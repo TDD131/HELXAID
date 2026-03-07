@@ -51,7 +51,7 @@ HELXAID currently consists of the following main components, each operating as a
 | Macro System | ~74% | 
 | RAM & Drive Cleaner | 50% | (Driver Cleaner didnt applied yet)
 | Hardware Stats | 90% |
-| System Optimization (OMEN AI–like concept) | Planned |
+| System Optimization (OMEN AI like concept) | Planned |
 
 ---
 
