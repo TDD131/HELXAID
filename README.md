@@ -54,9 +54,10 @@ HELXAID currently consists of the following main components:
 - Track playtime and automatically fetch game icons and background metadata
 
 ### Music Player
-- Import music from Spotify library
-- Import video/audio from YouTube
-- Download YouTube video or Spotify music using ResitaAPI
+- Play local audio and video files (MP3, WAV, FLAC, MP4) as background music
+- Modern, animated Spotify-style playlist interface with smooth column sorting
+- Auto-extracts file metadata, playback duration, and album cover art
+- Built-in volume, repeat/shuffle, and video background fit controls
 
 ### CPU Controller
 - CPU control via RyzenAdj
@@ -82,10 +83,7 @@ HELXAID currently consists of the following main components:
 This project is under active development and contains known limitations:
 
 - Application may freeze for several minutes when adding a large number of games
-- RAM usage and performance issues under heavy operations
-- Image import from game executable icons may fail in virtualized/shared folder environments
 - Some UI elements overlap at certain sizes
-- Select All option does not properly select all items in some panels
 - Certain fields should be empty on first launch but are not yet fully enforced
 
 ---
