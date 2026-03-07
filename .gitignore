@@ -18,10 +18,11 @@ python/UI Taskbar Icons/  # Depends if you want to bundle these or not
 python/web/temp/
 *.log
 
-# IDEs
+# IDEs & Tools
 .vscode/
 .idea/
 .gemini/
+.agent/
 .agent/
 
 # Native Build files
