@@ -44,44 +44,43 @@ HELXAID currently consists of the following main components, each operating as a
 
 | Module | Status |
 |------|------|
-| Game Launcher | ~95% |
-| Music Player | ~90% |
-| CPU Controller | ~90% |
-| Crosshair Overlay | ~100% | (New Feature Maybe?)
-| Macro System | ~74% | 
-| RAM & Drive Cleaner | 50% | (Driver Cleaner didnt applied yet)
-| Hardware Stats | 90% |
+| HELXAID (Game Launcher) | ~95% |
+| HELXAIC (Music Player) | ~90% |
+| HELXAIL (CPU Controller) | ~90% |
+| HELXAIR (Crosshair Overlay) | ~100% | (New Feature Maybe?)
+| HELXAIRO (Macro Setting) | ~74% | 
+| HELXTATS (System Monitoring & Cleaning) | ~70% | (Driver Cleaner didnt applied yet)
 | System Optimization (OMEN AI like concept) | Planned |
 
 ---
 
 ## Feature Notes
 
-### Game Launcher
+### HELXAID (Game Launcher)
 - Scan and manage Steam & Google Play Games libraries automatically
 - Manage local custom game folders
 - Track playtime and automatically fetch game icons and background metadata
 
-### Music Player
+### HELXAIC (Music Player)
 - Play local audio and video files (MP3, WAV, FLAC, MP4) as background music
 - Modern, animated Spotify-style playlist interface with smooth column sorting
 - Auto-extracts file metadata, playback duration, and album cover art
 - Built-in volume, repeat/shuffle, and video background fit controls
 
-### CPU Controller
+### HELXAIL (CPU Controller)
 - CPU control via RyzenAdj
 - Accessible only when required tools (RyzenAdj / UXTU) are available
 - Debug handling when required dependencies are missing
 
-### Crosshair Overlay
+### HELXAIR (Crosshair Overlay)
 - Customizable on-screen crosshair overlay (color, size, opacity)
 - Works without hooking into game memory (safer for anti-cheats)
 
-### Macro System
+### HELXAIRO (Macro Setting)
 - Map hardware keys to custom sequences and mouse inputs (integrated natively with C++)
 - Control DPI, rapid fire, and basic multimedia actions
 
-### System Monitoring & Cleaning
+### HELXTATS (System Monitoring & Cleaning)
 - Real-time Hardware stats (CPU, GPU, RAM) tracking
 - Memory (RAM) cleaning optimization capabilities
 
