@@ -35,12 +35,13 @@ HELXAID currently consists of the following main components:
 
 | Module | Status |
 |------|------|
-| Music Player | ~48% |
-| CPU Controller | ~59% |
-| Crosshair Overlay | ~6.7% |
-| Macro System | ~32% |
-| RAM & Drive Cleaner | Planned |
-| Hardware Stats | Planned |
+| Game Launcher | ~95% |
+| Music Player | ~90% |
+| CPU Controller | ~90% |
+| Crosshair Overlay | ~100% | (New Feature Maybe?)
+| Macro System | ~74% | 
+| RAM & Drive Cleaner | 50% | (Driver Cleaner didnt applied yet)
+| Hardware Stats | 90% |
 | System Optimization (OMEN AI–like concept) | Planned |
 
 ---
