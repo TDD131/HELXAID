@@ -23,7 +23,8 @@ python/web/temp/
 .idea/
 .gemini/
 .agent/
-.agent/
+.vercel/
+web/
 
 # Native Build files
 helxaid_native/build/
