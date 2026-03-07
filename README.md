@@ -48,6 +48,11 @@ HELXAID currently consists of the following main components:
 
 ## Feature Notes
 
+### Game Launcher
+- Scan and manage Steam & Google Play Games libraries automatically
+- Manage local custom game folders
+- Track playtime and automatically fetch game icons and background metadata
+
 ### Music Player
 - Import music from Spotify library
 - Import video/audio from YouTube
@@ -57,11 +62,6 @@ HELXAID currently consists of the following main components:
 - CPU control via RyzenAdj
 - Accessible only when required tools (RyzenAdj / UXTU) are available
 - Debug handling when required dependencies are missing
-
-### Game Launcher
-- Scan and manage Steam & Google Play Games libraries automatically
-- Manage local custom game folders
-- Track playtime and automatically fetch game icons and background metadata
 
 ### Crosshair Overlay
 - Customizable on-screen crosshair overlay (color, size, opacity)
