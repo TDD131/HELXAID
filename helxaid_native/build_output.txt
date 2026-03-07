@@ -1,0 +1,19 @@
+MSBuild version 18.0.5+e22287bf1 for .NET Framework
+
+  icon_extractor.cpp
+     Creating library D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.lib and object D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.exp
+  Generating code
+  Finished generating code
+  helxaid_native.vcxproj -> D:\Software\tididi\Game Launcher\helxaid_native\build\Release\helxaid_native.cp314-win_amd64.pyd
+  Copying helxaid_native to python directory
+  Error copying file "D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.cp314-win_amd64.pyd" to "D:/Software/tididi/Game Launcher/helxaid_native/../python/helxaid_native.cp314-win_amd64.pyd".
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: The command "setlocal [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: "C:\Program Files\CMake\bin\cmake.exe" -E copy "D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.cp314-win_amd64.pyd" "D:/Software/tididi/Game Launcher/helxaid_native/../python/helxaid_native.cp314-win_amd64.pyd" [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: if %errorlevel% neq 0 goto :cmEnd [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: :cmEnd [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: :cmErrorLevel [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: exit /b %1 [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: :cmDone [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: if %errorlevel% neq 0 goto :VCEnd [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Microsoft\VC\v180\Microsoft.CppCommon.targets(166,5): error MSB3073: :VCEnd" exited with code 1. [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]

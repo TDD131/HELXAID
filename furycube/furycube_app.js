@@ -1,0 +1,9736 @@
+(function () {
+  "use strict";
+  var e = {
+      8708: function (e, t, s) {
+        s(4114);
+        var i = s(6848),
+          a = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              {
+                staticClass: "flex_center",
+                style: e.backgroundStyle,
+                attrs: { id: "app" },
+              },
+              [
+                t(
+                  "div",
+                  {
+                    directives: [
+                      {
+                        name: "show",
+                        rawName: "v-show",
+                        value: e.isLoaded,
+                        expression: "isLoaded",
+                      },
+                    ],
+                  },
+                  [
+                    t(
+                      "div",
+                      {
+                        directives: [
+                          {
+                            name: "show",
+                            rawName: "v-show",
+                            value: e.noFound,
+                            expression: "noFound",
+                          },
+                        ],
+                      },
+                      [t("not-found")],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      {
+                        directives: [
+                          {
+                            name: "show",
+                            rawName: "v-show",
+                            value: 0 == e.noFound,
+                            expression: "noFound == false",
+                          },
+                        ],
+                      },
+                      [
+                        t("home", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: e.isHome,
+                              expression: "isHome",
+                            },
+                          ],
+                        }),
+                        t("mouse", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: !e.isHome,
+                              expression: "!isHome",
+                            },
+                          ],
+                        }),
+                      ],
+                      1,
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+          o = [],
+          n = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              {
+                staticClass: "welcome flex_column",
+                staticStyle: {
+                  height: "95vh",
+                  "justify-content": "space-between",
+                },
+              },
+              [
+                t("div", {
+                  directives: [
+                    {
+                      name: "show",
+                      rawName: "v-show",
+                      value: e.isPairing,
+                      expression: "isPairing",
+                    },
+                  ],
+                  staticClass: "pair_mask",
+                }),
+                t(
+                  "div",
+                  {
+                    staticClass: "flex_row",
+                    staticStyle: { "justify-content": "flex-end" },
+                  },
+                  [
+                    t(
+                      "div",
+                      {
+                        staticClass: "flex_row",
+                        staticStyle: {
+                          "justify-content": "space-evenly",
+                          width: "80%",
+                        },
+                      },
+                      [
+                        e.driverCfg.demo
+                          ? t(
+                              "div",
+                              { staticClass: "flex_row_center" },
+                              [
+                                t("span", [e._v("输入密码")]),
+                                t("el-input", {
+                                  staticClass: "password_class",
+                                  attrs: { "show-password": "" },
+                                  model: {
+                                    value: e.password,
+                                    callback: function (t) {
+                                      e.password = t;
+                                    },
+                                    expression: "password",
+                                  },
+                                }),
+                                t(
+                                  "el-button",
+                                  {
+                                    staticClass: "ok_class",
+                                    attrs: { lang: "OK" },
+                                    on: { click: e.handlePasswordClick },
+                                  },
+                                  [e._v("确定")],
+                                ),
+                              ],
+                              1,
+                            )
+                          : e._e(),
+                        e.driverCfg.demo
+                          ? t("div", [
+                              t("span", [e._v("设备类型：")]),
+                              t(
+                                "select",
+                                {
+                                  directives: [
+                                    {
+                                      name: "model",
+                                      rawName: "v-model",
+                                      value: e.device,
+                                      expression: "device",
+                                    },
+                                  ],
+                                  on: {
+                                    change: function (t) {
+                                      var s = Array.prototype.filter
+                                        .call(t.target.options, function (e) {
+                                          return e.selected;
+                                        })
+                                        .map(function (e) {
+                                          var t =
+                                            "_value" in e ? e._value : e.value;
+                                          return t;
+                                        });
+                                      e.device = t.target.multiple ? s : s[0];
+                                    },
+                                  },
+                                },
+                                e._l(e.deviceOption, function (s) {
+                                  return t(
+                                    "option",
+                                    {
+                                      key: s.value,
+                                      domProps: { value: s.value },
+                                    },
+                                    [e._v(" " + e._s(s.option))],
+                                  );
+                                }),
+                                0,
+                              ),
+                            ])
+                          : e._e(),
+                        e.driverCfg.demo
+                          ? t("div", [
+                              t("span", [e._v("Sensor类型：")]),
+                              t(
+                                "select",
+                                {
+                                  directives: [
+                                    {
+                                      name: "model",
+                                      rawName: "v-model",
+                                      value: e.selectSensor,
+                                      expression: "selectSensor",
+                                    },
+                                  ],
+                                  on: {
+                                    change: function (t) {
+                                      var s = Array.prototype.filter
+                                        .call(t.target.options, function (e) {
+                                          return e.selected;
+                                        })
+                                        .map(function (e) {
+                                          var t =
+                                            "_value" in e ? e._value : e.value;
+                                          return t;
+                                        });
+                                      e.selectSensor = t.target.multiple
+                                        ? s
+                                        : s[0];
+                                    },
+                                  },
+                                },
+                                e._l(e.sensorOptions, function (s) {
+                                  return t(
+                                    "option",
+                                    {
+                                      key: s.value,
+                                      domProps: { value: s.value },
+                                    },
+                                    [e._v(" " + e._s(s.option))],
+                                  );
+                                }),
+                                0,
+                              ),
+                            ])
+                          : e._e(),
+                      ],
+                    ),
+                    t(
+                      "select",
+                      {
+                        directives: [
+                          {
+                            name: "model",
+                            rawName: "v-model",
+                            value: e.language,
+                            expression: "language",
+                          },
+                        ],
+                        on: {
+                          change: [
+                            function (t) {
+                              var s = Array.prototype.filter
+                                .call(t.target.options, function (e) {
+                                  return e.selected;
+                                })
+                                .map(function (e) {
+                                  var t = "_value" in e ? e._value : e.value;
+                                  return t;
+                                });
+                              e.language = t.target.multiple ? s : s[0];
+                            },
+                            e.handleLanguageChange,
+                          ],
+                        },
+                      },
+                      e._l(e.languageOptions, function (s) {
+                        return t(
+                          "option",
+                          { key: s.value, domProps: { value: s.value } },
+                          [e._v(" " + e._s(s.option) + " ")],
+                        );
+                      }),
+                      0,
+                    ),
+                  ],
+                ),
+                t(
+                  "div",
+                  {
+                    staticClass: "flex_column",
+                    staticStyle: { "align-items": "center" },
+                  },
+                  [
+                    t(
+                      "p",
+                      { staticClass: "title_font", attrs: { lang: "Welcome" } },
+                      [e._v("欢迎使用Control HUB WEB")],
+                    ),
+                    t(
+                      "p",
+                      {
+                        staticClass: "subtitle_font",
+                        attrs: { lang: "SelectDevice" },
+                      },
+                      [
+                        e._v(
+                          "在这里您可以设置您的设备，包含按键、sensor、灯光及其它配置;",
+                        ),
+                      ],
+                    ),
+                    t(
+                      "p",
+                      {
+                        staticClass: "subtitle_font",
+                        attrs: { lang: "SupportSystem" },
+                      },
+                      [e._v("适配 Mac OS/Window/Linux 等主流操作系统")],
+                    ),
+                    t(
+                      "p",
+                      {
+                        staticClass: "subtitle_font",
+                        attrs: { lang: "SupportBrowser" },
+                      },
+                      [
+                        e._v(
+                          "仅支持Google Chrome，Microsoft Edge，Opera等浏览器访问",
+                        ),
+                      ],
+                    ),
+                    t(
+                      "el-button",
+                      {
+                        staticClass: "connect_button",
+                        attrs: {
+                          disabled: 0 == e.isSupportConnect,
+                          lang: "Connect",
+                        },
+                        on: { click: e.handleConnetClick },
+                      },
+                      [e._v("连接设备+")],
+                    ),
+                    t(
+                      "span",
+                      {
+                        staticClass: "operation_font",
+                        attrs: { lang: "OperationTips" },
+                      },
+                      [e._v("操作提示：")],
+                    ),
+                  ],
+                  1,
+                ),
+                t("div", { staticClass: "flex_column" }, [
+                  t(
+                    "div",
+                    {
+                      staticClass: "flex_row",
+                      staticStyle: {
+                        "justify-content": "space-between",
+                        "align-items": "center",
+                      },
+                    },
+                    [
+                      e._m(0),
+                      t(
+                        "div",
+                        {
+                          staticClass: "flex_row",
+                          staticStyle: { "align-items": "center" },
+                        },
+                        [
+                          t(
+                            "span",
+                            {
+                              staticClass: "version_font",
+                              attrs: { lang: "Version" },
+                            },
+                            [e._v("版本：")],
+                          ),
+                          t(
+                            "span",
+                            {
+                              staticClass: "version_font",
+                              staticStyle: { "margin-right": "20px" },
+                            },
+                            [e._v(e._s(e.version))],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  t(
+                    "div",
+                    {
+                      directives: [
+                        {
+                          name: "show",
+                          rawName: "v-show",
+                          value: e.showICP,
+                          expression: "showICP",
+                        },
+                      ],
+                      staticClass: "flex_row",
+                      staticStyle: {
+                        "justify-content": "center",
+                        "align-items": "baseline",
+                        "margin-top": "30px",
+                      },
+                    },
+                    [e._m(1)],
+                  ),
+                ]),
+                t("tips", { ref: "tipsDialog", attrs: { text: e.tipsText } }),
+                t("pair-dialog", { ref: "pairDialog" }),
+              ],
+              1,
+            );
+          },
+          r = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t(
+                "div",
+                { staticStyle: { display: "flex", "align-items": "baseline" } },
+                [
+                  t(
+                    "span",
+                    {
+                      staticClass: "pair_box",
+                      attrs: { lang: "PairButtonTips" },
+                    },
+                    [e._v("新接收器对码:")],
+                  ),
+                  t(
+                    "span",
+                    {
+                      staticClass: "pair_tips_font",
+                      staticStyle: { "margin-left": "10px" },
+                      attrs: { lang: "PairTips" },
+                    },
+                    [
+                      e._v(
+                        "敲击空格键进入配对，在弹窗中选择需要对码的接收器，回车确认（30秒）",
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t("span", [
+                e._v(" Control Hub |"),
+                t(
+                  "a",
+                  {
+                    staticClass: "web_span",
+                    attrs: { href: "https://beian.miit.gov.cn/" },
+                  },
+                  [e._v(" 粤ICP备06015730号-2")],
+                ),
+              ]);
+            },
+          ];
+        (s(4979), s(7467), s(4732), s(9577), s(6280), s(7913), s(7801));
+        const l = {
+          Escape: { value: 41, text: "Esc", type: 1 },
+          F1: { value: 58, text: "F1", type: 1 },
+          F2: { value: 59, text: "F2", type: 1 },
+          F3: { value: 60, text: "F3", type: 1 },
+          F4: { value: 61, text: "F4", type: 1 },
+          F5: { value: 62, text: "F5", type: 1 },
+          F6: { value: 63, text: "F6", type: 1 },
+          F7: { value: 64, text: "F7", type: 1 },
+          F8: { value: 65, text: "F8", type: 1 },
+          F9: { value: 66, text: "F9", type: 1 },
+          F10: { value: 67, text: "F10", type: 1 },
+          F11: { value: 68, text: "F11", type: 1 },
+          F12: { value: 69, text: "F12", type: 1 },
+          Backquote: { value: 53, text: "`", type: 1 },
+          Digit1: { value: 30, text: "1", type: 1 },
+          Digit2: { value: 31, text: "2", type: 1 },
+          Digit3: { value: 32, text: "3", type: 1 },
+          Digit4: { value: 33, text: "4", type: 1 },
+          Digit5: { value: 34, text: "5", type: 1 },
+          Digit6: { value: 35, text: "6", type: 1 },
+          Digit7: { value: 36, text: "7", type: 1 },
+          Digit8: { value: 37, text: "8", type: 1 },
+          Digit9: { value: 38, text: "9", type: 1 },
+          Digit0: { value: 39, text: "0", type: 1 },
+          Minus: { value: 45, text: "-", type: 1 },
+          Equal: { value: 46, text: "+", type: 1 },
+          Backspace: { value: 42, text: "←", type: 1 },
+          Tab: { value: 43, text: "Tab", type: 1 },
+          KeyQ: { value: 20, text: "Q", type: 1 },
+          KeyW: { value: 26, text: "W", type: 1 },
+          KeyE: { value: 8, text: "E", type: 1 },
+          KeyR: { value: 21, text: "R", type: 1 },
+          KeyT: { value: 23, text: "T", type: 1 },
+          KeyY: { value: 28, text: "Y", type: 1 },
+          KeyU: { value: 24, text: "U", type: 1 },
+          KeyI: { value: 12, text: "I", type: 1 },
+          KeyO: { value: 18, text: "O", type: 1 },
+          KeyP: { value: 19, text: "P", type: 1 },
+          BracketLeft: { value: 47, text: "[", type: 1 },
+          BracketRight: { value: 48, text: "]", type: 1 },
+          Backslash: { value: 49, text: "|", type: 1 },
+          CapsLock: { value: 57, text: "CapsLock", type: 1 },
+          KeyA: { value: 4, text: "A", type: 1 },
+          KeyS: { value: 22, text: "S", type: 1 },
+          KeyD: { value: 7, text: "D", type: 1 },
+          KeyF: { value: 9, text: "F", type: 1 },
+          KeyG: { value: 10, text: "G", type: 1 },
+          KeyH: { value: 11, text: "H", type: 1 },
+          KeyJ: { value: 13, text: "J", type: 1 },
+          KeyK: { value: 14, text: "K", type: 1 },
+          KeyL: { value: 15, text: "L", type: 1 },
+          Semicolon: { value: 51, text: ":", type: 1 },
+          Quote: { value: 52, text: "'", type: 1 },
+          Enter: { value: 40, text: "Enter", type: 1 },
+          ShiftLeft: { value: 2, text: "LShift", type: 0 },
+          KeyZ: { value: 29, text: "Z", type: 1 },
+          KeyX: { value: 27, text: "X", type: 1 },
+          KeyC: { value: 6, text: "C", type: 1 },
+          KeyV: { value: 25, text: "V", type: 1 },
+          KeyB: { value: 5, text: "B", type: 1 },
+          KeyN: { value: 17, text: "N", type: 1 },
+          KeyM: { value: 16, text: "M", type: 1 },
+          Comma: { value: 54, text: ",", type: 1 },
+          Period: { value: 55, text: ".", type: 1 },
+          Slash: { value: 56, text: "/", type: 1 },
+          ShiftRight: { value: 32, text: "RShift", type: 0 },
+          ControlLeft: { value: 1, text: "LCtrl", type: 0 },
+          MetaLeft: { value: 8, text: "LWin", type: 0 },
+          AltLeft: { value: 4, text: "LAlt", type: 0 },
+          Space: { value: 44, text: "Space", type: 1 },
+          AltRight: { value: 64, text: "RAlt", type: 0 },
+          MetaRight: { value: 128, text: "RWin", type: 0 },
+          ContextMenu: { value: 1, text: "Menu", type: 7 },
+          ControlRight: { value: 16, text: "RCtrl", type: 0 },
+          PrintScreen: { value: 70, text: "Screen", type: 1 },
+          ScrollLock: { value: 71, text: "Scroll", type: 1 },
+          Pause: { value: 72, text: "Pause", type: 1 },
+          Insert: { value: 73, text: "Insert", type: 1 },
+          Home: { value: 74, text: "Home", type: 1 },
+          PageUp: { value: 75, text: "PageUp", type: 1 },
+          Delete: { value: 76, text: "Del", type: 1 },
+          End: { value: 77, text: "End", type: 1 },
+          PageDown: { value: 78, text: "PageDn", type: 1 },
+          ArrowUp: { value: 82, text: "↑", type: 1 },
+          ArrowLeft: { value: 80, text: "←", type: 1 },
+          ArrowDown: { value: 81, text: "↓", type: 1 },
+          ArrowRight: { value: 79, text: "→", type: 1 },
+          NumLock: { value: 83, text: "NumLock", type: 1 },
+          NumpadDivide: { value: 84, text: "Num/", type: 1 },
+          NumpadMultiply: { value: 85, text: "Num*", type: 1 },
+          NumpadSubtract: { value: 86, text: "Num-", type: 1 },
+          NumpadAdd: { value: 87, text: "Num+", type: 1 },
+          NumpadDecimal: { value: 99, text: "Num.", type: 1 },
+          NumpadEnter: { value: 88, text: "Enter", type: 1 },
+          Numpad1: { value: 89, text: "Num1", type: 1 },
+          Numpad2: { value: 90, text: "Num2", type: 1 },
+          Numpad3: { value: 91, text: "Num3", type: 1 },
+          Numpad4: { value: 92, text: "Num4", type: 1 },
+          Numpad5: { value: 93, text: "Num5", type: 1 },
+          Numpad6: { value: 94, text: "Num6", type: 1 },
+          Numpad7: { value: 95, text: "Num7", type: 1 },
+          Numpad8: { value: 96, text: "Num8", type: 1 },
+          Numpad9: { value: 97, text: "Num9", type: 1 },
+          Numpad0: { value: 98, text: "Num0", type: 1 },
+          Apps: { value: 101, text: "Apps", type: 1 },
+          IntlYen: { value: 137, text: "K14 |    ¥", type: 1 },
+          IntlRo: { value: 135, text: "K56 -\\ろ", type: 1 },
+          Convert: { value: 138, text: "K132 変換", type: 1 },
+          NonConvert: { value: 139, text: "K131 無変換", type: 1 },
+          KanaMode: { value: 136, text: "Roma 力夕力ナ", type: 1 },
+          IntlBackslash: { value: 100, text: "K45", type: 1 },
+          Backslash2: { value: 50, text: "K42", type: 1 },
+          HangulHanja: { value: 145, text: "K150 한사", type: 1 },
+          Hangul: { value: 144, text: "151 한/영 かな", type: 1 },
+        };
+        function c(e) {
+          return l[e] || null;
+        }
+        function u(e) {
+          for (let t in l)
+            if (l[t].type == e.type && l[t].value == e.value) return l[t];
+          return null;
+        }
+        function h(e) {
+          for (let t in l) if (l[t].text == e) return l[t];
+          return null;
+        }
+        var d,
+          f,
+          p = { keyToHID: c, HIDToKey: u, textToHID: h },
+          g = !1,
+          m = !1,
+          v = !1,
+          y = !1,
+          _ = 0,
+          b = 0,
+          C = [
+            3050, 3420, 3480, 3540, 3600, 3660, 3720, 3760, 3800, 3840, 3880,
+            3920, 3940, 3960, 3980, 4e3, 4020, 4040, 4060, 4080, 4110,
+          ],
+          w = !1,
+          x = !1,
+          S = 0,
+          D = [];
+        function $(e, t) {
+          ((_ = t.level), (g = t.charging), (m = t.voltage > 0), (D = e));
+          var s =
+              D[0].toString(16).padStart(2, "0") +
+              D[1].toString(16).padStart(2, "0") +
+              D[2].toString(16).padStart(2, "0"),
+            i = localStorage.getItem("bat_" + s),
+            a = 0,
+            o = 0,
+            n = Math.floor(new Date().getTime() / 1e3),
+            r = 2e3;
+          if (i) {
+            var l = JSON.parse(i);
+            (console.log("item:", i, l),
+              (a = Number.parseInt(l.level)),
+              (o = Number.parseInt(l.time)),
+              (r = n - o));
+          }
+          (m && (_ = I(t.voltage, t.charging)),
+            console.log("current time:", n, S, a, _, r),
+            (S = P(a, _, r)),
+            console.log("current time:", n, S, _),
+            null == f && (f = setInterval(k, 6e4)),
+            null == d && (d = setInterval(M, 1e4)),
+            S > 95 && g ? (x = !1) : (w = !0));
+        }
+        function M() {
+          w &&
+            (g
+              ? _ > S &&
+                _ < 100 &&
+                (_ - 10 > S && S++, S >= 85 && ((w = !1), (x = !0)))
+              : _ < S && S > 0 && S--);
+        }
+        function k() {
+          x && (S < 99 && g && S++, S > 100 && (S = 100));
+        }
+        function R(e) {
+          var t = 0;
+          ((t = _ = m ? I(e.voltage, e.charging) : e.level),
+            (g = e.charging),
+            S >= 85 && t >= 95 && g
+              ? (w && (w = !1), 0 == x && (x = !0))
+              : (0 == w && (w = !0), x && (x = !1)),
+            0 == g
+              ? ((b = 0),
+                0 == e.level && (S = 0),
+                S < 15 || (e.level <= 15 && 0 == v && ((v = !0), (S = 15))),
+                y && (t > S ? t - S >= 30 && (S = t) : S - t >= 30 && (S = t)))
+              : ((v = !1),
+                100 == e.level
+                  ? (b < 10 && (b++, bs.Get_Device_Battery()),
+                    b >= 8 && (S = 100))
+                  : (b = 0)));
+          var s = { level: S, time: Math.floor(new Date().getTime() / 1e3) };
+          localStorage.setItem(
+            "bat_" +
+              D[0].toString(16).padStart(2, "0") +
+              D[1].toString(16).padStart(2, "0") +
+              D[2].toString(16).padStart(2, "0"),
+            JSON.stringify(s),
+          );
+        }
+        function T() {
+          return S;
+        }
+        function I(e, t) {
+          var s = 0,
+            i = 0,
+            a = -1;
+          if (e > C[C.length - 1]) s = t ? 99 : 100;
+          else {
+            for (var o = 0; o < C.length; o++)
+              if (e < C[o]) {
+                a = o;
+                break;
+              }
+            -1 != a &&
+              (0 == a
+                ? (s = 0)
+                : ((i = (C[a] - C[a - 1]) / 5),
+                  (s = (e - C[a - 1]) / i + 5 * (a - 1))),
+              (0 != s && 15 != s) || s++);
+          }
+          return ((s = Math.round(s)), s);
+        }
+        function P(e, t, s) {
+          var i = 0,
+            a = 0,
+            o = 0;
+          return (
+            s > 1800
+              ? (i = t)
+              : s < 60
+                ? (i = e)
+                : ((a = 0.028 * s),
+                  (a = a + e > 100 ? 100 : a + e),
+                  (o = 0.014 * s),
+                  (o = o > e || e - o < 0 ? 0 : e - o),
+                  (i = t > a ? a : t < o ? o : e)),
+            (i = Math.round(i)),
+            i
+          );
+        }
+        function K() {
+          (d && clearInterval(d), f && clearInterval(f), (w = !1), (x = !1));
+        }
+        var O = {
+          batteryHandleInit: $,
+          setDisplayLevel: R,
+          batteryHandleExit: K,
+          getDisplayLevel: T,
+          displayLevel: S,
+        };
+        function L(e) {
+          return parseInt(e, 16);
+        }
+        function B(e) {
+          var t = 1;
+          return ((t = e > 1e3 ? (e / 1e3) * 16 : 1e3 / e), t);
+        }
+        function F(e) {
+          var t = 1e3;
+          return ((t = e >= 16 ? (e / 16) * 2e3 : 1e3 / e), t);
+        }
+        function A(e, t) {
+          var s = e[t],
+            i = e[t + 1],
+            a = e[t + 2],
+            o = `rgb(${s}, ${i}, ${a})`;
+          return o;
+        }
+        function E(e) {
+          const t = e.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
+          return t
+            ? [parseInt(t[1], 10), parseInt(t[2], 10), parseInt(t[3], 10)]
+            : [0, 0, 0];
+        }
+        function N(e) {
+          var t = { color: !1, brightness: !1, speed: !1 };
+          switch (e) {
+            case 0:
+              ((t.color = !0), (t.brightness = !0), (t.speed = !0));
+              break;
+            case 1:
+            case 4:
+            case 5:
+              t.color = !0;
+              break;
+            case 6:
+              ((t.color = !0), (t.speed = !0));
+              break;
+            case 2:
+              break;
+            case 3:
+              t.speed = !0;
+              break;
+            default:
+              break;
+          }
+          return t;
+        }
+        function G(e) {
+          const t = new TextEncoder();
+          return t.encode(e);
+        }
+        function U(e) {
+          const t = new TextDecoder();
+          return t.decode(e);
+        }
+        function V(e) {
+          return e.map((e) =>
+            Array.isArray(e)
+              ? V(e)
+              : "object" === typeof e && null !== e
+                ? H(e)
+                : e,
+          );
+        }
+        function H(e) {
+          let t = Array.isArray(e) ? [] : {};
+          for (let s in e)
+            e.hasOwnProperty(s) &&
+              ("object" === typeof e[s] && null !== e[s]
+                ? (t[s] = H(e[s]))
+                : (t[s] = e[s]));
+          return t;
+        }
+        var W,
+          j,
+          z,
+          J,
+          q,
+          Y,
+          X = {
+            String_To_Hex: L,
+            ReportRate_To_FlashData: B,
+            FlashData_To_ReportRate: F,
+            Buffer_To_Color: A,
+            Color_To_Buffer: E,
+            LightMode_To_Disable: N,
+            String_To_UTF8: G,
+            UTF8_To_String: U,
+            Deep_Clone_Array: V,
+          },
+          Q = !0,
+          Z = {
+            EncryptionData: 1,
+            PCDriverStatus: 2,
+            DeviceOnLine: 3,
+            BatteryLevel: 4,
+            DongleEnterPair: 5,
+            GetPairState: 6,
+            WriteFlashData: 7,
+            ReadFlashData: 8,
+            ClearSetting: 9,
+            StatusChanged: 10,
+            SetDeviceVidPid: 11,
+            SetDeviceDescriptorString: 12,
+            EnterUsbUpdateMode: 13,
+            GetCurrentConfig: 14,
+            SetCurrentConfig: 15,
+            ReadCIDMID: 16,
+            EnterMTKMode: 17,
+            ReadVersionID: 18,
+            Set4KDongleRGB: 20,
+            Get4KDongleRGBValue: 21,
+            SetLongRangeMode: 22,
+            GetLongRangeMode: 23,
+            SetDongleRGBBarMode: 24,
+            GetDongleRGBBarMode: 25,
+            GetDongleVersion: 29,
+            SetDongle3RGBMode: 44,
+            GetDongle3RGBMode: 45,
+            MusicColorful: 176,
+            MusicSingleColor: 177,
+            WriteKBCIdMID: 240,
+            ReadKBCIdMID: 241,
+          },
+          ee = {
+            ReportRate: 0,
+            maxDpiStage: 2,
+            CurrentDPI: 4,
+            KeyOperation: 8,
+            LOD: 10,
+            DPIValue: 12,
+            DPIColor: 44,
+            DPIEffectMode: 76,
+            DPIEffectBrightness: 78,
+            DPIEffectSpeed: 80,
+            DPIEffectState: 82,
+            Light: 160,
+            DebounceTime: 169,
+            MotionSync: 171,
+            SleepTime: 173,
+            Angle: 175,
+            Ripple: 177,
+            MovingOffLight: 179,
+            PerformanceState: 181,
+            Performance: 183,
+            SensorMode: 185,
+            AngleTune: 189,
+            AngleTuneState: 191,
+            SensorFPS20K: 225,
+            WheelDebounceTime: 227,
+            DebounceReleaseTime: 229,
+            KeyFunction: 96,
+            ShortcutKey: 256,
+            Macro: 768,
+          },
+          te = {
+            Disable: 0,
+            MouseKey: 1,
+            LeftKey: 256,
+            DPISwitch: 2,
+            LeftRightRoll: 3,
+            FireKey: 4,
+            ShortcutKey: 5,
+            Macro: 6,
+            ReportRateSwitch: 7,
+            LightSwitch: 8,
+            ProfileSwitch: 9,
+            DPILock: 10,
+            UpDownRoll: 11,
+          },
+          se = { Pairing: 1, Fail: 2, Success: 3 },
+          ie = { Disconnected: 0, Connecting: 1, Connected: 2, TimeOut: 3 },
+          ae = !0,
+          oe = !1,
+          ne = 8,
+          re = [],
+          le = [],
+          ce = [],
+          ue = !1,
+          he = new Uint8Array(8192).fill(0),
+          de = 0,
+          fe = 0,
+          pe = { pairStatus: 0, pairLeftTime: 20 },
+          ge = !1,
+          me = !1,
+          ve = 0,
+          ye = !1,
+          _e = !1,
+          be = {
+            deviceOpen: !1,
+            connectState: ie.Disconnected,
+            online: !1,
+            addr: [],
+            info: { cid: 1, mid: 1, type: 1 },
+            pairCID: 0,
+            type: "mouse",
+            isWired: !1,
+            maxReportRate: 1e3,
+            battery: { level: 20, charging: !1, voltage: 3728 },
+            batteryOptimizeInit: !1,
+            batteryOptimize: !1,
+            version: { dongle: "v1.0", device: "--" },
+            supportChangeProfile: !1,
+            profile: 0,
+            isRestoring: !1,
+            showOfflineDialog: !1,
+            dongle4KRGB: {
+              mode: 0,
+              color1: "rgb(255,0,0)",
+              color2: "rgb(255,0,0)",
+              color3: "rgb(255,0,0)",
+            },
+            defaultDongle4KRGB: {
+              mode: 0,
+              color1: "rgb(255,0,0)",
+              color2: "rgb(255,0,0)",
+              color3: "rgb(255,0,0)",
+            },
+            dongleRGBBar: {
+              mode: 0,
+              color: "rgb(255,0,0)",
+              speed: 3,
+              brightness: 3,
+              time: 1,
+            },
+            dongle3LEDRGB: { mode: [] },
+            defaultDongleRGBBar: {
+              mode: 0,
+              color: "rgb(255,0,0)",
+              speed: 3,
+              brightness: 3,
+              time: 1,
+            },
+            mouseCfg: {
+              reportRate: 1,
+              maxDpiStage: 4,
+              currentDpi: 2,
+              xSpindown: 0,
+              ySpindown: 0,
+              debounceTime: 8,
+              debounceReleaseTime: 8,
+              supportLongDistance: !0,
+              longDistance: !1,
+              defaultLongDistance: !1,
+              supportAngleTune: !0,
+              angleTune: 0,
+              angleTuneState: 0,
+              wheelDebounceTime: 0,
+              leftKeyOperation: 0,
+              rightKeyOperation: 0,
+              sensor: {
+                cfg: {},
+                type: "3950",
+                lod: 1,
+                motionSync: !1,
+                angle: !1,
+                ripple: !1,
+                performanceState: !1,
+                performance: 6,
+                sensorMode: 0,
+                fps20k: 0,
+              },
+              dpis: [
+                { value: 400, color: "#ff0000" },
+                { value: 800, color: "#00ff00" },
+                { value: 1600, color: "#0000ff" },
+                { value: 3200, color: "#ff00ff" },
+                { value: 400, color: "#ff0000" },
+                { value: 400, color: "#ff0000" },
+                { value: 400, color: "#ff0000" },
+                { value: 400, color: "#ff0000" },
+              ],
+              dpiEffect: { mode: 1, state: ae, brightness: 3, speed: 3 },
+              lightEffect: {
+                mode: 2,
+                brightness: 3,
+                speed: 3,
+                color: "#ff0000",
+                state: ae,
+                movingOffState: !1,
+              },
+              sleepTime: 3,
+              keysCount: 6,
+              keys: [
+                { value: ["1", "0x0001"] },
+                { value: ["1", "0x0002"] },
+                { value: ["1", "0x0004"] },
+                { value: ["1", "0x0010"] },
+                { value: ["1", "0x0008"] },
+                { value: ["2", "0x0001"] },
+                { value: ["2", "0x0002"] },
+                { value: ["2", "0x0003"] },
+              ],
+              shortCutKey: [],
+              macros: [],
+            },
+          };
+        async function Ce(e) {
+          const t = await navigator.hid.requestDevice({ filters: e });
+          if (0 == t.length) return !1;
+          let s = JSON.parse(localStorage.getItem("hidDevices")) || [];
+          var i = !1;
+          for (let a of t) {
+            if (Q) {
+              i = Q;
+              break;
+            }
+            for (let e = 0; e < a.collections.length; e++)
+              if (
+                1 === a.collections[e].inputReports.length &&
+                1 === a.collections[e].outputReports.length &&
+                ne == a.collections[e].outputReports[0].reportId
+              ) {
+                ((j = a),
+                  0 == s.length
+                    ? (s.push(j.productName),
+                      localStorage.setItem("hidDevices", JSON.stringify(s)))
+                    : s.includes(j.productName) ||
+                      (s.push(j.productName),
+                      localStorage.setItem("hidDevices", JSON.stringify(s))),
+                  console.log("hidDevices", JSON.stringify(s)),
+                  j.opened || (await j.open()),
+                  (be.version.dongle = "--"),
+                  (be.deviceOpen = !0),
+                  Re(),
+                  (W = j.vendorId),
+                  Me(),
+                  (i = !0),
+                  await Le(),
+                  console.log("requestDevice:", j, be));
+                break;
+              }
+          }
+          return i;
+        }
+        async function we() {
+          0 == Q &&
+            (0 == be.isWired && (await Ye()),
+            0 == (await pt()) && (J = setInterval(pt, 1500)));
+        }
+        function xe(e, t) {
+          if (e === t) return !0;
+          if (
+            "object" !== typeof e ||
+            null === e ||
+            "object" !== typeof t ||
+            null === t
+          )
+            return !1;
+          const s = Object.keys(e),
+            i = Object.keys(t);
+          if (s.length !== i.length) return !1;
+          for (const a of s) if (!i.includes(a) || !xe(e[a], t[a])) return !1;
+          return !0;
+        }
+        async function Se() {
+          const e = JSON.parse(localStorage.getItem("hidDevices")),
+            t = await navigator.hid.getDevices();
+          if (0 == t.length) return ((le = []), le);
+          var s = !0;
+          if (
+            ((s = re.length === t.length && re.every((e, s) => xe(e, t[s]))),
+            0 == s)
+          ) {
+            ((le = []), (re = t));
+            for (let e = 0; e < t.length; e++) {
+              let s = t[e];
+              for (let e = 0; e < s.collections.length; e++)
+                if (
+                  1 === s.collections[e].inputReports.length &&
+                  1 === s.collections[e].outputReports.length &&
+                  ne == s.collections[e].outputReports[0].reportId
+                ) {
+                  ((j = s),
+                    j.opened || (await j.open()),
+                    (be.deviceOpen = !0),
+                    Re());
+                  const e = await Le();
+                  var i = !1,
+                    a = 1e3;
+                  2 == e.type
+                    ? ((i = !0), (a = 1e3))
+                    : 3 == e.type
+                      ? ((i = !0), (a = 8e3))
+                      : ((i = !1),
+                        0 == e.type
+                          ? (a = 1e3)
+                          : 1 == e.type
+                            ? (a = 4e3)
+                            : 4 == e.type
+                              ? (a = 2e3)
+                              : 5 == e.type && (a = 8e3));
+                  var o = await Fe();
+                  const t = {
+                    device: s,
+                    cid: e.cid,
+                    mid: e.mid,
+                    isWired: i,
+                    reportRate: a,
+                    online: o,
+                  };
+                  le.push(t);
+                  break;
+                }
+            }
+            console.log("Device_Reconnect", e, t, le);
+          } else
+            for (let n = 0; n < le.length; n++) {
+              let e = le[n].device;
+              ((j = e),
+                j.opened || (await j.open()),
+                (be.deviceOpen = !0),
+                Re());
+              o = await Fe();
+              le[n].online = o;
+            }
+          return le;
+        }
+        async function De(e) {
+          ((j = e),
+            j.opened || (await j.open()),
+            (be.deviceOpen = !0),
+            Re(),
+            (W = j.vendorId),
+            Me(),
+            await Le(),
+            console.log("requestDevice:", j, be));
+        }
+        function $e() {
+          (Y && clearInterval(Y),
+            q && clearInterval(q),
+            J && clearInterval(J),
+            z && clearInterval(z),
+            O.batteryHandleExit(),
+            (be.batteryOptimize = !1),
+            (be.batteryOptimizeInit = !1),
+            (be.deviceOpen = !1));
+        }
+        function Me() {
+          navigator.hid.ondisconnect = (e) => {
+            $e();
+          };
+        }
+        async function ke() {
+          ("undefined" != typeof _e && _e && (await Be(0)),
+            $e(),
+            0 == Q && "undefined" != typeof j && j.close());
+        }
+        function Re() {
+          j.oninputreport = async (e) => {
+            if (e.reportId === ne) {
+              ce = new Uint8Array(e.data.buffer);
+              let n = ce[0];
+              if (0 == ce[1])
+                switch (n) {
+                  case Z.EncryptionData:
+                    ((be.info.cid = ce[9]),
+                      (be.info.mid = ce[10]),
+                      (be.info.type = ce[11]),
+                      2 == be.info.type
+                        ? ((be.isWired = !0), (be.maxReportRate = 1e3))
+                        : 3 == be.info.type
+                          ? ((be.isWired = !0), (be.maxReportRate = 8e3))
+                          : ((be.isWired = !1),
+                            0 == be.info.type
+                              ? (be.maxReportRate = 1e3)
+                              : 1 == be.info.type
+                                ? (be.maxReportRate = 4e3)
+                                : 4 == be.info.type
+                                  ? (be.maxReportRate = 2e3)
+                                  : 5 == be.info.type &&
+                                    (be.maxReportRate = 8e3)));
+                    break;
+                  case Z.PCDriverStatus:
+                    break;
+                  case Z.DeviceOnLine:
+                    ((be.online = ce[5]),
+                      (be.addr.length = 3),
+                      (be.addr[2] = ce[6]),
+                      (be.addr[1] = ce[7]),
+                      (be.addr[0] = ce[8]));
+                    break;
+                  case Z.BatteryLevel:
+                    ((be.battery.level = ce[5]),
+                      (be.battery.charging = 1 == ce[6]),
+                      (be.battery.voltage = (ce[7] << 8) + ce[8]),
+                      0 == be.batteryOptimize
+                        ? (0 == be.batteryOptimizeInit &&
+                            O.batteryHandleInit(be.addr, be.battery),
+                          (be.batteryOptimizeInit = !0),
+                          O.setDisplayLevel(be.battery),
+                          (be.battery.level = O.getDisplayLevel()),
+                          (be.batteryOptimize = !0))
+                        : (O.setDisplayLevel(be.battery),
+                          (be.battery.level = O.getDisplayLevel())));
+                    break;
+                  case Z.DongleEnterPair:
+                    ((ye = !1),
+                      (ve = 0),
+                      (pe.pairStatus = 0),
+                      (Y = setInterval(Ue, 1e3)));
+                    break;
+                  case Z.GetPairState:
+                    ((pe.pairStatus = ce[5]),
+                      (pe.pairLeftTime = ce[6]),
+                      (pe.pairStatus != se.Fail &&
+                        pe.pairStatus != se.Success) ||
+                        (be.connectState == ie.Connected && (ye = !0),
+                        Y && clearInterval(Y)));
+                    break;
+                  case Z.WriteFlashData:
+                    var t = 0;
+                    t = (ce[3] << 8) + ce[4];
+                    var s = ce[4];
+                    break;
+                  case Z.ReadFlashData:
+                    t = 0;
+                    t = (ce[2] << 8) + ce[3];
+                    s = ce[4];
+                    for (var i = 0; i < s; i++) he[t + i] = ce[5 + i];
+                    ((t == ee.ReportRate && 2 == s) ||
+                      (t == ee.CurrentDPI && 2 == s) ||
+                      (t == ee.DPIEffectMode && 8 == s) ||
+                      (t == ee.Light && 7 == s)) &&
+                      yt();
+                    break;
+                  case Z.ClearSetting:
+                    be.isRestoring = !1;
+                    break;
+                  case Z.StatusChanged:
+                    var a = ce[5];
+                    (1 == (1 & a) && $t(),
+                      2 == (2 & a) && xt(),
+                      4 == (4 & a) &&
+                        0 == ge &&
+                        0 == me &&
+                        ((ge = !0), await We()),
+                      8 == (8 & a) && Kt(),
+                      32 == (32 & a) && Gt(),
+                      64 == (64 & a) && Ee());
+                    break;
+                  case Z.GetCurrentConfig:
+                    ((be.supportChangeProfile = !0),
+                      (be.profile = ce[5]),
+                      0 == Q &&
+                        ge &&
+                        ((ge = !1),
+                        await dt(),
+                        (be.connectState = ie.Connected)));
+                    break;
+                  case Z.SetCurrentConfig:
+                    break;
+                  case Z.ReadVersionID:
+                    var o =
+                      "v" +
+                      ce[5].toString() +
+                      "." +
+                      ce[6].toString(16).padStart(2, "0");
+                    be.version.device = o;
+                    break;
+                  case Z.Set4KDongleRGB:
+                    ((be.dongle4KRGB.mode = ce[5]),
+                      (be.dongle4KRGB.color1 = X.Buffer_To_Color(ce, 6)),
+                      (be.dongle4KRGB.color2 = X.Buffer_To_Color(ce, 9)),
+                      (be.dongle4KRGB.color3 = X.Buffer_To_Color(ce, 12)));
+                    break;
+                  case Z.Get4KDongleRGBValue:
+                    ((be.dongle4KRGB.mode = ce[5]),
+                      (be.dongle4KRGB.color1 = X.Buffer_To_Color(ce, 6)),
+                      (be.dongle4KRGB.color2 = X.Buffer_To_Color(ce, 9)),
+                      (be.dongle4KRGB.color3 = X.Buffer_To_Color(ce, 12)));
+                    break;
+                  case Z.SetLongRangeMode:
+                    break;
+                  case Z.GetLongRangeMode:
+                    ((be.mouseCfg.supportLongDistance = !0),
+                      (be.mouseCfg.longDistance = 1 == ce[5]));
+                    break;
+                  case Z.SetDongleRGBBarMode:
+                    ((be.dongleRGBBar.mode = ce[5]),
+                      (be.dongleRGBBar.color = X.Buffer_To_Color(ce, 6)),
+                      (be.dongleRGBBar.speed = ce[9]),
+                      (be.dongleRGBBar.brightness = ce[10]),
+                      (be.dongleRGBBar.time = ce[11]));
+                    break;
+                  case Z.GetDongleRGBBarMode:
+                    ((be.dongleRGBBar.mode = ce[5]),
+                      (be.dongleRGBBar.color = X.Buffer_To_Color(ce, 6)),
+                      (be.dongleRGBBar.speed = ce[9]),
+                      (be.dongleRGBBar.brightness = ce[10]),
+                      (be.dongleRGBBar.time = ce[11]));
+                    break;
+                  case Z.GetDongleVersion:
+                    o =
+                      "v" +
+                      ce[5].toString() +
+                      "." +
+                      ce[6].toString(16).padStart(2, "0");
+                    be.version.dongle = o;
+                    break;
+                  case Z.SetDongle3RGBMode:
+                    be.dongle3LEDRGB.mode = [];
+                    for (i = 0; i < 3; i++)
+                      be.dongle3LEDRGB.mode.push(ce[5 + i]);
+                    break;
+                  case Z.GetDongle3RGBMode:
+                    be.dongle3LEDRGB.mode = [];
+                    for (i = 0; i < 3; i++)
+                      be.dongle3LEDRGB.mode.push(ce[5 + i]);
+                    break;
+                }
+              else if (1 == ce[1])
+                switch (n) {
+                  case Z.GetLongRangeMode:
+                    be.mouseCfg.supportLongDistance = !1;
+                    break;
+                  case Z.GetCurrentConfig:
+                    be.supportChangeProfile = !1;
+                    break;
+                  case Z.GetDongleVersion:
+                    be.version.dongle = "v1.0";
+                    break;
+                }
+              ue = !1;
+            }
+          };
+        }
+        function Te(e) {
+          return new Promise((t) => setTimeout(t, e));
+        }
+        async function Ie(e) {
+          var t = !1;
+          if (Q) return Q;
+          for (var s = 0; s < 5; s++) {
+            var i = 0;
+            ((t = !0), (ue = !0));
+            try {
+              await j.sendReport(ne, e);
+            } catch (n) {
+              console.error("Send_HID_Buffer", n);
+            }
+            do {
+              (await Te(5), i++);
+            } while (ue && i < 40);
+            ue && console.log("write:", ue, i, e, ce);
+            var a = 3;
+            8 == e[0] && (a = 5);
+            for (var o = 0; o < a; o++) {
+              if (1 === ce[1]) {
+                t = !0;
+                break;
+              }
+              if (e[o] !== ce[o]) {
+                t = !1;
+                break;
+              }
+            }
+            if (1 == t) break;
+            await Te(10);
+          }
+          return t;
+        }
+        function Pe(e) {
+          for (var t = 0, s = 0; s < e.length - 1; s++) t += e[s];
+          return ((t &= 255), (t = 85 - t), t);
+        }
+        async function Ke(e, t) {
+          let s = Uint8Array.of(
+              e,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              239,
+            ),
+            i = 0;
+          s[4] = t.length;
+          for (let o = 0; o < t.length; o++) s[5 + o] = t[o];
+          ((i = Pe(s)), (s[15] = i - ne));
+          var a = await Ie(s);
+          return a;
+        }
+        async function Oe(e) {
+          let t = Uint8Array.of(
+              e,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              239,
+            ),
+            s = Pe(t);
+          ((t[15] = s - ne), await Ie(t));
+        }
+        async function Le() {
+          var e = [],
+            t = 0,
+            s = 255;
+          ((e[0] = Math.floor(Math.random() * (s - t + 1)) + t),
+            (e[1] = Math.floor(Math.random() * (s - t + 1)) + t),
+            (e[2] = Math.floor(Math.random() * (s - t + 1)) + t),
+            (e[3] = Math.floor(Math.random() * (s - t + 1)) + t),
+            (e[4] = 0),
+            (e[5] = 0),
+            (e[6] = 0),
+            (e[7] = 0));
+          var i = {};
+          return (
+            (await Ke(Z.EncryptionData, e)) &&
+              (i = { cid: be.info.cid, mid: be.info.mid, type: be.info.type }),
+            i
+          );
+        }
+        async function Be(e) {
+          var t = [];
+          ((t[0] = e), await Ke(Z.PCDriverStatus, t));
+        }
+        async function Fe() {
+          return (await Oe(Z.DeviceOnLine), 1 === ce[5]);
+        }
+        async function Ae() {
+          return (
+            await Oe(Z.DeviceOnLine),
+            !!Q ||
+              1 === ce[5] ||
+              ((be.online = !1), (be.showOfflineDialog = !0), !1)
+          );
+        }
+        async function Ee() {
+          if (ye) {
+            var e = await Fe();
+            1 == e
+              ? await Oe(Z.BatteryLevel)
+              : ((ye = !1),
+                (be.batteryOptimize = !1),
+                clearInterval(J),
+                (J = setInterval(pt, 1500)));
+          }
+        }
+        function Ne(e) {
+          be.pairCID = e;
+        }
+        async function Ge() {
+          let e = Uint8Array.of(
+              Z.DongleEnterPair,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              239,
+            ),
+            t = 0;
+          ((e[4] = 2),
+            (e[5] = 0),
+            (e[6] = 0),
+            (e[7] = 0 == be.pairCID ? be.info.cid : be.pairCID),
+            (t = Pe(e)),
+            (e[15] = t - ne),
+            console.log("Set_Pair_CID", be.pairCID, e[7], be),
+            await Ie(e));
+        }
+        async function Ue() {
+          ve++;
+          var e = await Oe(Z.GetPairState);
+          (0 == e || ve >= 20) &&
+            ((ye = !0), (pe.pairStatus = se.Fail), Y && clearInterval(Y));
+        }
+        async function Ve() {
+          var e = await Ae();
+          if (!Q && 1 == e) {
+            ((be.isRestoring = !0), (ye = !1));
+            var t = 0;
+            let e = Uint8Array.of(
+                Z.ClearSetting,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                239,
+              ),
+              s = Pe(e);
+            ((e[15] = s - ne), await j.sendReport(ne, e));
+            do {
+              (await Te(300), t++);
+            } while (be.isRestoring && t < 4);
+            (0 == be.isRestoring &&
+              (0 == be.isWired && (await Ye()),
+              await dt(),
+              await We(),
+              "undefined" != typeof be.mouseCfg.defaultLongDistance &&
+                0 == be.isWired &&
+                be.mouseCfg.supportLongDistance &&
+                (await qe(be.mouseCfg.defaultLongDistance ? 1 : 0),
+                (be.mouseCfg.longDistance = be.mouseCfg.defaultLongDistance)),
+              "undefined" != typeof be.defaultDongle4KRGB &&
+                0 == be.isWired &&
+                ((be.dongle4KRGB.mode = be.defaultDongle4KRGB.mode),
+                await ze()),
+              "undefined" != typeof be.defaultDongleRGBBar &&
+                0 == be.isWired &&
+                ((be.dongleRGBBar = JSON.parse(
+                  JSON.stringify(be.defaultDongleRGBBar),
+                )),
+                await Ze()),
+              (be.connectState = ie.Connected)),
+              (ye = !0));
+          }
+        }
+        async function He(e) {
+          var t = await Ae();
+          if (1 == t) {
+            var s = [];
+            (s.push(e),
+              (me = !0),
+              await Ke(Z.SetCurrentConfig, s),
+              0 == Q && (await dt(), (be.connectState = ie.Connected)),
+              (be.profile = e),
+              (me = !1));
+          }
+          return t;
+        }
+        async function We() {
+          await Oe(Z.GetCurrentConfig);
+        }
+        async function je() {
+          await Oe(Z.ReadVersionID);
+        }
+        async function ze() {
+          var e = new Uint8Array(10);
+          e[0] = be.dongle4KRGB.mode;
+          var t = X.Color_To_Buffer(be.dongle4KRGB.color1);
+          ((e[1] = t[0]),
+            (e[2] = t[1]),
+            (e[3] = t[2]),
+            (t = X.Color_To_Buffer(be.dongle4KRGB.color2)),
+            (e[4] = t[0]),
+            (e[5] = t[1]),
+            (e[6] = t[2]),
+            (t = X.Color_To_Buffer(be.dongle4KRGB.color3)),
+            (e[7] = t[0]),
+            (e[8] = t[1]),
+            (e[9] = t[2]),
+            await Ke(Z.Set4KDongleRGB, e));
+        }
+        async function Je(e) {
+          ((be.dongle4KRGB.mode = e), await ze());
+        }
+        async function qe(e) {
+          var t = await Ae();
+          if (1 == t) {
+            var s = new Uint8Array(10);
+            ((s[0] = e), await Ke(Z.SetLongRangeMode, s));
+          }
+          return t;
+        }
+        async function Ye() {
+          (await nt(), await Xe(), await ot(), await lt());
+        }
+        async function Xe(e) {
+          await Oe(Z.Get4KDongleRGBValue);
+        }
+        async function Qe() {
+          await Oe(Z.GetLongRangeMode);
+        }
+        async function Ze() {
+          var e = new Uint8Array(10);
+          e[0] = be.dongleRGBBar.mode;
+          var t = X.Color_To_Buffer(be.dongleRGBBar.color);
+          ((e[1] = t[0]),
+            (e[2] = t[1]),
+            (e[3] = t[2]),
+            (e[4] = be.dongleRGBBar.speed),
+            (e[5] = be.dongleRGBBar.brightness),
+            (e[6] = be.dongleRGBBar.time),
+            await Ke(Z.SetDongleRGBBarMode, e));
+        }
+        async function et(e) {
+          ((be.dongleRGBBar.mode = e), await Ze());
+        }
+        async function tt(e) {
+          ((be.dongleRGBBar.color = e), await Ze());
+        }
+        async function st(e) {
+          ((be.dongleRGBBar.speed = e), await Ze());
+        }
+        async function it(e) {
+          ((be.dongleRGBBar.brightness = e), await Ze());
+        }
+        async function at(e) {
+          ((be.dongleRGBBar.time = e), await Ze());
+        }
+        async function ot() {
+          await Oe(Z.GetDongleRGBBarMode);
+        }
+        async function nt() {
+          await Oe(Z.GetDongleVersion);
+        }
+        async function rt(e, t) {
+          for (var s = new Uint8Array(10), i = 0; i < 3; i++)
+            s[i] = i == e ? t : be.dongle3LEDRGB.mode[i];
+          await Ke(Z.SetDongle3RGBMode, s);
+        }
+        async function lt() {
+          await Oe(Z.GetDongle3RGBMode);
+        }
+        async function ct(e, t) {
+          let s = Uint8Array.of(
+            7,
+            0,
+            e >> 8,
+            255 & e,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            239,
+          );
+          var i = !1,
+            a = t.length % 10;
+          a = a > 0 ? Math.floor(t.length / 10) + 1 : Math.floor(t.length / 10);
+          for (var o = 0; o < a; o++) {
+            var n = e + 10 * o,
+              r = 10 * (o + 1) > t.length ? t.length - 10 * o : 10;
+            ((s[0] = 7),
+              (s[1] = 0),
+              (s[2] = n >> 8),
+              (s[3] = 255 & n),
+              (s[4] = r));
+            for (var l = 0; l < 10; l++) s[5 + l] = l < r ? t[l + 10 * o] : 0;
+            if (((s[15] = Pe(s) - ne), (i = await Ie(s)), 0 == i)) break;
+          }
+          if (i) for (o = 0; o < t.length; o++) he[o + e] = t[o];
+        }
+        async function ut(e, t) {
+          let s = Uint8Array.of(
+            7,
+            0,
+            e >> 8,
+            255 & e,
+            2,
+            8,
+            77,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            239,
+          );
+          ((s[5] = t), (s[6] = 85 - t));
+          let i = Pe(s);
+          ((s[15] = i - ne),
+            (await Ie(s)) &&
+              ((he[e] = t),
+              (he[e + 1] = s[6]),
+              console.log("Set_Device_Eeprom_Value", e, t)));
+        }
+        async function ht(e, t) {
+          let s = Uint8Array.of(
+              8,
+              0,
+              e >> 8,
+              255 & e,
+              t,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              239,
+            ),
+            i = 0;
+          ((i = Pe(s)), (s[15] = i - ne), await Ie(s));
+        }
+        async function dt() {
+          ((be.connectState = ie.Connecting), he.fill(255));
+          let e = Uint8Array.of(
+            8,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            239,
+          );
+          var t = 0;
+          do {
+            var s = !0;
+            ((e[2] = t >> 8), (e[3] = 255 & t), (e[4] = 10));
+            let o = Pe(e);
+            ((e[15] = o - ne), await Ie(e));
+            for (var i = 0; i < 5; i++)
+              if (e[i] !== ce[i]) {
+                s = !1;
+                break;
+              }
+            if (s) {
+              for (var a = 0; a < 10; a++) he[t + a] = ce[a + 5];
+              t += 10;
+            } else console.error("read fail", t);
+          } while (t < 256);
+          let o = 0,
+            n = 0;
+          for (i = 0; i < 256; i++) 255 != he[i] && (n = i);
+          for (i = 0; i < 256; i++) {
+            if (255 == he[i] && 0 == o && i >= n) {
+              de = n;
+              break;
+            }
+            ((o += he[i]), 85 == (255 & o) && (o = 0));
+          }
+          (console.log("readFullFlash", he, n, o, de),
+            await yt(),
+            await _t(),
+            console.log("device info:", be));
+        }
+        async function ft(e) {
+          var t = await Ae();
+          if (t) {
+            ((ye = !1), (be.connectState = ie.Connecting));
+            var s = [];
+            s.length = de;
+            for (var i = 0; i <= de; i++) s[i] = e[i];
+            (await ct(0, s),
+              yt(),
+              (be.mouseCfg.shortCutKey = []),
+              (be.mouseCfg.macros = []));
+            for (i = 0; i < be.mouseCfg.keysCount; i++) {
+              var a = 4 * i + 96,
+                o = (e[a + 1] << 8) + e[a + 2],
+                n = [e[a].toString(16), "0x" + o.toString(16).padStart(4, "0")];
+              be.mouseCfg.keys[i] = n;
+              for (var r = !0, l = 0, c = 0; c < 2; c++) {
+                ((r = !0),
+                  0 == c
+                    ? ((s.length = 32), (l = ee.ShortcutKey))
+                    : ((s.length = 384), (l = ee.Macro)),
+                  (l += i * s.length));
+                for (var u = [], h = 0; h < s.length; h++)
+                  ((s[h] = e[l + h]),
+                    he[l + h] != s[h] && ((r = !1), u.push(h)));
+                0 == r && (await ct(l, s));
+              }
+              var d = { isMedia: !1, contexts: [] };
+              (n[0] == te.ShortcutKey && (d = bt(i)),
+                be.mouseCfg.shortCutKey.push(d));
+              var f = { name: "", contexts: [], cycleTimes: e[a + 2] };
+              if (n[0] == te.Macro) {
+                o = Ct(i);
+                ((f.name = o.name), (f.contexts = o.contexts));
+              }
+              (be.mouseCfg.macros.push(f),
+                console.log("Write_Mouse_Flash i:", i, be, e, he));
+            }
+            ((be.connectState = ie.Connected),
+              console.log("Write_Mouse_Flash:", be, e, he),
+              (ye = !0));
+          }
+          return t;
+        }
+        async function pt() {
+          var e = await Fe();
+          if (e) {
+            (clearInterval(J),
+              (fe = 0),
+              (z = setInterval(gt, 1e3)),
+              console.log("driverOnline", _e),
+              "undefined" != typeof _e && _e && (await Be(1)));
+            try {
+              (await dt(),
+                (ye = !0),
+                await Ee(),
+                await We(),
+                await je(),
+                "undefined" != typeof be.mouseCfg.defaultLongDistance
+                  ? be.isWired
+                    ? (be.mouseCfg.supportLongDistance = !1)
+                    : await Qe()
+                  : (be.mouseCfg.supportLongDistance = !1),
+                (be.connectState = ie.Connected),
+                z && clearInterval(z));
+            } catch (t) {
+              return (console.error("Get_Online_Interval", t), ke(), e);
+            }
+          }
+          return e;
+        }
+        function gt() {
+          (fe++,
+            fe >= 10 &&
+              (console.error("Get_Flash_Time_Tick"),
+              be.connectState == ie.Connecting &&
+                (be.connectState, ie.TimeOut, ke())));
+        }
+        function mt(e, t) {
+          var s = (12 & t) >> 2,
+            i = e + (s << 8),
+            a = 1 == (1 & t),
+            o = 2 == (2 & t),
+            n = 0;
+          if (
+            "undefined" !== typeof be.mouseCfg.sensor.cfg.values &&
+            null !== be.mouseCfg.sensor.cfg.values
+          ) {
+            for (n = 0; n < be.mouseCfg.sensor.cfg.values.length; n++)
+              if (be.mouseCfg.sensor.cfg.values[n] == i) break;
+            ((i =
+              n * be.mouseCfg.sensor.cfg.range[0].step +
+              be.mouseCfg.sensor.cfg.range[0].min),
+              console.log("updateMouseDpi", n, i));
+          } else
+            i =
+              "OM76" == be.mouseCfg.sensor.type
+                ? i * be.mouseCfg.sensor.cfg.range[0].step +
+                  (0 == o ? be.mouseCfg.sensor.cfg.range[0].min : 0)
+                : (i + 1) * be.mouseCfg.sensor.cfg.range[0].step;
+          return (
+            a && (i *= 2),
+            o && ("OM76" == be.mouseCfg.sensor.type ? (i *= 10) : (i *= 2)),
+            i
+          );
+        }
+        function vt() {
+          for (var e = 0; e < 8; e++) {
+            var t = 4 * e + ee.DPIValue;
+            ((be.mouseCfg.dpis[e].value = mt(he[t], he[t + 2])),
+              (be.mouseCfg.dpis[e].color = X.Buffer_To_Color(he, t + 32)));
+          }
+        }
+        async function yt() {
+          if (
+            ((be.mouseCfg.reportRate = X.FlashData_To_ReportRate(he[0])),
+            be.mouseCfg.reportRate > be.maxReportRate &&
+              ((be.mouseCfg.reportRate = be.maxReportRate),
+              console.log(
+                "current reportRate > maxReportRate",
+                be.mouseCfg.reportRate,
+              )),
+            (be.mouseCfg.leftKeyOperation = 1 & he[ee.KeyOperation]),
+            (be.mouseCfg.rightKeyOperation = 2 & he[ee.KeyOperation]),
+            (be.mouseCfg.sensor.lod = he[ee.LOD]),
+            vt(),
+            (be.mouseCfg.maxDpiStage = he[ee.maxDpiStage]),
+            (be.mouseCfg.currentDpi = he[ee.CurrentDPI]),
+            (be.mouseCfg.dpiEffect.mode = he[ee.DPIEffectMode]),
+            (be.mouseCfg.dpiEffect.brightness = Ft(he[ee.DPIEffectBrightness])),
+            (be.mouseCfg.dpiEffect.speed = he[ee.DPIEffectSpeed]),
+            (be.mouseCfg.dpiEffect.state =
+              1 == he[ee.DPIEffectState] ? ae : oe),
+            (be.mouseCfg.lightEffect.mode = he[ee.Light]),
+            (be.mouseCfg.lightEffect.color = X.Buffer_To_Color(he, 161)),
+            (be.mouseCfg.lightEffect.speed = he[164] > 9 ? 9 : he[164]),
+            (be.mouseCfg.lightEffect.brightness = he[165] > 9 ? 9 : he[165]),
+            (be.mouseCfg.lightEffect.state = 1 == he[167] ? ae : oe),
+            (be.mouseCfg.lightEffect.movingOffState =
+              1 == he[ee.MovingOffLight]),
+            (be.mouseCfg.sleepTime = he[ee.SleepTime]),
+            (be.mouseCfg.debounceTime = he[ee.DebounceTime]),
+            (be.mouseCfg.sensor.motionSync = 1 == he[ee.MotionSync]),
+            (be.mouseCfg.sensor.performance = he[ee.Performance]),
+            (be.mouseCfg.sensor.angle = 1 == he[ee.Angle]),
+            (be.mouseCfg.sensor.ripple = 1 == he[ee.Ripple]),
+            (be.mouseCfg.sensor.performanceState =
+              1 == he[ee.PerformanceState]),
+            (be.mouseCfg.sensor.sensorMode = he[ee.SensorMode]),
+            (be.mouseCfg.sensor.fps20k = he[ee.SensorFPS20K]),
+            85 == ((he[ee.AngleTune] + he[ee.AngleTune + 1]) & 255) &&
+              85 == ((he[ee.AngleTuneState] + he[ee.AngleTuneState + 1]) & 255))
+          ) {
+            be.mouseCfg.supportAngleTune = !0;
+            var e = he[ee.AngleTune];
+            (he[ee.AngleTune] >= 128 && (e -= 256),
+              (be.mouseCfg.angleTune = e),
+              (be.mouseCfg.angleTuneState = he[ee.AngleTuneState]));
+          } else be.mouseCfg.supportAngleTune = !1;
+          (85 ==
+            ((he[ee.WheelDebounceTime] + he[ee.WheelDebounceTime + 1]) & 255) &&
+            (be.mouseCfg.wheelDebounceTime = he[ee.WheelDebounceTime]),
+            85 ==
+              ((he[ee.DebounceReleaseTime] + he[ee.DebounceReleaseTime + 1]) &
+                255) &&
+              (be.mouseCfg.debounceReleaseTime = he[ee.DebounceReleaseTime]));
+        }
+        async function _t() {
+          if (be.connectState == ie.Connecting) {
+            ((be.mouseCfg.shortCutKey = []), (be.mouseCfg.macros = []));
+            for (var e = 0; e < be.mouseCfg.keysCount; e++) {
+              var t = 4 * e + 96,
+                s = (he[t + 1] << 8) + he[t + 2],
+                i = [
+                  he[t].toString(16).toUpperCase(),
+                  "0x" + s.toString(16).padStart(4, "0"),
+                ];
+              if (he[t] == te.DPILock) {
+                var a = mt(he[t + 1], he[t + 2]);
+                i = [he[t].toString(16).toUpperCase(), a.toString()];
+              }
+              be.mouseCfg.keys[e] = i;
+              var o = { isMedia: !1, contexts: [] };
+              (i[0] == te.ShortcutKey && (await us(e), (o = bt(e))),
+                be.mouseCfg.shortCutKey.push(o));
+              var n = { name: "", contexts: [], cycleTimes: he[t + 2] };
+              if (i[0] == te.Macro) {
+                await vs(e);
+                s = Ct(e);
+                ((n.name = s.name), (n.contexts = s.contexts));
+              }
+              be.mouseCfg.macros.push(n);
+            }
+            (clearInterval(q), (q = setInterval(Ee, 5e3)));
+          }
+        }
+        function bt(e) {
+          for (
+            var t = { isMedia: !1, contexts: [] },
+              s = ee.ShortcutKey + 32 * e,
+              i = he[s],
+              a = [],
+              o = 0;
+            o < i / 2;
+            o++
+          ) {
+            var n = 15 & he[s + 3 * o + 1],
+              r = (he[s + 3 * o + 3] << 8) + he[s + 3 * o + 2],
+              l = { type: n, value: r };
+            a.push(l);
+          }
+          if (1 == a.length && 2 == a[0].type) {
+            t.isMedia = !0;
+            l = {
+              type: a[0].type,
+              value:
+                "0x" + a[0].value.toString(16).padStart(4, "0").toUpperCase(),
+            };
+            t.contexts.push(l);
+          }
+          return (0 == t.isMedia && (t.contexts = a), t);
+        }
+        function Ct(e) {
+          var t = ee.Macro + 384 * e,
+            s = he[t],
+            i = he[t + 31];
+          if (s <= 30 && s > 0 && i <= 70) {
+            for (var a = new Uint8Array(s), o = 0; o < s; o++)
+              a[o] = he[t + 1 + o];
+            var n = X.UTF8_To_String(a);
+            console.log("Update_Mouse_Macro", a, n);
+            var r = [];
+            for (o = 0; o < i; o++) {
+              var l = he[t + 32 + 5 * o],
+                c = l >> 6;
+              c = 2 === c ? 0 : 1;
+              var u = 15 & l,
+                h = (he[t + 32 + 5 * o + 2] << 8) + he[t + 32 + 5 * o + 1],
+                d = (he[t + 32 + 5 * o + 3] << 8) + he[t + 32 + 5 * o + 4],
+                f = { status: c, type: u, value: h, delay: d };
+              r.push(f);
+            }
+            var p = { name: n, contexts: r };
+            return p;
+          }
+          return null;
+        }
+        async function wt(e) {
+          var t = await Ae();
+          if (1 == t) {
+            var s = 1;
+            ((s = e <= 1e3 ? 1e3 / e : (e / 2e3) * 16),
+              await ut(ee.ReportRate, s),
+              (be.mouseCfg.reportRate = e));
+          }
+          return t;
+        }
+        async function xt() {
+          await ht(ee.ReportRate, 2);
+        }
+        async function St(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.maxDpiStage, e)), t);
+        }
+        async function Dt(e) {
+          var t = await Ae();
+          return (
+            1 == t &&
+              (await ut(ee.CurrentDPI, e), (be.mouseCfg.currentDpi = e)),
+            t
+          );
+        }
+        async function $t() {
+          await ht(ee.CurrentDPI, 2);
+        }
+        async function Mt() {
+          var e = 0;
+          (be.mouseCfg.leftKeyOperation > 0 && (e |= 1),
+            be.mouseCfg.rightKeyOperation > 0 && (e |= 2),
+            await ut(ee.KeyOperation, e));
+        }
+        async function kt(e) {
+          ((be.mouseCfg.leftKeyOperation = e > 0 ? 1 : 0), await Mt());
+        }
+        async function Rt(e) {
+          ((be.mouseCfg.rightKeyOperation = e > 0 ? 1 : 0), await Mt());
+        }
+        function Tt(e) {
+          var t,
+            s = 0,
+            i = 0,
+            a = 1;
+          for (t = be.mouseCfg.sensor.cfg.range.length - 1; t >= 0; t--)
+            if (e >= be.mouseCfg.sensor.cfg.range[t].min) break;
+          (3 == t
+            ? ((a = 4), (i = 51))
+            : (1 != t && 2 != t) ||
+              ((a = 2), (i = be.mouseCfg.sensor.cfg.range[t].DPIex)),
+            "OM76" == be.mouseCfg.sensor.type && 34 == i
+              ? (a = 10)
+              : "OM76" == be.mouseCfg.sensor.type && 51 == i && (a = 20),
+            (s = e / a),
+            "undefined" !== typeof be.mouseCfg.sensor.cfg.values &&
+            null !== be.mouseCfg.sensor.cfg.values
+              ? ((t =
+                  (s - be.mouseCfg.sensor.cfg.range[0].min) /
+                  be.mouseCfg.sensor.cfg.range[0].step),
+                (s = be.mouseCfg.sensor.cfg.values[t]))
+              : ((s /= be.mouseCfg.sensor.cfg.range[0].step),
+                "OM76" == be.mouseCfg.sensor.type && e > 1e4
+                  ? (s -= 0)
+                  : (s -= 1)));
+          var o = { val: s, dpiEx: i };
+          return o;
+        }
+        async function It(e, t) {
+          var s = await Ae();
+          if (1 == s) {
+            var i = ee.DPIValue + 4 * e,
+              a = Uint8Array.of(0, 0, 0, 0),
+              o = Tt(t);
+            ((a[0] = o.val), (a[1] = o.val));
+            var n = o.val >> 8;
+            ((a[2] = (n << 2) | (n << 6)),
+              (a[2] |= o.dpiEx),
+              (a[3] = Pe(a)),
+              console.log("Set_MS_DPIValue:", t, o),
+              await ct(i, a));
+          }
+          return s;
+        }
+        async function Pt(e, t) {
+          var s = await Ae();
+          if (1 == s) {
+            var i = ee.DPIColor + 4 * e,
+              a = X.Color_To_Buffer(t),
+              o = Uint8Array.of(a[0], a[1], a[2], 0);
+            ((o[3] = Pe(o)), await ct(i, o));
+          }
+          return s;
+        }
+        async function Kt() {
+          await ht(ee.DPIEffectMode, 8);
+        }
+        async function Ot(e) {
+          var t = await Ae();
+          return (
+            1 == t &&
+              (await ut(ee.DPIEffectMode, e),
+              be.mouseCfg.dpiEffect.state == oe &&
+                ((be.mouseCfg.dpiEffect.state = ae),
+                await ut(ee.DPIEffectState, 1))),
+            t
+          );
+        }
+        async function Lt(e) {
+          var t = await Ae();
+          if (1 == t) {
+            var s = Bt(e);
+            await ut(ee.DPIEffectBrightness, s);
+          }
+          return t;
+        }
+        function Bt(e) {
+          var t = 0;
+          switch (e) {
+            case 1:
+              t = 16;
+              break;
+            case 2:
+            case 3:
+            case 4:
+            case 6:
+            case 7:
+            case 8:
+              t = 30 * (e - 1);
+              break;
+            case 5:
+              t = 128;
+              break;
+            case 9:
+              t = 230;
+              break;
+            case 10:
+              t = 255;
+              break;
+            default:
+              t = 128;
+              break;
+          }
+          return t;
+        }
+        function Ft(e) {
+          var t = 0;
+          if (e % 30 == 0) t = e / 30 + 1;
+          else
+            switch (e) {
+              case 16:
+                t = 1;
+                break;
+              case 128:
+                t = 5;
+                break;
+              case 230:
+                t = 9;
+                break;
+              case 255:
+                t = 10;
+                break;
+              default:
+                t = 5;
+                break;
+            }
+          return t;
+        }
+        async function At(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.DPIEffectSpeed, e)), t);
+        }
+        async function Et() {
+          var e = await Ae();
+          return (
+            1 == e &&
+              ((be.mouseCfg.dpiEffect.state = oe),
+              await ut(ee.DPIEffectState, 0)),
+            e
+          );
+        }
+        async function Nt(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(94, e)), t);
+        }
+        async function Gt() {
+          await ht(ee.Light, 7);
+        }
+        async function Ut() {
+          var e = Uint8Array.of(0, 0, 0, 0, 0, 0, 0);
+          e[0] = be.mouseCfg.lightEffect.mode;
+          var t = X.Color_To_Buffer(be.mouseCfg.lightEffect.color);
+          ((e[1] = t[0]),
+            (e[2] = t[1]),
+            (e[3] = t[2]),
+            (e[4] = be.mouseCfg.lightEffect.speed),
+            (e[5] = be.mouseCfg.lightEffect.brightness),
+            (e[6] = Pe(e)),
+            await ct(ee.Light, e));
+        }
+        async function Vt(e) {
+          var t = await Ae();
+          return (
+            1 == t &&
+              ((be.mouseCfg.lightEffect.color = X.Buffer_To_Color(e, 0)),
+              await Ut()),
+            t
+          );
+        }
+        async function Ht(e) {
+          var t = await Ae();
+          return (
+            1 == t &&
+              (0 == e
+                ? be.mouseCfg.lightEffect.state == ae &&
+                  (await ut(167, 0), (be.mouseCfg.lightEffect.state = oe))
+                : (be.mouseCfg.lightEffect.state == oe &&
+                    (await ut(167, 1), (be.mouseCfg.lightEffect.state = ae)),
+                  (be.mouseCfg.lightEffect.mode = e),
+                  await Ut())),
+            t
+          );
+        }
+        async function Wt(e) {
+          var t = await Ae();
+          return (
+            1 == t && ((be.mouseCfg.lightEffect.brightness = e), await Ut()),
+            t
+          );
+        }
+        async function jt(e) {
+          var t = await Ae();
+          return (
+            1 == t && ((be.mouseCfg.lightEffect.speed = e), await Ut()),
+            t
+          );
+        }
+        async function zt(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.LOD, e)), t);
+        }
+        async function Jt(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.DebounceTime, e)), t);
+        }
+        async function qt(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.MotionSync, e)), t);
+        }
+        async function Yt(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.SleepTime, e)), t);
+        }
+        async function Xt(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.Angle, e)), t);
+        }
+        async function Qt(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.Ripple, e)), t);
+        }
+        async function Zt(e) {
+          var t = await Ae();
+          return (
+            1 == t &&
+              (await ut(ee.MovingOffLight, e),
+              (be.mouseCfg.lightEffect.movingOffState = 1 == e)),
+            t
+          );
+        }
+        async function es(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.PerformanceState, e)), t);
+        }
+        async function ts(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.Performance, e)), t);
+        }
+        async function ss(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.SensorMode, e)), t);
+        }
+        async function is(e) {
+          var t = await Ae();
+          if (1 == t) {
+            0 == be.mouseCfg.angleTuneState &&
+              (await ut(ee.AngleTuneState, 1),
+              (be.mouseCfg.angleTuneState = 1));
+            var s = e;
+            (e < 0 && (s += 256),
+              (be.mouseCfg.angleTune = e),
+              await ut(ee.AngleTune, s));
+          }
+          return t;
+        }
+        async function as(e) {
+          var t = await Ae();
+          return (1 == t && (await ut(ee.SensorFPS20K, e)), t);
+        }
+        async function os(e) {
+          await ut(ee.WheelDebounceTime, e);
+        }
+        async function ns(e) {
+          await ut(ee.DebounceReleaseTime, e);
+        }
+        async function rs(e, t) {
+          var s = await Ae();
+          if (1 == s) {
+            var i = ee.KeyFunction + 4 * e;
+            let s = Uint8Array.of(8, 0, 0, 0);
+            if (((s[0] = t.type), t.type == te.DPILock)) {
+              var a = Tt(t.param);
+              ((s[1] = a.val), (s[2] = 0), (s[3] = Pe(s)));
+            } else
+              ((s[1] = t.param >> 8), (s[2] = 255 & t.param), (s[3] = Pe(s)));
+            await ct(i, s);
+            var o = [
+              t.type.toString(16),
+              "0x" + t.param.toString(16).padStart(4, "0"),
+            ];
+            be.mouseCfg.keys[e] = o;
+          }
+          return s;
+        }
+        async function ls(e, t) {
+          var s = await Ae();
+          if (1 == s) {
+            var i = ee.ShortcutKey + 32 * e,
+              a = [],
+              o = X.String_To_Hex(t),
+              n = 0;
+            ((a[n++] = 2),
+              (a[n++] = 130),
+              (a[n++] = 255 & o),
+              (a[n++] = o >> 8),
+              (a[n++] = 66),
+              (a[n++] = 255 & o),
+              (a[n++] = o >> 8),
+              (a[n] = 0),
+              (a[n] = Pe(a)),
+              await ct(i, a));
+            var r = { isMedia: !0, contexts: [] };
+            ((r = bt(e)), (be.mouseCfg.shortCutKey[e] = r));
+          }
+          return s;
+        }
+        async function cs(e, t) {
+          var s = await Ae();
+          if (1 == s) {
+            var i = ee.ShortcutKey + 32 * e,
+              a = [],
+              o = t.length;
+            (console.log("shortCutKey:", t, o), a.push(2 * o));
+            for (var n = 0; n < o; n++) {
+              var r = p.textToHID(t[n]);
+              (a.push(128 | r.type),
+                a.push(255 & r.value),
+                a.push((r.value >> 8) & 255));
+            }
+            for (n = 0; n < o; n++) {
+              r = p.textToHID(t[o - 1 - n]);
+              (a.push(64 | r.type),
+                a.push(255 & r.value),
+                a.push((r.value >> 8) & 255));
+            }
+            (a.push(0), (a[a.length - 1] = Pe(a)), await ct(i, a));
+            t = { isMedia: !0, contexts: [] };
+            ((t = bt(e)), (be.mouseCfg.shortCutKey[e] = t));
+          }
+          return s;
+        }
+        async function us(e) {
+          await ht(ee.ShortcutKey + 32 * e, 10);
+          var t = he[ee.ShortcutKey + 32 * e];
+          if (t > 2) {
+            var s = 10,
+              i = 3 * t + 2;
+            do {
+              var a = i - s > 10 ? 10 : i - s;
+              (await ht(ee.ShortcutKey + 32 * e + s, a), (s += 10));
+            } while (s < i);
+          }
+        }
+        async function hs(e, t) {
+          var s = await Ae();
+          if (1 == s) {
+            var i = X.String_To_UTF8(t),
+              a = new Uint8Array(31);
+            (a.fill(255), (a[0] = i.length));
+            for (let e = 0; e < i.length; e++) a[e + 1] = i[e];
+            var o = ee.Macro + 384 * e;
+            (await ct(o, a), (be.mouseCfg.macros[e].name = t));
+          }
+          return s;
+        }
+        async function ds(e, t) {
+          var s = await Ae();
+          if (1 == s) {
+            var i = [];
+            i[0] = t.length;
+            for (let e = 0; e < t.length; e++) {
+              var a = 0;
+              switch (t[e].status) {
+                case 0:
+                  a = 2;
+                  break;
+                case 1:
+                  a = 1;
+                  break;
+              }
+              var o = (a << 6) + t[e].type;
+              (i.push(o),
+                (o = 255 & t[e].value),
+                i.push(o),
+                (o = t[e].value >> 8),
+                i.push(o),
+                (o = t[e].delay >> 8),
+                i.push(o),
+                (o = 255 & t[e].delay),
+                i.push(o));
+            }
+            (i.push(0), (i[i.length - 1] = Pe(i)));
+            var n = ee.Macro + 384 * e + 31;
+            (await ct(n, i), (be.mouseCfg.macros[e].contexts = t));
+          }
+          return s;
+        }
+        async function fs(e, t) {
+          var s = await Ae();
+          if (1 == s) {
+            var i = t.name,
+              a = t.contexts,
+              o = X.String_To_UTF8(i),
+              n = new Uint8Array(33 + 5 * a.length);
+            (n.fill(255), (n[0] = o.length));
+            for (let e = 0; e < o.length; e++) n[e + 1] = o[e];
+            n[31] = a.length;
+            var r = [];
+            for (let e = 0; e < a.length; e++) {
+              var l = 0;
+              switch (a[e].status) {
+                case 0:
+                  l = 2;
+                  break;
+                case 1:
+                  l = 1;
+                  break;
+              }
+              var c = (l << 6) + a[e].type;
+              (r.push(c),
+                (c = 255 & a[e].value),
+                r.push(c),
+                (c = a[e].value >> 8),
+                r.push(c),
+                (c = a[e].delay >> 8),
+                r.push(c),
+                (c = 255 & a[e].delay),
+                r.push(c));
+            }
+            (r.push(0), (r[r.length - 1] = Pe(r) - a.length));
+            for (var u = 0; u < r.length; u++) n[32 + u] = r[u];
+            var h = ee.Macro + 384 * e;
+            (await ct(h, n),
+              (be.mouseCfg.macros[e].name = i),
+              (be.mouseCfg.macros[e].contexts = a));
+          }
+          return s;
+        }
+        async function ps(e) {
+          var t = Fe();
+          if (t) {
+            var s = new Uint8Array(384),
+              i = { name: "", contexts: [], cycleTimes: 1 };
+            be.mouseCfg.macros[e] = i;
+            var a = ee.Macro + 384 * e;
+            await ct(a, s);
+          }
+        }
+        async function gs(e) {
+          var t = ee.Macro + 384 * e;
+          await ht(t, 10);
+          var s = he[t] + 1;
+          if (s > 10) {
+            var i = 10,
+              a = s;
+            do {
+              var o = a - i > 10 ? 10 : a - i;
+              (await ht(t + i, o), (i += 10));
+            } while (i < a);
+          }
+        }
+        async function ms(e) {
+          var t = ee.Macro + 384 * e + 31;
+          await ht(t, 10);
+          var s = he[t];
+          if (s >= 2) {
+            var i = 10,
+              a = 5 * s + 2;
+            do {
+              var o = a - i > 10 ? 10 : a - i;
+              (await ht(t + i, o), (i += 10));
+            } while (i < a);
+          }
+        }
+        async function vs(e) {
+          (await gs(e), await ms(e));
+        }
+        function ys(e) {
+          Q = e;
+        }
+        function _s(e) {
+          _e = e;
+        }
+        var bs = {
+            Request_Device: Ce,
+            Device_Connect: we,
+            Get_HistoryDevicesInfo: Se,
+            Device_Reconnect: De,
+            Write_Mouse_Flash: ft,
+            Device_Close: ke,
+            Set_MS_KeyFunction: rs,
+            Set_MS_DebounceTime: Jt,
+            Set_MS_Multimedia: ls,
+            Set_MS_ShortcutKey: cs,
+            Set_MS_MacroName: hs,
+            Set_MS_MacroContext: ds,
+            Set_MS_Macro: fs,
+            Restore_MS_Macro: ps,
+            Set_MS_ReportRate: wt,
+            Set_MS_LeftKeyOperation: kt,
+            Set_MS_RightKeyOperation: Rt,
+            Set_MS_MaxDPI: St,
+            Set_MS_CurrentDPI: Dt,
+            Set_MS_DPIValue: It,
+            Set_MS_DPIColor: Pt,
+            Set_MS_SensorMode: ss,
+            Set_MS_AngleTune: is,
+            Set_MS_SensorFPS20K: as,
+            Set_MS_WheelDebounceTime: os,
+            Set_MS_DebounceReleaseTime: ns,
+            Set_MS_LOD: zt,
+            Set_MS_PerformanceState: es,
+            Set_MS_PerformanceTime: ts,
+            Set_MS_Angle: Xt,
+            Set_MS_Ripple: Qt,
+            Set_MS_MotionSync: qt,
+            Set_MS_DPILightMode: Ot,
+            Set_MS_DPILightBrightness: Lt,
+            Set_MS_DPILightSpeed: At,
+            Set_MS_DPILightOff: Et,
+            Set_MS_LightColor: Vt,
+            Set_MS_LightMode: Ht,
+            Set_MS_LightBrightness: Wt,
+            Set_MS_LightSpeed: jt,
+            Set_MS_MovingOffState: Zt,
+            Set_MS_LightOffTime: Yt,
+            Set_MS_LightPowerSave: Nt,
+            Get_Device_Info: Le,
+            Set_PC_Satae: Be,
+            Get_Device_Battery: Ee,
+            Set_Pair_CID: Ne,
+            Set_Device_EnterPairMode: Ge,
+            Get_Device_PairResult: Ue,
+            Device_Restore: Ve,
+            Set_Device_Profile: He,
+            Set_Device_LongDistance: qe,
+            Set_Device_4KDongleRGBMode: Je,
+            Set_Device_LightMode: et,
+            Set_Device_LightColor: tt,
+            Set_Device_LightSpeed: st,
+            Set_Device_LightBrightness: it,
+            Set_Device_LightTime: at,
+            Set_Dongle_3RGBMode: rt,
+            Index_To_DPILightBrightness: Bt,
+            DPILightBrightness_To_Index: Ft,
+            Set_Visit_Mode: ys,
+            Set_DriverOnline: _s,
+            flashData: he,
+            deviceInfo: be,
+            pairResult: pe,
+            devicePID: W,
+            visit: Q,
+            driverOnlineFlag: _e,
+            DevicePairResult: se,
+            MouseKeyFunction: te,
+            DeviceConectState: ie,
+          },
+          Cs = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "el-dialog",
+              {
+                attrs: {
+                  title: e.title,
+                  visible: e.visible,
+                  "custom-class": "dialog_class",
+                },
+                on: { open: e.onOpen, close: e.onClose },
+              },
+              [
+                t(
+                  "span",
+                  {
+                    staticClass: "dialog-footer",
+                    attrs: { slot: "footer" },
+                    slot: "footer",
+                  },
+                  [
+                    t("div", { staticClass: "flex_column_evenly" }, [
+                      t("span", { staticClass: "dialog_span_padding" }, [
+                        e._v(e._s(e.text)),
+                      ]),
+                      t(
+                        "div",
+                        {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: e.showButton,
+                              expression: "showButton",
+                            },
+                          ],
+                          staticClass: "flex_row_center content_evenly",
+                          staticStyle: { "margin-top": "5vh" },
+                        },
+                        [
+                          t(
+                            "el-button",
+                            {
+                              staticClass: "dialog_button",
+                              attrs: { lang: "OK" },
+                              on: { click: e.handleOKClick },
+                            },
+                            [e._v("确 定")],
+                          ),
+                          t(
+                            "el-button",
+                            {
+                              staticClass: "dialog_button",
+                              attrs: { lang: "Cancel" },
+                              on: { click: e.handleCancelClick },
+                            },
+                            [e._v("取 消")],
+                          ),
+                        ],
+                        1,
+                      ),
+                    ]),
+                  ],
+                ),
+              ],
+            );
+          },
+          ws = [],
+          xs = {
+            extends: "el-dialog",
+            props: {
+              title: { type: String, default: "" },
+              text: { type: String, default: "" },
+              showButton: { type: Boolean, default: !0 },
+            },
+            data() {
+              return { visible: !1, sendResult: !1 };
+            },
+            methods: {
+              onOpen() {
+                this.sendResult = !1;
+              },
+              onClose() {
+                (this.$bus.$emit("tipsResult", !1), (this.visible = !1));
+              },
+              handleOKClick() {
+                ((this.sendResult = !0),
+                  this.$bus.$emit("tipsResult", !0),
+                  (this.visible = !1));
+              },
+              handleCancelClick() {
+                ((this.sendResult = !0),
+                  this.$bus.$emit("tipsResult", !1),
+                  (this.visible = !1));
+              },
+            },
+            created() {
+              this.$bus.$on("closeDialog", () => {
+                this.visible && (this.visible = !1);
+              });
+            },
+            beforeDestroy() {
+              this.$bus.$off("closeDialog");
+            },
+          },
+          Ss = xs,
+          Ds = s(1656),
+          $s = (0, Ds.A)(Ss, Cs, ws, !1, null, "1404e762", null),
+          Ms = $s.exports,
+          ks = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "el-dialog",
+              {
+                attrs: {
+                  title: e.title,
+                  visible: e.visible,
+                  "custom-class": "dialog_class",
+                  "show-close": e.closeVisible,
+                },
+                on: {
+                  "update:visible": function (t) {
+                    e.visible = t;
+                  },
+                  open: e.onOpen,
+                  close: e.onClose,
+                },
+              },
+              [
+                t(
+                  "span",
+                  {
+                    staticClass: "dialog-footer",
+                    attrs: { slot: "footer" },
+                    slot: "footer",
+                  },
+                  [
+                    t("div", { staticClass: "flex_column_evenly" }, [
+                      t(
+                        "span",
+                        {
+                          staticClass: "dialog_span_padding",
+                          attrs: { lang: "DialogPairTips" },
+                        },
+                        [
+                          e._v(
+                            "请让鼠标进入配对状态（同时按住左中右键3秒，直至对码指示灯快闪），并靠近接收器 ，点击“开始配对”或按键盘的空格键",
+                          ),
+                        ],
+                      ),
+                      t(
+                        "div",
+                        {
+                          staticClass: "flex_row_center content_evenly",
+                          staticStyle: { "margin-top": "5vh" },
+                        },
+                        [
+                          t(
+                            "el-button",
+                            {
+                              class:
+                                2 == e.result
+                                  ? "pair_fail_button pair_button"
+                                  : 3 == e.result
+                                    ? "pair_success_button pair_button"
+                                    : "dialog_button pair_button",
+                              on: {
+                                click: e.handlePairingClick,
+                                mouseover: function (t) {
+                                  return (
+                                    t.stopPropagation(),
+                                    e.handleMouseEnter.apply(null, arguments)
+                                  );
+                                },
+                              },
+                            },
+                            [e._v(e._s(e.text))],
+                          ),
+                          t(
+                            "el-button",
+                            {
+                              directives: [
+                                {
+                                  name: "show",
+                                  rawName: "v-show",
+                                  value: e.cancelVisible,
+                                  expression: "cancelVisible",
+                                },
+                              ],
+                              staticClass: "dialog_button pair_button",
+                              attrs: { lang: "Cancel" },
+                              on: { click: e.handleCancelClick },
+                            },
+                            [e._v("取 消")],
+                          ),
+                        ],
+                        1,
+                      ),
+                    ]),
+                  ],
+                ),
+              ],
+            );
+          },
+          Rs = [],
+          Ts = {
+            extends: "el-dialog",
+            props: { title: { type: String, default: "" } },
+            data() {
+              return {
+                visible: !1,
+                closeVisible: !0,
+                cancelVisible: !0,
+                text: "开始配对",
+                pairResult: bs.pairResult,
+                result: 0,
+                pairing: "",
+                pairSuccess: "",
+                pairFail: "",
+                startPair: "",
+                visitMode: !1,
+                info: bs.deviceInfo,
+              };
+            },
+            methods: {
+              onOpen() {
+                ((this.text = this.startPair),
+                  (this.result = 0),
+                  (this.cancelVisible = !0),
+                  this.$bus.$emit("pairDialogOpen", !0),
+                  window.addEventListener("keydown", this.handleKeyDown));
+              },
+              onClose() {
+                (this.$bus.$emit("pairDialogOpen", !1),
+                  window.removeEventListener("keydown", this.handleKeyDown));
+              },
+              handleKeyDown(e) {
+                "Space" === e.code && this.handlePairingClick();
+              },
+              handlePairingClick() {
+                0 == this.visitMode &&
+                  (console.log("result", this.result),
+                  this.result == bs.DevicePairResult.Fail || 0 == this.result
+                    ? ((this.text = this.pairing),
+                      (this.cancelVisible = !1),
+                      (this.closeVisible = !1),
+                      bs.Set_Device_EnterPairMode())
+                    : this.result == bs.DevicePairResult.Success &&
+                      (this.visible = !1));
+              },
+              handleMouseEnter() {
+                (console.log("handleMouseEnter"),
+                  this.result == bs.DevicePairResult.Fail &&
+                    ((this.text = this.startPair), (this.result = 0)));
+              },
+              handleCancelClick() {
+                this.visible = !1;
+              },
+            },
+            watch: {
+              "pairResult.pairStatus": {
+                handler() {
+                  ((this.result = this.pairResult.pairStatus),
+                    console.log("handler result", this.result),
+                    this.result == bs.DevicePairResult.Pairing ||
+                      ((this.closeVisible = !0),
+                      this.result == bs.DevicePairResult.Success
+                        ? (this.text = this.pairSuccess)
+                        : this.result == bs.DevicePairResult.Fail &&
+                          (this.text = this.pairFail)));
+                },
+              },
+              "info.deviceOpen": {
+                handler() {
+                  0 == this.info.deviceOpen &&
+                    this.visible &&
+                    (this.visible = !1);
+                },
+                deep: !0,
+              },
+            },
+            created() {
+              (this.$bus.$on("setDriverCfg", (e) => {
+                1 == e.visit && (this.visitMode = !0);
+              }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e &&
+                    ((this.startPair = e.StartPair),
+                    (this.pairing = e.Pairing),
+                    (this.pairFail = e.PairFail),
+                    (this.pairSuccess = e.PairSuccess));
+                }),
+                this.$bus.$on("closeDialog", () => {
+                  this.visible && (this.visible = !1);
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setDriverCfg"),
+                this.$bus.$off("languageChange"),
+                this.$bus.$off("closeDialog"));
+            },
+          },
+          Is = Ts,
+          Ps = (0, Ds.A)(Is, ks, Rs, !1, null, "059077e4", null),
+          Ks = Ps.exports,
+          Os = {
+            components: { Tips: Ms, PairDialog: Ks },
+            data() {
+              return {
+                languageOptions: [],
+                languages: [],
+                language: "zh-CN",
+                isSupportConnect: !0,
+                driverCfg: {},
+                version: "v1.0.0",
+                lang: {},
+                tipsText: "",
+                device: "mouse",
+                deviceOption: [
+                  { value: "mouse", option: "mouse" },
+                  { value: "keyboard", option: "keyboard" },
+                ],
+                normalPassword: "",
+                compxPassword: "Compx123",
+                password: "",
+                sensor: {},
+                sensorOptions: [],
+                selectSensor: "3395",
+                showICP: !0,
+                isPairing: !1,
+                historyDevices: [],
+                reconnectIntervalId: null,
+              };
+            },
+            methods: {
+              handleLanguageChange() {
+                var e = 0;
+                for (e = 0; e < this.languageOptions.length; e++)
+                  if (this.language == this.languageOptions[e].value) break;
+                (this.$bus.$emit("languageOptionsChange", this.language),
+                  this.$bus.$emit("languageChange", this.languages[e]));
+              },
+              handlePasswordClick() {
+                this.password == this.compxPassword ||
+                this.password == this.normalPassword
+                  ? (localStorage.setItem(
+                      "password",
+                      JSON.stringify(this.password),
+                    ),
+                    (this.isSupportConnect = !0))
+                  : (this.isSupportConnect = !1);
+              },
+              getBrowserInfo() {
+                let e = ["edg", "firefox", "chrome", "safari", "opera "],
+                  t = navigator.userAgent.toLocaleLowerCase();
+                var s = [];
+                if (
+                  (e.forEach((e) => {
+                    if (t.indexOf(e) > 0) {
+                      let i = `${e}\\/([\\d.]+)`;
+                      (s.push(e), s.push(t.match(i)[1]));
+                    }
+                  }),
+                  s.indexOf("chrome") > -1 && s.indexOf("safari") > -1)
+                )
+                  if (4 === s.length) {
+                    let e = [];
+                    (e.push("chrome"),
+                      e.push(s[s.indexOf("chrome") + 1]),
+                      (s = e));
+                  } else
+                    (s.splice(s.indexOf("chrome"), 2),
+                      s.splice(s.indexOf("safari"), 2));
+                "chrome" === s[0] || "edg" === s[0] || "opera" === s[0]
+                  ? (this.isSupportConnect = !0)
+                  : (this.isSupportConnect = !1);
+              },
+              async handleKeyDown(e) {
+                if (
+                  0 == this.isPairing &&
+                  this.isSupportConnect &&
+                  "Space" === e.code
+                ) {
+                  ((this.isPairing = !0), console.log("pairDialog open", e));
+                  var t = await this.requestDevice();
+                  t
+                    ? ((this.$refs.pairDialog.visible = !0),
+                      console.log(
+                        "dey down",
+                        this.driverCfg.demo,
+                        this.driverCfg,
+                      ),
+                      this.driverCfg.demo ||
+                        bs.Set_Pair_CID(this.driverCfg.mouse[0].cid))
+                    : (this.isPairing = !1);
+                }
+              },
+              async requestDevice() {
+                var e = !1,
+                  t = this.driverCfg,
+                  s = [],
+                  i = this.device;
+                if (t.demo || t.visit) e = await bs.Request_Device(s);
+                else {
+                  for (
+                    var a = [],
+                      o = [t.pid.mouse, t.pid.keyboard],
+                      n = [],
+                      r = [],
+                      l = 0;
+                    l < o.length;
+                    l++
+                  ) {
+                    for (var c = o[l], u = 0; u < c.wireless.length; u++)
+                      (a.push(c.wireless[u]),
+                        0 == l
+                          ? n.push(c.wireless[u])
+                          : 1 == l && r.push(c.wireless[u]));
+                    for (u = 0; u < c.wired.length; u++)
+                      (a.push(c.wired[u]),
+                        0 == l
+                          ? n.push(c.wired[u])
+                          : 1 == l && r.push(c.wired[u]));
+                  }
+                  for (let e = 0; e < a.length; e++) {
+                    var h = {
+                      vendorId: Number.parseInt(t.vid),
+                      productId: Number.parseInt(a[e]),
+                    };
+                    s.push(h);
+                  }
+                  if (
+                    (console.log("filters", s),
+                    (e = await bs.Request_Device(s)),
+                    e)
+                  ) {
+                    for (u = 0; u < n.length; u++)
+                      if (Number.parseInt(n[u]) == bs.devicePID) {
+                        i = "mouse";
+                        break;
+                      }
+                    for (u = 0; u < r.length; u++)
+                      if (Number.parseInt(r[u]) == bs.devicePID) {
+                        i = "keyboard";
+                        break;
+                      }
+                    bs.deviceInfo.type = i;
+                  }
+                }
+                return e;
+              },
+              async deviceConnect(e) {
+                if (
+                  (this.$bus.$emit(
+                    "currentDemoSensor",
+                    this.selectSensor,
+                    this.driverCfg,
+                  ),
+                  this.driverCfg.visit)
+                ) {
+                  var t = "demo.png",
+                    s = "3950",
+                    i = this.driverCfg.mouse[0].cfg[0];
+                  ("mouse" == bs.deviceInfo.type &&
+                    ((bs.deviceInfo.mouseCfg.sensor.type = i.sensor),
+                    (bs.deviceInfo.mouseCfg.sensor.cfg =
+                      this.sensor[s] || null),
+                    (bs.deviceInfo.mouseCfg.keysCount = i.keys.length),
+                    this.$bus.$emit("setMouseDefaultCfg", i)),
+                    (t = bs.deviceInfo.type + "/" + t),
+                    this.$bus.$emit("setDevicePath", t),
+                    this.$bus.$emit("backToHome", !1));
+                } else {
+                  var a,
+                    o = !1;
+                  ((t = "demo.png"), (s = "3395"));
+                  if (
+                    ((a =
+                      "mouse" == bs.deviceInfo.type
+                        ? this.driverCfg.mouse
+                        : this.driverCfg.keyboard),
+                    this.driverCfg.demo)
+                  )
+                    ((i = a[0].cfg[0]), (s = this.selectSensor), (o = !0));
+                  else if (0 != e.cid && 0 != e.mid) {
+                    for (var n, r = 0; r < a.length; r++)
+                      if (e.cid === a[r].cid)
+                        for (var l = 0; l < a[r].cfg.length; l++)
+                          if (e.mid === a[r].cfg[l].mid) {
+                            ((o = !0),
+                              console.log("connect info:", e, a[r].cfg[l]),
+                              (i = a[r].cfg[l]),
+                              (n = a[r].cid),
+                              (s = a[r].cfg[l].sensor));
+                            break;
+                          }
+                    0 == o
+                      ? ((this.tipsText = this.lang.DialogDeviceUnsupport),
+                        (this.$refs.tipsDialog.visible = !0))
+                      : (t =
+                          n.toString(16).padStart(2, "0") +
+                          i.mid.toString(16).padStart(2, "0") +
+                          ".png");
+                  } else
+                    ((this.tipsText = this.lang.DialogOffline),
+                      (this.$refs.tipsDialog.visible = !0));
+                  if (o) {
+                    if ("mouse" == bs.deviceInfo.type) {
+                      ((bs.deviceInfo.mouseCfg.sensor.type = s),
+                        (bs.deviceInfo.mouseCfg.sensor.cfg =
+                          this.sensor[s] || null));
+                      var c = 0;
+                      for (r = 0; r < i.keys.length; r++)
+                        c = i.keys[r].index > c ? i.keys[r].index : c;
+                      ((bs.deviceInfo.mouseCfg.keysCount = c + 1),
+                        (bs.deviceInfo.mouseCfg.defaultLongDistance =
+                          i.longDistance),
+                        "undefined" != typeof i.dongle4KRGB &&
+                          (bs.deviceInfo.defaultDongle4KRGB.mode =
+                            i.dongle4KRGB.mode),
+                        bs.Set_DriverOnline(i.driverOnline),
+                        console.log("driverOnline", i, bs.driverOnlineFlag),
+                        this.$bus.$emit("setMouseDefaultCfg", i));
+                    }
+                    ((t = bs.deviceInfo.type + "/" + t),
+                      this.$bus.$emit("setDevicePath", t),
+                      this.$bus.$emit("backToHome", !1),
+                      await bs.Device_Connect(),
+                      window.removeEventListener("keydown", this.handleKeyDown),
+                      this.$bus.$emit(
+                        "updateMaxReportRate",
+                        bs.deviceInfo.maxReportRate,
+                      ));
+                  }
+                }
+              },
+              async handleConnetClick() {
+                if (this.isSupportConnect) {
+                  var e = await this.requestDevice();
+                  if (e) {
+                    var t = await bs.Get_Device_Info();
+                    await this.deviceConnect(t);
+                  }
+                }
+              },
+              async handleDeviceReconnectClick(e) {
+                (console.log("handleDeviceReconnectClick", e),
+                  await bs.Device_Reconnect(e.device));
+                var t = { cid: e.cid, mid: e.mid };
+                await this.deviceConnect(t);
+              },
+              async getHistpryDevicesInfos() {
+                console.log("getHistpryDevicesInfos");
+              },
+            },
+            created() {
+              (this.getHistpryDevicesInfos(),
+                this.getBrowserInfo(),
+                this.$bus.$on("setGlobalSensor", (e) => {
+                  this.sensor = e;
+                  var t = Object.keys(e);
+                  this.sensorOptions = [];
+                  for (var s = 0; s < t.length; s++)
+                    if (e[t[s]].hasOwnProperty("range")) {
+                      var i = { value: t[s], option: t[s] };
+                      this.sensorOptions.push(i);
+                    }
+                }),
+                this.$bus.$on("setGlobalLanguages", (e, t) => {
+                  if (
+                    ((this.languageOptions = e),
+                    (this.languages = t),
+                    1 == e.length)
+                  )
+                    this.language = this.languageOptions[0].value;
+                  else {
+                    var s = localStorage.getItem("locale");
+                    if (s) {
+                      var i = JSON.parse(s);
+                      ((this.language = i),
+                        console.log(
+                          "language:",
+                          this.language,
+                          this.languages,
+                          this.languageOptions,
+                        ));
+                    } else if (navigator.language) {
+                      for (
+                        var a = !1, o = 0;
+                        o < this.languageOptions.length;
+                        o++
+                      )
+                        if (
+                          this.languageOptions[o].value == navigator.language ||
+                          this.languageOptions[o].value ==
+                            navigator.language.toLowerCase()
+                        ) {
+                          ((this.language = this.languageOptions[o].value),
+                            (a = !0));
+                          break;
+                        }
+                      0 == a && (this.language = "en");
+                    } else this.language = "en";
+                  }
+                  this.handleLanguageChange();
+                }),
+                this.$bus.$on("setDriverCfg", (e) => {
+                  if (
+                    ((this.driverCfg = e),
+                    (this.version = e.version),
+                    "" == this.driverCfg.vid
+                      ? ((this.isSupportConnect = !1), (this.showICP = !0))
+                      : (this.showICP = !1),
+                    e.demo)
+                  ) {
+                    const e = new Date(),
+                      t = e.getFullYear(),
+                      s = (e.getMonth() + 1).toString().padStart(2, "0"),
+                      i = e.getDate().toString().padStart(2, "0"),
+                      a = `${t}-${s}-${i}`;
+                    ((this.normalPassword = btoa(a)),
+                      console.log("time:", a, this.normalPassword),
+                      this.password != this.compxPassword &&
+                        this.password != this.normalPassword &&
+                        (this.isSupportConnect = !1));
+                  }
+                }),
+                this.$bus.$on("languageOptionsChange", (e) => {
+                  ((this.language = e),
+                    localStorage.setItem("locale", JSON.stringify(e)));
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  if ("undefined" != typeof e) {
+                    this.lang = e;
+                    let t = document.querySelectorAll("[lang]");
+                    t.forEach((t) => {
+                      let s = t.getAttribute("lang");
+                      e[s] && (t.innerText = e[s]);
+                    });
+                  }
+                }),
+                this.$bus.$on("backToHome", async (e) => {
+                  e
+                    ? (window.removeEventListener(
+                        "keydown",
+                        this.handleKeyDown,
+                      ),
+                      window.addEventListener("keydown", this.handleKeyDown),
+                      console.log("backToHome"),
+                      this.getHistpryDevicesInfos())
+                    : null != this.reconnectIntervalId &&
+                      (clearInterval(this.reconnectIntervalId),
+                      (this.reconnectIntervalId = null));
+                }));
+            },
+            mounted() {
+              (window.addEventListener("keydown", this.handleKeyDown),
+                this.$bus.$on("pairDialogOpen", (e) => {
+                  0 == e && (this.isPairing = e);
+                }));
+              var e = localStorage.getItem("password");
+              if (e) {
+                var t = JSON.parse(e);
+                this.password = t;
+              }
+            },
+            beforeDestroy() {
+              (window.removeEventListener("keydown", this.handleKeyDown),
+                this.$bus.$off("setGlobalSensor"),
+                this.$bus.$off("setGlobalLanguages"),
+                this.$bus.$off("setDriverCfg"),
+                this.$bus.$off("languageChange"),
+                this.$bus.$off("languageOptionsChange"),
+                this.$bus.$off("pairDialogOpen"));
+            },
+          },
+          Ls = Os,
+          Bs = (0, Ds.A)(Ls, n, r, !1, null, "df1596c6", null),
+          Fs = Bs.exports,
+          As = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              {
+                staticClass: "flex_column align_center mouse",
+                style: e.backgroundStyle,
+              },
+              [
+                t(
+                  "div",
+                  {
+                    staticClass: "flex_column align_center",
+                    staticStyle: { height: "90vh", width: "80vw" },
+                  },
+                  [
+                    t("div", { staticClass: "flex_row" }, [
+                      t(
+                        "div",
+                        {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: e.themeShow,
+                              expression: "themeShow",
+                            },
+                          ],
+                          staticClass: "flex_row theme_position",
+                        },
+                        [
+                          t("el-button", {
+                            staticClass: "theme_button",
+                            staticStyle: { background: "#fff" },
+                            on: {
+                              click: function (t) {
+                                return e.handleThemeClick("light");
+                              },
+                            },
+                          }),
+                          t("el-button", {
+                            staticClass: "theme_button",
+                            staticStyle: { background: "#000" },
+                            on: {
+                              click: function (t) {
+                                return e.handleThemeClick("dark");
+                              },
+                            },
+                          }),
+                        ],
+                        1,
+                      ),
+                      t(
+                        "div",
+                        { staticClass: "close_button" },
+                        [
+                          t(
+                            "el-button",
+                            { on: { click: e.handleCloseClick } },
+                            [t("i", { staticClass: "el-icon-close" })],
+                          ),
+                        ],
+                        1,
+                      ),
+                    ]),
+                    t(
+                      "div",
+                      {
+                        staticClass: "flex_row content_between align_center",
+                        staticStyle: { width: "100%" },
+                      },
+                      [
+                        t("img", {
+                          staticClass: "logo_img",
+                          attrs: { src: e.logo },
+                        }),
+                        t(
+                          "el-radio-group",
+                          {
+                            staticClass: "flex_row align_center",
+                            staticStyle: { "justify-content": "space-evenly" },
+                            nativeOn: {
+                              "!keydown": function (e) {
+                                (e.stopPropagation(), e.preventDefault());
+                              },
+                            },
+                            model: {
+                              value: e.radio,
+                              callback: function (t) {
+                                e.radio = t;
+                              },
+                              expression: "radio",
+                            },
+                          },
+                          [
+                            t("el-radio", {
+                              staticClass: "iconfont el-icon-main tab_radio",
+                              class:
+                                1 == e.radio
+                                  ? "tab_radio_checked"
+                                  : "tab_radio_unchecked",
+                              attrs: { label: "1", disabled: e.macroRecording },
+                            }),
+                            t("el-radio", {
+                              staticClass: "iconfont el-icon-sensor tab_radio",
+                              class:
+                                2 == e.radio
+                                  ? "tab_radio_checked"
+                                  : "tab_radio_unchecked",
+                              attrs: { label: "2", disabled: e.macroRecording },
+                            }),
+                            t("el-radio", {
+                              staticClass: "iconfont el-icon-macro tab_radio",
+                              class:
+                                3 == e.radio
+                                  ? "tab_radio_checked"
+                                  : "tab_radio_unchecked",
+                              attrs: { label: "3", disabled: e.macroRecording },
+                            }),
+                            t("el-radio", {
+                              directives: [
+                                {
+                                  name: "show",
+                                  rawName: "v-show",
+                                  value: e.lightShow,
+                                  expression: "lightShow",
+                                },
+                              ],
+                              staticClass: "iconfont el-icon-light tab_radio",
+                              class:
+                                4 == e.radio
+                                  ? "tab_radio_checked"
+                                  : "tab_radio_unchecked",
+                              attrs: { label: "4", disabled: e.macroRecording },
+                            }),
+                            t("el-radio", {
+                              staticClass: "iconfont el-icon-setting tab_radio",
+                              class:
+                                5 == e.radio
+                                  ? "tab_radio_checked"
+                                  : "tab_radio_unchecked",
+                              attrs: { label: "5", disabled: e.macroRecording },
+                            }),
+                          ],
+                          1,
+                        ),
+                        t("battery", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: e.batteryShow,
+                              expression: "batteryShow",
+                            },
+                          ],
+                          staticStyle: { width: "10vw" },
+                        }),
+                        t("div", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: 0 == e.batteryShow,
+                              expression: "batteryShow == false",
+                            },
+                          ],
+                          staticStyle: { width: "10vw" },
+                        }),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      {
+                        staticClass: "flex_column margin_top",
+                        staticStyle: { height: "60vh", width: "60vw" },
+                      },
+                      [
+                        t("mouse-key", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: 1 == e.radio,
+                              expression: "radio == 1",
+                            },
+                          ],
+                        }),
+                        t("mouse-sensor", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: 2 == e.radio,
+                              expression: "radio == 2",
+                            },
+                          ],
+                        }),
+                        t("mouse-macro", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: 3 == e.radio,
+                              expression: "radio == 3",
+                            },
+                          ],
+                        }),
+                        t("mouse-light", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: 4 == e.radio,
+                              expression: "radio == 4",
+                            },
+                          ],
+                        }),
+                        t("mouse-setting", {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: 5 == e.radio,
+                              expression: "radio == 5",
+                            },
+                          ],
+                        }),
+                      ],
+                      1,
+                    ),
+                  ],
+                ),
+                t("tips", {
+                  ref: "tipsDialog",
+                  attrs: { text: e.tipsText, showButton: e.showButton },
+                }),
+              ],
+              1,
+            );
+          },
+          Es = [],
+          Ns = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", [
+              t(
+                "div",
+                {
+                  staticClass: "flex_row_center content_between battery_block",
+                },
+                [
+                  t(
+                    "span",
+                    {
+                      directives: [
+                        {
+                          name: "show",
+                          rawName: "v-show",
+                          value: e.showBatteryValue,
+                          expression: "showBatteryValue",
+                        },
+                      ],
+                    },
+                    [e._v(e._s(e.battery) + "%")],
+                  ),
+                  t("div", { staticStyle: { position: "relative" } }, [
+                    t("img", {
+                      staticClass: "battery_img",
+                      attrs: { src: e.batterySrc },
+                    }),
+                    t("div", {
+                      staticClass: "battery",
+                      class:
+                        e.battery <= 15
+                          ? "low_battery_color"
+                          : 100 == e.battery
+                            ? "full_battery_color"
+                            : "normal_battery_color",
+                      style: { width: e.batteryWidth },
+                    }),
+                    t("img", {
+                      directives: [
+                        {
+                          name: "show",
+                          rawName: "v-show",
+                          value: e.charging,
+                          expression: "charging",
+                        },
+                      ],
+                      staticClass: "charging charging_img",
+                      attrs: { src: e.chargeSrc },
+                    }),
+                  ]),
+                ],
+              ),
+            ]);
+          },
+          Gs = [],
+          Us = {
+            data() {
+              return {
+                battery: 100,
+                charging: !1,
+                defaultFull: 67,
+                fullWidth: 67,
+                showBatteryValue: !0,
+                batterySrc: "/img/battery.png",
+                chargeSrc: "/img/charging.png",
+              };
+            },
+            computed: {
+              batteryWidth() {
+                return (this.battery * this.fullWidth) / 100 + "px";
+              },
+            },
+            mounted() {
+              ((this.batterySrc = window.location.href + "img/battery.png"),
+                (this.chargeSrc = window.location.href + "img/charging.png"),
+                this.$bus.$on("setDriverCfg", (e) => {
+                  this.showBatteryValue = e.showBatteryValue;
+                }),
+                this.$bus.$on("updateBattery", (e) => {
+                  ((this.battery = e.level), (this.charging = e.charging));
+                }),
+                this.$bus.$on("widthResize", (e) => {
+                  this.fullWidth = this.defaultFull * e;
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("updateBattery"), this.$bus.$off("widthResize"));
+            },
+          },
+          Vs = Us,
+          Hs = (0, Ds.A)(Vs, Ns, Gs, !1, null, "db19f0d8", null),
+          Ws = Hs.exports,
+          js = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              {
+                staticClass: "flex_row_center mouse_key",
+                staticStyle: { "align-items": "start" },
+              },
+              [
+                t(
+                  "div",
+                  {
+                    staticClass:
+                      "flex_column_around_center content_between mouse_key_height",
+                  },
+                  [
+                    t(
+                      "div",
+                      { staticClass: "flex_column" },
+                      e._l(e.keys, function (s, i) {
+                        return t(
+                          "div",
+                          { key: i, staticClass: "flex_row_center" },
+                          [
+                            t(
+                              "el-button",
+                              { staticClass: "key_list_index_button" },
+                              [e._v(e._s(i + 1))],
+                            ),
+                            e.refreshing
+                              ? [
+                                  t("el-cascader", {
+                                    ref: `cascader${i}`,
+                                    refInFor: !0,
+                                    staticStyle: { margin: "5px" },
+                                    attrs: {
+                                      options: e.keyOptions,
+                                      placeholder: "",
+                                      "show-all-levels": !1,
+                                    },
+                                    on: {
+                                      change: function (t) {
+                                        return e.handleKeyValueChange(
+                                          i,
+                                          ...arguments,
+                                        );
+                                      },
+                                      focus: function (t) {
+                                        return e.handleKeyFocus(i);
+                                      },
+                                      "visible-change": function (t) {
+                                        return e.handleKeyFocus(i);
+                                      },
+                                    },
+                                    scopedSlots: e._u(
+                                      [
+                                        {
+                                          key: "default",
+                                          fn: function ({ node: s, data: a }) {
+                                            return [
+                                              t(
+                                                "span",
+                                                {
+                                                  staticStyle: {
+                                                    display: "block",
+                                                    width: "100%",
+                                                  },
+                                                  on: {
+                                                    click: function (t) {
+                                                      return e.handleSpanClick(
+                                                        s,
+                                                        a,
+                                                        i,
+                                                      );
+                                                    },
+                                                  },
+                                                },
+                                                [e._v(e._s(a.label))],
+                                              ),
+                                            ];
+                                          },
+                                        },
+                                      ],
+                                      null,
+                                      !0,
+                                    ),
+                                    model: {
+                                      value: e.keys[i],
+                                      callback: function (t) {
+                                        e.$set(e.keys, i, t);
+                                      },
+                                      expression: "keys[index]",
+                                    },
+                                  }),
+                                ]
+                              : e._e(),
+                          ],
+                          2,
+                        );
+                      }),
+                      0,
+                    ),
+                    t("debounce"),
+                  ],
+                  1,
+                ),
+                t(
+                  "div",
+                  {
+                    staticClass: "mouse_image",
+                    style: { backgroundImage: "url(" + e.path + ")" },
+                  },
+                  e._l(e.keyLocs, function (s, i) {
+                    return t(
+                      "div",
+                      { key: i },
+                      [
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "mouse_image_index_button",
+                            style: { top: s.top, left: s.left },
+                            on: {
+                              click: function (t) {
+                                return e.handleMouseNumberClick(i);
+                              },
+                            },
+                          },
+                          [e._v(e._s(i + 1))],
+                        ),
+                      ],
+                      1,
+                    );
+                  }),
+                  0,
+                ),
+                t(
+                  "div",
+                  {
+                    staticClass:
+                      "flex_column_around_center content_between mouse_key_height",
+                  },
+                  [t("profile"), t("other")],
+                  1,
+                ),
+                t("tips", { ref: "tipsDialog", attrs: { text: e.tipsText } }),
+                t("fire-key", { ref: "fireKeyDialog" }),
+                t("shortcut-key", { ref: "shortcutKeyDialog" }),
+              ],
+              1,
+            );
+          },
+          zs = [],
+          Js = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              { staticClass: "flex_column" },
+              [
+                t("span", { attrs: { lang: "DebounceTime" } }, [
+                  e._v("按钮防抖时间"),
+                ]),
+                t(
+                  "select",
+                  {
+                    directives: [
+                      {
+                        name: "model",
+                        rawName: "v-model",
+                        value: e.debounceTime,
+                        expression: "debounceTime",
+                      },
+                    ],
+                    staticClass: "debounce_width",
+                    on: {
+                      change: [
+                        function (t) {
+                          var s = Array.prototype.filter
+                            .call(t.target.options, function (e) {
+                              return e.selected;
+                            })
+                            .map(function (e) {
+                              var t = "_value" in e ? e._value : e.value;
+                              return t;
+                            });
+                          e.debounceTime = t.target.multiple ? s : s[0];
+                        },
+                        e.handleDebounceTimeChange,
+                      ],
+                    },
+                  },
+                  e._l(e.debounceTimeOptions, function (s) {
+                    return t(
+                      "option",
+                      { key: s.value, domProps: { value: s.value } },
+                      [e._v(" " + e._s(s.option) + " ")],
+                    );
+                  }),
+                  0,
+                ),
+                t("tips", { ref: "tipsDialog", attrs: { text: e.tipsText } }),
+              ],
+              1,
+            );
+          },
+          qs = [],
+          Ys = {
+            components: { Tips: Ms },
+            data() {
+              return {
+                debounceTimeUint: "ms",
+                debounceTime: 8,
+                lastDebounceTime: 8,
+                debounceTimeOptions: [],
+                debounceTipsFlag: !1,
+                tipsText: "",
+                tipsDebounce: 8,
+              };
+            },
+            methods: {
+              async handleDebounceTimeChange() {
+                (this.debounceTime < this.tipsDebounce &&
+                  0 == this.debounceTipsFlag &&
+                  ((this.debounceTipsFlag = !0),
+                  (this.$refs.tipsDialog.visible = !0)),
+                  (await bs.Set_MS_DebounceTime(this.debounceTime))
+                    ? (this.lastDebounceTime = this.debounceTime)
+                    : (this.debounceTime = this.lastDebounceTime));
+              },
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {
+                ((this.lastDebounceTime = this.debounceTime = e.debounce),
+                  (this.tipsDebounce = e.tipsDebounce),
+                  (this.debounceTipsFlag = !1),
+                  (this.debounceTimeOptions = []));
+                for (var t = 0; t <= e.maxDebounce; t++) {
+                  var s = { value: t, option: t + this.debounceTimeUint };
+                  this.debounceTimeOptions.push(s);
+                }
+              }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  this.lastDebounceTime = this.debounceTime = e.debounceTime;
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e &&
+                    ((this.debounceTimeUint = e.DebounceTimeUint),
+                    (this.tipsText = e.DialogDebounceTips));
+                }));
+            },
+            beforeDestroy() {
+              this.$bus.$off("languageChange");
+            },
+          },
+          Xs = Ys,
+          Qs = (0, Ds.A)(Xs, Js, qs, !1, null, "04e3cd47", null),
+          Zs = Qs.exports,
+          ei = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "select",
+              {
+                directives: [
+                  {
+                    name: "model",
+                    rawName: "v-model",
+                    value: e.profile,
+                    expression: "profile",
+                  },
+                ],
+                staticClass: "import_button_width",
+                attrs: { disabled: e.disableChange },
+                on: {
+                  change: [
+                    function (t) {
+                      var s = Array.prototype.filter
+                        .call(t.target.options, function (e) {
+                          return e.selected;
+                        })
+                        .map(function (e) {
+                          var t = "_value" in e ? e._value : e.value;
+                          return t;
+                        });
+                      e.profile = t.target.multiple ? s : s[0];
+                    },
+                    e.handleProfileChange,
+                  ],
+                },
+              },
+              e._l(e.profileOptions, function (s) {
+                return t(
+                  "option",
+                  { key: s.value, domProps: { value: s.value } },
+                  [e._v(" " + e._s(s.option) + " ")],
+                );
+              }),
+              0,
+            );
+          },
+          ti = [],
+          si = {
+            data() {
+              return {
+                profile: 0,
+                lastProfile: 0,
+                profileOptions: [],
+                disableChange: !1,
+              };
+            },
+            methods: {
+              async handleProfileChange() {
+                (await bs.Set_Device_Profile(this.profile))
+                  ? (this.lastProfile = this.profile)
+                  : (this.profile = this.lastProfile);
+              },
+            },
+            created() {
+              (this.$bus.$on("languageChange", (e) => {
+                "undefined" != typeof e &&
+                  (this.profileOptions = e.ProfileOptions);
+              }),
+                this.$bus.$on("updateDeviceInfo", (e) => {
+                  this.disableChange = 0 == e.supportChangeProfile;
+                }),
+                this.$bus.$on("updateProfile", (e) => {
+                  this.lastProfile = this.profile = e;
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("updateProfile"),
+                this.$bus.$off("languageChange"));
+            },
+          },
+          ii = si,
+          ai = (0, Ds.A)(ii, ei, ti, !1, null, "1c7bb688", null),
+          oi = ai.exports,
+          ni = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              [
+                t(
+                  "div",
+                  {
+                    staticClass: "flex_column",
+                    staticStyle: { "align-items": "baseline" },
+                  },
+                  [
+                    t(
+                      "el-button",
+                      {
+                        staticClass: "import_button_width margin_top",
+                        on: { click: e.handleExportClick },
+                      },
+                      [
+                        t("span", { attrs: { lang: "Export" } }, [
+                          e._v("导出配置"),
+                        ]),
+                      ],
+                    ),
+                    t("input", {
+                      directives: [
+                        {
+                          name: "show",
+                          rawName: "v-show",
+                          value: !1,
+                          expression: "false",
+                        },
+                      ],
+                      ref: "fileInput",
+                      attrs: { type: "file", accept: ".bin" },
+                      on: { change: e.openFile },
+                    }),
+                    t(
+                      "el-button",
+                      {
+                        staticClass: "import_button_width margin_top",
+                        on: { click: e.handleImportClick },
+                      },
+                      [
+                        t("span", { attrs: { lang: "Import" } }, [
+                          e._v("导入配置"),
+                        ]),
+                      ],
+                    ),
+                    t(
+                      "el-button",
+                      {
+                        staticClass: "import_button_width margin_top",
+                        on: { click: e.handleRestoreClick },
+                      },
+                      [
+                        t("span", { attrs: { lang: "Restore" } }, [
+                          e._v("恢复默认"),
+                        ]),
+                      ],
+                    ),
+                  ],
+                  1,
+                ),
+                t("tips", {
+                  ref: "tipsDialog",
+                  attrs: { text: e.text, showButton: e.tipsButton },
+                }),
+                t("input-name", {
+                  ref: "inputNameDialog",
+                  attrs: { text: e.inputName },
+                }),
+              ],
+              1,
+            );
+          },
+          ri = [],
+          li =
+            (s(4603),
+            s(7566),
+            s(8721),
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t(
+                "el-dialog",
+                {
+                  ref: "fire-key",
+                  attrs: {
+                    title: e.title,
+                    visible: e.visible,
+                    "custom-class": "dialog_class",
+                  },
+                  on: {
+                    "update:visible": function (t) {
+                      e.visible = t;
+                    },
+                    open: e.onOpen,
+                    close: e.onClose,
+                  },
+                },
+                [
+                  t(
+                    "span",
+                    {
+                      staticClass: "dialog-footer",
+                      attrs: { slot: "footer" },
+                      slot: "footer",
+                    },
+                    [
+                      t(
+                        "div",
+                        { staticClass: "flex_column_around_center" },
+                        [
+                          t("span", { staticClass: "dialog_span_padding" }, [
+                            e._v(e._s(e.text)),
+                          ]),
+                          t("el-input", {
+                            staticStyle: { width: "25vw", "margin-top": "1vh" },
+                            on: { input: e.handleInputName },
+                            model: {
+                              value: e.name,
+                              callback: function (t) {
+                                e.name = t;
+                              },
+                              expression: "name",
+                            },
+                          }),
+                        ],
+                        1,
+                      ),
+                      t(
+                        "div",
+                        {
+                          staticClass: "flex_row_center content_evenly",
+                          staticStyle: { "margin-top": "2vh" },
+                        },
+                        [
+                          t(
+                            "el-button",
+                            {
+                              staticClass: "dialog_button",
+                              attrs: { lang: "OK" },
+                              on: { click: e.handleOKClick },
+                            },
+                            [e._v("确 定")],
+                          ),
+                          t(
+                            "el-button",
+                            {
+                              staticClass: "dialog_button",
+                              attrs: { lang: "Cancel" },
+                              on: { click: e.handleCancelClick },
+                            },
+                            [e._v("取 消")],
+                          ),
+                        ],
+                        1,
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            }),
+          ci = [],
+          ui = {
+            extends: "el-dialog",
+            props: {
+              title: { type: String, default: "" },
+              text: { type: String, default: "" },
+            },
+            data() {
+              return { visible: !1, name: "", maxFlag: !1 };
+            },
+            methods: {
+              onOpen() {
+                this.name = "";
+              },
+              onClose() {},
+              handleInputName(e) {
+                const t =
+                  /[`~!@#$%^&*()_\-+=<>?:"{}|,.\/;'\\[\]·~！@#￥%……&*（）——\-+={}|《》？：“”【】、；‘’，。、]/g;
+                var s = e.replace(t, "").replace(/\s/g, "");
+                const i = new TextEncoder();
+                var a = i.encode(s);
+                while (a.length > 30) ((s = s.slice(0, -1)), (a = i.encode(s)));
+                for (var o = new Uint8Array(a.length), n = 0; n < a.length; n++)
+                  o[n] = a[n];
+                ((s = X.UTF8_To_String(o)), (this.name = s));
+              },
+              handleOKClick() {
+                var e;
+                ((e =
+                  "" == this.name
+                    ? { result: !1 }
+                    : { result: !0, name: this.name }),
+                  this.$bus.$emit("inputName", e),
+                  (this.visible = !1));
+              },
+              handleCancelClick() {
+                var e = { result: !1 };
+                (this.$bus.$emit("inputName", e), (this.visible = !1));
+              },
+            },
+            created() {
+              this.$bus.$on("closeDialog", () => {
+                this.visible && (this.visible = !1);
+              });
+            },
+            beforeDestroy() {
+              this.$bus.$off("closeDialog");
+            },
+          },
+          hi = ui,
+          di = (0, Ds.A)(hi, li, ci, !1, null, "10e3cc48", null),
+          fi = di.exports,
+          pi = {
+            components: { Tips: Ms, InputName: fi },
+            data() {
+              return {
+                isRestoring: bs.deviceInfo.isRestoring,
+                language: {},
+                text: "",
+                tipsButton: !0,
+                inputName: "",
+                maxDpiCount: 5,
+              };
+            },
+            methods: {
+              handleExportClick() {
+                ((this.inputName = this.language.DialogExportName),
+                  (this.$refs.inputNameDialog.visible = !0));
+              },
+              openFile(e) {
+                const t = e.target.files[0];
+                if (t) {
+                  const e = new FileReader();
+                  ((e.onload = async (e) => {
+                    try {
+                      const h = e.target.result;
+                      for (
+                        var t = new Uint8Array(h),
+                          s = t.length,
+                          i = new Uint8Array(32),
+                          a = 0;
+                        a < 32;
+                        a++
+                      )
+                        i[a] = t[s - 64 + a];
+                      var o = X.UTF8_To_String(i).replace(/\0+$/, "");
+                      if ("Compx Inc" == o) {
+                        var n = !1;
+                        for (a = 0; a < 16; a++) i[a] = t[s - 32 + a];
+                        var r = X.UTF8_To_String(i).replace(/\0+$/, "");
+                        for (a = 0; a < 16; a++) i[a] = t[s - 16 + a];
+                        var l = X.UTF8_To_String(i).replace(/\0+$/, "");
+                        if (
+                          ((r != bs.deviceInfo.type ||
+                            ("mouse" == r &&
+                              l != bs.deviceInfo.mouseCfg.sensor.type)) &&
+                            (n = !0),
+                          n)
+                        )
+                          ((this.text = this.language.DialogEConfigMismatch),
+                            (this.tipsButton = !0),
+                            (this.$refs.tipsDialog.visible = !0));
+                        else {
+                          var c = [];
+                          for (a = 0; a < t.length - 64; a++) c[a] = t[a];
+                          var u = X.FlashData_To_ReportRate(c[0]);
+                          (u > bs.deviceInfo.maxReportRate &&
+                            ((u = bs.deviceInfo.maxReportRate),
+                            (c[0] = X.ReportRate_To_FlashData(u)),
+                            (c[1] = 85 - c[0])),
+                            c[2] > this.maxDpiCount &&
+                              ((c[2] = this.maxDpiCount), (c[3] = 85 - c[2])),
+                            c[4] > this.maxDpiCount - 1 &&
+                              ((c[4] = this.maxDpiCount - 1),
+                              (c[5] = 85 - c[2])),
+                            console.log("import", o, l, c),
+                            await bs.Write_Mouse_Flash(c));
+                        }
+                      } else
+                        ((this.text = this.language.DialogConfigError),
+                          (this.tipsButton = !0),
+                          (this.$refs.tipsDialog.visible = !0));
+                    } catch (h) {
+                      console.log("import file error", h);
+                    }
+                  }),
+                    e.readAsArrayBuffer(t),
+                    (this.$refs.fileInput.value = ""));
+                }
+              },
+              handleImportClick() {
+                this.$refs.fileInput.click();
+              },
+              handleRestoreClick() {
+                0 == this.isRestoring &&
+                  ((this.text = this.language.DialogRestore),
+                  (this.tipsButton = !0),
+                  (this.$refs.tipsDialog.visible = !0));
+              },
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {
+                this.maxDpiCount = e.dpis.length;
+              }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e && (this.language = e);
+                }),
+                this.$bus.$on("tipsResult", async (e) => {
+                  this.$refs.tipsDialog.visible &&
+                    1 == e &&
+                    this.text == this.language.DialogRestore &&
+                    (await bs.Device_Restore());
+                }),
+                this.$bus.$on("inputName", async (e) => {
+                  if (this.$refs.inputNameDialog.visible && 1 == e.result) {
+                    for (
+                      var t = new Uint8Array(bs.flashData.length + 64), s = 0;
+                      s < bs.flashData.length;
+                      s++
+                    )
+                      t[s] = bs.flashData[s];
+                    console.log("export:", bs.flashData, t);
+                    var i = "Compx Inc",
+                      a = X.String_To_UTF8(i);
+                    for (s = 0; s < a.length; s++)
+                      t[bs.flashData.length + s] = a[s];
+                    a = X.String_To_UTF8(bs.deviceInfo.type);
+                    for (s = 0; s < a.length; s++)
+                      t[bs.flashData.length + s + 32] = a[s];
+                    if ("mouse" == bs.deviceInfo.type) {
+                      a = X.String_To_UTF8(bs.deviceInfo.mouseCfg.sensor.type);
+                      for (s = 0; s < a.length; s++)
+                        t[bs.flashData.length + s + 48] = a[s];
+                    }
+                    console.log("flashData", t);
+                    const o = new Blob([t]),
+                      n = URL.createObjectURL(o),
+                      r = document.createElement("a");
+                    ((r.href = n),
+                      r.setAttribute("download", e.name + ".bin"),
+                      document.body.appendChild(r),
+                      r.click(),
+                      document.body.removeChild(r),
+                      window.URL.revokeObjectURL(n));
+                  }
+                }));
+            },
+            watch: {
+              isRestoring: {
+                handler() {
+                  this.isRestoring
+                    ? ((this.text = this.language.DialogRestoring),
+                      (this.tipsButton = !1),
+                      (this.$refs.tipsDialog.visible = !0))
+                    : (this.$refs.tipsDialog.visible = !1);
+                },
+              },
+            },
+            beforeDestroy() {
+              (this.$bus.$off("languageChange"),
+                this.$bus.$off("tipsResult"),
+                this.$bus.$off("inputName"));
+            },
+          },
+          gi = pi,
+          mi = (0, Ds.A)(gi, ni, ri, !1, null, "08362cfc", null),
+          vi = mi.exports,
+          yi = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "el-dialog",
+              {
+                ref: "fire-key",
+                attrs: {
+                  title: e.title,
+                  visible: e.visible,
+                  "custom-class": "dialog_class",
+                },
+                on: {
+                  "update:visible": function (t) {
+                    e.visible = t;
+                  },
+                  open: e.onOpen,
+                  close: e.onClose,
+                },
+              },
+              [
+                t(
+                  "span",
+                  {
+                    staticClass: "dialog-footer",
+                    attrs: { slot: "footer" },
+                    slot: "footer",
+                  },
+                  [
+                    t("div", { staticClass: "flex_column_around_center" }, [
+                      t(
+                        "div",
+                        { staticClass: "flex_row content_between" },
+                        [
+                          t(
+                            "span",
+                            {
+                              staticClass: "width_class",
+                              attrs: { lang: "DialogFireKeyTimes" },
+                            },
+                            [e._v("次数（0-3）")],
+                          ),
+                          t("el-input", {
+                            staticClass: "el-input_width",
+                            on: { blur: e.handleTimesBlur },
+                            model: {
+                              value: e.times,
+                              callback: function (t) {
+                                e.times = e._n(t);
+                              },
+                              expression: "times",
+                            },
+                          }),
+                        ],
+                        1,
+                      ),
+                      t(
+                        "div",
+                        { staticClass: "flex_row content_between" },
+                        [
+                          t(
+                            "span",
+                            {
+                              staticClass: "width_class",
+                              attrs: { lang: "DialogFireKeyInterval" },
+                            },
+                            [e._v("间隔（10-255）")],
+                          ),
+                          t("el-input", {
+                            staticClass: "el-input_width",
+                            on: { blur: e.handleIntervalBlur },
+                            model: {
+                              value: e.interval,
+                              callback: function (t) {
+                                e.interval = e._n(t);
+                              },
+                              expression: "interval",
+                            },
+                          }),
+                        ],
+                        1,
+                      ),
+                      t(
+                        "span",
+                        {
+                          staticClass: "dialog_span_padding",
+                          attrs: { lang: "DialogFireKeyTips" },
+                        },
+                        [e._v("次数设置为0时，按下按键一直发，松开按键结束")],
+                      ),
+                    ]),
+                    t(
+                      "div",
+                      {
+                        staticClass: "flex_row_center content_evenly",
+                        staticStyle: { "margin-top": "3vh" },
+                      },
+                      [
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "dialog_button",
+                            attrs: { lang: "OK" },
+                            on: { click: e.handleOKClick },
+                          },
+                          [e._v("确 定")],
+                        ),
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "dialog_button",
+                            attrs: { lang: "Cancel" },
+                            on: { click: e.handleCancelClick },
+                          },
+                          [e._v("取 消")],
+                        ),
+                      ],
+                      1,
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+          _i = [],
+          bi = {
+            extends: "el-dialog",
+            props: { title: { type: String, default: "" } },
+            data() {
+              return { visible: !1, times: 3, interval: 10, result: {} };
+            },
+            methods: {
+              onOpen() {
+                this.result = { result: !1 };
+              },
+              onClose() {
+                (console.log("fire key close", this.result),
+                  this.$bus.$emit("fireKey", this.result));
+              },
+              handleTimesBlur() {
+                (this.times < 0 && (this.times = 0),
+                  this.times > 3 && (this.times = 3));
+              },
+              handleIntervalBlur() {
+                (this.interval < 10 && (this.interval = 10),
+                  this.interval > 255 && (this.interval = 255));
+              },
+              handleOKClick() {
+                ((this.result = {
+                  result: !0,
+                  times: this.times,
+                  interval: this.interval,
+                }),
+                  (this.visible = !1));
+              },
+              handleCancelClick() {
+                this.visible = !1;
+              },
+            },
+            created() {
+              this.$bus.$on("closeDialog", () => {
+                this.visible && (this.visible = !1);
+              });
+            },
+            beforeDestroy() {
+              this.$bus.$off("closeDialog");
+            },
+          },
+          Ci = bi,
+          wi = (0, Ds.A)(Ci, yi, _i, !1, null, "0b63394b", null),
+          xi = wi.exports,
+          Si = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "el-dialog",
+              {
+                ref: "fire-key",
+                attrs: {
+                  title: e.title,
+                  visible: e.visible,
+                  "custom-class": "dialog_class",
+                },
+                on: {
+                  "update:visible": function (t) {
+                    e.visible = t;
+                  },
+                  open: e.onOpen,
+                  close: e.onClose,
+                },
+              },
+              [
+                t(
+                  "span",
+                  {
+                    staticClass: "dialog-footer",
+                    attrs: { slot: "footer" },
+                    slot: "footer",
+                  },
+                  [
+                    t(
+                      "div",
+                      { staticClass: "flex_column_around_center" },
+                      [
+                        t("span", {
+                          staticClass: "dialog_span_padding",
+                          attrs: { lang: "DialogShortcutKeyTips" },
+                        }),
+                        t("el-input", {
+                          staticStyle: { width: "25vw", "margin-top": "1vh" },
+                          attrs: { disabled: !0 },
+                          model: {
+                            value: e.key,
+                            callback: function (t) {
+                              e.key = t;
+                            },
+                            expression: "key",
+                          },
+                        }),
+                        t(
+                          "div",
+                          {
+                            staticClass: "flex_row content_between",
+                            staticStyle: { width: "25vw", "margin-top": "1vh" },
+                          },
+                          e._l(e.modifyItems, function (s, i) {
+                            return t("el-checkbox", {
+                              key: i,
+                              attrs: { label: s },
+                              on: { change: e.handleModifyChange },
+                              model: {
+                                value: e.modifys,
+                                callback: function (t) {
+                                  e.modifys = t;
+                                },
+                                expression: "modifys",
+                              },
+                            });
+                          }),
+                          1,
+                        ),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      {
+                        staticClass: "flex_row_center content_evenly",
+                        staticStyle: { "margin-top": "3vh" },
+                      },
+                      [
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "dialog_button",
+                            attrs: { lang: "OK" },
+                            on: { click: e.handleOKClick },
+                          },
+                          [e._v("确 定")],
+                        ),
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "dialog_button",
+                            attrs: { lang: "Cancel" },
+                            on: { click: e.handleCancelClick },
+                          },
+                          [e._v("取 消")],
+                        ),
+                      ],
+                      1,
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+          Di = [],
+          $i = {
+            extends: "el-dialog",
+            props: { title: { type: String, default: "" } },
+            data() {
+              return {
+                visible: !1,
+                key: "",
+                modifys: [],
+                modifyItems: ["Shift", "Ctrl", "Alt", "Win"],
+                result: {},
+              };
+            },
+            methods: {
+              onOpen() {
+                ((this.result = { result: !1 }),
+                  window.addEventListener("keydown", this.handleKeyDown));
+              },
+              onClose() {
+                (window.removeEventListener("keydown", this.handleKeyDown),
+                  console.log("shortcut key close", this.result),
+                  this.$bus.$emit("shortcutKey", this.result));
+              },
+              handleKeyDown(e) {
+                var t = p.keyToHID(e.code);
+                null != t &&
+                  1 == t.type &&
+                  ((this.key = p.keyToHID(e.code).text),
+                  console.log(e, this.key),
+                  e.preventDefault());
+              },
+              handleModifyChange() {
+                (this.modifys.length > 2 && this.modifys.splice(0, 1),
+                  console.log("modifys:", this.modifys));
+              },
+              handleOKClick() {
+                for (var e = 0; e < this.modifys.length; e++) {
+                  var t = "L" + this.modifys[e];
+                  this.modifys[e] = t;
+                }
+                ("" != this.key && this.modifys.push(this.key),
+                  this.modifys.length > 0 &&
+                    (this.result = { result: !0, modifys: this.modifys }),
+                  (this.visible = !1));
+              },
+              handleCancelClick() {
+                this.visible = !1;
+              },
+            },
+            created() {
+              this.$bus.$on("closeDialog", () => {
+                this.visible && (this.visible = !1);
+              });
+            },
+            beforeDestroy() {
+              this.$bus.$off("closeDialog");
+            },
+          },
+          Mi = $i,
+          ki = (0, Ds.A)(Mi, Si, Di, !1, null, "f0edb20c", null),
+          Ri = ki.exports,
+          Ti = {
+            components: {
+              Debounce: Zs,
+              Profile: oi,
+              Other: vi,
+              Tips: Ms,
+              FireKey: xi,
+              ShortcutKey: Ri,
+            },
+            data() {
+              return {
+                path: "/img/devices/mouse3e01.png",
+                refreshing: !1,
+                selectIndex: 0,
+                keyOptions: [],
+                defaultKeyLocs: [],
+                keyLocs: [],
+                defaultKeys: [],
+                keys: [],
+                lastKeys: [],
+                widthRatio: 1,
+                heightRatio: 1,
+                language: {},
+                tipsText: "",
+                times: 2,
+                interval: 10,
+                macros: [],
+                initFlag: !1,
+              };
+            },
+            methods: {
+              handleKeyFocus(e) {
+                var t = !1;
+                ((this.selectIndex = e),
+                  (this.lastKeys = this.keys[e]),
+                  console.log(
+                    "handleKeyFocus:",
+                    this.selectIndex,
+                    this.lastKeys,
+                    this.keys,
+                  ));
+                for (var s = [], i = 0; i < this.keys.length; i++)
+                  this.keys[i][0] == bs.MouseKeyFunction.MouseKey &&
+                    this.keys[i][1] == bs.MouseKeyFunction.LeftKey &&
+                    s.push(i);
+                return (
+                  1 == s.length &&
+                    s[0] == e &&
+                    ((t = !0),
+                    (this.$refs.tipsDialog.visible = !0),
+                    (this.tipsText = this.language.DialogKeepLeftKey)),
+                  t && this.$refs[`cascader${e}`][0].toggleDropDownVisible(!1),
+                  t
+                );
+              },
+              async handleSpanClick(e, t, s) {
+                if (
+                  (console.log("span Click", e, t, s),
+                  (this.selectIndex = s),
+                  0 == e.hasChildren && null == e.parent)
+                ) {
+                  if (t.value == bs.MouseKeyFunction.ShortcutKey) {
+                    var i,
+                      a = !1;
+                    if (this.keys[s][0] == bs.MouseKeyFunction.ShortcutKey) {
+                      var o = this.defaultKeys[s].index;
+                      ((i = bs.deviceInfo.mouseCfg.shortCutKey[o]),
+                        (a = 0 == i.isMedia));
+                    }
+                    if (a) {
+                      for (
+                        var n = [], r = "", l = 0;
+                        l < i.contexts.length;
+                        l++
+                      ) {
+                        var c = p.HIDToKey(i.contexts[l]);
+                        0 == c.type
+                          ? n.push(c.text.replace(/L/g, ""))
+                          : (r = c.text);
+                      }
+                      ((this.$refs.shortcutKeyDialog.modifys = n),
+                        (this.$refs.shortcutKeyDialog.key = r));
+                    } else
+                      ((this.$refs.shortcutKeyDialog.modifys = []),
+                        (this.$refs.shortcutKeyDialog.key = ""));
+                    this.$refs.shortcutKeyDialog.visible = !0;
+                  }
+                  if (t.value == bs.MouseKeyFunction.FireKey) {
+                    if (this.keys[s][0] == bs.MouseKeyFunction.FireKey) {
+                      o = this.defaultKeys[s].index;
+                      var u = X.String_To_Hex(
+                        bs.deviceInfo.mouseCfg.keys[o][1],
+                      );
+                      ((this.$refs.fireKeyDialog.times = 255 & u),
+                        (this.$refs.fireKeyDialog.interval = u >> 8));
+                    } else
+                      ((this.$refs.fireKeyDialog.times = 3),
+                        (this.$refs.fireKeyDialog.interval = 10));
+                    this.$refs.fireKeyDialog.visible = !0;
+                  }
+                }
+                setTimeout(() => {
+                  for (
+                    var e = document.getElementsByClassName(
+                        "el-cascader-menu__empty-text",
+                      ),
+                      t = 0;
+                    t < e.length;
+                    t++
+                  )
+                    e[t].innerHTML = this.language.MacroEmpty;
+                  console.log("new inner html", e);
+                }, 20);
+              },
+              async handleKeyValueChange(e) {
+                var t = this.keys[e],
+                  s = this.defaultKeys[e].index;
+                this.selectIndex = e;
+                var i,
+                  a = !1,
+                  o = t[0],
+                  n = 0;
+                if (1005 == t[0])
+                  ((o = 5), await bs.Set_MS_Multimedia(s, t[1]), (a = !0));
+                else if (
+                  ((o = X.String_To_Hex(t[0])),
+                  console.log("handleKeyValueChange", e, s, t),
+                  o == bs.MouseKeyFunction.ShortcutKey)
+                );
+                else if (o == bs.MouseKeyFunction.Macro) {
+                  var r = 0;
+                  for (i = t[1], r = 0; r < this.macros.length; r++)
+                    if (this.macros[r].name == i) break;
+                  ((n = (s << 8) + parseInt(this.macros[r].cycleTimes)),
+                    (a = !0));
+                } else
+                  o == bs.MouseKeyFunction.FireKey ||
+                    (o == bs.MouseKeyFunction.DPILock
+                      ? ((n = parseInt(t[1])), (a = !0))
+                      : ((n = X.String_To_Hex(t[1])), (a = !0)));
+                if (a) {
+                  var l = { type: o, param: n };
+                  (await bs.Set_MS_KeyFunction(s, l),
+                    o == bs.MouseKeyFunction.Macro &&
+                      (console.log("set macro", i, this.keys),
+                      this.$bus.$emit("setMouseMacro", s, i)));
+                }
+              },
+              handleMouseNumberClick(e) {
+                0 == this.handleKeyFocus(e) &&
+                  this.$refs[`cascader${e}`][0].toggleDropDownVisible();
+              },
+              changeKeysLocation() {
+                if (this.initFlag) {
+                  this.keyLocs = [];
+                  for (var e = 0; e < this.keys.length; e++) {
+                    var t = {
+                      left:
+                        this.defaultKeyLocs[e].left * this.widthRatio + "px",
+                      top: this.defaultKeyLocs[e].top * this.widthRatio + "px",
+                    };
+                    this.keyLocs.push(t);
+                  }
+                }
+              },
+              updateMacros() {
+                for (var e = [], t = 0; t < this.keyOptions.length; t++)
+                  if (this.keyOptions[t].value == bs.MouseKeyFunction.Macro) {
+                    this.keyOptions[t].children = [];
+                    for (var s = 0; s < this.macros.length; s++) {
+                      var i = {
+                        value: this.macros[s].name,
+                        label: this.macros[s].name,
+                      };
+                      (e.push(i), this.keyOptions[t].children.push(i));
+                    }
+                  }
+                if (e.length > 0) {
+                  this.refreshing = !1;
+                  var a = bs.deviceInfo.mouseCfg;
+                  for (t = 0; t < this.keys.length; t++) {
+                    var o = X.String_To_Hex(this.defaultKeys[t].index);
+                    if (a.keys[t][0] == bs.MouseKeyFunction.Macro)
+                      for (s = 0; s < e.length; s++)
+                        if (e[s].label == a.macros[t].name) {
+                          var n = [
+                            bs.MouseKeyFunction.Macro.toString(),
+                            e[s].value,
+                          ];
+                          this.keys[o] = n;
+                        }
+                  }
+                  ((this.refreshing = !0),
+                    console.log("keyOptions", this.keyOptions, this.keys, e));
+                }
+              },
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {
+                this.keys.length = e.keys.length;
+                for (var t = 0; t < e.keys.length; t++)
+                  this.keys[t] = e.keys[t].value;
+                ((this.defaultKeys = e.keys), (this.defaultKeyLocs = []));
+                for (t = 0; t < this.keys.length; t++) {
+                  var s = {
+                    left: e.keys[t].loc[0] + "px",
+                    top: e.keys[t].loc[1] + "px",
+                  };
+                  this.keyLocs.push(s);
+                  var i = { left: e.keys[t].loc[0], top: e.keys[t].loc[1] };
+                  this.defaultKeyLocs.push(i);
+                }
+                ((this.initFlag = !0),
+                  (this.refreshing = !0),
+                  this.changeKeysLocation());
+              }),
+                this.$bus.$on("setDevicePath", (e) => {
+                  this.path = window.location.href + "img/devices/" + e;
+                }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  this.refreshing = !1;
+                  for (var t = 0; t < this.keys.length; t++) {
+                    var s = this.defaultKeys[t].index;
+                    if (
+                      e.keys[s][0] == bs.MouseKeyFunction.FireKey ||
+                      e.keys[s][0] == bs.MouseKeyFunction.ProfileSwitch ||
+                      e.keys[s][0] == bs.MouseKeyFunction.ReportRateSwitch ||
+                      e.keys[s][0] == bs.MouseKeyFunction.Disable
+                    )
+                      this.keys[t] = e.keys[s][0];
+                    else if (e.keys[s][0] == bs.MouseKeyFunction.Macro);
+                    else if (e.keys[s][0] == bs.MouseKeyFunction.ShortcutKey) {
+                      var i = [];
+                      (e.shortCutKey[s].isMedia
+                        ? (i.push("1005"),
+                          i.push(e.shortCutKey[s].contexts[0].value))
+                        : i.push(bs.MouseKeyFunction.ShortcutKey.toString()),
+                        (this.keys[t] = i));
+                    } else this.keys[t] = e.keys[s];
+                  }
+                  this.refreshing = !0;
+                }),
+                this.$bus.$on("restoreKeyfunction", async (e) => {
+                  for (var t = 0; t < this.keys.length; t++)
+                    if (X.String_To_Hex(this.defaultKeys[t].index) == e) {
+                      var s = X.String_To_Hex(this.defaultKeys[t].value[1]),
+                        i = X.String_To_Hex(this.defaultKeys[t].value[0]),
+                        a = [
+                          this.defaultKeys[t].value[0],
+                          this.defaultKeys[t].value[1],
+                        ];
+                      1005 == i && (i = 5);
+                      var o = { type: i, param: s };
+                      (await bs.Set_MS_KeyFunction(e, o)) && (this.keys[t] = a);
+                    }
+                  ((this.refreshing = !1),
+                    console.log(
+                      "restoreKeyfunction",
+                      this.keyOptions,
+                      this.keys,
+                      this.defaultKeys,
+                    ),
+                    (this.refreshing = !0));
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e &&
+                    ((this.language = e),
+                    (this.refreshing = !1),
+                    (this.keyOptions = e.KeyOptions),
+                    this.updateMacros(),
+                    (this.refreshing = !0));
+                }),
+                this.$bus.$on("mouseImageResize", (e) => {
+                  ((this.widthRatio = e), this.changeKeysLocation());
+                }),
+                this.$bus.$on("fireKey", (e) => {
+                  if (e.result) {
+                    ((this.times = e.times), (this.interval = e.interval));
+                    var t = {
+                      type: bs.MouseKeyFunction.FireKey,
+                      param: (e.interval << 8) + e.times,
+                    };
+                    bs.Set_MS_KeyFunction(
+                      this.defaultKeys[this.selectIndex].index,
+                      t,
+                    );
+                  } else
+                    ((this.refreshing = !1),
+                      (this.keys[this.selectIndex] = this.lastKeys),
+                      (this.refreshing = !0));
+                }),
+                this.$bus.$on("shortcutKey", async (e) => {
+                  if (e.result) {
+                    var t = Uint8Array.of(0, 0, 0);
+                    ((t[0] = bs.MouseKeyFunction.ShortcutKey),
+                      console.log("shortcut:", e));
+                    var s = { type: bs.MouseKeyFunction.ShortcutKey, param: 0 };
+                    (await bs.Set_MS_KeyFunction(
+                      this.defaultKeys[this.selectIndex].index,
+                      s,
+                    ),
+                      await bs.Set_MS_ShortcutKey(
+                        this.defaultKeys[this.selectIndex].index,
+                        e.modifys,
+                      ));
+                  } else
+                    ((this.refreshing = !1),
+                      console.log(
+                        "shortcut key not set:",
+                        this.keys,
+                        this.lastKeys,
+                        this.selectIndex,
+                      ),
+                      (this.keys[this.selectIndex] = this.lastKeys),
+                      (this.refreshing = !0));
+                }),
+                this.$bus.$on("updateMacroList", async (e) => {
+                  ((this.macros = e), this.updateMacros());
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("setDevicePath"),
+                this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("updateKeyMacro"),
+                this.$bus.$off("updateMacroList"),
+                this.$bus.$off("restoreKeyfunction"),
+                this.$bus.$off("languageChange"),
+                this.$bus.$off("mouseImageResize"),
+                this.$bus.$off("fireKey"),
+                this.$bus.$off("shortcutKey"));
+            },
+          },
+          Ii = Ti,
+          Pi = (0, Ds.A)(Ii, js, zs, !1, null, "e1203066", null),
+          Ki = Pi.exports,
+          Oi = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              { staticClass: "mouse_sensor" },
+              [
+                t("dpi-setting"),
+                t("report-rate"),
+                t("sensor-setting", {
+                  directives: [
+                    {
+                      name: "show",
+                      rawName: "v-show",
+                      value: e.sensorShow,
+                      expression: "sensorShow",
+                    },
+                  ],
+                }),
+                t("dpi-effect", {
+                  directives: [
+                    {
+                      name: "show",
+                      rawName: "v-show",
+                      value: e.effectShow,
+                      expression: "effectShow",
+                    },
+                  ],
+                }),
+              ],
+              1,
+            );
+          },
+          Li = [],
+          Bi = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "flex_column_evenly dpi_setting" }, [
+              t(
+                "div",
+                {
+                  staticClass: "flex_row",
+                  staticStyle: { "align-items": "center" },
+                },
+                [
+                  t("i", { staticClass: "incfont el-icon-title" }),
+                  t(
+                    "span",
+                    {
+                      staticClass: "margin_left",
+                      attrs: { lang: "DPISetting" },
+                    },
+                    [e._v("DPI级数")],
+                  ),
+                  t(
+                    "select",
+                    {
+                      directives: [
+                        {
+                          name: "model",
+                          rawName: "v-model",
+                          value: e.maxDpiStage,
+                          expression: "maxDpiStage",
+                        },
+                      ],
+                      staticClass: "margin_left",
+                      on: {
+                        change: [
+                          function (t) {
+                            var s = Array.prototype.filter
+                              .call(t.target.options, function (e) {
+                                return e.selected;
+                              })
+                              .map(function (e) {
+                                var t = "_value" in e ? e._value : e.value;
+                                return t;
+                              });
+                            e.maxDpiStage = t.target.multiple ? s : s[0];
+                          },
+                          e.handleDpiStageChange,
+                        ],
+                      },
+                    },
+                    e._l(e.defaultMaxDpi, function (s) {
+                      return t("option", { key: s, domProps: { value: s } }, [
+                        e._v(" " + e._s(s) + " "),
+                      ]);
+                    }),
+                    0,
+                  ),
+                ],
+              ),
+              t(
+                "div",
+                { staticClass: "flex_row" },
+                [
+                  t("el-slider", {
+                    staticClass: "dpi_slider",
+                    attrs: {
+                      "show-tooltip": !1,
+                      min: e.min,
+                      max: e.max,
+                      step: e.step,
+                    },
+                    on: { change: e.handleDPIValueChange },
+                    model: {
+                      value: e.dpiValue,
+                      callback: function (t) {
+                        e.dpiValue = t;
+                      },
+                      expression: "dpiValue",
+                    },
+                  }),
+                  t("el-input-number", {
+                    staticClass: "margin_left",
+                    attrs: {
+                      min: e.min,
+                      max: e.max,
+                      step: e.inputStep,
+                      size: "mini",
+                    },
+                    on: { change: e.handleDPIValueChange },
+                    model: {
+                      value: e.dpiValue,
+                      callback: function (t) {
+                        e.dpiValue = t;
+                      },
+                      expression: "dpiValue",
+                    },
+                  }),
+                ],
+                1,
+              ),
+              t(
+                "div",
+                { staticClass: "flex_row align_center" },
+                e._l(e.dpiParams, function (s, i) {
+                  return t(
+                    "div",
+                    { key: i, staticClass: "flex_column align_center" },
+                    [
+                      t(
+                        "div",
+                        {
+                          staticClass: "dpi_box",
+                          class: [
+                            e.currentDpi == i ? "dpi_checked" : "dpi_unchecked",
+                            i > 0 ? "dpi_box_gap" : "",
+                          ],
+                          staticStyle: { "justify-content": "space-between" },
+                          on: {
+                            click: function (t) {
+                              return e.handleDPIClick(i);
+                            },
+                          },
+                        },
+                        [
+                          t(
+                            "span",
+                            {
+                              staticClass: "flex_center",
+                              class:
+                                e.currentDpi == i
+                                  ? "dpi_checked"
+                                  : "dpi_unchecked",
+                            },
+                            [e._v(e._s(s.value))],
+                          ),
+                          t("el-color-picker", {
+                            directives: [
+                              {
+                                name: "show",
+                                rawName: "v-show",
+                                value: e.showDpiCOlor,
+                                expression: "showDpiCOlor",
+                              },
+                            ],
+                            attrs: { "color-format": "rgb" },
+                            on: {
+                              change: function (t) {
+                                return e.handleColorChange(i, s.color);
+                              },
+                            },
+                            model: {
+                              value: s.color,
+                              callback: function (t) {
+                                e.$set(s, "color", t);
+                              },
+                              expression: "value.color",
+                            },
+                          }),
+                        ],
+                        1,
+                      ),
+                      t("div", {
+                        directives: [
+                          {
+                            name: "show",
+                            rawName: "v-show",
+                            value: e.currentDpi == i,
+                            expression: "currentDpi == index",
+                          },
+                        ],
+                        staticClass: "triangle",
+                        class: i > 0 ? "dpi_box_gap" : "",
+                      }),
+                    ],
+                  );
+                }),
+                0,
+              ),
+            ]);
+          },
+          Fi = [],
+          Ai = {
+            data() {
+              return {
+                maxDpiStage: 5,
+                lastMaxDpi: 5,
+                defaultMaxDpi: 8,
+                dpiValue: 3500,
+                lastDpiValue: 3500,
+                min: 50,
+                max: 3e4,
+                step: 50,
+                inputStep: 50,
+                currentDpi: 3,
+                showDpiCOlor: !0,
+                dpiParams: [
+                  { value: 400, color: "rgb(255,0,0)" },
+                  { value: 800, color: "rgb(0,255,0)" },
+                  { value: 2400, color: "rgb(0,0,255)" },
+                  { value: 4800, color: "rgb(255,255,0)" },
+                  { value: 26e3, color: "rgb(255,255,255)" },
+                ],
+                lastDPIParams: [],
+                mouseDpiParams: [],
+                sensor: {},
+                sensorParam: {},
+              };
+            },
+            methods: {
+              async handleDpiStageChange() {
+                if (await bs.Set_MS_MaxDPI(this.maxDpiStage)) {
+                  if (this.maxDpiStage < this.lastMaxDpi) {
+                    if (this.currentDpi >= this.maxDpiStage - 1) {
+                      var e = this.maxDpiStage - 1,
+                        t = {
+                          value: this.dpiParams[this.currentDpi].value,
+                          color: this.dpiParams[this.currentDpi].color,
+                        },
+                        s = {
+                          value: this.dpiParams[e].value,
+                          color: this.dpiParams[e].color,
+                        };
+                      (this.dpiParams.splice(this.currentDpi, 1, s),
+                        this.dpiParams.splice(e, 1, t));
+                      for (var i = 0; i < this.lastMaxDpi; i++)
+                        this.mouseDpiParams[i] = this.dpiParams[i];
+                      (await bs.Set_MS_DPIColor(
+                        this.currentDpi,
+                        this.dpiParams[this.currentDpi].color,
+                      ),
+                        await bs.Set_MS_DPIValue(
+                          this.currentDpi,
+                          this.dpiParams[this.currentDpi].value,
+                        ),
+                        await bs.Set_MS_DPIColor(e, this.dpiParams[e].color),
+                        await bs.Set_MS_DPIValue(e, this.dpiParams[e].value),
+                        (this.currentDpi = this.maxDpiStage - 1),
+                        await bs.Set_MS_CurrentDPI(this.currentDpi));
+                    }
+                    for (i = this.lastMaxDpi - 1; i > this.maxDpiStage - 1; i--)
+                      this.dpiParams.pop(i);
+                    this.lastDPIParams = this.dpiParams;
+                  } else
+                    for (i = this.lastMaxDpi; i < this.maxDpiStage; i++)
+                      this.dpiParams.push(this.mouseDpiParams[i]);
+                  this.lastMaxDpi = this.maxDpiStage;
+                } else this.maxDpiStage = this.lastMaxDpi;
+              },
+              async handleDPIValueChange() {
+                var e = this.dpiValue,
+                  t = this.dpiValue,
+                  s = this.sensorParam.range.length - 1;
+                for (s = this.sensorParam.range.length - 1; s >= 0; s--) {
+                  var i =
+                    this.sensorParam.range[s].min -
+                    this.sensorParam.range[s].step;
+                  if (t > i) {
+                    ((e =
+                      Math.ceil(e / this.sensorParam.range[s].step) *
+                      this.sensorParam.range[s].step),
+                      (this.inputStep = this.sensorParam.range[s].step));
+                    break;
+                  }
+                }
+                (await bs.Set_MS_DPIValue(this.currentDpi, e))
+                  ? ((this.lastDpiValue = this.dpiValue = e),
+                    (this.lastDPIParams[this.currentDpi].value = this.dpiParams[
+                      this.currentDpi
+                    ].value =
+                      this.dpiValue))
+                  : (this.dpiValue = this.lastDpiValue);
+              },
+              async handleDPIClick(e) {
+                if (this.currentDpi != e && (await bs.Set_MS_CurrentDPI(e))) {
+                  this.currentDpi = e;
+                  var t = this.dpiValue;
+                  e = this.sensorParam.range.length - 1;
+                  for (e = this.sensorParam.range.length - 1; e >= 0; e--) {
+                    var s =
+                      this.sensorParam.range[e].min -
+                      this.sensorParam.range[e].step;
+                    if (t > s) {
+                      this.inputStep = this.sensorParam.range[e].step;
+                      break;
+                    }
+                  }
+                }
+              },
+              async handleColorChange(e, t) {
+                var s = !0;
+                (this.currentDpi != e &&
+                  ((await bs.Set_MS_CurrentDPI(e))
+                    ? (this.currentDpi = e)
+                    : (s = !1)),
+                  s && (await bs.Set_MS_DPIColor(e, t))
+                    ? (this.lastDPIParams[e].color = this.dpiParams[e].color =
+                        t)
+                    : (this.dpiParams[e].color = this.lastDPIParams[e].color));
+              },
+            },
+            watch: {
+              currentDpi: {
+                handler() {
+                  this.currentDpi < this.maxDpiStage &&
+                    (this.lastDpiValue = this.dpiValue =
+                      this.dpiParams[this.currentDpi].value);
+                },
+              },
+            },
+            mounted() {
+              (this.$bus.$on("setGlobalSensor", (e) => {
+                this.sensor = e;
+              }),
+                this.$bus.$on("setMouseDefaultCfg", (e) => {
+                  ((this.max = e.maxDpi),
+                    (this.lastMaxDpi =
+                      this.defaultMaxDpi =
+                      this.maxDpiStage =
+                        e.dpis.length),
+                    (this.lastDPIParams = []),
+                    (this.dpiParams = []));
+                  for (var t = 0; t < e.dpis.length; t++) {
+                    var s = { value: e.dpis[t].value, color: e.dpis[t].color },
+                      i = { value: e.dpis[t].value, color: e.dpis[t].color };
+                    (this.lastDPIParams.push(i), this.dpiParams.push(s));
+                  }
+                  ((this.currentDpi = e.currentDpi),
+                    (this.sensorParam =
+                      this.sensor[bs.deviceInfo.mouseCfg.sensor.type]),
+                    (this.min = this.sensorParam.range[0].min),
+                    this.max >
+                      this.sensorParam.range[this.sensorParam.range.length - 1]
+                        .max &&
+                      (this.max =
+                        this.sensorParam.range[
+                          this.sensorParam.range.length - 1
+                        ].max),
+                    (this.step = this.sensorParam.range[0].step),
+                    1 == e.disableDpiColor
+                      ? (this.showDpiCOlor = !1)
+                      : (this.showDpiCOlor = !0));
+                }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  ((this.lastDPIParams = []),
+                    (this.dpiParams = []),
+                    (this.mouseDpiParams = []));
+                  for (var t = 0; t < 8; t++) {
+                    var s = { value: e.dpis[t].value, color: e.dpis[t].color },
+                      i = { value: e.dpis[t].value, color: e.dpis[t].color };
+                    (t < e.maxDpiStage &&
+                      (this.lastDPIParams.push(i), this.dpiParams.push(s)),
+                      this.mouseDpiParams.push(s));
+                  }
+                  ((this.currentDpi = e.currentDpi),
+                    (this.lastMaxDpi = this.maxDpiStage = e.maxDpiStage),
+                    (this.lastDpiValue = this.dpiValue =
+                      this.dpiParams[this.currentDpi].value));
+                  e = this.dpiValue;
+                  var a = this.sensorParam.range.length - 1;
+                  for (a = this.sensorParam.range.length - 1; a >= 0; a--) {
+                    var o =
+                      this.sensorParam.range[a].min -
+                      this.sensorParam.range[a].step;
+                    if (e > o) {
+                      this.inputStep = this.sensorParam.range[a].step;
+                      break;
+                    }
+                  }
+                }),
+                this.$bus.$on("updateCurrentDPI", (e) => {
+                  this.currentDpi = e;
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("updateCurrentDPI"));
+            },
+          },
+          Ei = Ai,
+          Ni = (0, Ds.A)(Ei, Bi, Fi, !1, null, "1bd9c0a6", null),
+          Gi = Ni.exports,
+          Ui = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "flex_column_evenly report_rate" }, [
+              e._m(0),
+              t(
+                "div",
+                { staticClass: "flex_row" },
+                e._l(e.reportRates, function (s, i) {
+                  return t(
+                    "div",
+                    { key: i, class: i > 0 ? "report_box_gap" : "" },
+                    [
+                      t(
+                        "el-button",
+                        {
+                          staticClass: "reportRate_button_width",
+                          class:
+                            e.reportRate == i
+                              ? "reportRate_checked"
+                              : "reportRate_unchecked",
+                          on: {
+                            click: function (t) {
+                              return e.handleReportRateClick(i);
+                            },
+                          },
+                        },
+                        [e._v(e._s(s.option))],
+                      ),
+                    ],
+                    1,
+                  );
+                }),
+                0,
+              ),
+            ]);
+          },
+          Vi = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t(
+                "div",
+                {
+                  staticClass: "flex_row",
+                  staticStyle: { "align-items": "center" },
+                },
+                [
+                  t("i", { staticClass: "incfont el-icon-title" }),
+                  t(
+                    "span",
+                    {
+                      staticClass: "margin_left",
+                      attrs: { lang: "ReportRate" },
+                    },
+                    [e._v("回报率")],
+                  ),
+                ],
+              );
+            },
+          ],
+          Hi = {
+            data() {
+              return {
+                reportRates: [],
+                defaultReportRates: [],
+                reportRate: 3,
+                maxReportRate: 8e3,
+              };
+            },
+            methods: {
+              reportRateToIndex(e) {
+                for (
+                  var t = e > this.maxReportRate ? this.maxReportRate : e,
+                    s = !1,
+                    i = 0;
+                  i < this.reportRates.length;
+                  i++
+                ) {
+                  var a = this.reportRates[i].rate;
+                  if (a == t) {
+                    ((this.reportRate = i), (s = !0));
+                    break;
+                  }
+                }
+                (0 == s &&
+                  (this.reportRate =
+                    this.reportRates[this.reportRates.length - 1].value),
+                  this.setSensorCorder());
+              },
+              async handleReportRateClick(e) {
+                var t = this.reportRates[e].rate;
+                (await bs.Set_MS_ReportRate(t)) &&
+                  ((this.reportRate = e), this.setSensorCorder());
+              },
+              setSensorCorder() {
+                bs.deviceInfo.isWired ||
+                this.reportRates[this.reportRate].rate > 1e3
+                  ? this.$bus.$emit("setSensorCorder", !0)
+                  : this.$bus.$emit("setSensorCorder", !1);
+              },
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {
+                (this.reportRateToIndex(e.reportRate),
+                  (this.maxReportRate = 8e3));
+              }),
+                this.$bus.$on("updateMaxReportRate", (e) => {
+                  (console.log("updateMaxReportRate:", e),
+                    (this.maxReportRate = e),
+                    (this.reportRates = []));
+                  for (var t = 0; t < this.defaultReportRates.length; t++)
+                    this.defaultReportRates[t].rate <= this.maxReportRate &&
+                      this.reportRates.push(this.defaultReportRates[t]);
+                }),
+                this.$bus.$on("updateDeviceInfo", (e) => {
+                  this.reportRates = [];
+                  for (var t = 0; t < this.defaultReportRates.length; t++)
+                    this.defaultReportRates[t].rate <= e.maxReportRate &&
+                      this.reportRates.push(this.defaultReportRates[t]);
+                  ((this.maxReportRate =
+                    e.maxReportRate < bs.deviceInfo.maxReportRate
+                      ? e.maxReportRate
+                      : bs.deviceInfo.maxReportRate),
+                    console.log(
+                      "updateDeviceInfo",
+                      this.maxReportRate,
+                      bs.deviceInfo.maxReportRate,
+                    ));
+                }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  this.reportRateToIndex(e.reportRate);
+                }),
+                this.$bus.$on("updateReportRate", (e) => {
+                  this.reportRateToIndex(e);
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  if ("undefined" != typeof e) {
+                    ((this.defaultReportRates = e.ReportRates),
+                      (this.reportRates = []));
+                    for (var t = 0; t < this.defaultReportRates.length; t++)
+                      this.defaultReportRates[t].rate <= this.maxReportRate &&
+                        this.reportRates.push(this.defaultReportRates[t]);
+                  }
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("updateDeviceInfo"),
+                this.$bus.$off("updateMaxReportRate"),
+                this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("updateReportRate"),
+                this.$bus.$off("languageChange"));
+            },
+          },
+          Wi = Hi,
+          ji = (0, Ds.A)(Wi, Ui, Vi, !1, null, "53748408", null),
+          zi = ji.exports,
+          Ji = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              { staticClass: "flex_column_evenly sensor_setting" },
+              [
+                e._m(0),
+                t(
+                  "div",
+                  {
+                    staticClass: "flex_row",
+                    staticStyle: {
+                      "justify-content": "space-between",
+                      "align-items": "center",
+                    },
+                  },
+                  [
+                    t(
+                      "div",
+                      {
+                        directives: [
+                          {
+                            name: "show",
+                            rawName: "v-show",
+                            value: e.sensorModeShow,
+                            expression: "sensorModeShow",
+                          },
+                        ],
+                        staticClass: "flex_column_start",
+                      },
+                      [
+                        t(
+                          "el-tooltip",
+                          {
+                            attrs: {
+                              content: e.sensorModeTips,
+                              placement: "top",
+                              effect: e.effect,
+                            },
+                          },
+                          [
+                            t("span", { attrs: { lang: "SensorMode" } }, [
+                              e._v("模式选择"),
+                            ]),
+                          ],
+                        ),
+                        t(
+                          "select",
+                          {
+                            directives: [
+                              {
+                                name: "model",
+                                rawName: "v-model",
+                                value: e.sensorMode,
+                                expression: "sensorMode",
+                              },
+                            ],
+                            attrs: { disabled: e.corderMode },
+                            on: {
+                              change: [
+                                function (t) {
+                                  var s = Array.prototype.filter
+                                    .call(t.target.options, function (e) {
+                                      return e.selected;
+                                    })
+                                    .map(function (e) {
+                                      var t =
+                                        "_value" in e ? e._value : e.value;
+                                      return t;
+                                    });
+                                  e.sensorMode = t.target.multiple ? s : s[0];
+                                },
+                                e.handleSensorModeChange,
+                              ],
+                            },
+                          },
+                          e._l(e.sensorModeOptions, function (s) {
+                            return t(
+                              "option",
+                              {
+                                key: s.value,
+                                attrs: { disabled: 256 == s.value },
+                                domProps: { value: s.value },
+                              },
+                              [e._v(e._s(s.option))],
+                            );
+                          }),
+                          0,
+                        ),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      {
+                        directives: [
+                          {
+                            name: "show",
+                            rawName: "v-show",
+                            value: e.lodShow,
+                            expression: "lodShow",
+                          },
+                        ],
+                        staticClass: "flex_column_start",
+                      },
+                      [
+                        t(
+                          "el-tooltip",
+                          {
+                            attrs: {
+                              content: e.lodTips,
+                              placement: "top",
+                              effect: e.effect,
+                            },
+                          },
+                          [
+                            t("span", { attrs: { lang: "LOD" } }, [
+                              e._v("LOD"),
+                            ]),
+                          ],
+                        ),
+                        t(
+                          "select",
+                          {
+                            directives: [
+                              {
+                                name: "model",
+                                rawName: "v-model",
+                                value: e.lod,
+                                expression: "lod",
+                              },
+                            ],
+                            on: {
+                              change: [
+                                function (t) {
+                                  var s = Array.prototype.filter
+                                    .call(t.target.options, function (e) {
+                                      return e.selected;
+                                    })
+                                    .map(function (e) {
+                                      var t =
+                                        "_value" in e ? e._value : e.value;
+                                      return t;
+                                    });
+                                  e.lod = t.target.multiple ? s : s[0];
+                                },
+                                e.handleLODChange,
+                              ],
+                            },
+                          },
+                          e._l(e.lodOptions, function (s) {
+                            return t(
+                              "option",
+                              { key: s.value, domProps: { value: s.value } },
+                              [e._v(e._s(s.option))],
+                            );
+                          }),
+                          0,
+                        ),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      {
+                        directives: [
+                          {
+                            name: "show",
+                            rawName: "v-show",
+                            value: e.performanceShow,
+                            expression: "performanceShow",
+                          },
+                        ],
+                        staticClass: "flex_column_start",
+                      },
+                      [
+                        t(
+                          "div",
+                          {
+                            staticClass: "flex_row",
+                            staticStyle: { "justify-content": "center" },
+                          },
+                          [
+                            t("el-checkbox", {
+                              on: { change: e.handlePerformanceStateChange },
+                              model: {
+                                value: e.performanceState,
+                                callback: function (t) {
+                                  e.performanceState = t;
+                                },
+                                expression: "performanceState",
+                              },
+                            }),
+                            t(
+                              "el-tooltip",
+                              {
+                                attrs: {
+                                  content: e.performanceTips,
+                                  placement: "top",
+                                  effect: e.effect,
+                                },
+                              },
+                              [
+                                t(
+                                  "span",
+                                  {
+                                    staticClass: "margin_left",
+                                    attrs: { lang: "Performance" },
+                                  },
+                                  [e._v("火力全开")],
+                                ),
+                              ],
+                            ),
+                          ],
+                          1,
+                        ),
+                        t(
+                          "select",
+                          {
+                            directives: [
+                              {
+                                name: "model",
+                                rawName: "v-model",
+                                value: e.performance,
+                                expression: "performance",
+                              },
+                            ],
+                            attrs: { disabled: 0 == e.performanceState },
+                            on: {
+                              change: [
+                                function (t) {
+                                  var s = Array.prototype.filter
+                                    .call(t.target.options, function (e) {
+                                      return e.selected;
+                                    })
+                                    .map(function (e) {
+                                      var t =
+                                        "_value" in e ? e._value : e.value;
+                                      return t;
+                                    });
+                                  e.performance = t.target.multiple ? s : s[0];
+                                },
+                                e.handlePerformanceChange,
+                              ],
+                            },
+                          },
+                          e._l(e.performanceOptions, function (s) {
+                            return t(
+                              "option",
+                              { key: s.value, domProps: { value: s.value } },
+                              [e._v(e._s(s.option))],
+                            );
+                          }),
+                          0,
+                        ),
+                      ],
+                    ),
+                    t("div", { staticClass: "flex_column" }, [
+                      t(
+                        "div",
+                        {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: e.rippleShow,
+                              expression: "rippleShow",
+                            },
+                          ],
+                          staticClass: "sensor_switch",
+                        },
+                        [
+                          t("el-switch", {
+                            nativeOn: {
+                              click: function (t) {
+                                return e.handleRippleClick.apply(
+                                  null,
+                                  arguments,
+                                );
+                              },
+                            },
+                            model: {
+                              value: e.ripple,
+                              callback: function (t) {
+                                e.ripple = t;
+                              },
+                              expression: "ripple",
+                            },
+                          }),
+                          t(
+                            "el-tooltip",
+                            {
+                              attrs: {
+                                content: e.rippleTips,
+                                placement: "top",
+                                effect: e.effect,
+                              },
+                            },
+                            [
+                              t(
+                                "span",
+                                {
+                                  staticClass: "margin_left",
+                                  attrs: { lang: "Ripple" },
+                                },
+                                [e._v("波纹控制")],
+                              ),
+                            ],
+                          ),
+                        ],
+                        1,
+                      ),
+                      t(
+                        "div",
+                        {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: e.angleShow,
+                              expression: "angleShow",
+                            },
+                          ],
+                          staticClass: "sensor_switch",
+                        },
+                        [
+                          t("el-switch", {
+                            nativeOn: {
+                              click: function (t) {
+                                return e.handleAngleClick.apply(
+                                  null,
+                                  arguments,
+                                );
+                              },
+                            },
+                            model: {
+                              value: e.angle,
+                              callback: function (t) {
+                                e.angle = t;
+                              },
+                              expression: "angle",
+                            },
+                          }),
+                          t(
+                            "el-tooltip",
+                            {
+                              attrs: {
+                                content: e.angleTips,
+                                placement: "top",
+                                effect: e.effect,
+                              },
+                            },
+                            [
+                              t(
+                                "span",
+                                {
+                                  staticClass: "margin_left",
+                                  attrs: { lang: "Angle" },
+                                },
+                                [e._v("直线修正")],
+                              ),
+                            ],
+                          ),
+                        ],
+                        1,
+                      ),
+                      t(
+                        "div",
+                        {
+                          directives: [
+                            {
+                              name: "show",
+                              rawName: "v-show",
+                              value: e.motionSyncShow,
+                              expression: "motionSyncShow",
+                            },
+                          ],
+                          staticClass: "sensor_switch",
+                        },
+                        [
+                          t("el-switch", {
+                            nativeOn: {
+                              click: function (t) {
+                                return e.handleMotionSyncClick.apply(
+                                  null,
+                                  arguments,
+                                );
+                              },
+                            },
+                            model: {
+                              value: e.motionSync,
+                              callback: function (t) {
+                                e.motionSync = t;
+                              },
+                              expression: "motionSync",
+                            },
+                          }),
+                          t(
+                            "el-tooltip",
+                            {
+                              attrs: {
+                                content: e.motionSyncTips,
+                                placement: "top",
+                                effect: e.effect,
+                              },
+                            },
+                            [
+                              t(
+                                "span",
+                                {
+                                  staticClass: "margin_left",
+                                  attrs: { lang: "MotionSync" },
+                                },
+                                [e._v("Motion sync")],
+                              ),
+                            ],
+                          ),
+                        ],
+                        1,
+                      ),
+                    ]),
+                  ],
+                ),
+              ],
+            );
+          },
+          qi = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t(
+                "div",
+                {
+                  staticClass: "flex_row",
+                  staticStyle: { "align-items": "center" },
+                },
+                [
+                  t("i", { staticClass: "incfont el-icon-title" }),
+                  t(
+                    "span",
+                    {
+                      staticClass: "margin_left",
+                      attrs: { lang: "SensorSetting" },
+                    },
+                    [e._v("Sensor设置")],
+                  ),
+                ],
+              );
+            },
+          ],
+          Yi = {
+            data() {
+              return {
+                sensor: {},
+                sensorModeShow: !0,
+                sensorMode: 0,
+                lastSensorMode: 0,
+                sensorModeOptions: [],
+                corderOptionDisable: !0,
+                corderMode: !1,
+                lodShow: !0,
+                lod: 1,
+                lastLOD: 1,
+                lodOptions: [],
+                performanceShow: !0,
+                performanceState: !1,
+                performance: 6,
+                lastPerformance: 6,
+                performanceOptions: [],
+                rippleShow: !0,
+                ripple: !1,
+                angleShow: !0,
+                angle: !1,
+                motionSyncShow: !0,
+                motionSync: !1,
+                effect: "light",
+                sensorModeTips: "",
+                lodTips: "",
+                performanceTips: "",
+                rippleTips: "",
+                angleTips: "",
+                motionSyncTips: "",
+                demoSensor: "",
+                driveCfg: {},
+              };
+            },
+            methods: {
+              async handleSensorModeChange() {
+                (await bs.Set_MS_SensorMode(this.sensorMode))
+                  ? (this.lastSensorMode = this.sensorMode)
+                  : (this.sensorMode = this.lastSensorMode);
+              },
+              setCorderMode(e) {
+                e
+                  ? ((this.sensorMode = 256), (this.corderMode = !0))
+                  : ((this.sensorMode = this.lastSensorMode),
+                    (this.corderMode = !1));
+              },
+              async handleLODChange() {
+                (await bs.Set_MS_LOD(this.lod))
+                  ? (this.lastLOD = this.lod)
+                  : (this.lod = this.lastLOD);
+              },
+              async handlePerformanceStateChange() {
+                var e = this.performanceState;
+                0 == (await bs.Set_MS_PerformanceState(e ? 1 : 0)) &&
+                  (this.performanceState = !e);
+              },
+              async handlePerformanceChange() {
+                (await bs.Set_MS_PerformanceTime(this.performance))
+                  ? (this.lastPerformance = this.performance)
+                  : (this.performance = this.lastPerformance);
+              },
+              async handleRippleClick() {
+                var e = this.ripple;
+                0 == (await bs.Set_MS_Ripple(e ? 1 : 0)) &&
+                  (this.ripple = !this.ripple);
+              },
+              async handleAngleClick() {
+                var e = this.angle;
+                0 == (await bs.Set_MS_Angle(e ? 1 : 0)) &&
+                  (this.angle = !this.angle);
+              },
+              async handleMotionSyncClick() {
+                var e = this.motionSync;
+                0 == (await bs.Set_MS_MotionSync(e ? 1 : 0)) &&
+                  (this.motionSync = !this.motionSync);
+              },
+              updateSensorSetting(e) {
+                (this.sensorModeShow &&
+                  (this.lastSensorMode = this.sensorMode = e.sensorMode),
+                  this.lodShow && (this.lastLOD = this.lod = e.lod),
+                  this.performanceShow &&
+                    ((this.performanceState = e.performanceState),
+                    (this.lastPerformance = this.performance = e.performance)),
+                  this.rippleShow && (this.ripple = e.ripple),
+                  this.angleShow && (this.angle = e.angle),
+                  this.motionSyncShow && (this.motionSync = e.motionSync));
+              },
+            },
+            created() {
+              (this.$bus.$on("setGlobalSensor", (e) => {
+                this.sensor = e;
+              }),
+                this.$bus.$on("currentDemoSensor", (e, t) => {
+                  ((this.demoSensor = e), (this.driveCfg = t));
+                }),
+                this.$bus.$on("setMouseDefaultCfg", (e) => {
+                  var t = e.sensor;
+                  if (
+                    ("undefined" != typeof this.driveCfg.demo &&
+                      this.driveCfg.demo &&
+                      (t = this.demoSensor),
+                    (this.sensorModeShow =
+                      this.sensor.ModeSelect.includes(t) &&
+                      "undefined" != typeof e.sensorMode),
+                    (this.lodShow =
+                      this.sensor.LOD.includes(t) &&
+                      "undefined" != typeof e.lod),
+                    (this.performanceShow =
+                      "undefined" != typeof e.performance),
+                    (this.rippleShow =
+                      this.sensor.Ripple.includes(t) &&
+                      "undefined" != typeof e.ripple),
+                    (this.angleShow =
+                      this.sensor.Angle.includes(t) &&
+                      "undefined" != typeof e.angle),
+                    (this.motionSyncShow =
+                      this.sensor.MotionSync.includes(t) &&
+                      "undefined" != typeof e.motionSync),
+                    this.updateSensorSetting(e),
+                    "OM76" == bs.deviceInfo.mouseCfg.sensor.type)
+                  )
+                    for (var s = 0; s < this.sensorModeOptions.length; s++)
+                      0 == this.sensorModeOptions[s].value &&
+                        this.sensorModeOptions.splice(s, 1);
+                  if ("3950" != bs.deviceInfo.mouseCfg.sensor.type)
+                    for (s = 0; s < this.lodOptions.length; s++)
+                      3 == this.lodOptions[s].value &&
+                        this.lodOptions.splice(s, 1);
+                }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  (this.updateSensorSetting(e.sensor),
+                    this.setCorderMode(
+                      e.reportRate > 1e3 || bs.deviceInfo.isWired,
+                    ));
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  if ("undefined" != typeof e) {
+                    if (
+                      ((this.sensorModeOptions = e.SensorModeOptions),
+                      "OM76" == bs.deviceInfo.mouseCfg.sensor.type)
+                    )
+                      for (var t = 0; t < this.sensorModeOptions.length; t++)
+                        0 == this.sensorModeOptions[t].value &&
+                          this.sensorModeOptions.splice(t, 1);
+                    if (
+                      ((this.lodOptions = e.LODOptions),
+                      "3950" != bs.deviceInfo.mouseCfg.sensor.type)
+                    )
+                      for (t = 0; t < this.lodOptions.length; t++)
+                        3 == this.lodOptions[t].value &&
+                          this.lodOptions.splice(t, 1);
+                    ((this.performanceOptions = e.PerformanceOptions),
+                      (this.sensorModeTips = e.SensorModeTips),
+                      (this.lodTips = e.LODTips),
+                      (this.performanceTips = e.PerformanceTips),
+                      (this.rippleTips = e.RippleTips),
+                      (this.angleTips = e.AngleTips),
+                      (this.motionSyncTips = e.MotionSyncTips));
+                  }
+                }),
+                this.$bus.$on("themeChange", (e) => {
+                  this.effect = e;
+                }),
+                this.$bus.$on("setSensorCorder", (e) => {
+                  this.setCorderMode(e);
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setGlobalSensor"),
+                this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("languageChange"),
+                this.$bus.$off("themeChange"));
+            },
+          },
+          Xi = Yi,
+          Qi = (0, Ds.A)(Xi, Ji, qi, !1, null, "ba8c721a", null),
+          Zi = Qi.exports,
+          ea = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "flex_column_evenly dpi_effect" }, [
+              e._m(0),
+              t(
+                "div",
+                {
+                  staticClass: "flex_row",
+                  staticStyle: {
+                    "align-items": "center",
+                    "justify-content": "space-between",
+                  },
+                },
+                [
+                  t(
+                    "select",
+                    {
+                      directives: [
+                        {
+                          name: "model",
+                          rawName: "v-model",
+                          value: e.mode,
+                          expression: "mode",
+                        },
+                      ],
+                      on: {
+                        change: [
+                          function (t) {
+                            var s = Array.prototype.filter
+                              .call(t.target.options, function (e) {
+                                return e.selected;
+                              })
+                              .map(function (e) {
+                                var t = "_value" in e ? e._value : e.value;
+                                return t;
+                              });
+                            e.mode = t.target.multiple ? s : s[0];
+                          },
+                          e.handleDPIEffectChange,
+                        ],
+                      },
+                    },
+                    e._l(e.effectOptions, function (s) {
+                      return t(
+                        "option",
+                        { key: s.value, domProps: { value: s.value } },
+                        [e._v(e._s(s.option))],
+                      );
+                    }),
+                    0,
+                  ),
+                  t("div", { staticClass: "flex_column" }, [
+                    t(
+                      "div",
+                      { staticClass: "flex_row_end_center" },
+                      [
+                        t("span", { attrs: { lang: "Brightness" } }, [
+                          e._v("亮度"),
+                        ]),
+                        t("el-slider", {
+                          staticClass: "margin_left dpiEffect_slider_width",
+                          attrs: {
+                            "show-tooltip": !1,
+                            min: e.min,
+                            max: e.max,
+                            disabled: e.brightnessDisable,
+                          },
+                          on: { change: e.handleBrightnessChange },
+                          model: {
+                            value: e.brightness,
+                            callback: function (t) {
+                              e.brightness = t;
+                            },
+                            expression: "brightness",
+                          },
+                        }),
+                        t("span", { staticClass: "margin_left" }, [
+                          e._v(e._s(e.brightness)),
+                        ]),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      { staticClass: "flex_row_end_center" },
+                      [
+                        t("span", { attrs: { lang: "Speed" } }, [e._v("速度")]),
+                        t("el-slider", {
+                          staticClass: "margin_left dpiEffect_slider_width",
+                          attrs: {
+                            "show-tooltip": !1,
+                            min: e.min,
+                            max: 5,
+                            disabled: e.speedDisable,
+                          },
+                          on: { change: e.handleSpeedChange },
+                          model: {
+                            value: e.speed,
+                            callback: function (t) {
+                              e.speed = t;
+                            },
+                            expression: "speed",
+                          },
+                        }),
+                        t("span", { staticClass: "margin_left" }, [
+                          e._v(e._s(e.speed)),
+                        ]),
+                      ],
+                      1,
+                    ),
+                  ]),
+                ],
+              ),
+            ]);
+          },
+          ta = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t(
+                "div",
+                {
+                  staticClass: "flex_row",
+                  staticStyle: { "align-items": "center" },
+                },
+                [
+                  t("i", { staticClass: "incfont el-icon-title" }),
+                  t(
+                    "span",
+                    {
+                      staticClass: "margin_left",
+                      attrs: { lang: "DPIEffect" },
+                    },
+                    [e._v("DPI灯效")],
+                  ),
+                ],
+              );
+            },
+          ],
+          sa = {
+            data() {
+              return {
+                mode: 0,
+                lastMode: 0,
+                effectOptions: [],
+                min: 1,
+                max: 10,
+                brightnessDisable: !1,
+                brightness: 5,
+                lastBrightness: 5,
+                speedDisable: !1,
+                speed: 3,
+                lastSpeed: 3,
+              };
+            },
+            methods: {
+              effectToDisable() {
+                switch (this.mode) {
+                  case 0:
+                    ((this.brightnessDisable = !0), (this.speedDisable = !0));
+                    break;
+                  case 1:
+                    ((this.brightnessDisable = !1), (this.speedDisable = !0));
+                    break;
+                  case 2:
+                    ((this.brightnessDisable = !0), (this.speedDisable = !1));
+                    break;
+                }
+              },
+              async handleDPIEffectChange() {
+                console.log("Dpi mode", this.mode);
+                var e = !1;
+                ((e =
+                  0 == this.mode
+                    ? await bs.Set_MS_DPILightOff()
+                    : await bs.Set_MS_DPILightMode(this.mode)),
+                  e
+                    ? ((this.lastMode = this.mode), this.effectToDisable())
+                    : (this.mode = this.lastMode));
+              },
+              async handleBrightnessChange() {
+                (await bs.Set_MS_DPILightBrightness(this.brightness))
+                  ? (this.lastBrightness = this.brightness)
+                  : (this.brightness = this.lastBrightness);
+              },
+              async handleSpeedChange() {
+                (await bs.Set_MS_DPILightSpeed(this.speed))
+                  ? (this.lastSpeed = this.speed)
+                  : (this.speed = this.lastSpeed);
+              },
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {
+                "undefined" != typeof e.dpiEffect &&
+                  ((this.lastMode = this.mode = e.dpiEffect.mode),
+                  this.effectToDisable(),
+                  (this.lastBrightness = this.brightness =
+                    e.dpiEffect.brightness),
+                  (this.lastSpeed = this.speed = e.dpiEffect.speed));
+              }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  ((this.lastMode = this.mode =
+                    0 == e.dpiEffect.state ? 0 : e.dpiEffect.mode),
+                    this.effectToDisable(),
+                    (this.lastBrightness = this.brightness =
+                      e.dpiEffect.brightness),
+                    (this.lastSpeed = this.speed = e.dpiEffect.speed));
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e &&
+                    (this.effectOptions = e.DPIEffectOptions);
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("languageChange"));
+            },
+          },
+          ia = sa,
+          aa = (0, Ds.A)(ia, ea, ta, !1, null, "352e3598", null),
+          oa = aa.exports,
+          na = {
+            components: {
+              DpiSetting: Gi,
+              ReportRate: zi,
+              SensorSetting: Zi,
+              DpiEffect: oa,
+            },
+            data() {
+              return { sensorShow: !0, effectShow: !0, sensor: {} };
+            },
+            created() {
+              (this.$bus.$on("setGlobalSensor", (e) => {
+                this.sensor = e;
+              }),
+                this.$bus.$on("setMouseDefaultCfg", (e) => {
+                  ((this.sensorShow = this.sensor.Setting.includes(e.sensor)),
+                    (this.effectShow = "undefined" != typeof e.dpiEffect));
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("setGlobalSensor"));
+            },
+          },
+          ra = na,
+          la = (0, Ds.A)(ra, Oi, Li, !1, null, "19d9e357", null),
+          ca = la.exports,
+          ua = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              { staticClass: "flex_row content_between macro" },
+              [
+                t(
+                  "div",
+                  {
+                    staticClass:
+                      "flex_column_evenly content_between macro_table_width macro_height",
+                  },
+                  [
+                    t(
+                      "span",
+                      {
+                        staticClass: "flex_column_start",
+                        attrs: { lang: "MacroList" },
+                      },
+                      [e._v("宏列表")],
+                    ),
+                    t(
+                      "div",
+                      [
+                        t(
+                          "el-table",
+                          {
+                            staticClass: "macro_table_height",
+                            attrs: {
+                              data: e.macros,
+                              "row-class-name": e.macroRowName,
+                              height: "macro_table_height",
+                            },
+                            on: {
+                              "row-click": e.handleMacroRowClick,
+                              "row-contextmenu": e.handleMacroRowContextmenu,
+                            },
+                          },
+                          [
+                            t("el-table-column", {
+                              attrs: { "min-width": "85%" },
+                              scopedSlots: e._u([
+                                {
+                                  key: "default",
+                                  fn: function (s) {
+                                    return [
+                                      t(
+                                        "span",
+                                        {
+                                          staticStyle: {
+                                            display: "flex",
+                                            width: "100%",
+                                          },
+                                        },
+                                        [e._v(e._s(s.row.name))],
+                                      ),
+                                    ];
+                                  },
+                                },
+                              ]),
+                            }),
+                            t("el-table-column", {
+                              attrs: { "min-width": "15%", align: "right" },
+                              scopedSlots: e._u([
+                                {
+                                  key: "default",
+                                  fn: function (s) {
+                                    return [
+                                      t("el-button", {
+                                        staticClass: "macro_edit_button",
+                                        attrs: { icon: "el-icon-edit-outline" },
+                                        on: {
+                                          click: function (t) {
+                                            return e.handleModifyMacroClick(
+                                              s.$index,
+                                            );
+                                          },
+                                        },
+                                      }),
+                                    ];
+                                  },
+                                },
+                              ]),
+                            }),
+                          ],
+                          1,
+                        ),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      { staticClass: "flex_row content_between" },
+                      [
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "macro_operation_button",
+                            on: { click: e.handleNewMacroClick },
+                          },
+                          [
+                            t("span", { attrs: { lang: "NewMacro" } }, [
+                              e._v("新建宏"),
+                            ]),
+                          ],
+                        ),
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "macro_operation_button",
+                            on: { click: e.handleDeleteMacroCLick },
+                          },
+                          [
+                            t("span", { attrs: { lang: "Delete" } }, [
+                              e._v("删除"),
+                            ]),
+                          ],
+                        ),
+                      ],
+                      1,
+                    ),
+                  ],
+                ),
+                t(
+                  "div",
+                  {
+                    staticClass:
+                      "flex_column_evenly content_between macro_table_width macro_height",
+                  },
+                  [
+                    t(
+                      "span",
+                      {
+                        staticClass: "flex_column_start",
+                        attrs: { lang: "KeyList" },
+                      },
+                      [e._v("按键列表")],
+                    ),
+                    t(
+                      "div",
+                      [
+                        t(
+                          "el-table",
+                          {
+                            ref: "keyTable",
+                            staticClass: "macro_table_height",
+                            attrs: {
+                              data: e.contexts,
+                              "row-class-name": e.keyRowName,
+                              height: "macro_table_height",
+                            },
+                            on: { "current-change": e.handleKeyCurrentChange },
+                          },
+                          [
+                            t("el-table-column", {
+                              scopedSlots: e._u([
+                                {
+                                  key: "default",
+                                  fn: function (s) {
+                                    return [
+                                      t(
+                                        "div",
+                                        { staticClass: "flex_row_center" },
+                                        [
+                                          t("i", {
+                                            directives: [
+                                              {
+                                                name: "show",
+                                                rawName: "v-show",
+                                                value: 1 == s.row.status,
+                                                expression:
+                                                  "scope.row.status == 1",
+                                              },
+                                            ],
+                                            staticClass: "el-icon-top",
+                                          }),
+                                          t("i", {
+                                            directives: [
+                                              {
+                                                name: "show",
+                                                rawName: "v-show",
+                                                value: 0 == s.row.status,
+                                                expression:
+                                                  "scope.row.status == 0",
+                                              },
+                                            ],
+                                            staticClass: "el-icon-bottom",
+                                          }),
+                                          e.currentContextIndex == s.$index &&
+                                          e.modifyFlag
+                                            ? t(
+                                                "el-input",
+                                                {
+                                                  ref: "inputModifyKey",
+                                                  on: {
+                                                    focus:
+                                                      e.handleModifyKeyFocus,
+                                                  },
+                                                  model: {
+                                                    value: e.tmpKeyValue,
+                                                    callback: function (t) {
+                                                      e.tmpKeyValue = t;
+                                                    },
+                                                    expression: "tmpKeyValue",
+                                                  },
+                                                },
+                                                [
+                                                  e._v(
+                                                    e._s(e.getKeyText(s.row)),
+                                                  ),
+                                                ],
+                                              )
+                                            : t(
+                                                "span",
+                                                { staticClass: "margin_left" },
+                                                [
+                                                  e._v(
+                                                    e._s(e.getKeyText(s.row)),
+                                                  ),
+                                                ],
+                                              ),
+                                        ],
+                                        1,
+                                      ),
+                                    ];
+                                  },
+                                },
+                              ]),
+                            }),
+                            t("el-table-column", {
+                              scopedSlots: e._u([
+                                {
+                                  key: "default",
+                                  fn: function (s) {
+                                    return [
+                                      t(
+                                        "div",
+                                        {
+                                          staticStyle: {
+                                            display: "flex",
+                                            "flex-direction": "row",
+                                            "align-items": "center",
+                                          },
+                                        },
+                                        [
+                                          t("i", {
+                                            staticClass:
+                                              "el-icon-time margin_left",
+                                          }),
+                                          e.currentContextIndex == s.$index &&
+                                          e.modifyFlag
+                                            ? t(
+                                                "el-input",
+                                                {
+                                                  attrs: {
+                                                    max: "65535",
+                                                    type: "number",
+                                                  },
+                                                  on: {
+                                                    input:
+                                                      e.handleModifyDelayInput,
+                                                    blur: e.handleModifyDelayBlur,
+                                                  },
+                                                  model: {
+                                                    value: e.tmpKeyDelay,
+                                                    callback: function (t) {
+                                                      e.tmpKeyDelay = e._n(t);
+                                                    },
+                                                    expression: "tmpKeyDelay",
+                                                  },
+                                                },
+                                                [e._v(e._s(s.row.delay))],
+                                              )
+                                            : t(
+                                                "span",
+                                                {
+                                                  staticClass: "key_delay_span",
+                                                },
+                                                [e._v(e._s(s.row.delay))],
+                                              ),
+                                        ],
+                                        1,
+                                      ),
+                                    ];
+                                  },
+                                },
+                              ]),
+                            }),
+                          ],
+                          1,
+                        ),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      { staticClass: "flex_row content_between" },
+                      [
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "macro_operation_button",
+                            on: { click: e.handleModifyKeyCLick },
+                          },
+                          [
+                            t("span", { attrs: { lang: "Modify" } }, [
+                              e._v("修改"),
+                            ]),
+                          ],
+                        ),
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "macro_operation_button",
+                            on: { click: e.handleDeleteKeyClick },
+                          },
+                          [
+                            t("span", { attrs: { lang: "Delete" } }, [
+                              e._v("删除"),
+                            ]),
+                          ],
+                        ),
+                      ],
+                      1,
+                    ),
+                  ],
+                ),
+                t(
+                  "div",
+                  {
+                    staticClass: "flex_column_start macro_height",
+                    staticStyle: { "justify-content": "space-evenly" },
+                  },
+                  [
+                    t(
+                      "el-button",
+                      {
+                        staticClass: "macro_record_width",
+                        on: { click: e.handleRecordClick },
+                      },
+                      [
+                        t("span", { class: e.recordClass }),
+                        e._v(" " + e._s(e.recordLabel)),
+                      ],
+                    ),
+                    t(
+                      "div",
+                      { staticClass: "flex_column_start delay_box" },
+                      [
+                        t(
+                          "el-radio",
+                          {
+                            staticClass: "flex_row_center",
+                            attrs: { label: "1" },
+                            model: {
+                              value: e.delayAction,
+                              callback: function (t) {
+                                e.delayAction = t;
+                              },
+                              expression: "delayAction",
+                            },
+                          },
+                          [
+                            t("span", { attrs: { lang: "AutoDelay" } }, [
+                              e._v("自动插入延时"),
+                            ]),
+                          ],
+                        ),
+                        t(
+                          "el-radio",
+                          {
+                            staticClass: "flex_row_center",
+                            attrs: { label: "2" },
+                            model: {
+                              value: e.delayAction,
+                              callback: function (t) {
+                                e.delayAction = t;
+                              },
+                              expression: "delayAction",
+                            },
+                          },
+                          [
+                            t("span", { attrs: { lang: "DefaultDelay" } }, [
+                              e._v("默认延时"),
+                            ]),
+                          ],
+                        ),
+                        t("el-input", {
+                          staticClass: "macro_record_width",
+                          attrs: {
+                            disabled: e.isRecording,
+                            placeholder: "10-65535",
+                          },
+                          on: { blur: e.handleDefaultDelayBlur },
+                          model: {
+                            value: e.defaultDelay,
+                            callback: function (t) {
+                              e.defaultDelay = t;
+                            },
+                            expression: "defaultDelay",
+                          },
+                        }),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      { staticClass: "flex_column_start cycle_box" },
+                      [
+                        t(
+                          "el-radio",
+                          {
+                            directives: [
+                              {
+                                name: "removeAriaHidden",
+                                rawName: "v-removeAriaHidden",
+                              },
+                            ],
+                            staticClass: "flex_row_center",
+                            attrs: { label: "254" },
+                            model: {
+                              value: e.cycleAction,
+                              callback: function (t) {
+                                e.cycleAction = t;
+                              },
+                              expression: "cycleAction",
+                            },
+                          },
+                          [
+                            t(
+                              "span",
+                              { attrs: { lang: "UntilThisReleased" } },
+                              [e._v("循环直到此按键松开")],
+                            ),
+                          ],
+                        ),
+                        t(
+                          "el-radio",
+                          {
+                            directives: [
+                              {
+                                name: "removeAriaHidden",
+                                rawName: "v-removeAriaHidden",
+                              },
+                            ],
+                            staticClass: "flex_row_center",
+                            attrs: { label: "255" },
+                            model: {
+                              value: e.cycleAction,
+                              callback: function (t) {
+                                e.cycleAction = t;
+                              },
+                              expression: "cycleAction",
+                            },
+                          },
+                          [
+                            t("span", { attrs: { lang: "UntilAnyPressed" } }, [
+                              e._v("循环直到任意键按下"),
+                            ]),
+                          ],
+                        ),
+                        t(
+                          "el-radio",
+                          {
+                            directives: [
+                              {
+                                name: "removeAriaHidden",
+                                rawName: "v-removeAriaHidden",
+                              },
+                            ],
+                            staticClass: "flex_row_center",
+                            attrs: { label: "253" },
+                            model: {
+                              value: e.cycleAction,
+                              callback: function (t) {
+                                e.cycleAction = t;
+                              },
+                              expression: "cycleAction",
+                            },
+                          },
+                          [
+                            t("span", { attrs: { lang: "UntilThisPressed" } }, [
+                              e._v("循环直到此按键再次按下"),
+                            ]),
+                          ],
+                        ),
+                        t(
+                          "el-radio",
+                          {
+                            directives: [
+                              {
+                                name: "removeAriaHidden",
+                                rawName: "v-removeAriaHidden",
+                              },
+                            ],
+                            staticClass: "flex_row_center",
+                            attrs: { label: "1" },
+                            model: {
+                              value: e.cycleAction,
+                              callback: function (t) {
+                                e.cycleAction = t;
+                              },
+                              expression: "cycleAction",
+                            },
+                          },
+                          [
+                            t("span", { attrs: { lang: "CycleTimes" } }, [
+                              e._v("循环次数"),
+                            ]),
+                          ],
+                        ),
+                        t("el-input", {
+                          staticClass: "macro_record_width",
+                          attrs: {
+                            disabled: e.isRecording,
+                            placeholder: "1-250",
+                          },
+                          on: { blur: e.handleCycleTimesBlur },
+                          model: {
+                            value: e.cycleTimes,
+                            callback: function (t) {
+                              e.cycleTimes = t;
+                            },
+                            expression: "cycleTimes",
+                          },
+                        }),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      { staticClass: "flex_column_start insert_box" },
+                      [
+                        t("span", { attrs: { lang: "InsertEvent" } }, [
+                          e._v("插入事件"),
+                        ]),
+                        t(
+                          "el-dropdown",
+                          {
+                            staticClass: "macro_record_width",
+                            staticStyle: { border: "1px solid" },
+                            attrs: {
+                              trigger: "click",
+                              disabled: e.isRecording,
+                            },
+                            on: { command: e.handleInsertEventCommand },
+                            model: {
+                              value: e.insertCommand,
+                              callback: function (t) {
+                                e.insertCommand = t;
+                              },
+                              expression: "insertCommand",
+                            },
+                          },
+                          [
+                            t(
+                              "span",
+                              {
+                                staticClass:
+                                  "el-dropdown-link macro_record_width flex_center macro_record_height",
+                              },
+                              [
+                                t("i", {
+                                  staticClass:
+                                    "el-icon-arrow-down el-icon--right",
+                                }),
+                              ],
+                            ),
+                            t(
+                              "el-dropdown-menu",
+                              { attrs: { slot: "dropdown" }, slot: "dropdown" },
+                              e._l(e.insertEventOptions, function (s, i) {
+                                return t(
+                                  "el-dropdown-item",
+                                  { key: i, attrs: { command: s.command } },
+                                  [e._v(e._s(s.option))],
+                                );
+                              }),
+                              1,
+                            ),
+                          ],
+                          1,
+                        ),
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "macro_record_width",
+                            class: e.saveTipsFlag
+                              ? "save_highlight_button"
+                              : "save_button",
+                            attrs: { disabled: 0 == e.saveTipsFlag },
+                            on: { click: e.handleSaveClick },
+                          },
+                          [
+                            t("span", { attrs: { lang: "Save" } }, [
+                              e._v("保存"),
+                            ]),
+                          ],
+                        ),
+                      ],
+                      1,
+                    ),
+                  ],
+                  1,
+                ),
+                t("tips", { ref: "tipsDialog", attrs: { text: e.tipsText } }),
+                t("input-name", {
+                  ref: "inputName",
+                  attrs: { text: e.inputNameText },
+                }),
+                t("input-key", { ref: "inputKey" }),
+              ],
+              1,
+            );
+          },
+          ha = [],
+          da = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "el-dialog",
+              {
+                ref: "fire-key",
+                attrs: {
+                  title: e.title,
+                  visible: e.visible,
+                  "custom-class": "dialog_class",
+                },
+                on: { open: e.onOpen, close: e.onClose },
+              },
+              [
+                t(
+                  "span",
+                  {
+                    staticClass: "dialog-footer",
+                    attrs: { slot: "footer" },
+                    slot: "footer",
+                  },
+                  [
+                    t(
+                      "div",
+                      { staticClass: "flex_column_around_center" },
+                      [
+                        t("span", {
+                          staticClass: "dialog_span_padding",
+                          attrs: { lang: "DialogShortcutKeyTips" },
+                        }),
+                        t("el-input", {
+                          staticStyle: { width: "25vw", "margin-top": "1vh" },
+                          attrs: { disabled: !0 },
+                          model: {
+                            value: e.key,
+                            callback: function (t) {
+                              e.key = t;
+                            },
+                            expression: "key",
+                          },
+                        }),
+                      ],
+                      1,
+                    ),
+                    t(
+                      "div",
+                      {
+                        staticClass: "flex_row_center content_evenly",
+                        staticStyle: { "margin-top": "3vh" },
+                      },
+                      [
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "dialog_button",
+                            attrs: { lang: "OK" },
+                            on: { click: e.handleOKClick },
+                          },
+                          [e._v("确 定")],
+                        ),
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "dialog_button",
+                            attrs: { lang: "Cancel" },
+                            on: { click: e.handleCancelClick },
+                          },
+                          [e._v("取 消")],
+                        ),
+                      ],
+                      1,
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+          fa = [],
+          pa = {
+            extends: "el-dialog",
+            props: { title: { type: String, default: "" } },
+            data() {
+              return { visible: !1, key: "", result: {} };
+            },
+            methods: {
+              onOpen() {
+                ((this.key = ""),
+                  (this.result = { result: !1 }),
+                  window.addEventListener("keydown", this.handleKeyDown));
+              },
+              onClose() {
+                (window.removeEventListener("keydown", this.handleKeyDown),
+                  this.$bus.$emit("inputKey", this.result),
+                  (this.visible = !1));
+              },
+              handleKeyDown(e) {
+                var t = p.keyToHID(e.code);
+                null != t &&
+                  ((this.key = p.keyToHID(e.code).text),
+                  console.log("inputkey handleKeyDown", e, this.key),
+                  e.preventDefault());
+              },
+              handleOKClick() {
+                ("" != this.key &&
+                  (this.result = { result: !0, key: this.key }),
+                  (this.visible = !1));
+              },
+              handleCancelClick() {
+                this.visible = !1;
+              },
+            },
+            created() {
+              this.$bus.$on("closeDialog", () => {
+                this.visible && (this.visible = !1);
+              });
+            },
+            beforeDestroy() {
+              this.$bus.$off("closeDialog");
+            },
+          },
+          ga = pa,
+          ma = (0, Ds.A)(ga, da, fa, !1, null, "bf818f26", null),
+          va = ma.exports,
+          ya = {
+            components: { Tips: Ms, InputName: fi, InputKey: va },
+            data() {
+              return {
+                macros: [],
+                currentMacroIndex: -1,
+                macroChange: !1,
+                contexts: [],
+                currentContextIndex: -1,
+                contextCount: 0,
+                lastTimeStamp: 0,
+                keyInterval: 0,
+                restartRecord: !1,
+                tmpKeyValue: "",
+                inputKeyValue: "",
+                tmpKeyDelay: 10,
+                modifyFlag: !1,
+                isRecording: !1,
+                recordLabel: "开始录制",
+                recordClass: "circle",
+                saveTipsFlag: !1,
+                saveMacroFirst: !1,
+                delayAction: "1",
+                defaultDelay: "10",
+                cycleAction: "1",
+                cycleTimes: 1,
+                insertCommand: "0",
+                insertEventOptions: [],
+                macroKeyType: "modify",
+                language: {},
+                tipsText: "",
+                inputNameText: "",
+                newMacroName: !1,
+              };
+            },
+            methods: {
+              stopRecordFirst() {
+                return (
+                  this.isRecording &&
+                    ((this.tipsText = this.language.DialogStopRecordFirst),
+                    (this.$refs.tipsDialog.visible = !0)),
+                  this.isRecording
+                );
+              },
+              handleMacroRowClick(e) {
+                null != e &&
+                  0 == this.isRecording &&
+                  ((this.currentMacroIndex = this.macros.indexOf(e)),
+                  (this.contexts = X.Deep_Clone_Array(e.contexts)),
+                  (this.cycleAction =
+                    e.cycleTimes < 251 ? "1" : e.cycleTimes.toString()),
+                  "1" == this.cycleAction
+                    ? (this.cycleTimes = e.cycleTimes.toString())
+                    : (this.cycleTimes = "1"),
+                  (this.currentContextIndex = -1),
+                  (this.saveTipsFlag = !1),
+                  (this.macroChange = !0));
+              },
+              handleMacroRowContextmenu(e, t, s) {
+                console.log("handleMacroRowContextmenu", e, t, s);
+              },
+              handleNewMacroClick() {
+                0 == this.stopRecordFirst() &&
+                  ((this.newMacroName = !0),
+                  (this.$refs.inputName.visible = !0));
+              },
+              handleDeleteMacroCLick() {
+                0 == this.stopRecordFirst() &&
+                  -1 != this.currentMacroIndex &&
+                  ((this.tipsText = this.language.DialogDeleteMacro),
+                  (this.$refs.tipsDialog.visible = !0));
+              },
+              handleModifyMacroClick(e) {
+                0 == this.stopRecordFirst() &&
+                  ((this.currentMacroIndex = e),
+                  (this.newMacroName = !1),
+                  (this.$refs.inputName.visible = !0));
+              },
+              handleKeyCurrentChange(e) {
+                (console.log("handleKeyCurrentChange", e),
+                  null != e
+                    ? ((this.currentContextIndex = this.contexts.indexOf(e)),
+                      (this.tmpKeyValue = this.getCurrentKeyValue()),
+                      (this.tmpKeyDelay =
+                        this.contexts[this.currentContextIndex].delay),
+                      (this.modifyFlag = !1))
+                    : (this.currentContextIndex = -1));
+              },
+              getCurrentKeyValue() {
+                var e = this.contexts[this.currentContextIndex],
+                  t = this.getInsertEventText(e);
+                return null != t ? t : p.HIDToKey(e).text;
+              },
+              handleModifyKeyCLick() {
+                0 == this.stopRecordFirst() &&
+                  -1 != this.currentContextIndex &&
+                  (this.modifyFlag = !0);
+              },
+              handleModifyKeyFocus() {
+                ((this.macroKeyType = "modify"),
+                  (this.$refs.inputKey.visible = !0),
+                  this.$refs.inputModifyKey.$refs.input.blur());
+              },
+              handleModifyDelayInput(e) {
+                var t = e.replace(/[^\d]/g, "");
+                ((this.contexts[this.currentContextIndex].delay = t
+                  ? Math.max(10, Math.min(t, 65535))
+                  : 10),
+                  (this.saveMacroFirst = !0),
+                  (this.saveTipsFlag = !0));
+              },
+              handleModifyDelayBlur() {
+                this.modifyFlag = !1;
+              },
+              handleDeleteKeyClick() {
+                0 == this.stopRecordFirst() &&
+                  -1 != this.currentContextIndex &&
+                  (this.contexts.splice(this.currentContextIndex, 1),
+                  (this.currentContextIndex = -1),
+                  (this.saveMacroFirst = !0),
+                  (this.saveTipsFlag = !0));
+              },
+              handleRecordClick() {
+                if (-1 == this.currentMacroIndex)
+                  return (
+                    (this.tipsText = this.language.DialogSelectMacroFirst),
+                    void (this.$refs.tipsDialog.visible = !0)
+                  );
+                ((this.isRecording = !this.isRecording),
+                  (this.saveTipsFlag = !this.isRecording),
+                  (this.recordLabel = this.isRecording
+                    ? this.language.StopRecord
+                    : this.language.StartRecord),
+                  (this.recordClass = this.isRecording ? "square" : "circle"),
+                  this.isRecording
+                    ? (document.addEventListener("keydown", this.handleKeyDown),
+                      document.addEventListener("keyup", this.handleKeyUp),
+                      (this.contextCount = 0),
+                      (this.restartRecord = !0),
+                      (this.modifyFlag = !1),
+                      parseInt(this.defaultDelay, 10) < 10 &&
+                        (this.defaultDelay = "10"),
+                      (this.contexts = []))
+                    : (document.removeEventListener(
+                        "keydown",
+                        this.handleKeyDown,
+                      ),
+                      document.removeEventListener("keyup", this.handleKeyUp),
+                      (this.saveMacroFirst = !0)),
+                  this.$bus.$emit("macroRecording", this.isRecording));
+              },
+              addKeyContext(e, t) {
+                if ((e.preventDefault(), this.contexts.length < 70)) {
+                  var s = 0;
+                  (this.restartRecord
+                    ? ((this.restartRecord = !1),
+                      (this.lastTimeStamp = e.timeStamp))
+                    : ((s = Math.floor(e.timeStamp - this.lastTimeStamp)),
+                      (this.lastTimeStamp = e.timeStamp)),
+                    2 == this.delayAction && (s = this.defaultDelay));
+                  var i = p.keyToHID(e.code),
+                    a = {
+                      status: t.status,
+                      type: i.type,
+                      value: i.value,
+                      delay: 0,
+                    };
+                  (this.contexts.length > 0 &&
+                    (this.contexts[this.contexts.length - 1].delay = s),
+                    this.contexts.push(a),
+                    this.$nextTick(function () {
+                      this.$refs.keyTable.bodyWrapper.scrollTop =
+                        this.$refs.keyTable.bodyWrapper.scrollHeight;
+                    }));
+                } else
+                  ((this.tipsText = this.language.DialogMaxMacroKey),
+                    (this.$refs.tipsDialog.visible = !0));
+                this.currentContextIndex = this.contexts.length - 1;
+              },
+              handleKeyDown(e) {
+                if (this.isRecording) {
+                  var t = { status: 0, type: 1, value: e.keyCode };
+                  this.addKeyContext(e, t);
+                }
+              },
+              handleKeyUp(e) {
+                if (this.isRecording) {
+                  var t = { status: 1, type: 1, value: e.keyCode };
+                  this.addKeyContext(e, t);
+                }
+              },
+              handleDefaultDelayBlur() {
+                ((this.defaultDelay = this.defaultDelay.replace(/\s/g, "")),
+                  "" == this.defaultDelay
+                    ? (this.defaultDelay = "10")
+                    : (parseInt(this.defaultDelay, 10) > 65535 &&
+                        (this.defaultDelay = "65535"),
+                      parseInt(this.defaultDelay, 10) < 10 &&
+                        (this.defaultDelay = "10")));
+              },
+              handleCycleTimesBlur() {
+                ((this.cycleTimes = this.cycleTimes.replace(/\s/g, "")),
+                  "" == this.cycleTimes
+                    ? (this.cycleTimes = "1")
+                    : (parseInt(this.cycleTimes, 10) > 250 &&
+                        (this.cycleTimes = "250"),
+                      parseInt(this.cycleTimes, 10) < 1 &&
+                        (this.cycleTimes = "1")),
+                  -1 != this.currentMacroIndex && (this.saveTipsFlag = !0));
+              },
+              handleInsertEventCommand(e) {
+                if (-1 == this.currentMacroIndex)
+                  ((this.tipsText = this.language.DialogSelectMacroFirst),
+                    (this.$refs.tipsDialog.visible = !0));
+                else if (((this.insertCommand = e), e < 2))
+                  ((this.macroKeyType = "insert"),
+                    (this.$refs.inputKey.visible = !0));
+                else {
+                  ((this.saveMacroFirst = !0), (this.saveTipsFlag = !0));
+                  var t = this.currentContextIndex,
+                    s = !1;
+                  (-1 == t && (t = 0),
+                    t == this.contexts.length - 1 && (s = !0));
+                  var i = X.String_To_Hex(
+                      this.language.InsertEventOptions[e].value,
+                    ),
+                    a = i >> 16,
+                    o = 65535 & i,
+                    n = { status: 1, type: a, value: o, delay: 10 },
+                    r = { status: 0, type: a, value: o, delay: 10 };
+                  (s
+                    ? (this.contexts.push(r), this.contexts.push(n))
+                    : (this.contexts.splice(t, 0, n),
+                      this.contexts.splice(t, 0, r)),
+                    (this.currentContextIndex = this.contexts.length - 1));
+                }
+              },
+              async handleSaveClick() {
+                if (-1 != this.currentMacroIndex && this.saveTipsFlag) {
+                  var e = 1;
+                  ((this.modifyFlag = !1),
+                    1 == this.cycleAction
+                      ? (this.cycleTimes < 1 && (this.cycleTimes = 1),
+                        this.cycleTimes > 250 && (this.cycleTimes = 250),
+                        (e = this.cycleTimes))
+                      : (e = this.cycleAction),
+                    (this.saveMacroFirst = !1),
+                    (this.saveTipsFlag = !1));
+                  var t = this.macros[this.currentMacroIndex].name;
+                  console.log(
+                    "handleSaveClick",
+                    this.macros,
+                    bs.deviceInfo.mouseCfg.macros,
+                    this.currentMacroIndex,
+                    t,
+                  );
+                  for (
+                    var s = [], i = 0;
+                    i < bs.deviceInfo.mouseCfg.macros.length;
+                    i++
+                  )
+                    if (bs.deviceInfo.mouseCfg.macros[i].name == t) {
+                      if (this.macros[this.currentMacroIndex].cycleTimes != e) {
+                        var a = parseInt(e),
+                          o = {
+                            type: bs.MouseKeyFunction.Macro,
+                            param: (i << 8) | a,
+                          };
+                        await bs.Set_MS_KeyFunction(i, o);
+                      }
+                      if (
+                        this.macros[this.currentMacroIndex].contexts.length ==
+                        this.contexts.length
+                      ) {
+                        for (var n = 0; n < this.contexts.length; n++)
+                          if (
+                            this.macros[this.currentMacroIndex].contexts[n]
+                              .delay != this.contexts[n].delay ||
+                            this.macros[this.currentMacroIndex].contexts[n]
+                              .status != this.contexts[n].status ||
+                            this.macros[this.currentMacroIndex].contexts[n]
+                              .type != this.contexts[n].type ||
+                            this.macros[this.currentMacroIndex].contexts[n]
+                              .value != this.contexts[n].value
+                          ) {
+                            (s.push(i), !0);
+                            break;
+                          }
+                      } else (s.push(i), !0);
+                      console.log("same name", i, this.contexts);
+                    }
+                  ((this.macros[this.currentMacroIndex].cycleTimes = e),
+                    (this.macros[this.currentMacroIndex].contexts = []));
+                  for (i = 0; i < this.contexts.length; i++) {
+                    var r = {
+                      status: this.contexts[i].status,
+                      type: this.contexts[i].type,
+                      value: this.contexts[i].value,
+                      delay: this.contexts[i].delay,
+                    };
+                    this.macros[this.currentMacroIndex].contexts[i] = r;
+                  }
+                  for (i = 0; i < s.length; i++)
+                    await bs.Set_MS_Macro(
+                      s[i],
+                      this.macros[this.currentMacroIndex],
+                    );
+                  (this.saveLocalStorage(), console.log(this.macros, e));
+                }
+              },
+              macroRowName({ row: e, rowIndex: t }) {
+                return t == this.currentMacroIndex
+                  ? "select-row"
+                  : "unselect-row";
+              },
+              keyRowName({ row: e, rowIndex: t }) {
+                return t == this.currentContextIndex
+                  ? "select-row"
+                  : "unselect-row";
+              },
+              saveLocalStorage() {
+                (localStorage.setItem("macro", JSON.stringify(this.macros)),
+                  this.updateMacroList(this.macros));
+              },
+              updateMacroList(e) {
+                this.$bus.$emit("updateMacroList", e);
+              },
+              getInsertEventText(e) {
+                for (
+                  var t = (e.type << 16) + e.value, s = 2;
+                  s < this.language.InsertEventOptions.length;
+                  s++
+                ) {
+                  var i = X.String_To_Hex(
+                    this.language.InsertEventOptions[s].value,
+                  );
+                  if (t == i)
+                    return (
+                      console.log(
+                        "getInsertEventText",
+                        t,
+                        this.language.InsertEventOptions[s].option,
+                      ),
+                      this.language.InsertEventOptions[s].option
+                    );
+                }
+                return null;
+              },
+            },
+            watch: {
+              cycleAction: {
+                handler() {
+                  -1 != this.currentMacroIndex &&
+                    (this.macroChange
+                      ? ((this.macroChange = !1), (this.saveTipsFlag = !0))
+                      : (this.saveTipsFlag = !0),
+                    console.log(
+                      "watch cycleAction",
+                      this.macroChange,
+                      this.saveTipsFlag,
+                    ));
+                },
+              },
+              saveMacroFirst: {
+                handler() {
+                  this.$bus.$emit("saveMacroFirst", this.saveMacroFirst);
+                },
+              },
+            },
+            computed: {
+              getKeyText() {
+                return (e) => {
+                  var t = this.getInsertEventText(e);
+                  return null != t ? t : p.HIDToKey(e).text;
+                };
+              },
+            },
+            created() {
+              var e = localStorage.getItem("macro");
+              if (e)
+                try {
+                  var t = [];
+                  t.push(JSON.parse(e));
+                  for (var s = 0; s < t[0].length; s++)
+                    this.macros.push(t[0][s]);
+                  this.updateMacroList(this.macros);
+                } catch (i) {
+                  console.error("Macro parsing error", i);
+                }
+              (this.$bus.$on("updateMouseUI", (e) => {
+                for (var t = 0; t < e.macros.length; t++)
+                  if (
+                    "" != e.macros[t].name &&
+                    e.macros[t].contexts.length >= 2
+                  ) {
+                    for (var s = !0, i = 0; i < this.macros.length; i++)
+                      if (e.macros[t].name == this.macros[i].name) {
+                        ((s = !1),
+                          (this.macros[i].contexts = e.macros[t].contexts),
+                          (this.macros[i].cycleTimes = e.macros[t].cycleTimes));
+                        break;
+                      }
+                    s && this.macros.push(e.macros[t]);
+                  }
+                this.saveLocalStorage();
+              }),
+                this.$bus.$on("setMouseMacro", async (e, t) => {
+                  for (var s = 0; s < this.macros.length; s++)
+                    if (t == this.macros[s].name) {
+                      await bs.Set_MS_Macro(e, this.macros[s]);
+                      break;
+                    }
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e &&
+                    ((this.language = e),
+                    (this.insertEventOptions = e.InsertEventOptions),
+                    (this.recordLabel = e.StartRecord),
+                    (this.inputNameText = e.DialogInputMacroName));
+                }),
+                this.$bus.$on("tipsResult", async (e) => {
+                  if (
+                    this.$refs.tipsDialog.visible &&
+                    1 == e &&
+                    this.tipsText == this.language.DialogDeleteMacro
+                  ) {
+                    for (
+                      var t = this.macros[this.currentMacroIndex].name, s = 0;
+                      s < bs.deviceInfo.mouseCfg.macros.length;
+                      s++
+                    )
+                      bs.deviceInfo.mouseCfg.macros[s].name == t &&
+                        (await bs.Restore_MS_Macro(s),
+                        this.$bus.$emit("restoreKeyfunction", s));
+                    ((this.contexts = []),
+                      this.macros.splice(this.currentMacroIndex, 1),
+                      this.saveLocalStorage(),
+                      (this.currentMacroIndex = -1),
+                      (this.saveTipsFlag = !1),
+                      (this.saveMacroFirst = !1));
+                  }
+                }),
+                this.$bus.$on("inputName", async (e) => {
+                  if (this.$refs.inputName.visible && 1 == e.result) {
+                    for (var t = !1, s = 0; s < this.macros.length; s++)
+                      if (this.macros[s].name == e.name) {
+                        ((this.tipsText = this.language.DialogSameMacroName),
+                          (this.$refs.tipsDialog.visible = !0),
+                          (t = !0));
+                        break;
+                      }
+                    if (0 == t) {
+                      if (this.newMacroName) {
+                        var i = { name: e.name, contexts: [], cycleTimes: 1 };
+                        ((this.cycleAction = "1"),
+                          this.macros.push(i),
+                          (this.currentMacroIndex = this.macros.length - 1),
+                          (this.currentContextIndex = -1),
+                          (this.contexts = []));
+                      } else {
+                        var a = this.macros[this.currentMacroIndex].name,
+                          o = [];
+                        for (
+                          s = 0;
+                          s < bs.deviceInfo.mouseCfg.macros.length;
+                          s++
+                        )
+                          bs.deviceInfo.mouseCfg.macros[s].name == a &&
+                            o.push(s);
+                        this.macros[this.currentMacroIndex].name = e.name;
+                        for (s = 0; s < o.length; s++)
+                          await bs.Set_MS_Macro(
+                            o[s],
+                            this.macros[this.currentMacroIndex],
+                          );
+                      }
+                      this.saveLocalStorage();
+                    }
+                  }
+                }),
+                this.$bus.$on("inputKey", async (e) => {
+                  if (1 == e.result) {
+                    var t = p.textToHID(e.key);
+                    if (
+                      ((this.saveMacroFirst = !0),
+                      (this.saveTipsFlag = !0),
+                      "insert" == this.macroKeyType)
+                    ) {
+                      var s = {
+                          status: this.insertCommand,
+                          type: t.type,
+                          value: t.value,
+                          delay: 10,
+                        },
+                        i = this.currentContextIndex,
+                        a = !1;
+                      (-1 == i && (i = 0),
+                        i == this.contexts.length - 1 && (a = !0),
+                        a
+                          ? this.contexts.push(s)
+                          : this.contexts.splice(
+                              this.currentContextIndex,
+                              0,
+                              s,
+                            ),
+                        (this.currentContextIndex = this.contexts.length - 1));
+                    } else
+                      ((this.contexts[this.currentContextIndex].type = t.type),
+                        (this.contexts[this.currentContextIndex].value =
+                          t.value),
+                        (this.tmpKeyValue = this.getCurrentKeyValue()),
+                        console.log("input key:", this.contexts));
+                  }
+                  this.modifyFlag = !1;
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("setMouseMacro"),
+                this.$bus.$off("languageChange"),
+                this.$bus.$off("tipsResult"),
+                this.$bus.$off("inputName"),
+                this.$bus.$off("inputKey"));
+            },
+          },
+          _a = ya,
+          ba = (0, Ds.A)(_a, ua, ha, !1, null, "6bc1a2ba", null),
+          Ca = ba.exports,
+          wa = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "mouse_light" }, [
+              t(
+                "div",
+                { staticClass: "flex_row mouse_light_height content_between" },
+                [
+                  t(
+                    "div",
+                    { staticClass: "flex_column_start content_between" },
+                    [
+                      t(
+                        "div",
+                        {
+                          staticClass:
+                            "flex_column_start content_between light_section",
+                        },
+                        [
+                          t("span", { attrs: { lang: "LightMode" } }, [
+                            e._v("灯光模式"),
+                          ]),
+                          t(
+                            "select",
+                            {
+                              directives: [
+                                {
+                                  name: "model",
+                                  rawName: "v-model",
+                                  value: e.mode,
+                                  expression: "mode",
+                                },
+                              ],
+                              staticClass: "control_width light_margin",
+                              on: {
+                                change: [
+                                  function (t) {
+                                    var s = Array.prototype.filter
+                                      .call(t.target.options, function (e) {
+                                        return e.selected;
+                                      })
+                                      .map(function (e) {
+                                        var t =
+                                          "_value" in e ? e._value : e.value;
+                                        return t;
+                                      });
+                                    e.mode = t.target.multiple ? s : s[0];
+                                  },
+                                  e.handleModeChange,
+                                ],
+                              },
+                            },
+                            e._l(e.lightModeOptions, function (s) {
+                              return t(
+                                "option",
+                                { key: s.value, domProps: { value: s.value } },
+                                [e._v(e._s(s.option))],
+                              );
+                            }),
+                            0,
+                          ),
+                          t("span", { attrs: { lang: "Brightness" } }, [
+                            e._v("亮度"),
+                          ]),
+                          t(
+                            "div",
+                            { staticClass: "flex_row_center" },
+                            [
+                              t("el-slider", {
+                                staticClass: "control_width light_margin",
+                                attrs: {
+                                  "show-tooltip": !1,
+                                  min: e.min,
+                                  max: e.max,
+                                  disabled: e.brightnessDisable,
+                                },
+                                on: { change: e.handleBrightnessChange },
+                                model: {
+                                  value: e.brightness,
+                                  callback: function (t) {
+                                    e.brightness = t;
+                                  },
+                                  expression: "brightness",
+                                },
+                              }),
+                              t("span", [e._v(e._s(e.brightness + 1))]),
+                            ],
+                            1,
+                          ),
+                          t("span", { attrs: { lang: "Speed" } }, [
+                            e._v("速度"),
+                          ]),
+                          t(
+                            "div",
+                            { staticClass: "flex_row_center" },
+                            [
+                              t("el-slider", {
+                                staticClass: "control_width light_margin",
+                                attrs: {
+                                  "show-tooltip": !1,
+                                  min: e.min,
+                                  max: e.max,
+                                  disabled: e.speedDisable,
+                                },
+                                on: { change: e.handleSpeedChange },
+                                model: {
+                                  value: e.speed,
+                                  callback: function (t) {
+                                    e.speed = t;
+                                  },
+                                  expression: "speed",
+                                },
+                              }),
+                              t("span", [e._v(e._s(e.speed + 1))]),
+                            ],
+                            1,
+                          ),
+                        ],
+                      ),
+                      t(
+                        "div",
+                        {
+                          staticClass:
+                            "flex_column_start content_between light_operation_section",
+                        },
+                        [
+                          t(
+                            "div",
+                            {
+                              staticClass:
+                                "flex_row_center content_between moving_off_width",
+                            },
+                            [
+                              t(
+                                "span",
+                                {
+                                  staticStyle: { "text-align": "left" },
+                                  attrs: { lang: "MovingOffLight" },
+                                },
+                                [e._v("移动时关灯")],
+                              ),
+                              t("el-switch", {
+                                attrs: { disabled: 0 == e.lightState },
+                                on: { change: e.handleMovingOffChange },
+                                model: {
+                                  value: e.movingOffState,
+                                  callback: function (t) {
+                                    e.movingOffState = t;
+                                  },
+                                  expression: "movingOffState",
+                                },
+                              }),
+                            ],
+                            1,
+                          ),
+                          t(
+                            "div",
+                            {
+                              staticClass:
+                                "flex_row_center content_between control_width",
+                            },
+                            [
+                              t(
+                                "span",
+                                {
+                                  staticStyle: { "text-align": "left" },
+                                  attrs: { lang: "LightOffTime" },
+                                },
+                                [e._v("放停后灯光关闭时间")],
+                              ),
+                              t(
+                                "select",
+                                {
+                                  directives: [
+                                    {
+                                      name: "model",
+                                      rawName: "v-model",
+                                      value: e.lightOffTime,
+                                      expression: "lightOffTime",
+                                    },
+                                  ],
+                                  staticClass: "stop_off_time_select",
+                                  attrs: { disabled: 0 == e.lightState },
+                                  on: {
+                                    change: [
+                                      function (t) {
+                                        var s = Array.prototype.filter
+                                          .call(t.target.options, function (e) {
+                                            return e.selected;
+                                          })
+                                          .map(function (e) {
+                                            var t =
+                                              "_value" in e
+                                                ? e._value
+                                                : e.value;
+                                            return t;
+                                          });
+                                        e.lightOffTime = t.target.multiple
+                                          ? s
+                                          : s[0];
+                                      },
+                                      e.handleLightOffTimeChange,
+                                    ],
+                                  },
+                                },
+                                e._l(e.lightOffTimeOptions, function (s) {
+                                  return t(
+                                    "option",
+                                    {
+                                      key: s.value,
+                                      domProps: { value: s.value },
+                                    },
+                                    [e._v(e._s(s.option))],
+                                  );
+                                }),
+                                0,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  t(
+                    "div",
+                    {
+                      directives: [
+                        {
+                          name: "show",
+                          rawName: "v-show",
+                          value: !e.colorDisable,
+                          expression: "!colorDisable",
+                        },
+                      ],
+                    },
+                    [
+                      t(
+                        "div",
+                        {
+                          staticClass:
+                            "flex_column_start mouse_light_height content_between",
+                        },
+                        [
+                          t("span", { attrs: { lang: "CustomColor" } }, [
+                            e._v("自定义颜色"),
+                          ]),
+                          t("img", {
+                            ref: "imageElement",
+                            staticClass: "control_width",
+                            attrs: { src: e.colorbarSrc, draggable: "false" },
+                            on: {
+                              click: function (t) {
+                                return e.getPixelColor(t, e.colorbarSrc);
+                              },
+                            },
+                          }),
+                          t("span", { attrs: { lang: "Preview" } }, [
+                            e._v("预览"),
+                          ]),
+                          t("div", { staticClass: "flex_row_center" }, [
+                            t("div", {
+                              staticClass: "preview_color",
+                              style: { backgroundColor: e.backColor },
+                            }),
+                            t(
+                              "div",
+                              {
+                                staticClass: "flex_column",
+                                staticStyle: { "align-items": "flex-end" },
+                              },
+                              [
+                                t(
+                                  "div",
+                                  { staticClass: "flex_row_center" },
+                                  [
+                                    t("span", { attrs: { lang: "Red" } }, [
+                                      e._v("R:"),
+                                    ]),
+                                    t("el-input-number", {
+                                      attrs: { min: 0, max: 255, size: "mini" },
+                                      on: { change: e.handleColorChange },
+                                      model: {
+                                        value: e.r,
+                                        callback: function (t) {
+                                          e.r = t;
+                                        },
+                                        expression: "r",
+                                      },
+                                    }),
+                                  ],
+                                  1,
+                                ),
+                                t(
+                                  "div",
+                                  { staticClass: "flex_row_center" },
+                                  [
+                                    t("span", { attrs: { lang: "Green" } }, [
+                                      e._v("G:"),
+                                    ]),
+                                    t("el-input-number", {
+                                      attrs: { min: 0, max: 255, size: "mini" },
+                                      on: { change: e.handleColorChange },
+                                      model: {
+                                        value: e.g,
+                                        callback: function (t) {
+                                          e.g = t;
+                                        },
+                                        expression: "g",
+                                      },
+                                    }),
+                                  ],
+                                  1,
+                                ),
+                                t(
+                                  "div",
+                                  { staticClass: "flex_row_center" },
+                                  [
+                                    t("span", { attrs: { lang: "Blue" } }, [
+                                      e._v("B:"),
+                                    ]),
+                                    t("el-input-number", {
+                                      attrs: { min: 0, max: 255, size: "mini" },
+                                      on: { change: e.handleColorChange },
+                                      model: {
+                                        value: e.b,
+                                        callback: function (t) {
+                                          e.b = t;
+                                        },
+                                        expression: "b",
+                                      },
+                                    }),
+                                  ],
+                                  1,
+                                ),
+                              ],
+                            ),
+                          ]),
+                          t("span", { attrs: { lang: "Preset" } }, [
+                            e._v("预设"),
+                          ]),
+                          t("div", { staticClass: "flex_column" }, [
+                            t(
+                              "div",
+                              { staticClass: "flex_row" },
+                              e._l(7, function (s) {
+                                return t("div", { key: s }, [
+                                  t("img", {
+                                    ref: "imageElement",
+                                    refInFor: !0,
+                                    staticClass: "preset_color",
+                                    attrs: {
+                                      src: e.presetPath + (s + 0) + ".png",
+                                      draggable: "false",
+                                    },
+                                    on: {
+                                      click: function (t) {
+                                        e.getPixelColor(
+                                          t,
+                                          e.presetPath + (s + 0) + ".png",
+                                        );
+                                      },
+                                    },
+                                  }),
+                                ]);
+                              }),
+                              0,
+                            ),
+                            t(
+                              "div",
+                              { staticClass: "flex_row" },
+                              e._l(7, function (s) {
+                                return t("div", { key: s }, [
+                                  t("img", {
+                                    ref: "imageElement",
+                                    refInFor: !0,
+                                    staticClass: "preset_color",
+                                    attrs: {
+                                      src: e.presetPath + (s + 7) + ".png",
+                                      draggable: "false",
+                                    },
+                                    on: {
+                                      click: function (t) {
+                                        e.getPixelColor(
+                                          t,
+                                          e.presetPath + (s + 7) + ".png",
+                                        );
+                                      },
+                                    },
+                                  }),
+                                ]);
+                              }),
+                              0,
+                            ),
+                          ]),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ]);
+          },
+          xa = [],
+          Sa = {
+            data() {
+              return {
+                mode: 0,
+                lastMode: 0,
+                min: 0,
+                max: 9,
+                lightModeOptions: [],
+                brightnessDisable: !1,
+                brightness: 5,
+                lastBrightness: 5,
+                speedDisable: !1,
+                speed: 5,
+                lastSpeed: 5,
+                lightState: !0,
+                movingOffState: !1,
+                lightOffTime: 6,
+                lastLightOffTime: 6,
+                lightOffTimeOptions: [],
+                colorDisable: !1,
+                color: [255, 0, 255],
+                lastColor: [255, 0, 255],
+                r: 255,
+                g: 0,
+                b: 255,
+                backColor: "rgb(255,0,255)",
+                colorbarSrc: "/img/color_bar.png",
+                presetPath: "/img/colors/color",
+                widthRatio: 1,
+                heightRatio: 1,
+              };
+            },
+            methods: {
+              async handleModeChange() {
+                (await bs.Set_MS_LightMode(this.mode))
+                  ? ((this.lastMode = this.mode), this.updateDisableState())
+                  : (this.mode = this.lastMode);
+              },
+              async handleBrightnessChange() {
+                (await bs.Set_MS_LightBrightness(this.brightness))
+                  ? (this.lastBrightness = this.brightness)
+                  : (this.brightness = this.lastBrightness);
+              },
+              async handleSpeedChange() {
+                (await bs.Set_MS_LightSpeed(this.speed))
+                  ? (this.lastSpeed = this.speed)
+                  : (this.speed = this.lastSpeed);
+              },
+              async handleMovingOffChange() {
+                var e = this.movingOffState;
+                0 == (await bs.Set_MS_MovingOffState(e ? 1 : 0)) &&
+                  (this.movingOffState = !e);
+              },
+              async handleLightOffTimeChange() {
+                (await bs.Set_MS_LightOffTime(this.lightOffTime))
+                  ? ((this.lastLightOffTime = this.lightOffTime),
+                    this.$bus.$emit("updateSleepTime", this.lightOffTime))
+                  : (this.lightOffTime = this.lastLightOffTime);
+              },
+              getPixelColor(e, t) {
+                const s = new Image();
+                ((s.src = t),
+                  (s.onload = async () => {
+                    const t = document.createElement("canvas"),
+                      i = t.getContext("2d");
+                    ((t.width = s.width),
+                      (t.height = s.height),
+                      i.drawImage(s, 0, 0));
+                    t.getBoundingClientRect();
+                    const a = e.offsetX / this.widthRatio,
+                      o = e.offsetY / this.heightRatio,
+                      n = i.getImageData(a, o, 1, 1);
+                    var r = n.data;
+                    (await bs.Set_MS_LightColor(r)) &&
+                      ((this.color = r), this.colorToRgb());
+                  }));
+              },
+              async handleColorChange() {
+                var e = [this.r, this.g, this.b];
+                (console.log("handleColorChange", e),
+                  (await bs.Set_MS_LightColor(e))
+                    ? ((this.color = e), this.rgbToColor())
+                    : this.colorToRgb());
+              },
+              colorToRgb() {
+                ((this.r = this.color[0]),
+                  (this.g = this.color[1]),
+                  (this.b = this.color[2]),
+                  (this.backColor = X.Buffer_To_Color(this.color, 0)));
+              },
+              rgbToColor() {
+                ((this.color[0] = this.r),
+                  (this.color[1] = this.g),
+                  (this.color[2] = this.b),
+                  (this.backColor = X.Buffer_To_Color(this.color, 0)));
+              },
+              updateDisableState() {
+                var e = X.LightMode_To_Disable(this.mode);
+                ((this.colorDisable = e.color),
+                  (this.brightnessDisable = e.brightness),
+                  (this.speedDisable = e.speed),
+                  (this.lightState = 0 != this.mode));
+              },
+            },
+            created() {
+              ((this.colorbarSrc = window.location.href + "img/color_bar.png"),
+                (this.presetPath = window.location.href + "img/colors/color"),
+                this.$bus.$on("setMouseDefaultCfg", (e) => {
+                  "undefined" != typeof e.lightEffect &&
+                    ((this.mode = e.lightEffect.mode),
+                    this.updateDisableState(),
+                    (this.lastBrightness = this.brightness =
+                      e.lightEffect.brightness),
+                    (this.lastSpeed = this.speed = e.lightEffect.speed),
+                    (this.movingOffState = e.lightEffect.movingOffState),
+                    (this.lastLightOffTime = this.lightOffTime = e.sleepTime));
+                }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  ((this.mode =
+                    0 == e.lightEffect.state ? 0 : e.lightEffect.mode),
+                    this.updateDisableState());
+                  var t = X.LightMode_To_Disable(this.mode);
+                  ((this.colorDisable = t.color),
+                    (this.brightnessDisable = t.brightness),
+                    (this.speedDisable = t.speed),
+                    (this.lastBrightness = this.brightness =
+                      e.lightEffect.brightness),
+                    (this.lastSpeed = this.speed = e.lightEffect.speed),
+                    (this.movingOffState = e.lightEffect.movingOffState),
+                    (this.lastLightOffTime = this.lightOffTime = e.sleepTime),
+                    (this.color = X.Color_To_Buffer(e.lightEffect.color)),
+                    this.colorToRgb());
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e &&
+                    ((this.lightModeOptions = e.LightModeOptions),
+                    (this.lightOffTimeOptions = e.LightOffTimeOptions));
+                }),
+                this.$bus.$on("updateLightEffect", (e) => {
+                  ((this.mode = 0 == e.state ? 0 : e.mode),
+                    this.updateDisableState());
+                  var t = X.LightMode_To_Disable(this.mode);
+                  ((this.colorDisable = t.color),
+                    (this.brightnessDisable = t.brightness),
+                    (this.speedDisable = t.speed),
+                    (this.lastBrightness = this.brightness = e.brightness),
+                    (this.lastSpeed = this.speed = e.speed),
+                    (this.movingOffState = e.movingOffState),
+                    (this.color = X.Color_To_Buffer(e.color)),
+                    this.colorToRgb());
+                }),
+                this.$bus.$on("widthResize", (e) => {
+                  this.widthRatio = e / 0.9;
+                }),
+                this.$bus.$on("heightResize", (e) => {
+                  this.heightRatio = e;
+                }),
+                this.$bus.$on("updateLightOffTime", (e) => {
+                  this.lastLightOffTime = this.lightOffTime = e;
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("languageChange"),
+                this.$bus.$off("updateLightOffTime"));
+            },
+          },
+          Da = Sa,
+          $a = (0, Ds.A)(Da, wa, xa, !1, null, "44a3e14c", null),
+          Ma = $a.exports,
+          ka = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              { staticClass: "mouse_setting" },
+              [
+                t("language"),
+                t("device-info"),
+                t("pair"),
+                t("sleep-time"),
+                t("advanced-setting", {
+                  directives: [
+                    {
+                      name: "show",
+                      rawName: "v-show",
+                      value: e.longDistanceShow,
+                      expression: "longDistanceShow",
+                    },
+                  ],
+                }),
+                t("company-info"),
+                t("dongle-rgb", {
+                  directives: [
+                    {
+                      name: "show",
+                      rawName: "v-show",
+                      value: e.dongleRgbShow,
+                      expression: "dongleRgbShow",
+                    },
+                  ],
+                }),
+              ],
+              1,
+            );
+          },
+          Ra = [],
+          Ta = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "flex_column language" }, [
+              e._m(0),
+              t(
+                "select",
+                {
+                  directives: [
+                    {
+                      name: "model",
+                      rawName: "v-model",
+                      value: e.language,
+                      expression: "language",
+                    },
+                  ],
+                  staticClass: "margin_top",
+                  on: {
+                    change: [
+                      function (t) {
+                        var s = Array.prototype.filter
+                          .call(t.target.options, function (e) {
+                            return e.selected;
+                          })
+                          .map(function (e) {
+                            var t = "_value" in e ? e._value : e.value;
+                            return t;
+                          });
+                        e.language = t.target.multiple ? s : s[0];
+                      },
+                      e.handleLanguageChange,
+                    ],
+                  },
+                },
+                e._l(e.languageOptions, function (s) {
+                  return t(
+                    "option",
+                    { key: s.value, domProps: { value: s.value } },
+                    [e._v(" " + e._s(s.option) + " ")],
+                  );
+                }),
+                0,
+              ),
+            ]);
+          },
+          Ia = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t("div", { staticClass: "flex_row_center" }, [
+                t("i", { staticClass: "incfont el-icon-title" }),
+                t(
+                  "span",
+                  { staticClass: "margin_left", attrs: { lang: "Language" } },
+                  [e._v("语言")],
+                ),
+              ]);
+            },
+          ],
+          Pa = {
+            data() {
+              return { languageOptions: [], languages: [], language: "zh-CN" };
+            },
+            methods: {
+              handleLanguageChange() {
+                var e = 0;
+                for (e = 0; e < this.languageOptions.length; e++)
+                  if (this.language == this.languageOptions[e].value) break;
+                (this.$bus.$emit("languageOptionsChange", this.language),
+                  this.$bus.$emit("languageChange", this.languages[e]));
+              },
+            },
+            created() {
+              (this.$bus.$on("setGlobalLanguages", (e, t) => {
+                ((this.languageOptions = e), (this.languages = t));
+              }),
+                this.$bus.$on("languageOptionsChange", (e) => {
+                  this.language = e;
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setGlobalLanguages"),
+                this.$bus.$off("languageOptionsChange"));
+            },
+          },
+          Ka = Pa,
+          Oa = (0, Ds.A)(Ka, Ta, Ia, !1, null, "65981104", null),
+          La = Oa.exports,
+          Ba = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "flex_column_evenly device_info" }, [
+              e._m(0),
+              t("div", { staticClass: "flex_row device_info" }, [
+                t("div", { staticClass: "flex_column_evenly" }, [
+                  t("div", { staticClass: "flex_row_center" }, [
+                    t("span", { attrs: { lang: "DongleVersion" } }, [
+                      e._v("接收器固件版本"),
+                    ]),
+                    t("span", [e._v(" " + e._s(e.dongleVersion))]),
+                  ]),
+                  t("div", { staticClass: "flex_row_center" }, [
+                    t("span", { attrs: { lang: "MouseVersion" } }, [
+                      e._v("鼠标固件版本"),
+                    ]),
+                    t("span", [e._v(" " + e._s(e.mouseVersion))]),
+                  ]),
+                ]),
+                t(
+                  "div",
+                  {
+                    directives: [
+                      {
+                        name: "show",
+                        rawName: "v-show",
+                        value: e.upgradeShow,
+                        expression: "upgradeShow",
+                      },
+                    ],
+                    staticClass: "flex_center button_gap",
+                  },
+                  [
+                    t(
+                      "el-tooltip",
+                      {
+                        attrs: {
+                          content: e.language.UpgradeTips,
+                          placement: "top",
+                          effect: e.effect,
+                        },
+                      },
+                      [
+                        t(
+                          "el-button",
+                          {
+                            staticClass: "upgrade_button",
+                            attrs: { lang: "Upgrade" },
+                            on: { click: e.handleUpgradeClick },
+                          },
+                          [e._v("Upgrade")],
+                        ),
+                      ],
+                      1,
+                    ),
+                  ],
+                  1,
+                ),
+              ]),
+            ]);
+          },
+          Fa = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t("div", { staticClass: "flex_row_center" }, [
+                t("i", { staticClass: "incfont el-icon-title" }),
+                t(
+                  "span",
+                  { staticClass: "margin_left", attrs: { lang: "DeviceInfo" } },
+                  [e._v("设备信息")],
+                ),
+              ]);
+            },
+          ],
+          Aa = {
+            data() {
+              return {
+                dongleVersion: "v1.0",
+                mouseVersion: "--",
+                language: {},
+                upgrade: null,
+                upgradeShow: !1,
+                effect: "light",
+              };
+            },
+            methods: {
+              handleUpgradeClick() {
+                const e = window.location.href + this.upgrade.link;
+                let t = this.upgrade.link;
+                ((t = t.split("/download/").join("")),
+                  console.log("upgrade:", t));
+                var s = new XMLHttpRequest();
+                (s.open("GET", e, !0),
+                  (s.responseType = "blob"),
+                  (s.onload = function () {
+                    if (200 === s.status) {
+                      var e = s.response,
+                        i = document.createElement("a");
+                      ((i.style.display = "none"),
+                        (i.href = window.URL.createObjectURL(e)),
+                        i.setAttribute("download", t),
+                        document.body.appendChild(i),
+                        i.click(),
+                        document.body.removeChild(i));
+                    }
+                  }),
+                  s.send());
+              },
+            },
+            created() {
+              (this.$bus.$on("updateDeviceInfo", (e) => {
+                if (
+                  (0 == e.isWired && (this.dongleVersion = e.version.dongle),
+                  (this.mouseVersion = e.version.device),
+                  null != this.upgrade)
+                ) {
+                  var t = !1;
+                  ("undefined" != typeof this.upgrade.device &&
+                    this.upgrade.device != e.version.device &&
+                    (t = !0),
+                    0 == e.isWired &&
+                      (8e3 == e.maxReportRate
+                        ? "undefined" != typeof this.upgrade.dongle8 &&
+                          this.upgrade.dongle8 != e.version.dongle &&
+                          (t = !0)
+                        : 4e3 == e.maxReportRate
+                          ? "undefined" != typeof this.upgrade.dongle4 &&
+                            this.upgrade.dongle4 != e.version.dongle &&
+                            (t = !0)
+                          : 2e3 == e.maxReportRate
+                            ? "undefined" != typeof this.upgrade.dongle2 &&
+                              this.upgrade.dongle2 != e.version.dongle &&
+                              (t = !0)
+                            : "undefined" != typeof this.upgrade.dongle &&
+                              this.upgrade.dongle != e.version.dongle &&
+                              (t = !0)),
+                    (this.upgradeShow = t));
+                }
+              }),
+                this.$bus.$on("updateVersion", (e) => {
+                  ((this.dongleVersion = e.dongle),
+                    (this.mouseVersion = e.device));
+                }),
+                this.$bus.$on("setMouseDefaultCfg", (e) => {
+                  "undefined" != typeof e.upgrade && (this.upgrade = e.upgrade);
+                }),
+                this.$bus.$on("themeChange", (e) => {
+                  this.effect = e;
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e && (this.language = e);
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("updateDeviceInfo"),
+                this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("themeChange"),
+                this.$bus.$off("languageChange"));
+            },
+          },
+          Ea = Aa,
+          Na = (0, Ds.A)(Ea, Ba, Fa, !1, null, "30ab2994", null),
+          Ga = Na.exports,
+          Ua = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              { staticClass: "flex_column_evenly pair" },
+              [
+                e._m(0),
+                t(
+                  "el-button",
+                  {
+                    staticClass: "pair_button",
+                    attrs: { disabled: e.disablePair },
+                    on: { click: e.handlePairClick },
+                  },
+                  [t("span", { attrs: { lang: "Pair" } }, [e._v("配对")])],
+                ),
+                t("pair-dialog", { ref: "pairDialog" }),
+              ],
+              1,
+            );
+          },
+          Va = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t("div", { staticClass: "flex_row_center" }, [
+                t("i", { staticClass: "incfont el-icon-title" }),
+                t(
+                  "span",
+                  { staticClass: "margin_left", attrs: { lang: "PairTool" } },
+                  [e._v("配对工具")],
+                ),
+              ]);
+            },
+          ],
+          Ha = {
+            components: { PairDialog: Ks },
+            data() {
+              return { pairDialogState: !1, disablePair: !1 };
+            },
+            methods: {
+              handlePairClick() {
+                this.$refs.pairDialog.visible = !0;
+              },
+              handleKeyDown(e) {
+                (console.log("handleKeyDown", e), e.code);
+              },
+            },
+            watch: {
+              "$refs.pairDialog.visible": {
+                handler() {
+                  console.log("visible", this.$refs.pairDialog.visible);
+                },
+              },
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {}),
+                this.$bus.$on("updateDeviceInfo", (e) => {
+                  this.disablePair = e.isWired;
+                }));
+            },
+            beforeDestroy() {
+              this.$bus.$off("setMouseDefaultCfg");
+            },
+          },
+          Wa = Ha,
+          ja = (0, Ds.A)(Wa, Ua, Va, !1, null, "23396942", null),
+          za = ja.exports,
+          Ja = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "flex_column sleep_time" }, [
+              e._m(0),
+              t(
+                "select",
+                {
+                  directives: [
+                    {
+                      name: "model",
+                      rawName: "v-model",
+                      value: e.sleepTime,
+                      expression: "sleepTime",
+                    },
+                  ],
+                  staticClass: "margin_top",
+                  on: {
+                    change: [
+                      function (t) {
+                        var s = Array.prototype.filter
+                          .call(t.target.options, function (e) {
+                            return e.selected;
+                          })
+                          .map(function (e) {
+                            var t = "_value" in e ? e._value : e.value;
+                            return t;
+                          });
+                        e.sleepTime = t.target.multiple ? s : s[0];
+                      },
+                      e.handleSleepTimeChange,
+                    ],
+                  },
+                },
+                e._l(e.sleepTimes, function (s) {
+                  return t(
+                    "option",
+                    { key: s.value, domProps: { value: s.value } },
+                    [e._v(" " + e._s(s.option) + " ")],
+                  );
+                }),
+                0,
+              ),
+            ]);
+          },
+          qa = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t("div", { staticClass: "flex_row_center" }, [
+                t("i", { staticClass: "incfont el-icon-title" }),
+                t(
+                  "span",
+                  { staticClass: "margin_left", attrs: { lang: "SleepTime" } },
+                  [e._v("鼠标休眠时间")],
+                ),
+              ]);
+            },
+          ],
+          Ya = {
+            data() {
+              return { sleepTimes: [], sleepTime: 1, lastSleepTime: 1 };
+            },
+            methods: {
+              async handleSleepTimeChange() {
+                (await bs.Set_MS_LightOffTime(this.sleepTime))
+                  ? ((this.lastSleepTime = this.sleepTime),
+                    this.$bus.$emit("updateLightOffTime", this.sleepTime))
+                  : (this.sleepTime = this.lastSleepTime);
+              },
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {
+                this.lastSleepTime = this.sleepTime = e.sleepTime;
+              }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  this.lastSleepTime = this.sleepTime = e.sleepTime;
+                }),
+                this.$bus.$on("updateSleepTime", (e) => {
+                  this.lastSleepTime = this.sleepTime = e;
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e &&
+                    (this.lastSleepTime = this.sleepTimes =
+                      e.LightOffTimeOptions);
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("languageChange"),
+                this.$bus.$off("updateSleepTime"));
+            },
+          },
+          Xa = Ya,
+          Qa = (0, Ds.A)(Xa, Ja, qa, !1, null, "1cb95f3a", null),
+          Za = Qa.exports,
+          eo = function () {
+            var e = this,
+              t = e._self._c;
+            return t(
+              "div",
+              { staticClass: "flex_column_evenly advance_setting" },
+              [
+                e._m(0),
+                t(
+                  "div",
+                  { staticClass: "flex_row_center" },
+                  [
+                    t(
+                      "el-checkbox",
+                      {
+                        on: { change: e.handleLongDistanceChange },
+                        model: {
+                          value: e.longDistance,
+                          callback: function (t) {
+                            e.longDistance = t;
+                          },
+                          expression: "longDistance",
+                        },
+                      },
+                      [
+                        t("span", { attrs: { lang: "LongDistance" } }, [
+                          e._v("远距离模式 "),
+                        ]),
+                      ],
+                    ),
+                    t(
+                      "span",
+                      {
+                        staticClass: "long_distance_font",
+                        attrs: { lang: "LongDistanceTips" },
+                      },
+                      [
+                        e._v(
+                          "(远距离模式下，距离会更远抗干扰能力更强，相应工作电流会加大，使用时间减少)",
+                        ),
+                      ],
+                    ),
+                  ],
+                  1,
+                ),
+                t("tips", { ref: "tipsDialog", attrs: { text: e.tipsText } }),
+              ],
+              1,
+            );
+          },
+          to = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t("div", { staticClass: "flex_row_center" }, [
+                t("i", { staticClass: "incfont el-icon-title" }),
+                t(
+                  "span",
+                  {
+                    staticClass: "margin_left",
+                    attrs: { lang: "AdvancedSetting" },
+                  },
+                  [e._v("高级设置")],
+                ),
+              ]);
+            },
+          ],
+          so = {
+            components: { Tips: Ms },
+            data() {
+              return { longDistance: !1, tipsText: "" };
+            },
+            methods: {
+              async handleLongDistanceChange() {
+                var e = this.longDistance;
+                e
+                  ? (this.$refs.tipsDialog.visible = !0)
+                  : 0 == (await bs.Set_Device_LongDistance(0)) &&
+                    (this.longDistance = !0);
+              },
+            },
+            created() {
+              (this.$bus.$on("updateMouseUI", (e) => {
+                this.longDistance = e.longDistance;
+              }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e &&
+                    (this.tipsText = e.LongDistanceTips);
+                }),
+                this.$bus.$on("tipsResult", async (e) => {
+                  this.$refs.tipsDialog.visible &&
+                    (1 == e
+                      ? 0 == (await bs.Set_Device_LongDistance(1)) &&
+                        (this.longDistance = !1)
+                      : (this.longDistance = !1));
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("updateMouseUI"),
+                this.$bus.$off("tipsResult"),
+                this.$bus.$off("languageChange"));
+            },
+          },
+          io = so,
+          ao = (0, Ds.A)(io, eo, to, !1, null, "ce0f34d4", null),
+          oo = ao.exports,
+          no = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "company_info" }, [
+              t(
+                "a",
+                {
+                  staticStyle: { "text-decoration": "none" },
+                  attrs: { href: e.companyWeb, target: "_blank" },
+                },
+                [e._v(" " + e._s(e.companyWeb))],
+              ),
+            ]);
+          },
+          ro = [],
+          lo = {
+            data() {
+              return { companyWeb: "" };
+            },
+            methods: {
+              handleWebClick(e) {
+                window.open(this.companyWeb);
+              },
+            },
+            created() {
+              this.$bus.$on("setDriverCfg", (e) => {
+                this.companyWeb = e.web;
+              });
+            },
+            beforeDestroy() {
+              this.$bus.$off("setDriverCfg");
+            },
+          },
+          co = lo,
+          uo = (0, Ds.A)(co, no, ro, !1, null, "62a4b44c", null),
+          ho = uo.exports,
+          fo = function () {
+            var e = this,
+              t = e._self._c;
+            return t("div", { staticClass: "flex_column_evenly device_info" }, [
+              e._m(0),
+              t(
+                "div",
+                {
+                  staticClass: "flex_row device_info",
+                  staticStyle: { width: "60vw" },
+                },
+                [
+                  t(
+                    "div",
+                    { staticClass: "flex_column_evenly" },
+                    e._l(e.language.DongleRGBOptions, function (s, i) {
+                      return t(
+                        "el-radio",
+                        {
+                          directives: [
+                            {
+                              name: "removeAriaHidden",
+                              rawName: "v-removeAriaHidden",
+                            },
+                          ],
+                          key: i,
+                          staticClass: "flex_row_center",
+                          staticStyle: { "white-space": "normal" },
+                          attrs: { label: s.value },
+                          model: {
+                            value: e.dongleRGBMode,
+                            callback: function (t) {
+                              e.dongleRGBMode = t;
+                            },
+                            expression: "dongleRGBMode",
+                          },
+                        },
+                        [t("span", [e._v(e._s(s.option))])],
+                      );
+                    }),
+                    1,
+                  ),
+                ],
+              ),
+            ]);
+          },
+          po = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t("div", { staticClass: "flex_row_center" }, [
+                t("i", { staticClass: "incfont el-icon-title" }),
+                t(
+                  "span",
+                  {
+                    staticClass: "margin_left",
+                    attrs: { lang: "DongleRGBTitle" },
+                  },
+                  [e._v("设备信息")],
+                ),
+              ]);
+            },
+          ],
+          go = {
+            data() {
+              return { language: {}, dongleRGBMode: 1 };
+            },
+            methods: {},
+            watch: {
+              dongleRGBMode: {
+                async handler() {
+                  await bs.Set_Device_4KDongleRGBMode(this.dongleRGBMode);
+                },
+              },
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {
+                "undefined" != typeof e.dongle4KRGB &&
+                  (this.dongleRGBMode = e.dongle4KRGB.mode);
+              }),
+                this.$bus.$on("updateDeviceInfo", (e) => {
+                  this.dongleRGBMode = e.dongle4KRGB.mode;
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e && (this.language = e);
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("updateDeviceInfo"),
+                this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("themeChange"),
+                this.$bus.$off("languageChange"));
+            },
+          },
+          mo = go,
+          vo = (0, Ds.A)(mo, fo, po, !1, null, "0b572ed8", null),
+          yo = vo.exports,
+          _o = {
+            components: {
+              Language: La,
+              DeviceInfo: Ga,
+              Pair: za,
+              SleepTime: Za,
+              AdvancedSetting: oo,
+              CompanyInfo: ho,
+              DongleRgb: yo,
+            },
+            data() {
+              return {
+                sleepTimeShow: !0,
+                longDistanceShow: !1,
+                dongleRgbShow: !1,
+              };
+            },
+            created() {
+              (this.$bus.$on("setMouseDefaultCfg", (e) => {
+                ((this.sleepTimeShow = !e.light),
+                  (this.dongleRgbShow = "undefined" != typeof e.dongle4KRGB));
+              }),
+                this.$bus.$on("updateMouseUI", (e) => {
+                  this.longDistanceShow = e.supportLongDistance;
+                }));
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("updateMouseUI"));
+            },
+          },
+          bo = _o,
+          Co = (0, Ds.A)(bo, ka, Ra, !1, null, "39cb72b3", null),
+          wo = Co.exports,
+          xo = {
+            components: {
+              Battery: Ws,
+              MouseKey: Ki,
+              MouseSensor: ca,
+              MouseMacro: Ca,
+              MouseLight: Ma,
+              MouseSetting: wo,
+              Tips: Ms,
+            },
+            data() {
+              return {
+                radio: "1",
+                lastRadio: "1",
+                lightShow: !0,
+                info: bs.deviceInfo,
+                logo: "/img/logo_light.png",
+                language: {},
+                tipsVisible: !1,
+                tipsText: "",
+                showButton: !1,
+                macroRecording: !1,
+                saveMacroFirst: !1,
+                theme: "",
+                bgImage: "./img/bg_dark.png",
+                batteryShow: !1,
+                themeShow: !1,
+                upgrade: null,
+                upgradeNotify: null,
+              };
+            },
+            methods: {
+              handleThemeClick(e) {
+                (console.log("theme", e, this.theme),
+                  this.theme != e &&
+                    ((this.theme = e),
+                    "light" == this.theme
+                      ? (this.logo = window.location.href + "img/logo_dark.png")
+                      : (this.logo =
+                          window.location.href + "img/logo_light.png"),
+                    (this.bgImage = window.location.href + `img/bg_${e}.png`),
+                    this.$bus.$emit("themeChange", e)));
+              },
+              handleCloseClick() {
+                0 == this.saveMacroFirst
+                  ? ((this.upgrade = null),
+                    this.upgradeNotify &&
+                      (this.upgradeNotify.close(), (this.upgradeNotify = null)),
+                    bs.Device_Close(),
+                    this.$bus.$emit("closeDialog"),
+                    this.$bus.$emit("backToHome", !0))
+                  : this.showTips(this.language.DialogSaveMacroFirst, !0);
+              },
+              showTips(e, t) {
+                ((this.tipsText = e),
+                  (this.showButton = t),
+                  (this.tipsVisible = !0),
+                  (this.$refs.tipsDialog.visible = this.tipsVisible));
+              },
+              hideTips() {
+                ((this.tipsVisible = !1),
+                  (this.$refs.tipsDialog.visible = this.tipsVisible));
+              },
+              handleWindowClose(e) {
+                bs.Device_Close();
+              },
+            },
+            watch: {
+              radio: {
+                handler() {
+                  this.saveMacroFirst
+                    ? ((this.radio = this.lastRadio),
+                      this.showTips(this.language.DialogSaveMacroFirst, !0))
+                    : (this.lastRadio = this.radio);
+                },
+              },
+              "info.connectState": {
+                handler() {
+                  this.info.connectState == bs.DeviceConectState.Connected
+                    ? (this.$bus.$emit("updateDeviceInfo", this.info),
+                      this.$bus.$emit("updateMouseUI", this.info.mouseCfg),
+                      this.hideTips(),
+                      (this.batteryShow = !0))
+                    : this.info.connectState ==
+                        bs.DeviceConectState.Connecting &&
+                      this.showTips(this.language.DialogUpdating, !1);
+                },
+                deep: !0,
+              },
+              "info.online": {
+                handler() {
+                  0 == this.info.online &&
+                    this.info.showOfflineDialog &&
+                    (this.showTips(this.language.DialogOffline, !0),
+                    (this.info.showOfflineDialog = !1));
+                },
+              },
+              "info.mouseCfg.reportRate": {
+                handler() {
+                  this.$bus.$emit(
+                    "updateReportRate",
+                    this.info.mouseCfg.reportRate,
+                  );
+                },
+                deep: !0,
+              },
+              "info.mouseCfg.currentDpi": {
+                handler() {
+                  this.$bus.$emit(
+                    "updateCurrentDPI",
+                    this.info.mouseCfg.currentDpi,
+                  );
+                },
+                deep: !0,
+              },
+              "info.battery": {
+                handler() {
+                  this.$bus.$emit("updateBattery", this.info.battery);
+                },
+                deep: !0,
+              },
+              "info.mouseCfg.lightEffect": {
+                handler() {
+                  this.$bus.$emit(
+                    "updateLightEffect",
+                    this.info.mouseCfg.lightEffect,
+                  );
+                },
+                deep: !0,
+              },
+              "info.profile": {
+                handler() {
+                  this.$bus.$emit("updateProfile", this.info.profile);
+                },
+                deep: !0,
+              },
+              "info.version": {
+                handler() {
+                  if (
+                    (this.$bus.$emit("updateVersion", this.info.version),
+                    console.log(
+                      "info.version",
+                      this.info.version,
+                      this.upgrade,
+                    ),
+                    null != this.upgrade)
+                  ) {
+                    var e = !1;
+                    ("undefined" != typeof this.upgrade.device &&
+                      this.upgrade.device != this.info.version.device &&
+                      (e = !0),
+                      0 == this.info.isWired &&
+                        (8e3 == this.info.maxReportRate
+                          ? "undefined" != typeof this.upgrade.dongle8 &&
+                            this.upgrade.dongle8 != this.info.version.dongle &&
+                            (e = !0)
+                          : 4e3 == this.info.maxReportRate
+                            ? "undefined" != typeof this.upgrade.dongle4 &&
+                              this.upgrade.dongle4 !=
+                                this.info.version.dongle &&
+                              (e = !0)
+                            : 2e3 == this.info.maxReportRate
+                              ? "undefined" != typeof this.upgrade.dongle2 &&
+                                this.upgrade.dongle2 !=
+                                  this.info.version.dongle &&
+                                (e = !0)
+                              : "undefined" != typeof this.upgrade.dongle &&
+                                this.upgrade.dongle !=
+                                  this.info.version.dongle &&
+                                (e = !0)),
+                      e
+                        ? null == this.upgradeNotify &&
+                          (this.upgradeNotify = this.$notify({
+                            dangerouslyUseHTMLString: !0,
+                            message: `<a href="${window.location.href + this.upgrade.link}" style="text-decoration: none" target="_blank">${this.language.UpgradeTips}</a>`,
+                            offset: 100,
+                            duration: 0,
+                          }))
+                        : this.upgradeNotify &&
+                          (this.upgradeNotify.close(),
+                          (this.upgradeNotify = null)));
+                  }
+                },
+                deep: !0,
+              },
+              "info.deviceOpen": {
+                handler() {
+                  0 == this.info.deviceOpen &&
+                    (this.$bus.$emit("closeDialog"),
+                    this.$bus.$emit("backToHome", !0));
+                },
+                deep: !0,
+              },
+            },
+            created() {
+              ((this.batteryShow = !1),
+                this.$bus.$on("themeButtonShow", (e) => {
+                  if (((this.themeShow = e), (this.theme = "light"), e)) {
+                    var t = localStorage.getItem("theme");
+                    if (t) {
+                      var s = JSON.parse(t);
+                      ("light" != s && "dark" != s) || (this.theme = s);
+                    } else {
+                      const e =
+                        window.matchMedia &&
+                        window.matchMedia("(prefers-color-scheme: dark)")
+                          .matches;
+                      e && (this.theme = "dark");
+                    }
+                    console.log("themeButtonShow 1", t, this.theme);
+                  }
+                  (console.log("themeButtonShow 2", e, this.theme),
+                    (this.bgImage =
+                      window.location.href + `img/bg_${this.theme}.png`),
+                    "light" == this.theme
+                      ? (this.logo = window.location.href + "img/logo_dark.png")
+                      : (this.logo =
+                          window.location.href + "img/logo_light.png"),
+                    this.$bus.$emit("themeChange", this.theme));
+                }),
+                this.$bus.$on("setMouseDefaultCfg", (e) => {
+                  ((this.radio = "1"),
+                    (this.lightShow = "undefined" != typeof e.lightEffect),
+                    "undefined" != typeof e.upgrade &&
+                      ((this.upgrade = e.upgrade),
+                      console.log("upgrade", this.upgrade)));
+                }),
+                this.$bus.$on("languageChange", (e) => {
+                  "undefined" != typeof e && (this.language = e);
+                }),
+                this.$bus.$on("macroRecording", (e) => {
+                  this.macroRecording = e;
+                }),
+                this.$bus.$on("saveMacroFirst", (e) => {
+                  this.saveMacroFirst = e;
+                }));
+            },
+            mounted() {
+              window.addEventListener("beforeunload", this.handleWindowClose);
+            },
+            computed: {
+              backgroundStyle() {
+                return { backgroundImage: `url(${this.bgImage})` };
+              },
+            },
+            beforeDestroy() {
+              (window.removeEventListener(
+                "beforeunload",
+                this.handleWindowClose,
+              ),
+                this.$bus.$off("setMouseDefaultCfg"),
+                this.$bus.$off("languageChange"),
+                this.$bus.$off("macroRecording"),
+                this.$bus.$off("saveMacroFirst"));
+            },
+          },
+          So = xo,
+          Do = (0, Ds.A)(So, As, Es, !1, null, "08029572", null),
+          $o = Do.exports,
+          Mo = function () {
+            var e = this;
+            e._self._c;
+            return e._m(0);
+          },
+          ko = [
+            function () {
+              var e = this,
+                t = e._self._c;
+              return t("div", [t("h1", [e._v("404 Not Found")])]);
+            },
+          ],
+          Ro = {},
+          To = Ro,
+          Io = (0, Ds.A)(To, Mo, ko, !1, null, null, null),
+          Po = Io.exports,
+          Ko = {
+            name: "App",
+            components: { Home: Fs, Mouse: $o, NotFound: Po },
+            data() {
+              return {
+                noFound: !1,
+                driverCfg: null,
+                isHome: !0,
+                bgImage: "./img/home_bg.png",
+                screenWidth: "",
+                screenHeight: "",
+                widthRatio: 1,
+                heightRatio: 1,
+                currentTheme: "light",
+                isLoaded: !1,
+              };
+            },
+            methods: {
+              changeMouseImageSize() {
+                const e = document.documentElement;
+                var t = this.widthRatio;
+                (this.widthRatio > this.heightRatio && (t = this.heightRatio),
+                  e.style.setProperty("--mouse-img-width", 760 * t + "px"),
+                  e.style.setProperty("--mouse-img-height", 630 * t + "px"),
+                  this.$bus.$emit("mouseImageResize", t));
+              },
+              updateTheme() {
+                const e = document.documentElement;
+                var t;
+                ("light" == this.currentTheme
+                  ? ((t = this.driverCfg.light),
+                    e.style.setProperty(
+                      "--option-color",
+                      "rgba(50,160,127,0.5)",
+                    ))
+                  : ((t = this.driverCfg.dark),
+                    e.style.setProperty(
+                      "--option-color",
+                      "rgba(0,66,227,0.5)",
+                    )),
+                  e.style.setProperty("--theme-color", t.theme),
+                  e.style.setProperty("--font-color", t.font),
+                  e.style.setProperty("--border-color", t.border),
+                  e.style.setProperty("--key-inner-color", t.keyInner),
+                  e.style.setProperty(
+                    "--home-font-color",
+                    this.driverCfg.home.font,
+                  ),
+                  e.style.setProperty(
+                    "--home-theme-color",
+                    this.driverCfg.home.theme,
+                  ));
+                var s =
+                  window.location.href +
+                  "img/dialog_" +
+                  this.currentTheme +
+                  ".png)";
+                (console.log("path", s),
+                  e.style.setProperty("--dialog-image-path", "url(" + s),
+                  this.isHome
+                    ? (this.bgImage = window.location.href + "img/home_bg.png")
+                    : (this.bgImage = ""),
+                  localStorage.setItem(
+                    "theme",
+                    JSON.stringify(this.currentTheme),
+                  ));
+              },
+            },
+            created() {
+              (this.$bus.$on("setDriverCfg", (e) => {
+                ((this.driverCfg = e),
+                  "undefined" == typeof e.visit
+                    ? bs.Set_Visit_Mode(!1)
+                    : bs.Set_Visit_Mode(e.visit),
+                  this.updateTheme());
+              }),
+                this.$bus.$on("themeChange", (e) => {
+                  ((this.currentTheme = e),
+                    null != this.driverCfg && this.updateTheme());
+                }),
+                this.$bus.$on("setGlobalLanguages", (e, t) => {
+                  setTimeout(() => {
+                    this.isLoaded = !0;
+                  }, 100);
+                }));
+            },
+            mounted() {
+              (this.$bus.$on("noFound", (e) => {
+                this.noFound = e;
+              }),
+                this.$bus.$on("backToHome", (e) => {
+                  ((this.isHome = e),
+                    this.isHome &&
+                      (this.bgImage =
+                        window.location.href + "img/home_bg.png"));
+                }),
+                (this.screenWidth = document.body.clientWidth),
+                (this.screenHeight = document.body.clientHeight),
+                (window.onresize = () =>
+                  (() => {
+                    ((this.screenWidth = document.body.clientWidth),
+                      (this.screenHeight = document.body.clientHeight));
+                  })()));
+            },
+            watch: {
+              screenWidth: {
+                handler() {
+                  const e = document.documentElement;
+                  var t = (this.screenWidth / 1920) * 0.9;
+                  this.widthRatio = t;
+                  var s = 40;
+                  (e.style.setProperty("--screen-width-ratio", t),
+                    this.$bus.$emit("widthResize", t),
+                    e.style.setProperty(
+                      "--home-width",
+                      this.screenWidth - t * s * 2 + "px",
+                    ),
+                    e.style.setProperty(
+                      "--main-width",
+                      this.screenWidth - t * s * 2 + "px",
+                    ),
+                    e.style.setProperty("--title-font-size", 55 * t + "px"),
+                    e.style.setProperty("--subtitle-font-size", 36 * t + "px"),
+                    e.style.setProperty("--tips-font-size", 22 * t + "px"),
+                    e.style.setProperty("--font-size", 20 * t + "px"),
+                    e.style.setProperty("--theme-button-size", 32 * t + "px"),
+                    e.style.setProperty("--select-width", 200 * t + "px"),
+                    e.style.setProperty("--input-number-width", 160 * t + "px"),
+                    e.style.setProperty("--battery-width", 83 * t + "px"),
+                    e.style.setProperty("--charging-width", 36 * t + "px"),
+                    e.style.setProperty("--logo-img-height", 100 * t + "px"),
+                    e.style.setProperty("--cascader-width", 270 * t + "px"),
+                    e.style.setProperty("--slider-button-width", 8 * t + "px"),
+                    e.style.setProperty("--dpi-slider-width", 1200 * t + "px"),
+                    e.style.setProperty("--dpi-select-width", 80 * t + "px"),
+                    e.style.setProperty("--dpi-unselect-width", 80 * t + "px"),
+                    e.style.setProperty(
+                      "--reportRate-button-width",
+                      105 * t + "px",
+                    ),
+                    e.style.setProperty("--checkbox-width", 24 * t + "px"),
+                    e.style.setProperty("--switch-width", 40 * t + "px"),
+                    e.style.setProperty("--moving-switch-width", 60 * t + "px"),
+                    e.style.setProperty("--radio-button-width", 16 * t + "px"),
+                    e.style.setProperty(
+                      "--dpiEffect-slider-width",
+                      250 * t + "px",
+                    ),
+                    e.style.setProperty("--table-width", 380 * t + "px"),
+                    e.style.setProperty("--table-height", 600 * t + "px"),
+                    e.style.setProperty("--macro-button-width", 175 * t + "px"),
+                    e.style.setProperty("--macro-record-width", 280 * t + "px"),
+                    e.style.setProperty("--light-normal-width", 400 * t + "px"),
+                    e.style.setProperty("--preview-color-width", 90 * t + "px"),
+                    e.style.setProperty("--preset-color-width", 38 * t + "px"));
+                },
+                deep: !0,
+              },
+              screenHeight: {
+                handler() {
+                  const e = document.documentElement;
+                  var t = this.screenHeight / 910;
+                  (this.$bus.$emit("heightResize", t),
+                    (this.heightRatio = t),
+                    e.style.setProperty("--battery-height", 40 * t + "px"),
+                    e.style.setProperty("--charging-height", 14 * t + "px"));
+                },
+                deep: !0,
+              },
+              widthRatio: {
+                handler() {
+                  this.changeMouseImageSize();
+                },
+                deep: !0,
+              },
+              heightRatio: {
+                handler() {
+                  this.changeMouseImageSize();
+                },
+                deep: !0,
+              },
+            },
+            beforeDestroy() {
+              (this.$bus.$off("setDriverCfg"),
+                this.$bus.$off("backToHome"),
+                this.$bus.$off("themeChange"),
+                this.$bus.$off("setGlobalLanguages"));
+            },
+            computed: {
+              backgroundStyle() {
+                return { backgroundImage: `url(${this.bgImage})` };
+              },
+            },
+          },
+          Oo = Ko,
+          Lo = (0, Ds.A)(Oo, a, o, !1, null, null, null),
+          Bo = Lo.exports,
+          Fo = s(9143),
+          Ao = s.n(Fo),
+          Eo = s(4373);
+        ((i["default"].config.productionTip = !1),
+          (Ao().Dialog.props.closeOnClickModal.default = !1),
+          (Ao().Dialog.props.closeOnPressEscape.default = !1),
+          (Ao().Dialog.props.lockScroll.default = !1),
+          i["default"].use(Ao()),
+          i["default"].directive("removeAriaHidden", {
+            bind(e, t) {
+              let s = e.querySelectorAll(".el-radio__original");
+              s.forEach((e) => {
+                e.removeAttribute("aria-hidden");
+              });
+            },
+          }),
+          new i["default"]({
+            render: (e) => e(Bo),
+            async beforeCreate() {
+              i["default"].prototype.$bus = this;
+              const e = window.location.href;
+              (Eo.A.get(`${e}cfg.json`)
+                .then((t) => {
+                  var s = t.data;
+                  (this.$bus.$emit("setDriverCfg", s),
+                    "undefined" != typeof s.light &&
+                    "undefined" != typeof s.dark
+                      ? this.$bus.$emit("themeButtonShow", !0)
+                      : this.$bus.$emit("themeButtonShow", !1),
+                    0 == s.debug.log && (console.log = () => {}),
+                    (document.title = s.title));
+                  var i = [],
+                    a = [];
+                  const o = s.language.map(
+                    async (t) =>
+                      await Eo.A.get(`${e}lang/${t}.json`).then((e) => {
+                        i.push(e.data);
+                        let s = { value: t, option: e.data.Language };
+                        a.push(s);
+                      }),
+                  );
+                  Promise.all(o)
+                    .then((t) => {
+                      (console.log("cfg:", e, s, a, i),
+                        this.$bus.$emit("setGlobalLanguages", a, i),
+                        Eo.A.get(window.location.href + "custom.scss")
+                          .then((e) => {
+                            const t = document.createElement("style");
+                            ((t.innerHTML = e.data),
+                              document.head.appendChild(t),
+                              console.log("init css"));
+                          })
+                          .catch((e) => {}));
+                    })
+                    .catch((e) => {
+                      console.error("An error occurred:", e);
+                    });
+                })
+                .catch((e) => {
+                  this.$bus.$emit("noFound", !0);
+                }),
+                Eo.A.get(window.location.origin + "/sensor.json")
+                  .then((e) => {
+                    var t = e.data;
+                    this.$bus.$emit("setGlobalSensor", t);
+                  })
+                  .catch((e) => {
+                    ((notFound = !0), this.$bus.$emit("noFound", !0));
+                  }));
+            },
+          }).$mount("#app"));
+      },
+    },
+    t = {};
+  function s(i) {
+    var a = t[i];
+    if (void 0 !== a) return a.exports;
+    var o = (t[i] = { id: i, loaded: !1, exports: {} });
+    return (e[i].call(o.exports, o, o.exports, s), (o.loaded = !0), o.exports);
+  }
+  ((s.m = e),
+    (function () {
+      s.amdO = {};
+    })(),
+    (function () {
+      var e = [];
+      s.O = function (t, i, a, o) {
+        if (!i) {
+          var n = 1 / 0;
+          for (u = 0; u < e.length; u++) {
+            ((i = e[u][0]), (a = e[u][1]), (o = e[u][2]));
+            for (var r = !0, l = 0; l < i.length; l++)
+              (!1 & o || n >= o) &&
+              Object.keys(s.O).every(function (e) {
+                return s.O[e](i[l]);
+              })
+                ? i.splice(l--, 1)
+                : ((r = !1), o < n && (n = o));
+            if (r) {
+              e.splice(u--, 1);
+              var c = a();
+              void 0 !== c && (t = c);
+            }
+          }
+          return t;
+        }
+        o = o || 0;
+        for (var u = e.length; u > 0 && e[u - 1][2] > o; u--) e[u] = e[u - 1];
+        e[u] = [i, a, o];
+      };
+    })(),
+    (function () {
+      s.n = function (e) {
+        var t =
+          e && e.__esModule
+            ? function () {
+                return e["default"];
+              }
+            : function () {
+                return e;
+              };
+        return (s.d(t, { a: t }), t);
+      };
+    })(),
+    (function () {
+      s.d = function (e, t) {
+        for (var i in t)
+          s.o(t, i) &&
+            !s.o(e, i) &&
+            Object.defineProperty(e, i, { enumerable: !0, get: t[i] });
+      };
+    })(),
+    (function () {
+      s.g = (function () {
+        if ("object" === typeof globalThis) return globalThis;
+        try {
+          return this || new Function("return this")();
+        } catch (e) {
+          if ("object" === typeof window) return window;
+        }
+      })();
+    })(),
+    (function () {
+      s.o = function (e, t) {
+        return Object.prototype.hasOwnProperty.call(e, t);
+      };
+    })(),
+    (function () {
+      s.r = function (e) {
+        ("undefined" !== typeof Symbol &&
+          Symbol.toStringTag &&
+          Object.defineProperty(e, Symbol.toStringTag, { value: "Module" }),
+          Object.defineProperty(e, "__esModule", { value: !0 }));
+      };
+    })(),
+    (function () {
+      s.nmd = function (e) {
+        return ((e.paths = []), e.children || (e.children = []), e);
+      };
+    })(),
+    (function () {
+      var e = { 524: 0 };
+      s.O.j = function (t) {
+        return 0 === e[t];
+      };
+      var t = function (t, i) {
+          var a,
+            o,
+            n = i[0],
+            r = i[1],
+            l = i[2],
+            c = 0;
+          if (
+            n.some(function (t) {
+              return 0 !== e[t];
+            })
+          ) {
+            for (a in r) s.o(r, a) && (s.m[a] = r[a]);
+            if (l) var u = l(s);
+          }
+          for (t && t(i); c < n.length; c++)
+            ((o = n[c]), s.o(e, o) && e[o] && e[o][0](), (e[o] = 0));
+          return s.O(u);
+        },
+        i = (self["webpackChunkvue_test"] = self["webpackChunkvue_test"] || []);
+      (i.forEach(t.bind(null, 0)), (i.push = t.bind(null, i.push.bind(i))));
+    })());
+  var i = s.O(void 0, [504], function () {
+    return s(8708);
+  });
+  i = s.O(i);
+})();
+//# sourceMappingURL=app.60ff4c9d.js.map

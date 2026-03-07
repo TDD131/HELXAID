@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Configuration (Don't leak your API keys!)
+python/settings.json
+python/config.json
+python/music_panel_state.json
+
+# Local Data
+python/icons/
+python/UI Taskbar Icons/  # Depends if you want to bundle these or not
+python/web/temp/
+*.log
+
+# IDEs
+.vscode/
+.idea/
+.gemini/
+
+# Native Build files
+helxaid_native/build/
+helxaid_native/bin/
+helxaid_native/obj/
+*.pyd
+*.exp
+*.lib
+
+# Build output
+dist/
+build/

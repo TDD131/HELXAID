@@ -1,0 +1,249 @@
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  boost_engine.cpp
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(79,16): error C2065: 'HDROP': undeclared identifier [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(82,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(82,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(84,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(84,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(90,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(90,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(91,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(91,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(92,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(92,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(94,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(94,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(96,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(96,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(104,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(104,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(106,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(106,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(113,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(113,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(114,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(114,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(120,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(120,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(121,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(121,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(122,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(122,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(128,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(128,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(129,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(129,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(135,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(135,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(136,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(136,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1512,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1512,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1533,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1533,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1546,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1546,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1551,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1551,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1553,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1553,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1582,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1582,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1588,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1588,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1601,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1601,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1602,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1602,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1692,1): error C2086: 'int EXTERN_C': redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+      C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(68,1):
+      see declaration of 'EXTERN_C'
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1692,1): error C2146: syntax error: missing ';' before identifier 'DECLSPEC_IMPORT' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1708,12): error C3646: 'PortNumber': unknown override specifier [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1709,12): error C3646: 'PrefixLength': unknown override specifier [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shellapi.h(1733,8): error C2146: syntax error: missing ';' before identifier 'SHGetDriveMedia' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shlobj_core.h(563,38): error C2061: syntax error: identifier 'LPSHELLEXECUTEINFOA' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um\shlobj_core.h(571,38): error C2061: syntax error: identifier 'LPSHELLEXECUTEINFOW' [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/boost_engine.cpp')
+  
+D:\Software\tididi\Game Launcher\helxaid_native\src\boost_engine.cpp(121,19): error C3861: 'ShellExecuteW': identifier not found [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]

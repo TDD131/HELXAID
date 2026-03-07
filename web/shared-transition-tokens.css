@@ -1,0 +1,47 @@
+/**
+ * Shared Element Transition Design Tokens
+ * TDD Launcher - UI Transition System
+ * 
+ * Animate only transform and opacity. No blur, large scale (>1.03), or dramatic offset (>30px).
+ * Total perceived transition ~200-250ms. Max 2 shared elements per transition.
+ */
+
+:root {
+    /* === TIMING === */
+    --transition-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --shared-duration: 120ms;
+    /* Sidebar active indicator move */
+    --exit-duration: 120ms;
+    /* Old content fade-out */
+    --enter-duration: 180ms;
+    /* New content fade-in + translate */
+    --header-crossfade: 100ms;
+    /* Header/title text crossfade */
+
+    /* === DISTANCES === */
+    --translate-distance: 10px;
+    /* Content entrance offset */
+    --stagger-item: 24ms;
+    /* Stagger delay for list children */
+
+    /* === REDUCED MOTION FALLBACKS === */
+    --reduced-fade-duration: 60ms;
+    /* Quick fade for reduced motion */
+}
+
+/* Reduced motion: instant or very short fade only */
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --shared-duration: 0ms;
+        --exit-duration: var(--reduced-fade-duration);
+        --enter-duration: var(--reduced-fade-duration);
+        --header-crossfade: 0ms;
+        --translate-distance: 0px;
+        --stagger-item: 0ms;
+    }
+}
+
+/* will-change hints - apply sparingly during active transitions only */
+.shared-animating {
+    will-change: transform, opacity;
+}

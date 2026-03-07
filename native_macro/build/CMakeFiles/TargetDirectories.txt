@@ -1,0 +1,3 @@
+D:/Software/tididi/Game Launcher/native_macro/build/CMakeFiles/helxairo_native.dir
+D:/Software/tididi/Game Launcher/native_macro/build/CMakeFiles/ALL_BUILD.dir
+D:/Software/tididi/Game Launcher/native_macro/build/CMakeFiles/ZERO_CHECK.dir

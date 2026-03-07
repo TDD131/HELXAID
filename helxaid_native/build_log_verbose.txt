@@ -1,0 +1,138 @@
+Change Dir: 'D:/Software/tididi/Game Launcher/helxaid_native/build'
+
+Run Build Command(s): "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/amd64/MSBuild.exe" ALL_BUILD.vcxproj /p:Configuration=Release /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+MSBuild version 17.14.23+b0019275e for .NET Framework
+Build started 3/7/2026 6:46:29 AM.
+
+Project "D:\Software\tididi\Game Launcher\helxaid_native\build\ALL_BUILD.vcxproj" on node 1 (default targets).
+Project "D:\Software\tididi\Game Launcher\helxaid_native\build\ALL_BUILD.vcxproj" (1) is building "D:\Software\tididi\Game Launcher\helxaid_native\build\ZERO_CHECK.vcxproj" (2) on node 1 (default targets).
+PrepareForBuild:
+  Creating directory "x64\Release\ZERO_CHECK\".
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+  Creating directory "x64\Release\ZERO_CHECK\ZERO_CHECK.tlog\".
+InitializeBuildStatus:
+  Creating "x64\Release\ZERO_CHECK\ZERO_CHECK.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+  Touching "x64\Release\ZERO_CHECK\ZERO_CHECK.tlog\unsuccessfulbuild".
+CustomBuild:
+  1>Checking Build System
+FinalizeBuildStatus:
+  Deleting file "x64\Release\ZERO_CHECK\ZERO_CHECK.tlog\unsuccessfulbuild".
+  Touching "x64\Release\ZERO_CHECK\ZERO_CHECK.tlog\ZERO_CHECK.lastbuildstate".
+Done Building Project "D:\Software\tididi\Game Launcher\helxaid_native\build\ZERO_CHECK.vcxproj" (default targets).
+Project "D:\Software\tididi\Game Launcher\helxaid_native\build\ALL_BUILD.vcxproj" (1) is building "D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj" (3) on node 1 (default targets).
+PrepareForBuild:
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+  Creating directory "D:\Software\tididi\Game Launcher\helxaid_native\build\Release\".
+  Creating directory "helxaid_native.dir\Release\helxaid_native.tlog\".
+InitializeBuildStatus:
+  Creating "helxaid_native.dir\Release\helxaid_native.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+  Touching "helxaid_native.dir\Release\helxaid_native.tlog\unsuccessfulbuild".
+CustomBuild:
+  Building Custom Rule D:/Software/tididi/Game Launcher/helxaid_native/CMakeLists.txt
+ClCompile:
+  C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\CL.exe /c /I"D:\Software\tididi\Game Launcher\helxaid_native\include" /nologo /W1 /WX- /diagnostics:column /MP /O2 /Ob2 /GL /D _WINDLL /D _MBCS /D WIN32 /D _WINDOWS /D NDEBUG /D NOMINMAX /D _CRT_SECURE_NO_WARNINGS /D Py_NO_LINK_LIB /D "CMAKE_INTDIR=\"Release\"" /D helxaid_native_EXPORTS /EHsc /MD /GR /std:c++20 /Fo"helxaid_native.dir\Release\\" /Fd"helxaid_native.dir\Release\vc143.pdb" /external:W0 /TP /errorReport:queue  /external:I "C:/Python314/Include" /external:I "D:/Software/tididi/Game Launcher/helxaid_native/third_party/pybind11/include" /bigobj "D:\Software\tididi\Game Launcher\helxaid_native\src\bindings.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\icon_extractor.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\file_scanner.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\game_detector.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\media_player.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\hardware_monitor.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\input_hook.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\macro_engine.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\hid_controller.cpp" "D:\Software\tididi\Game Launcher\helxaid_native\src\boost_engine.cpp"
+  bindings.cpp
+  icon_extractor.cpp
+  file_scanner.cpp
+  game_detector.cpp
+  media_player.cpp
+  hardware_monitor.cpp
+  input_hook.cpp
+  macro_engine.cpp
+  hid_controller.cpp
+  boost_engine.cpp
+D:\Software\tididi\Game Launcher\helxaid_native\src\media_player.cpp(12,9): warning C4005: 'NOMINMAX': macro redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+      D:\Software\tididi\Game Launcher\helxaid_native\src\media_player.cpp(12,9):
+      'NOMINMAX' previously declared on the command line
+  
+C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18): warning C4244: '=': conversion from 'wchar_t' to 'char', possible loss of data [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  (compiling source file '../src/media_player.cpp')
+      C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18):
+      the template instantiation context (the oldest one first) is
+          D:\Software\tididi\Game Launcher\helxaid_native\src\media_player.cpp(521,25):
+          see reference to function template instantiation 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::basic_string<std::_String_iterator<std::_String_val<std::_Simple_types<_Elem>>>,0>(_Iter,_Iter,const _Alloc &)' being compiled
+          with
+          [
+              _Elem=wchar_t,
+              _Iter=std::_String_iterator<std::_String_val<std::_Simple_types<wchar_t>>>,
+              _Alloc=std::allocator<char>
+          ]
+              D:\Software\tididi\Game Launcher\helxaid_native\src\media_player.cpp(521,25):
+              see the first reference to 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::basic_string' in 'helxaid::MediaPlayer::scanFolder'
+          C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\xstring(812,17):
+          see reference to function template instantiation 'void std::basic_string<char,std::char_traits<char>,std::allocator<char>>::_Construct_from_iter<wchar_t*,wchar_t*,_Size_type>(_Iter,const _Sent,_Size)' being compiled
+          with
+          [
+              _Size_type=std::+::_Size_type,
+              _Iter=wchar_t *,
+              _Sent=wchar_t *,
+              _Size=std::+::_Size_type
+          ]
+          C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\xstring(968,18):
+          see reference to function template instantiation '_OutIt *std::_Copy_n_unchecked4<wchar_t*,_Size,char*>(_InIt,_SizeTy,_OutIt)' being compiled
+          with
+          [
+              _OutIt=char *,
+              _Size=std::+::_Size_type,
+              _InIt=wchar_t *,
+              _SizeTy=std::+::_Size_type
+          ]
+  
+Link:
+  C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\bin\HostX64\x64\link.exe /OUT:"D:\Software\tididi\Game Launcher\helxaid_native\build\Release\helxaid_native.cp314-win_amd64.pyd" /INCREMENTAL:NO /NOLOGO shell32.lib ole32.lib gdi32.lib user32.lib shlwapi.lib mf.lib mfplat.lib mfuuid.lib mfreadwrite.lib propsys.lib setupapi.lib hid.lib psapi.lib C:\Python314\libs\python314.lib kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /PDB:"D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.pdb" /LTCG /LTCGOUT:"helxaid_native.dir\Release\helxaid_native.cp314-win_amd64.iobj" /TLBID:1 /IMPLIB:"D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.lib" /MACHINE:X64  /machine:x64 /DLL helxaid_native.dir\Release\bindings.obj
+  helxaid_native.dir\Release\icon_extractor.obj
+  helxaid_native.dir\Release\file_scanner.obj
+  helxaid_native.dir\Release\game_detector.obj
+  helxaid_native.dir\Release\media_player.obj
+  helxaid_native.dir\Release\hardware_monitor.obj
+  helxaid_native.dir\Release\input_hook.obj
+  helxaid_native.dir\Release\macro_engine.obj
+  helxaid_native.dir\Release\hid_controller.obj
+  helxaid_native.dir\Release\boost_engine.obj
+     Creating library D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.lib and object D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.exp
+  Generating code
+  Finished generating code
+  helxaid_native.vcxproj -> D:\Software\tididi\Game Launcher\helxaid_native\build\Release\helxaid_native.cp314-win_amd64.pyd
+PostBuildEvent:
+  Copying helxaid_native to python directory
+  setlocal
+  "C:\Program Files\CMake\bin\cmake.exe" -E copy "D:/Software/tididi/Game Launcher/helxaid_native/build/Release/helxaid_native.cp314-win_amd64.pyd" "D:/Software/tididi/Game Launcher/helxaid_native/../python/helxaid_native.cp314-win_amd64.pyd"
+  if %errorlevel% neq 0 goto :cmEnd
+  :cmEnd
+  endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+  :cmErrorLevel
+  exit /b %1
+  :cmDone
+  if %errorlevel% neq 0 goto :VCEnd
+  :VCEnd
+FinalizeBuildStatus:
+  Deleting file "helxaid_native.dir\Release\helxaid_native.tlog\unsuccessfulbuild".
+  Touching "helxaid_native.dir\Release\helxaid_native.tlog\helxaid_native.lastbuildstate".
+Done Building Project "D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj" (default targets).
+PrepareForBuild:
+  Creating directory "x64\Release\ALL_BUILD\".
+  Structured output is enabled. The formatting of compiler diagnostics will reflect the error hierarchy. See https://aka.ms/cpp/structured-output for more details.
+  Creating directory "x64\Release\ALL_BUILD\ALL_BUILD.tlog\".
+InitializeBuildStatus:
+  Creating "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
+  Touching "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild".
+CustomBuild:
+  Building Custom Rule D:/Software/tididi/Game Launcher/helxaid_native/CMakeLists.txt
+FinalizeBuildStatus:
+  Deleting file "x64\Release\ALL_BUILD\ALL_BUILD.tlog\unsuccessfulbuild".
+  Touching "x64\Release\ALL_BUILD\ALL_BUILD.tlog\ALL_BUILD.lastbuildstate".
+Done Building Project "D:\Software\tididi\Game Launcher\helxaid_native\build\ALL_BUILD.vcxproj" (default targets).
+
+Build succeeded.
+
+"D:\Software\tididi\Game Launcher\helxaid_native\build\ALL_BUILD.vcxproj" (default target) (1) ->
+"D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj" (default target) (3) ->
+(ClCompile target) -> 
+  D:\Software\tididi\Game Launcher\helxaid_native\src\media_player.cpp(12,9): warning C4005: 'NOMINMAX': macro redefinition [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+  C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\14.44.35207\include\xutility(4813,18): warning C4244: '=': conversion from 'wchar_t' to 'char', possible loss of data [D:\Software\tididi\Game Launcher\helxaid_native\build\helxaid_native.vcxproj]
+
+    2 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:23.51
+

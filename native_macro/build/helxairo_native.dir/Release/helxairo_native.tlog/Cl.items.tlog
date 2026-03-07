@@ -1,0 +1,8 @@
+D:\Software\tididi\Game Launcher\native_macro\src\input_hook.cpp;D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.dir\Release\input_hook.obj
+D:\Software\tididi\Game Launcher\native_macro\src\input_simulator.cpp;D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.dir\Release\input_simulator.obj
+D:\Software\tididi\Game Launcher\native_macro\src\timer_manager.cpp;D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.dir\Release\timer_manager.obj
+D:\Software\tididi\Game Launcher\native_macro\src\macro_engine.cpp;D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.dir\Release\macro_engine.obj
+D:\Software\tididi\Game Launcher\native_macro\src\hid_controller.cpp;D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.dir\Release\hid_controller.obj
+D:\Software\tididi\Game Launcher\native_macro\src\macros\base_macro.cpp;D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.dir\Release\base_macro.obj
+D:\Software\tididi\Game Launcher\native_macro\src\macros\toggle_macro.cpp;D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.dir\Release\toggle_macro.obj
+D:\Software\tididi\Game Launcher\native_macro\bindings\python_bindings.cpp;D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.dir\Release\python_bindings.obj

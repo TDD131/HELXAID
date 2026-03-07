@@ -1,0 +1,10 @@
+^D:\SOFTWARE\TIDIDI\GAME LAUNCHER\NATIVE_MACRO\BUILD\CMAKEFILES\3FBE6135299A9F7C411D4FFE08A1D486\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SD:/Software/tididi/Game Launcher/native_macro" "-BD:/Software/tididi/Game Launcher/native_macro/build" --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file "D:/Software/tididi/Game Launcher/native_macro/build/helxairo_native.sln"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

@@ -1,0 +1,10 @@
+**********************************************************************
+** Visual Studio 2022 Developer Command Prompt v17.14.23
+** Copyright (c) 2025 Microsoft Corporation
+**********************************************************************
+[vcvarsall.bat] Environment initialized for: 'x64'
+MSBuild version 17.14.23+b0019275e for .NET Framework
+
+  1>Checking Build System
+  Building Custom Rule D:/Software/tididi/Game Launcher/native_macro/CMakeLists.txt
+LINK : fatal error LNK1104: cannot open file 'D:\Software\tididi\Game Launcher\python\helxairo_native.cp314-win_amd64.pyd' [D:\Software\tididi\Game Launcher\native_macro\build\helxairo_native.vcxproj]

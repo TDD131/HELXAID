@@ -1,0 +1,10 @@
+^D:\SOFTWARE\TIDIDI\GAME LAUNCHER\NATIVE_MACRO\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" "-SD:/Software/tididi/Game Launcher/native_macro" "-BD:/Software/tididi/Game Launcher/native_macro/build" --check-stamp-file "D:/Software/tididi/Game Launcher/native_macro/build/CMakeFiles/generate.stamp"
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

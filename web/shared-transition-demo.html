@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shared Element Transition Demo - TDD Launcher</title>
+    <link rel="stylesheet" href="shared-transition-tokens.css">
+    <style>
+        /* === BASE STYLES === */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, sans-serif;
+            background: #0a0a0a;
+            color: #fff;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        /* === LAYOUT === */
+        .app {
+            display: grid;
+            grid-template-columns: 64px 1fr;
+            grid-template-rows: 56px 1fr;
+            height: 100vh;
+        }
+
+        /* === SIDEBAR === */
+        .sidebar {
+            grid-row: 1 / -1;
+            background: #111;
+            border-right: 1px solid #222;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 16px 0;
+            position: relative;
+        }
+
+        .sidebar-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 8px;
+            cursor: pointer;
+            background: transparent;
+            border: none;
+            color: #666;
+            font-size: 20px;
+            transition: color 180ms ease, background 180ms ease;
+            position: relative;
+            z-index: 2;
+        }
+
+        .sidebar-icon:hover {
+            color: #ff6600;
+            background: rgba(255, 102, 0, 0.1);
+        }
+
+        .sidebar-icon:focus {
+            outline: 2px solid #ff6600;
+            outline-offset: 2px;
+        }
+
+        .sidebar-icon.active {
+            color: #ff6600;
+        }
+
+        /* Active indicator - the shared element */
+        .active-indicator {
+            position: absolute;
+            left: 10px;
+            width: 44px;
+            height: 44px;
+            background: rgba(255, 102, 0, 0.15);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 102, 0, 0.4);
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        /* === HEADER === */
+        .header {
+            background: #111;
+            border-bottom: 1px solid #222;
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            position: relative;
+        }
+
+        .header-title-wrapper {
+            position: relative;
+            height: 100%;
+            display: flex;
+            align-items: center;
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .header-title.exiting {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        /* === CONTENT PANEL === */
+        .content {
+            background: #0a0a0a;
+            overflow: auto;
+            position: relative;
+        }
+
+        .panel {
+            position: absolute;
+            inset: 0;
+            padding: 32px;
+            display: none;
+        }
+
+        .panel.active {
+            display: block;
+        }
+
+        .panel h2 {
+            font-size: 28px;
+            margin-bottom: 16px;
+            color: #ff6600;
+        }
+
+        .panel p {
+            color: #888;
+            line-height: 1.6;
+            max-width: 600px;
+        }
+
+        /* === GAME GRID (for stagger demo) === */
+        .game-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 16px;
+            margin-top: 24px;
+        }
+
+        .game-card {
+            aspect-ratio: 1;
+            background: #151515;
+            border: 1px solid #222;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            transition: border-color 200ms ease, box-shadow 200ms ease;
+        }
+
+        .game-card:hover {
+            border-color: #ff6600;
+            box-shadow: 0 0 20px rgba(255, 102, 0, 0.2);
+        }
+
+        /* === STATUS BAR === */
+        .status-bar {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .status-bar code {
+            background: #252525;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #ff6600;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app">
+        <!-- SIDEBAR -->
+        <nav class="sidebar" role="navigation" aria-label="Main navigation">
+            <div class="active-indicator" id="activeIndicator"></div>
+
+            <button class="sidebar-icon active" data-panel="home" aria-label="Home" aria-current="page">
+                🏠
+            </button>
+            <button class="sidebar-icon" data-panel="games" aria-label="Games">
+                🎮
+            </button>
+            <button class="sidebar-icon" data-panel="settings" aria-label="Settings">
+                ⚙️
+            </button>
+            <button class="sidebar-icon" data-panel="about" aria-label="About">
+                ℹ️
+            </button>
+        </nav>
+
+        <!-- HEADER -->
+        <header class="header">
+            <div class="header-title-wrapper" id="headerWrapper">
+                <span class="header-title" id="headerTitle">Home</span>
+            </div>
+        </header>
+
+        <!-- CONTENT PANELS -->
+        <main class="content" id="contentArea">
+            <section class="panel active" id="panel-home">
+                <h2>Welcome to TDD Launcher</h2>
+                <p>Click the sidebar icons to see smooth shared element transitions. The active indicator slides to the
+                    selected icon, content fades out and in, and the header title crossfades.</p>
+                <p style="margin-top: 12px;">Try rapid clicking to test debouncing — animations cancel and snap to the
+                    final state.</p>
+            </section>
+
+            <section class="panel" id="panel-games">
+                <h2>Games Library</h2>
+                <p>Your installed games with staggered entrance animation.</p>
+                <div class="game-grid">
+                    <div class="game-card">🎯</div>
+                    <div class="game-card">🏎️</div>
+                    <div class="game-card">⚔️</div>
+                    <div class="game-card">🚀</div>
+                    <div class="game-card">🧩</div>
+                    <div class="game-card">🎲</div>
+                </div>
+            </section>
+
+            <section class="panel" id="panel-settings">
+                <h2>Settings</h2>
+                <p>Configure your launcher preferences. Animations respect prefers-reduced-motion.</p>
+            </section>
+
+            <section class="panel" id="panel-about">
+                <h2>About</h2>
+                <p>TDD Launcher v0.9 Beta — Shared Element Transition Demo</p>
+                <p style="margin-top: 12px;">Built with Web Animations API. Transform and opacity only. ~200-250ms total
+                    perceived duration.</p>
+            </section>
+        </main>
+    </div>
+
+    <!-- Status indicator -->
+    <div class="status-bar">
+        Motion: <code id="motionStatus">checking...</code>
+    </div>
+
+    <script src="shared-transition.js"></script>
+    <script>
+        // ========================================
+        // DEMO INITIALIZATION
+        // ========================================
+
+        const panelTitles = {
+            home: 'Home',
+            games: 'Games Library',
+            settings: 'Settings',
+            about: 'About'
+        };
+
+        let currentPanel = 'home';
+
+        // Initialize transition controller
+        const transitionController = new SharedTransitionController({
+            onStart: () => console.log('[Transition] Started'),
+            onComplete: () => console.log('[Transition] Complete')
+        });
+
+        // Motion status indicator
+        const motionStatus = document.getElementById('motionStatus');
+        function updateMotionStatus() {
+            const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            motionStatus.textContent = reduced ? 'Reduced' : 'Full';
+        }
+        updateMotionStatus();
+        window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', updateMotionStatus);
+
+        // ========================================
+        // SIDEBAR NAVIGATION
+        // ========================================
+
+        const sidebarIcons = document.querySelectorAll('.sidebar-icon');
+        const activeIndicator = document.getElementById('activeIndicator');
+        const headerWrapper = document.getElementById('headerWrapper');
+        const headerTitle = document.getElementById('headerTitle');
+        const contentArea = document.getElementById('contentArea');
+
+        // Position active indicator on initial active icon
+        function positionIndicator(icon) {
+            const iconRect = icon.getBoundingClientRect();
+            const sidebarRect = icon.parentElement.getBoundingClientRect();
+            activeIndicator.style.top = (iconRect.top - sidebarRect.top) + 'px';
+        }
+
+        // Find and position initial indicator
+        const initialActive = document.querySelector('.sidebar-icon.active');
+        if (initialActive) {
+            positionIndicator(initialActive);
+        }
+
+        // Handle sidebar icon clicks
+        sidebarIcons.forEach(icon => {
+            icon.addEventListener('click', async (e) => {
+                const targetPanel = icon.dataset.panel;
+
+                // Skip if already on this panel
+                if (targetPanel === currentPanel) return;
+
+                // Get elements
+                const oldPanel = document.getElementById(`panel-${currentPanel}`);
+                const newPanel = document.getElementById(`panel-${targetPanel}`);
+                const oldIcon = document.querySelector('.sidebar-icon.active');
+
+                // Measure target position for indicator
+                const iconRect = icon.getBoundingClientRect();
+                const sidebarRect = icon.parentElement.getBoundingClientRect();
+                const targetTop = iconRect.top - sidebarRect.top;
+
+                // Update state
+                const previousPanel = currentPanel;
+                currentPanel = targetPanel;
+
+                // Update ARIA
+                sidebarIcons.forEach(i => {
+                    i.classList.remove('active');
+                    i.removeAttribute('aria-current');
+                });
+                icon.classList.add('active');
+                icon.setAttribute('aria-current', 'page');
+
+                // ========================================
+                // ORCHESTRATE TRANSITION
+                // ========================================
+
+                // Cancel any in-progress transition
+                if (transitionController.isTransitioning) {
+                    transitionController.cancelAll();
+                }
+
+                transitionController.isTransitioning = true;
+
+                // Phase 1: Move active indicator
+                const indicatorStart = parseFloat(activeIndicator.style.top) || 0;
+                const sharedDuration = transitionController.parseDuration(
+                    transitionController.getCSSVar('--shared-duration', '120ms')
+                );
+
+                const indicatorAnim = activeIndicator.animate([
+                    { top: indicatorStart + 'px' },
+                    { top: targetTop + 'px' }
+                ], {
+                    duration: transitionController.prefersReducedMotion ? 0 : sharedDuration,
+                    easing: transitionController.getCSSVar('--transition-ease'),
+                    fill: 'forwards'
+                });
+
+                // Phase 2: Fade out old content (parallel with indicator)
+                await transitionController.fadeOut(oldPanel);
+
+                // Wait for indicator if still running
+                await indicatorAnim.finished;
+                activeIndicator.style.top = targetTop + 'px';
+
+                // Phase 3: Swap content
+                oldPanel.classList.remove('active');
+                oldPanel.style.display = 'none';
+                oldPanel.style.opacity = '';
+
+                newPanel.style.display = 'block';
+                newPanel.style.opacity = '0';
+                newPanel.classList.add('active');
+
+                // Phase 4: Update header title with crossfade
+                const oldTitle = headerTitle.cloneNode(true);
+                oldTitle.classList.add('exiting');
+                headerTitle.textContent = panelTitles[targetPanel];
+                headerTitle.style.opacity = '0';
+                headerWrapper.appendChild(oldTitle);
+
+                const crossfadeDuration = transitionController.parseDuration(
+                    transitionController.getCSSVar('--header-crossfade', '100ms')
+                );
+
+                const titleOutAnim = oldTitle.animate([
+                    { opacity: 1 },
+                    { opacity: 0 }
+                ], {
+                    duration: transitionController.prefersReducedMotion ? 0 : crossfadeDuration,
+                    easing: 'ease-out',
+                    fill: 'forwards'
+                });
+
+                const titleInAnim = headerTitle.animate([
+                    { opacity: 0 },
+                    { opacity: 1 }
+                ], {
+                    duration: transitionController.prefersReducedMotion ? 0 : crossfadeDuration,
+                    easing: 'ease-in',
+                    fill: 'forwards'
+                });
+
+                // Phase 5: Fade in new content
+                await transitionController.fadeIn(newPanel);
+
+                // Cleanup header
+                await Promise.all([titleOutAnim.finished, titleInAnim.finished]);
+                oldTitle.remove();
+                headerTitle.style.opacity = '';
+
+                // Stagger game cards if on games panel
+                if (targetPanel === 'games') {
+                    const gameGrid = newPanel.querySelector('.game-grid');
+                    if (gameGrid) {
+                        await transitionController.staggerChildren(gameGrid);
+                    }
+                }
+
+                transitionController.isTransitioning = false;
+
+                // Restore focus to new icon for keyboard users
+                icon.focus();
+            });
+
+            // Keyboard support
+            icon.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    icon.click();
+                }
+            });
+        });
+
+        console.log('Shared Element Transition Demo initialized.');
+        console.log('Reduced motion:', transitionController.prefersReducedMotion);
+    </script>
+</body>
+
+</html>

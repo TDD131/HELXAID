@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\Software\tididi\Game Launcher\native_macro\build\CMakeFiles\3fbe6135299a9f7c411d4ffe08a1d486\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{F07ED1DF-8D57-3CCF-A7EB-4F9239977E38}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
