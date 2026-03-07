@@ -18,16 +18,25 @@ The project is modular by design, allowing each component to evolve independentl
 
 ## Components
 
-HELXAID currently consists of the following main components:
+HELXAID currently consists of the following main components, each operating as a focused module:
 
-- **HELXAID Launcher**  
-  Game library management and launching system.
+- **HELXAID** (Game Launcher)  
+  Core hub for game library management and universal launching.
 
-- **HELXAID Overlay**  
-  In-game overlay features such as crosshair and future HUD utilities.
+- **HELXAIC** (Music Player)  
+  Integrated local media player acting as your gaming background soundtrack.
 
-- **HELXAID Control**  
-  System-level utilities and performance controls.
+- **HELXAIL** (CPU Controller)  
+  System-level processor management integrating with tools like RyzenAdj.
+
+- **HELXAIR** (Crosshair Overlay)  
+  In-game custom crosshair layer to aid in first-person shooters.
+
+- **HELXAIRO** (Macro Setting)  
+  Hardware key mapping and input sequence automation.
+
+- **HELXTATS** (Stats & Monitoring)  
+  Hardware monitoring suite integrating PC booster, CPU stats, and driver health.
 
 ---
 
