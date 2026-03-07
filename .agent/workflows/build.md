@@ -2,7 +2,7 @@
 description: Build Game Launcher Project
 ---
 
-Build HELXAID Game Launcher to portable .exe with all HID/mouse hardware features working.
+Build HELXAID Game Launcher to portable .exe with all HID/mouse hardware features working, then package it into an installer using Inno Setup.
 
 ## Critical: HID Features Must Work in Built .exe
 
@@ -33,8 +33,23 @@ The `--hidden-import=hidapi` flag ensures the hidapi library is bundled correctl
    Get-Item "dist/HELXAID.exe" | Select-Object Name, LastWriteTime, Length
    ```
 
+4. Compile installer with Inno Setup (creates `dist/HELXAID Setup.exe`):
+   ```bash
+   & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer.iss"
+   ```
+   If Inno Setup is not installed at the default path, check other common paths:
+   - `C:\Program Files\Inno Setup 6\ISCC.exe`
+   
+   If ISCC.exe is not found at any path, inform the user that Inno Setup must be installed first from https://jrsoftware.org/isdownload.php
+
+5. Show final output files:
+   ```bash
+   Get-Item "dist/HELXAID.exe", "dist/HELXAID Setup.exe" | Select-Object Name, LastWriteTime, @{N='Size(MB)';E={[math]::Round($_.Length/1MB,1)}}
+   ```
+
 ## Output
 - Portable: `dist/HELXAID.exe` (~120MB)
+- Installer: `dist/HELXAID Setup.exe` (smaller, compressed with LZMA2)
 
 ## Troubleshooting HID Issues
 

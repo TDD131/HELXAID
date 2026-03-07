@@ -23,13 +23,12 @@ SolidCompression=yes
 ; Appearance
 WizardStyle=modern
 ; Icon for installer
-SetupIconFile=UI Icons\launcher-icon.ico
+SetupIconFile=python\UI Icons\launcher-icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; Require Windows 10+
 MinVersion=10.0
-; Allow non-admin install to user's local folder
-PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+; Require admin so it installs to C:\Program Files
+PrivilegesRequired=admin
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
