@@ -58,6 +58,23 @@ HELXAID currently consists of the following main components:
 - Accessible only when required tools (RyzenAdj / UXTU) are available
 - Debug handling when required dependencies are missing
 
+### Game Launcher
+- Scan and manage Steam & Google Play Games libraries automatically
+- Manage local custom game folders
+- Track playtime and automatically fetch game icons and background metadata
+
+### Crosshair Overlay
+- Customizable on-screen crosshair overlay (color, size, opacity)
+- Works without hooking into game memory (safer for anti-cheats)
+
+### Macro System
+- Map hardware keys to custom sequences and mouse inputs (integrated natively with C++)
+- Control DPI, rapid fire, and basic multimedia actions
+
+### System Monitoring & Cleaning
+- Real-time Hardware stats (CPU, GPU, RAM) tracking
+- Memory (RAM) cleaning optimization capabilities
+
 ---
 
 ## Known Issues
