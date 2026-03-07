@@ -49,7 +49,7 @@ HELXAID currently consists of the following main components, each operating as a
 | HELXAIL (CPU Controller) | ~90% |
 | HELXAIR (Crosshair Overlay) | ~100% | (New Feature Maybe?)
 | HELXAIRO (Macro Setting) | ~74% | 
-| HELXTATS (System Monitoring & Cleaning) | ~70% | (Driver Cleaner didnt applied yet)
+| HELXTATS (System Monitoring & Cleaning) | ~50% | (Driver Cleaner didnt applied yet)
 | System Optimization (OMEN AI like concept) | Planned |
 
 ---
