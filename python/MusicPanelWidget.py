@@ -1777,11 +1777,11 @@ class MusicPanelWidget(QWidget):
         self.action_select_folder.triggered.connect(self._browse_folder_direct)
         tools_menu.addAction(self.action_select_folder)
         
-        # Load Stream URL
-        self.action_load_url = QAction("Open Stream URL...", self)
-        self.action_load_url.setShortcut("Ctrl+U")
-        self.action_load_url.triggered.connect(self._show_load_url_dialog)
-        tools_menu.addAction(self.action_load_url)
+        # Download from YouTube
+        self.action_download_yt = QAction("Download from YouTube...", self)
+        self.action_download_yt.setShortcut("Ctrl+U")
+        self.action_download_yt.triggered.connect(self._show_youtube_download_dialog)
+        tools_menu.addAction(self.action_download_yt)
         
         tools_menu.addSeparator()
         
@@ -2734,6 +2734,377 @@ class MusicPanelWidget(QWidget):
             vlc_vol = max(0, min(200, int(volume * 100)))
             self._vlc_player.audio_set_volume(vlc_vol)
     
+    def _show_youtube_download_dialog(self):
+        """Show dialog to download audio or video from a YouTube URL using yt-dlp.
+
+        Presents format options (audio MP3 / video MP4), lets the user choose an
+        output folder, then spawns yt-dlp in a background QThread so the UI
+        remains responsive. Progress is streamed line-by-line from yt-dlp's
+        stdout and reflected in a QProgressBar. On completion the downloaded
+        file is automatically added to the current playlist.
+        """
+        from PySide6.QtWidgets import (
+            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+            QPushButton, QComboBox, QProgressBar, QFileDialog, QButtonGroup,
+            QRadioButton, QGroupBox
+        )
+        from PySide6.QtCore import QThread, Signal, Qt
+        import os, sys, subprocess, re
+
+        # ---- Check yt-dlp is available ----
+        try:
+            import yt_dlp  # noqa: F401
+        except ImportError:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "yt-dlp Not Found",
+                "yt-dlp is not installed.\n\nInstall it with:\n  pip install yt-dlp"
+            )
+            return
+
+        # ---- Worker thread ----
+        class DownloadWorker(QThread):
+            """Background thread that runs yt-dlp and emits progress signals.
+
+            Signals:
+                progress(int):  Percentage complete (0-100).
+                status(str):    Human-readable status line from yt-dlp.
+                finished(str):  Absolute path of the downloaded file, or empty string on failure.
+                error(str):    Error message if download fails.
+            """
+            progress = Signal(int)
+            status   = Signal(str)
+            finished = Signal(str)
+            error    = Signal(str)
+
+            def __init__(self, url: str, output_dir: str, fmt: str):
+                super().__init__()
+                # url:        The YouTube URL to download
+                # output_dir: Directory where the file will be saved
+                # fmt:        'audio' for MP3, 'video' for MP4
+                self.url        = url
+                self.output_dir = output_dir
+                self.fmt        = fmt
+                self._cancelled = False
+
+            def cancel(self):
+                """Signal the worker to abort. The subprocess will be killed."""
+                self._cancelled = True
+                if hasattr(self, '_proc') and self._proc:
+                    try:
+                        self._proc.terminate()
+                    except Exception:
+                        pass
+
+            def run(self):
+                """Execute yt-dlp as a subprocess and stream its output."""
+                import yt_dlp as _yt_dlp_mod
+                main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
+
+                # Build yt-dlp arguments based on selected format:
+                # - audio: extract audio stream and re-encode to MP3 via FFmpeg
+                # - video: download best H.264 + AAC and merge into MP4 via FFmpeg
+                if self.fmt == 'audio':
+                    extra = [
+                        '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+                    ]
+                else:
+                    extra = [
+                        '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                        '--merge-output-format', 'mp4',
+                    ]
+
+                # FFmpeg must be on PATH or bundled; yt-dlp will locate it automatically.
+                cmd = [
+                    sys.executable, main_py,
+                    '--newline',           # flush one line at a time for progress parsing
+                    '--progress',
+                    '--no-warnings',
+                    '--no-check-certificate',
+                    '--socket-timeout', '20',
+                    '-o', os.path.join(self.output_dir, '%(title)s.%(ext)s'),
+                ] + extra + [self.url]
+
+                startupinfo = None
+                if sys.platform == 'win32':
+                    from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
+                    startupinfo = STARTUPINFO()
+                    startupinfo.dwFlags |= STARTF_USESHOWWINDOW
+
+                try:
+                    self._proc = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        startupinfo=startupinfo
+                    )
+
+                    last_pct = 0
+                    dest_file = ""
+
+                    for line in self._proc.stdout:
+                        if self._cancelled:
+                            break
+                        line = line.rstrip()
+                        if not line:
+                            continue
+
+                        self.status.emit(line)
+
+                        # Parse percentage from yt-dlp's progress lines, e.g.
+                        # "[download]  42.3% of ..."
+                        pct_match = re.search(r'(\d+\.?\d*)%', line)
+                        if pct_match:
+                            pct = min(99, int(float(pct_match.group(1))))
+                            if pct > last_pct:
+                                last_pct = pct
+                                self.progress.emit(pct)
+
+                        # Parse destination file path from yt-dlp output, e.g.
+                        # "[download] Destination: /path/to/file.mp3" or
+                        # "[Merger] Merging formats into /path/to/file.mp4"
+                        for pattern in [
+                            r'\[download\] Destination: (.+)',
+                            r'\[Merger\] Merging formats into "?(.+?)"?$',
+                            r'\[ExtractAudio\] Destination: (.+)',
+                        ]:
+                            m = re.search(pattern, line)
+                            if m:
+                                dest_file = m.group(1).strip().strip('"')
+
+                    self._proc.wait()
+
+                    if self._cancelled:
+                        self.error.emit("Download cancelled.")
+                        return
+
+                    if self._proc.returncode == 0:
+                        self.progress.emit(100)
+                        self.finished.emit(dest_file)
+                    else:
+                        self.error.emit("yt-dlp exited with an error. Check the URL and try again.")
+
+                except Exception as exc:
+                    self.error.emit(str(exc))
+
+        # ---- Build dialog ----
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Download from YouTube")
+        dialog.setMinimumWidth(520)
+        dialog.setStyleSheet("""
+            QDialog {
+                background: #1a1a2e;
+                color: #e0e0e0;
+            }
+            QLabel { color: #e0e0e0; background: transparent; font-size: 13px; }
+            QLineEdit {
+                background: rgba(255,255,255,0.08);
+                border: 1px solid rgba(255,255,255,0.2);
+                border-radius: 6px;
+                padding: 6px 10px;
+                color: #e0e0e0;
+                font-size: 13px;
+            }
+            QLineEdit:focus { border: 1px solid #FF5B06; }
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid rgba(255,255,255,0.15);
+                border-radius: 6px;
+                margin-top: 8px;
+                padding-top: 8px;
+                color: #aaa;
+                font-size: 11px;
+            }
+            QGroupBox::title { subcontrol-origin: margin; left: 8px; color: #FF5B06; }
+            QRadioButton { color: #e0e0e0; padding: 4px 8px; font-size: 12px; background: transparent; }
+            QRadioButton::indicator { width: 14px; height: 14px; border-radius: 7px; border: 2px solid #666; background: #2a2a2a; }
+            QRadioButton::indicator:checked { background: #FF5B06; border-color: #FF5B06; }
+            QProgressBar {
+                border: 1px solid rgba(255,255,255,0.15);
+                border-radius: 6px;
+                background: rgba(0,0,0,0.3);
+                text-align: center;
+                color: #e0e0e0;
+                font-size: 11px;
+                min-height: 20px;
+            }
+            QProgressBar::chunk { background: #FF5B06; border-radius: 5px; }
+            QPushButton {
+                background: #FF5B06;
+                color: white;
+                border: none;
+                padding: 8px 18px;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover { background: #FF7B26; }
+            QPushButton:disabled { background: #444; color: #888; }
+        """)
+
+        layout = QVBoxLayout(dialog)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Title banner
+        banner = QLabel("Download from YouTube")
+        banner.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF5B06; background: transparent;")
+        layout.addWidget(banner)
+
+        # URL input
+        url_group = QGroupBox("YouTube URL")
+        url_layout = QHBoxLayout(url_group)
+        url_edit = QLineEdit()
+        url_edit.setObjectName("ytUrlInput")
+        url_edit.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        url_layout.addWidget(url_edit)
+        layout.addWidget(url_group)
+
+        # Format selector
+        fmt_group = QGroupBox("Format")
+        fmt_layout = QHBoxLayout(fmt_group)
+        btn_group = QButtonGroup(dialog)
+        rb_audio = QRadioButton("Audio only  (MP3)")
+        rb_video = QRadioButton("Video  (MP4, best quality)")
+        rb_audio.setChecked(True)
+        btn_group.addButton(rb_audio, 0)
+        btn_group.addButton(rb_video, 1)
+        fmt_layout.addWidget(rb_audio)
+        fmt_layout.addWidget(rb_video)
+        fmt_layout.addStretch()
+        layout.addWidget(fmt_group)
+
+        # Output folder
+        folder_group = QGroupBox("Save to")
+        folder_layout = QHBoxLayout(folder_group)
+        default_folder = self._music_folder or os.path.expanduser("~/Downloads")
+        folder_edit = QLineEdit(default_folder)
+        folder_edit.setObjectName("ytFolderInput")
+        folder_edit.setReadOnly(True)
+        browse_btn = QPushButton("Browse...")
+        browse_btn.setStyleSheet("background: rgba(255,255,255,0.1); font-weight: normal;")
+
+        def pick_folder():
+            d = QFileDialog.getExistingDirectory(dialog, "Select Output Folder", folder_edit.text())
+            if d:
+                folder_edit.setText(d)
+
+        browse_btn.clicked.connect(pick_folder)
+        folder_layout.addWidget(folder_edit, 1)
+        folder_layout.addWidget(browse_btn)
+        layout.addWidget(folder_group)
+
+        # Progress bar + status label
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(0)
+        progress_bar.setVisible(False)
+        layout.addWidget(progress_bar)
+
+        status_lbl = QLabel("")
+        status_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        status_lbl.setWordWrap(True)
+        status_lbl.setVisible(False)
+        layout.addWidget(status_lbl)
+
+        # Buttons row
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("ytCancelBtn")
+        cancel_btn.setStyleSheet("background: #333; font-weight: normal;")
+        cancel_btn.clicked.connect(dialog.reject)
+        download_btn = QPushButton("Download")
+        download_btn.setObjectName("ytDownloadBtn")
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(download_btn)
+        layout.addLayout(btn_row)
+
+        # Worker handle (kept in closure)
+        _worker = [None]
+
+        def start_download():
+            url = url_edit.text().strip()
+            if not url:
+                url_edit.setPlaceholderText("Please enter a URL first!")
+                return
+
+            fmt = 'audio' if rb_audio.isChecked() else 'video'
+            out_dir = folder_edit.text().strip() or os.path.expanduser("~/Downloads")
+            os.makedirs(out_dir, exist_ok=True)
+
+            # Lock UI while downloading
+            download_btn.setEnabled(False)
+            url_edit.setEnabled(False)
+            rb_audio.setEnabled(False)
+            rb_video.setEnabled(False)
+            browse_btn.setEnabled(False)
+            cancel_btn.setText("Stop")
+
+            progress_bar.setValue(0)
+            progress_bar.setVisible(True)
+            status_lbl.setVisible(True)
+            status_lbl.setText("Starting download...")
+
+            worker = DownloadWorker(url, out_dir, fmt)
+            _worker[0] = worker
+
+            # Trim status to last line for readability
+            worker.status.connect(lambda s: status_lbl.setText(s[-120:] if len(s) > 120 else s))
+            worker.progress.connect(progress_bar.setValue)
+
+            def on_finished(dest_path: str):
+                """Called when yt-dlp exits with code 0."""
+                status_lbl.setText("Download complete!")
+                progress_bar.setValue(100)
+                cancel_btn.setText("Close")
+                cancel_btn.clicked.disconnect()
+                cancel_btn.clicked.connect(dialog.accept)
+
+                # Auto-add downloaded file to the current playlist
+                if dest_path and os.path.isfile(dest_path):
+                    from PlaylistWidget import PlaylistWidget as _PW
+                    track = _PW.build_track_meta(dest_path) if hasattr(_PW, 'build_track_meta') else {
+                        'path': dest_path,
+                        'title': os.path.splitext(os.path.basename(dest_path))[0],
+                        'artist': 'YouTube',
+                        'duration': 0,
+                        'is_online': False,
+                        'mtime': os.path.getmtime(dest_path),
+                    }
+                    if not hasattr(self, '_playlist') or self._playlist is None:
+                        self._playlist = []
+                    self._playlist.append(track)
+                    self.table.set_tracks(self._playlist)
+                    print(f"[YouTube DL] Added to playlist: {os.path.basename(dest_path)}")
+
+            def on_error(msg: str):
+                """Called when yt-dlp fails or is cancelled."""
+                status_lbl.setText(f"Error: {msg}")
+                status_lbl.setStyleSheet("color: #ff5555; font-size: 11px; background: transparent;")
+                cancel_btn.setText("Close")
+                cancel_btn.clicked.disconnect()
+                cancel_btn.clicked.connect(dialog.reject)
+
+            worker.finished.connect(on_finished)
+            worker.error.connect(on_error)
+            worker.start()
+
+        def on_cancel():
+            """Stop button while downloading, or close if idle."""
+            if _worker[0] and _worker[0].isRunning():
+                _worker[0].cancel()
+            else:
+                dialog.reject()
+
+        cancel_btn.clicked.connect(on_cancel)
+        download_btn.clicked.connect(start_download)
+
+        dialog.exec()
+
     def _show_load_url_dialog(self):
         """Show input dialog for stream URL."""
         from PySide6.QtWidgets import QInputDialog
