@@ -2762,6 +2762,14 @@ class MusicPanelWidget(QWidget):
             )
             return
 
+        # ---- Check FFmpeg availability ----
+        # FFmpeg is required by yt-dlp to:
+        #   - Re-encode audio to MP3 (audio mode)
+        #   - Merge separate video+audio streams into MP4 (video mode)
+        # Without it, both download modes will fail at the post-processing step.
+        import shutil as _shutil
+        ffmpeg_ok = bool(_shutil.which('ffmpeg') or _shutil.which('ffmpeg.exe'))
+
         # ---- Worker thread ----
         class DownloadWorker(QThread):
             """Background thread that runs yt-dlp and emits progress signals.
@@ -2954,6 +2962,40 @@ class MusicPanelWidget(QWidget):
         banner.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF5B06; background: transparent;")
         layout.addWidget(banner)
 
+        # ---- FFmpeg warning panel ----
+        # Shown when FFmpeg is not found on PATH. Styled to match the
+        # HELXAIL 'RyzenAdj Not Found' panel so the UI language is consistent.
+        if not ffmpeg_ok:
+            from PySide6.QtWidgets import QFrame
+            warn_frame = QFrame()
+            warn_frame.setObjectName("ffmpegWarnPanel")
+            warn_frame.setStyleSheet("""
+                QFrame#ffmpegWarnPanel {
+                    background: rgba(255, 160, 0, 0.10);
+                    border: 1px solid rgba(255, 160, 0, 0.4);
+                    border-radius: 8px;
+                    padding: 4px;
+                }
+            """)
+            warn_layout = QVBoxLayout(warn_frame)
+            warn_layout.setContentsMargins(14, 10, 14, 10)
+            warn_layout.setSpacing(4)
+
+            warn_title = QLabel("FFmpeg Not Found")
+            warn_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #FDA903; background: transparent;")
+            warn_layout.addWidget(warn_title)
+
+            warn_body = QLabel(
+                "FFmpeg is required to download and convert YouTube media.\n"
+                "Install FFmpeg and ensure it is added to your system PATH,\n"
+                "then reopen this dialog."
+            )
+            warn_body.setWordWrap(True)
+            warn_body.setStyleSheet("font-size: 12px; color: #9DB2BF; background: transparent;")
+            warn_layout.addWidget(warn_body)
+
+            layout.addWidget(warn_frame)
+
         # URL input
         url_group = QGroupBox("YouTube URL")
         url_layout = QHBoxLayout(url_group)
@@ -3022,6 +3064,16 @@ class MusicPanelWidget(QWidget):
         btn_row.addWidget(cancel_btn)
         btn_row.addWidget(download_btn)
         layout.addLayout(btn_row)
+
+        # Gate all download controls behind FFmpeg availability.
+        # Without FFmpeg, yt-dlp cannot post-process the downloaded stream
+        # into MP3 or MP4, so attempting a download would always fail.
+        if not ffmpeg_ok:
+            download_btn.setEnabled(False)
+            download_btn.setToolTip("Install FFmpeg and add it to PATH to enable downloads.")
+            rb_audio.setEnabled(False)
+            rb_video.setEnabled(False)
+
 
         # Worker handle (kept in closure)
         _worker = [None]
