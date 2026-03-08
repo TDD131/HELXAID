@@ -52,7 +52,7 @@ namespace helxaid {
 
 // Static version tag — bump to force recreation of stale scheduled tasks.
 // Embedded in the task description XML so we can detect old versions.
-const char *BoostEngine::TASK_VERSION = "v3";
+const char *BoostEngine::TASK_VERSION = "v4";
 
 BoostEngine::BoostEngine() = default;
 BoostEngine::~BoostEngine() = default;
@@ -218,17 +218,13 @@ bool BoostEngine::createTaskWithXml(const std::string &taskName,
       <RestartOnIdle>false</RestartOnIdle>
     </IdleSettings>
     <AllowStartOnDemand>true</AllowStartOnDemand>
-    <Enabled>true</Enabled>
-    <Hidden>true</Hidden>
-    <RunOnlyIfIdle>false</RunOnlyIfIdle>
-    <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
     <Priority>7</Priority>
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>powershell.exe</Command>
-      <Arguments>-NoProfile -ExecutionPolicy Bypass -NonInteractive -WindowStyle Hidden -File ")" +
+      <Command>wscript.exe</Command>
+      <Arguments>//B //Nologo ")" +
                     escapedPath + R"("</Arguments>
     </Exec>
   </Actions>
@@ -316,6 +312,7 @@ bool BoostEngine::ensureTaskExists(const std::string &taskName,
 // ============================================================
 
 bool BoostEngine::writeBoostScript(const std::string &scriptPath,
+                                   const std::string &vbsPath,
                                    const std::string &inputPath,
                                    const std::string &logPath) {
   // Escape backslashes for PowerShell string literals
@@ -370,6 +367,19 @@ Remove-Item $inputFile -Force -ErrorAction SilentlyContinue
     return false;
   file << script;
   file.close();
+
+  // Write VBS wrapper
+  std::ofstream vbsFile(vbsPath, std::ios::trunc);
+  if (vbsFile.is_open()) {
+    std::string vbsScript =
+        "Set objShell = CreateObject(\"WScript.Shell\")\n"
+        "objShell.Run \"powershell.exe -NoProfile -ExecutionPolicy Bypass "
+        "-WindowStyle Hidden -File \"\"\" & \"" +
+        scriptPath + "\" & \"\"\"\", 0, False\n";
+    vbsFile << vbsScript;
+    vbsFile.close();
+  }
+
   return true;
 }
 
@@ -399,12 +409,14 @@ BoostEngine::stopServices(const std::vector<ServiceEntry> &services,
     std::string scriptDir = std::string(appdataPath) + "\\HELXAID";
     CreateDirectoryA(scriptDir.c_str(), nullptr);
     std::string scriptPath = scriptDir + "\\boost_services.ps1";
+    std::string vbsPath = scriptDir + "\\boost_wrapper.vbs";
 
-    // Write the PS1 script (idempotent)
-    writeBoostScript(scriptPath, inputPath, logPath);
+    // Write the scripts (idempotent)
+    writeBoostScript(scriptPath, vbsPath, inputPath, logPath);
 
-    // Ensure scheduled task exists
-    if (!ensureTaskExists(taskName, scriptPath)) {
+    // Ensure scheduled task exists. The task is now explicitly tied to the VBS
+    // script.
+    if (!ensureTaskExists(taskName, vbsPath)) {
       // UAC denied or creation failed — all services fail
       for (auto &svc : services) {
         ServiceStopResult r;

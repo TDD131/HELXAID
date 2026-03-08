@@ -107,10 +107,11 @@ public:
 
     // ---- PowerShell Script ----
 
-    // Write/update the PS1 script that the scheduled task executes.
+    // Write/update the PS1/VBS scripts that the scheduled task executes.
     // The script reads service names from inputPath, stops them,
     // writes results to logPath.
     bool writeBoostScript(const std::string& scriptPath,
+                         const std::string& vbsPath,
                          const std::string& inputPath,
                          const std::string& logPath);
 
