@@ -1271,7 +1271,8 @@ class HardwarePanelWidget(QWidget):
                                      Q_ARG(object, None), Q_ARG(str, None), 
                                      Q_ARG(object, str(e)), Q_ARG(int, 0))
     
-    @QtCore.Slot(object, str, object, int)
+    from PySide6.QtCore import Slot
+    @Slot(object, str, object, int)
     def _boost_complete_safe(self, results, summary, error, total_failed):
         """Wrapper strictly for cross-thread calls"""
         self._boost_complete(results, summary, error, total_failed)
