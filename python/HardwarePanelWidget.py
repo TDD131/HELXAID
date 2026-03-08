@@ -251,9 +251,15 @@ class HardwarePanelWidget(QWidget):
     Component Name: HardwarePanelWidget
     """
     
+    # Signal to handle cross-thread updates back to GUI (must be defined at class level)
+    boost_completed_signal = Signal(object, str, object, int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("HardwarePanelWidget")
+        
+        # Connect the signal to the safe wrapper
+        self.boost_completed_signal.connect(self._boost_complete_safe)
         
         # Initialize hardware monitor
         self.monitor = get_monitor(500)  # 500ms default
@@ -1258,20 +1264,13 @@ class HardwarePanelWidget(QWidget):
             
             print(f"[Boost] Complete - {summary}")
             
-            # Schedule UI update in main thread safely
-            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-            QMetaObject.invokeMethod(self, "_boost_complete_safe", Qt.QueuedConnection, 
-                                     Q_ARG(object, results), Q_ARG(str, summary), 
-                                     Q_ARG(object, None), Q_ARG(int, total_failed))
+            # Schedule UI update in main thread safely using Signal
+            self.boost_completed_signal.emit(results, summary, None, total_failed)
                 
         except Exception as e:
             print(f"[Boost] Error: {e}")
-            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
-            QMetaObject.invokeMethod(self, "_boost_complete_safe", Qt.QueuedConnection, 
-                                     Q_ARG(object, None), Q_ARG(str, None), 
-                                     Q_ARG(object, str(e)), Q_ARG(int, 0))
+            self.boost_completed_signal.emit(None, "", str(e), 0)
     
-    from PySide6.QtCore import Slot
     @Slot(object, str, object, int)
     def _boost_complete_safe(self, results, summary, error, total_failed):
         """Wrapper strictly for cross-thread calls"""
