@@ -8062,7 +8062,7 @@ Stylesheet Selector:
                                              Q_ARG(str, "ERROR"),
                                              Q_ARG(str, str(e)))
             
-            # Tampilkan pointer loading pas nge-check
+            # Show waiting cursor while checking
             self.setCursor(Qt.WaitCursor)
             
             checking_thread = threading.Thread(target=run_check, daemon=True)
@@ -8072,7 +8072,7 @@ Stylesheet Selector:
             
         except Exception as e:
             self.setCursor(Qt.ArrowCursor)
-            QMessageBox.warning(self, "Update Error", f"Terjadi kesalahan: {e}")
+            QMessageBox.warning(self, "Update Error", f"An error occurred: {e}")
 
     @Slot(str, str)
     def _on_update_result(self, latest_version: str, release_url: str):
@@ -8081,7 +8081,7 @@ Stylesheet Selector:
         
         if latest_version == "ERROR":
             print(f"[UpdateCheck] Could not reach update server: {release_url}")
-            QMessageBox.warning(self, "Update Error", f"Gagal mengecek update!\n\nPastikan koneksi internet lancar.\nError: {release_url}")
+            QMessageBox.warning(self, "Update Error", f"Failed to check for updates!\n\nPlease ensure your internet connection is stable.\nError: {release_url}")
             return
             
         CURRENT_VERSION = "4.8"
@@ -8089,12 +8089,12 @@ Stylesheet Selector:
         # Simple string comparison
         if latest_version and latest_version != CURRENT_VERSION:
             reply = QMessageBox.question(self, "Update Available!", 
-                                         f"Versi baru ({latest_version}) tersedia!\n\nVersi kamu saat ini: {CURRENT_VERSION}\n\nMau download sekarang?",
+                                         f"A new version ({latest_version}) is available!\n\nYour current version: {CURRENT_VERSION}\n\nWould you like to download it now?",
                                          QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes and release_url:
                 QDesktopServices.openUrl(QUrl(release_url))
         else:
-            QMessageBox.information(self, "Update", f"Kamu udah pakai versi terbaru ({CURRENT_VERSION}) wok!")
+            QMessageBox.information(self, "Update", f"You are already using the latest version ({CURRENT_VERSION})!")
     
     
     def _browse_qs_bg(self):
