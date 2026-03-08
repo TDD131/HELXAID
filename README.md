@@ -104,8 +104,6 @@ HELXAID currently consists of the following main components, each operating as a
 ### v4.8
 - Universal Scan (combines Steam & Google Play Games library scanning)
 - Check for Updates functionality via GitHub releases
-- Settings persistence fix (migrated to `%APPDATA%\HELXAID`)
-- Installer now defaults to `C:\Program Files` with Administrator privileges
 - Fullscreen (F11) and window maximize state behavior fixes
 
 ### v4.9
