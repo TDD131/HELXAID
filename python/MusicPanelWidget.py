@@ -2768,7 +2768,22 @@ class MusicPanelWidget(QWidget):
         #   - Merge separate video+audio streams into MP4 (video mode)
         # Without it, both download modes will fail at the post-processing step.
         import shutil as _shutil
-        ffmpeg_ok = bool(_shutil.which('ffmpeg') or _shutil.which('ffmpeg.exe'))
+        local_ffmpeg_dir = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'tools', 'ffmpeg', 'bin')
+        ffmpeg_bin_path = os.path.join(local_ffmpeg_dir, 'ffmpeg.exe') if sys.platform == 'win32' else os.path.join(local_ffmpeg_dir, 'ffmpeg')
+        
+        ffmpeg_ok = False
+        ffmpeg_cmd_path = ""
+        
+        if os.path.exists(ffmpeg_bin_path):
+            ffmpeg_ok = True
+            ffmpeg_cmd_path = local_ffmpeg_dir
+            print(f"[YouTube DL] Found local bundled FFmpeg at {ffmpeg_cmd_path}")
+        else:
+            ffmpeg_path = _shutil.which('ffmpeg') or _shutil.which('ffmpeg.exe')
+            ffmpeg_ok = bool(ffmpeg_path)
+            if ffmpeg_ok:
+                ffmpeg_cmd_path = os.path.dirname(ffmpeg_path)
+                print(f"[YouTube DL] Found system FFmpeg.")
 
         # ---- Worker thread ----
         class DownloadWorker(QThread):
@@ -2845,7 +2860,10 @@ class MusicPanelWidget(QWidget):
                     '--no-check-certificate',
                     '--socket-timeout', '20',
                     '-o', os.path.join(self.output_dir, '%(title)s.%(ext)s'),
-                ] + extra + [self.url]
+                ] + extra
+                if ffmpeg_cmd_path:
+                    cmd.extend(['--ffmpeg-location', ffmpeg_cmd_path])
+                cmd.append(self.url)
 
                 startupinfo = None
                 if sys.platform == 'win32':
