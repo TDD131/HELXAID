@@ -7989,6 +7989,59 @@ Stylesheet Selector:
         version_layout.addStretch()
         layout.addLayout(version_layout)
 
+        # === Developer Mode Section ===
+        # Placed at the very bottom before Ok/Cancel.
+        # The Uninstall External Tools button is hidden behind this toggle
+        # to prevent accidental removal of critical runtime dependencies.
+        dev_group = QGroupBox("Developer")
+        dev_group.setStyleSheet("""
+            QGroupBox {
+                color: #888888;
+                border: 1px solid rgba(255,100,0,0.3);
+                border-radius: 4px;
+                margin-top: 8px;
+                padding-top: 8px;
+                font-size: 11px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                color: #FF5B06;
+            }
+        """)
+        dev_layout = QVBoxLayout(dev_group)
+        dev_layout.setSpacing(6)
+
+        # Toggle for enabling developer-only controls
+        dev_mode_cb = QCheckBox("Developer Mode")
+        dev_mode_cb.setChecked(self.settings.get("developer_mode", False))
+        dev_mode_cb.setStyleSheet("color: #b3b3b3; font-size: 11px;")
+        dev_layout.addWidget(dev_mode_cb)
+
+        # Danger button: only enabled when Developer Mode is active.
+        # Removes external runtime tools (RyzenAdj, FFprobe) from the system.
+        uninstall_tools_btn = AnimatedButton("Uninstall External Tools")
+        uninstall_tools_btn.setEnabled(dev_mode_cb.isChecked())
+        uninstall_tools_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(200, 40, 40, 0.7);
+                color: white;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: rgba(220, 60, 60, 0.9); }
+            QPushButton:disabled { background: rgba(80,80,80,0.4); color: #555555; }
+        """)
+        uninstall_tools_btn.clicked.connect(self.uninstall_external_tools)
+        dev_layout.addWidget(uninstall_tools_btn)
+
+        # Wire toggle so button enables/disables reactively without reopening dialog
+        dev_mode_cb.toggled.connect(uninstall_tools_btn.setEnabled)
+
+        layout.addWidget(dev_group)
+
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
@@ -8007,6 +8060,7 @@ Stylesheet Selector:
             self.settings["resizable_window"] = resizable_cb.isChecked()
             self.settings["window_fullscreen"] = fullscreen_cb.isChecked()
             self.settings["window_opacity"] = opacity_slider.value() / 100.0
+            self.settings["developer_mode"] = dev_mode_cb.isChecked()
             save_settings(self.settings)
             
             # Apply display settings immediately
@@ -8031,6 +8085,85 @@ Stylesheet Selector:
             self.refresh()
             
         del dialog
+
+    def uninstall_external_tools(self):
+        """Remove external runtime tools from the system.
+        
+        Targets the optional external software components that HELXAID relies on:
+        - RyzenAdj: stored in %APPDATA%\\HELXAID\\tools\\ryzenadj (and variants)
+        - FFmpeg/FFprobe: path taken from the stored 'ffprobe_path' setting if set
+        
+        Only removes the tool files/folders, not any user data or settings.
+        The button calling this method is gated behind Developer Mode so it cannot
+        be triggered accidentally by a normal user.
+        """
+        import shutil
+
+        # Identify candidate paths for each external tool.
+        # RyzenAdj is always stored under the HELXAID AppData tools folder.
+        appdata_tools = os.path.join(os.environ.get("APPDATA", ""), "HELXAID", "tools")
+        ryzenadj_path  = os.path.join(appdata_tools, "ryzenadj")
+        ryzenadj_path2 = os.path.join(appdata_tools, "RyzenAdj")
+
+        # FFprobe path is read from settings (user may have set a custom location).
+        # We only target the parent folder if it was explicitly configured in settings.
+        ffprobe_exe = self.settings.get("ffprobe_path", "")
+        ffprobe_folder = os.path.dirname(ffprobe_exe) if ffprobe_exe else ""
+
+        # Build the list of targets that actually exist on this machine
+        targets = []
+        for p in [ryzenadj_path, ryzenadj_path2]:
+            if os.path.exists(p) and p not in [t[0] for t in targets]:
+                targets.append((p, "RyzenAdj"))
+        if ffprobe_folder and os.path.isdir(ffprobe_folder):
+            targets.append((ffprobe_folder, "FFmpeg/FFprobe"))
+
+        if not targets:
+            QMessageBox.information(
+                self, "Uninstall External Tools",
+                "No installed external tools were found on this system.\n\n"
+                "Either they were never downloaded, or they are stored in a custom location."
+            )
+            return
+
+        # Build a human-readable list of what will be deleted and confirm
+        names = "\n".join(f"  - {name}  ({path})" for path, name in targets)
+        confirm = QMessageBox.warning(
+            self, "Uninstall External Tools",
+            f"The following external tools will be permanently deleted:\n\n{names}\n\n"
+            "This action cannot be undone. Features that depend on these tools\n"
+            "(CPU Controller, Music duration reading) may stop working.\n\n"
+            "Are you sure?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        # Perform deletion and track results
+        removed, failed = [], []
+        for path, name in targets:
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+                removed.append(name)
+            except Exception as e:
+                failed.append(f"{name}: {e}")
+
+        # Also clear the ffprobe_path setting if we just deleted it
+        if ffprobe_folder and any("FFmpeg" in n for n in removed):
+            self.settings.pop("ffprobe_path", None)
+            save_settings(self.settings)
+
+        # Show final summary
+        msg = ""
+        if removed:
+            msg += "Successfully removed:\n" + "\n".join(f"  - {n}" for n in removed)
+        if failed:
+            msg += "\n\nFailed to remove:\n" + "\n".join(f"  - {n}" for n in failed)
+
+        QMessageBox.information(self, "Uninstall Complete", msg.strip())
 
     def check_for_updates(self):
         """Check for application updates."""
@@ -12360,5 +12493,3 @@ if __name__ == "__main__":
         w.show()
     
     sys.exit(app.exec())
-    
-    
