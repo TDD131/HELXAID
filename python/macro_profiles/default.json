@@ -1,0 +1,14 @@
+{
+  "id": "default",
+  "name": "Default Profile",
+  "description": "Default macro profile",
+  "enabled": true,
+  "bound_apps": [],
+  "activation_hotkey": null,
+  "default_layer": "default",
+  "layer_switch_hotkeys": {},
+  "macro_ids": [
+    "autoclicker_db48e1"
+  ],
+  "settings": {}
+}

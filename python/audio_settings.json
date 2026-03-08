@@ -1,0 +1,20 @@
+{
+  "audio_player": {
+    "folder": "C:/Users/TDD/Music/Fujii Kaze's Playlist",
+    "index": 0,
+    "volume": 97,
+    "device": "FxSound Speakers (FxSound Audio Enhancer)",
+    "stereo_mode": 0,
+    "loop_mode": 2,
+    "shuffle_enabled": false
+  },
+  "playlist_widget": {
+    "column_widths": {
+      "0": 50,
+      "1": 320,
+      "2": 150,
+      "3": 80
+    }
+  },
+  "video_fit_mode": 1
+}

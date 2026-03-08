@@ -1,0 +1,19 @@
+{
+  "enabled": false,
+  "shape": "t-shape",
+  "color": "#00ff00",
+  "size": 5,
+  "thickness": 2,
+  "opacity": 100,
+  "dot_size": 4,
+  "dot_enabled": true,
+  "outline_enabled": true,
+  "outline_color": "#000000",
+  "outline_thickness": 1,
+  "gap": 7,
+  "offset_x": 0,
+  "offset_y": 0,
+  "rotation": 0,
+  "custom_image": "C:/Users/TDD/Downloads/Gve61v9.png",
+  "custom_colors": []
+}

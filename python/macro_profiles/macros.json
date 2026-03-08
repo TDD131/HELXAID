@@ -1,0 +1,28 @@
+[
+  {
+    "id": "autoclicker_db48e1",
+    "name": "Auto-clicker (left)",
+    "type": "ToggleMacro",
+    "enabled": true,
+    "description": "",
+    "trigger": {
+      "type": "keyboard_key",
+      "event": "down",
+      "key": "f8"
+    },
+    "conditions": [],
+    "layer": "default",
+    "allow_overlap": false,
+    "is_toggle": true,
+    "on_action": null,
+    "repeat_action": {
+      "type": "mouse_click",
+      "button": "left"
+    },
+    "repeat_interval_ms": 1,
+    "hold_key": null,
+    "hold_button": null,
+    "on_activate_actions": [],
+    "on_deactivate_actions": []
+  }
+]
