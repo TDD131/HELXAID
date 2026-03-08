@@ -8178,21 +8178,6 @@ Stylesheet Selector:
         except Exception as e:
             print(f"[UninstallTools] Could not resolve RyzenAdj path: {e}")
 
-        # ---- FFmpeg / FFprobe ----
-        # The path is stored by PlaylistWidget in settings under 'ffprobe_path'.
-        # We remove only the immediate parent folder of ffprobe.exe so we don't
-        # accidentally wipe a user's full FFmpeg install if they pointed it at a
-        # system-wide location.
-        ffprobe_exe = self.settings.get("ffprobe_path", "")
-        if not ffprobe_exe:
-            # Fallback: check alternate key name
-            ffprobe_exe = self.settings.get("ffprobe_exe", "")
-        if ffprobe_exe and os.path.isfile(ffprobe_exe):
-            ffprobe_dir = os.path.dirname(ffprobe_exe)
-            if ffprobe_dir not in seen_paths:
-                targets.append((ffprobe_dir, f"FFmpeg/FFprobe  ({ffprobe_dir})"))
-                seen_paths.add(ffprobe_dir)
-
         if not targets:
             QMessageBox.information(
                 self, "Uninstall External Tools",
@@ -8243,12 +8228,13 @@ Stylesheet Selector:
 
         QMessageBox.information(self, "Uninstall Complete", msg.strip())
 
-        # Trigger live panel reloads so the user sees the "unavailable" state
-        # immediately without having to restart the application.
+        # Trigger live panel reload for CPU if RyzenAdj was removed,
+        # so the "RyzenAdj Not Found" state is shown immediately.
         if any("RyzenAdj" in n for n in removed):
             self._reload_cpu_panel()
-        if any("FFmpeg" in n for n in removed):
-            self._reload_music_panel()
+        # Note: FFprobe is NOT a core dependency — HELXAIC music playback works
+        # without it (FFprobe is only a fallback for reading audio duration metadata).
+        # Therefore we do NOT disable the Music Player panel when FFprobe is removed.
 
     def check_for_updates(self):
         """Check for application updates."""
