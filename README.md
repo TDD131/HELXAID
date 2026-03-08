@@ -1,9 +1,16 @@
-# HELXAID
+<p align="center">
+  <img src="python/UI%20Icons/launcher-icon.png" width="220" alt="HELXAID Logo">
+</p>
 
-![Status](https://img.shields.io/badge/status-active_development-blue)
+<h1 align="center">HELXAID</h1>
 
-**HELXAID** is an actively developed desktop utility suite for gamers and power users.  
-It combines a game launcher, overlay tools, system controls, and automation features into a single unified platform.
+<p align="center">
+  <img src="https://img.shields.io/badge/status-active_development-blue" alt="Status">
+</p>
+
+<p align="center">
+  <b>An actively developed desktop utility suite for gamers and power users.<br>Combines a game launcher, system controls, and automation features into a single unified platform.</b>
+</p>
 
 ---
 
