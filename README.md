@@ -116,6 +116,13 @@ This project is under active development and contains known limitations:
 - Installer now defaults to `C:\Program Files` with Administrator privileges
 - Fullscreen (F11) and window maximize state behavior fixes
 
+### v4.9
+- **HELXTATS Boost Engine Rewrite:** fully silent native C++ execution using VBScript wrapper (no PowerShell popups, no annoying beeps)
+- **YouTube Downloader Enhancements:** Added format (MP3/MP4) and specific Quality options (e.g. 320kbps, 1080p, etc.)
+- Fixed FFmpeg local detection logic, ensuring reliable parsing inside Music Player
+- Refined tray notification messaging and behaviors for Booster
+- Support for auto-fetching required binaries (FFmpeg, RyzenAdj) to local AppData
+
 ---
 
 ## Development Status
