@@ -762,11 +762,10 @@ class HardwarePanelWidget(QWidget):
             
             # Show notification
             if hasattr(self.window(), 'tray_icon') and self.window().tray_icon:
-                from PySide6.QtWidgets import QSystemTrayIcon
                 self.window().tray_icon.showMessage(
                     "HELXAID Booster",
                     "Custom boost preset has been saved successfully.",
-                    QSystemTrayIcon.Information,
+                    self.window().windowIcon(),
                     3000
                 )
         except Exception as e:
@@ -1313,15 +1312,15 @@ class HardwarePanelWidget(QWidget):
                         if total_failed == 0:
                             main_window.tray_icon.showMessage(
                                 "Boost Active",
-                                f"Optimizations applied. Re-applying every 60s.\n{summary}",
-                                QSystemTrayIcon.Information,
+                                "Optimizations applied successfully. Re-applying every 60s.",
+                                main_window.windowIcon(),
                                 5000
                             )
                         else:
                             main_window.tray_icon.showMessage(
                                 "Boost Active (with warnings)",
-                                f"Some items failed. Re-applying every 60s.\n{summary}",
-                                QSystemTrayIcon.Warning,
+                                "Some items failed to apply. Re-applying every 60s.",
+                                main_window.windowIcon(),
                                 5000
                             )
                         print("[Boost] Windows notification sent via tray icon")
