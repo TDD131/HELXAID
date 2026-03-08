@@ -496,13 +496,37 @@ def show_download_dialog(parent, tool_name: str, download_func: Callable) -> boo
                 QMessageBox.Ok
             )
             
-            # Restart the application
-            import sys
-            import os
-            python = sys.executable
-            os.execl(python, python, *sys.argv)
+            # Restart the application using QProcess which works correctly
+            # on Windows for both frozen executables and dev script runs.
+            # os.execl() is unreliable on Windows (does not truly replace
+            # the process when running under a debugger or via pythonw).
+            try:
+                from PySide6.QtCore import QProcess
+                from PySide6.QtWidgets import QApplication
+                import sys, os
+
+                if getattr(sys, 'frozen', False):
+                    # Running as PyInstaller-built .exe — restart the exe directly
+                    exe = sys.executable
+                    args = sys.argv[1:]
+                else:
+                    # Running as a plain Python script (development mode)
+                    exe = sys.executable
+                    args = sys.argv  # argv[0] is launcher.py
+
+                QProcess.startDetached(exe, args)
+                QApplication.quit()
+            except Exception as restart_err:
+                print(f"[Tools] Restart failed: {restart_err}")
+                # Fallback: tell user to restart manually
+                QMessageBox.information(
+                    parent,
+                    "Restart Required",
+                    "Please close and reopen HELXAID manually to complete the installation."
+                )
             
             return True
+
         else:
             QMessageBox.critical(
                 parent,
