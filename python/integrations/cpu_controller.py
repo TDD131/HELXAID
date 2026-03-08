@@ -405,7 +405,7 @@ try {{
         print("[CPU DEBUG] Calling ShellExecuteW with runas...")
         ret = ctypes.windll.shell32.ShellExecuteW(
             None, "runas", "powershell.exe",
-            f'-NoProfile -ExecutionPolicy Bypass -File "{ps_script_path}"',
+            f'-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File "{ps_script_path}"',
             None, 0  # SW_HIDE
         )
         
@@ -658,7 +658,7 @@ def _inject_preset_elevated(presets_path: str, preset_name: str, uxtu_preset: di
             None,
             "runas",
             "powershell.exe",
-            f'-NoProfile -ExecutionPolicy Bypass -Command "{ps_script}"',
+            f'-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -Command "{ps_script}"',
             None,
             0  # SW_HIDE - hide the window
         )
@@ -754,7 +754,7 @@ Remove-Item -Path "{ps_script_path}" -Force -ErrorAction SilentlyContinue
         # 4. EXECUTE ELEVATED SCRIPT
         ret = ctypes.windll.shell32.ShellExecuteW(
             None, "runas", "powershell.exe",
-            f'-NoProfile -ExecutionPolicy Bypass -File "{ps_script_path}"',
+            f'-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File "{ps_script_path}"',
             None, 0  # SW_HIDE
         )
         

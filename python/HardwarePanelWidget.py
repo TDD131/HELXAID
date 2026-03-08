@@ -505,10 +505,20 @@ class HardwarePanelWidget(QWidget):
         self.custom_mode_btn_ram.setFixedSize(200, 35)
         self.custom_mode_btn_ram.setCursor(Qt.PointingHandCursor)
         self.custom_mode_btn_ram.setToolTip("Save current settings as a custom preset")
-        self.custom_mode_btn_ram.setCheckable(True)
-        self.custom_mode_btn_ram.clicked.connect(self._on_custom_mode_toggled)
-        self._custom_mode_active = False
-        self._update_custom_btn_style()
+        self.custom_mode_btn_ram.clicked.connect(self._open_custom_preset_dialog)
+        self.custom_mode_btn_ram.setStyleSheet("""
+            QPushButton {
+                background: #333;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 6px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background: #444;
+                border-color: #FF5B06;
+            }
+        """)
         left_layout.addWidget(self.custom_mode_btn_ram, alignment=Qt.AlignCenter)
         
         # Manual Boost button
@@ -714,6 +724,8 @@ class HardwarePanelWidget(QWidget):
             print("[Boost] Stop requested by user")
             self._boost_cancel_requested = True
             self.manual_boost_btn.setText("STOPPING...")
+            if hasattr(self, 'clean_btn'):
+                self.clean_btn.setText("STOPPING...")
             
             # Stop the reapply timer immediately
             if hasattr(self, '_boost_reapply_timer') and self._boost_reapply_timer is not None:
@@ -733,6 +745,21 @@ class HardwarePanelWidget(QWidget):
         
         # Change button to STOP mode with animated gradient
         self.manual_boost_btn.setText("STOP BOOST")
+        if hasattr(self, 'clean_btn'):
+            self.clean_btn.setText("STOP BOOST")
+            self.clean_btn.setStyleSheet("""
+                QPushButton#cleanRamButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #E53935, stop:1 #B71C1C);
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+                QPushButton#cleanRamButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #EF5350, stop:1 #C62828);
+                }
+            """)
         
         # Start animated gradient for STOP button (same as nav buttons)
         self._boost_btn_gradient_offset = 0.0
@@ -1171,23 +1198,26 @@ class HardwarePanelWidget(QWidget):
             
             if show_notification:
                 try:
-                    from plyer import notification
-                    
-                    if total_failed == 0:
-                        notification.notify(
-                            title="Boost Active",
-                            message=f"Optimizations applied. Re-applying every 60s.\n{summary}",
-                            app_name="HELXAID",
-                            timeout=5
-                        )
+                    main_window = self.window()
+                    if hasattr(main_window, 'tray_icon') and main_window.tray_icon:
+                        from PySide6.QtWidgets import QSystemTrayIcon
+                        if total_failed == 0:
+                            main_window.tray_icon.showMessage(
+                                "Boost Active",
+                                f"Optimizations applied. Re-applying every 60s.\n{summary}",
+                                QSystemTrayIcon.Information,
+                                5000
+                            )
+                        else:
+                            main_window.tray_icon.showMessage(
+                                "Boost Active (with warnings)",
+                                f"Some items failed. Re-applying every 60s.\n{summary}",
+                                QSystemTrayIcon.Warning,
+                                5000
+                            )
+                        print("[Boost] Windows notification sent via tray icon")
                     else:
-                        notification.notify(
-                            title="Boost Active (with warnings)",
-                            message=f"Some items failed. Re-applying every 60s.\n{summary}",
-                            app_name="HELXAID",
-                            timeout=5
-                        )
-                    print("[Boost] Windows notification sent")
+                        print("[Boost] Tray icon not found, skipping notification")
                 except Exception as e:
                     print(f"[Boost] Notification error: {e}")
         
@@ -1242,6 +1272,25 @@ class HardwarePanelWidget(QWidget):
                 }
             """)
             print("[Boost] Button reset to MANUAL BOOST")
+            
+            if hasattr(self, 'clean_btn'):
+                self.clean_btn.setText("Clean RAM")
+                self.clean_btn.setStyleSheet("""
+                    QPushButton#cleanRamButton {
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 12px;
+                        font-size: 14px;
+                        font-weight: 600;
+                    }
+                    QPushButton#cleanRamButton:hover {
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7B26, stop:1 #FDC933);
+                    }
+                    QPushButton#cleanRamButton:pressed {
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #E54B00, stop:1 #DD9903);
+                    }
+                """)
         except Exception as e:
             print(f"[Boost] Error resetting button: {e}")
     
@@ -1879,43 +1928,6 @@ class HardwarePanelWidget(QWidget):
         
         print("[Essential] Restored optimizations")
 
-    def _on_custom_mode_toggled(self, checked: bool):
-        """Handle Custom button toggle."""
-        self._custom_mode_active = checked
-        self._update_custom_btn_style()
-        print(f"[RAM] Custom mode: {'ON' if checked else 'OFF'}")
-    
-    def _update_custom_btn_style(self):
-        """Update Custom button style based on toggle state."""
-        if self._custom_mode_active:
-            self.custom_mode_btn_ram.setStyleSheet("""
-                QPushButton {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
-                    color: #ffffff;
-                    border: none;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                QPushButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7B26, stop:1 #FDC933);
-                }
-            """)
-        else:
-            self.custom_mode_btn_ram.setStyleSheet("""
-                QPushButton {
-                    background: #333;
-                    color: #e0e0e0;
-                    border: 1px solid #555;
-                    border-radius: 6px;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background: #444;
-                    border-color: #FF5B06;
-                }
-            """)
-    
     def _create_processes_tab(self) -> QWidget:
         """Create Processes tab content matching reference design."""
         page = QWidget()
@@ -3049,7 +3061,14 @@ class HardwarePanelWidget(QWidget):
         self.clean_btn.setObjectName("cleanRamButton")
         self.clean_btn.setCursor(Qt.PointingHandCursor)
         self.clean_btn.setFixedHeight(48)
-        self.clean_btn.clicked.connect(self._clean_ram)
+        
+        def _on_clean_btn_clicked():
+            if getattr(self, '_is_boosting', False):
+                self._run_manual_boost()
+            else:
+                self._clean_ram()
+                
+        self.clean_btn.clicked.connect(_on_clean_btn_clicked)
         self.clean_btn.setStyleSheet("""
             QPushButton#cleanRamButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);

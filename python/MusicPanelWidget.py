@@ -3610,6 +3610,8 @@ class MusicPanelWidget(QWidget):
     
     def _set_aspect_ratio(self, mode: str):
         """Set video aspect ratio mode: fill, fit, or stretch."""
+        self._current_aspect_ratio = mode
+        
         # Update checkmarks
         self.action_aspect_fill.setChecked(mode == "fill")
         self.action_aspect_fit.setChecked(mode == "fit")
@@ -3623,6 +3625,12 @@ class MusicPanelWidget(QWidget):
         elif mode == "stretch":
             self.video_player.video_widget.setAspectRatioMode(Qt.IgnoreAspectRatio)
         
+        # Save state when changed
+        if hasattr(self, '_config_path'):
+            # Use QTimer to avoid rapid multiple saves if called repeatedly
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(500, self._save_state)
+            
         print(f"Aspect ratio set to: {mode}")
     
     def _toggle_fullscreen(self):
@@ -3939,6 +3947,10 @@ class MusicPanelWidget(QWidget):
                     self._audio_output.setVolume(volume / 100.0)
                     self.player_bar.volume_slider.setValue(volume)
                     
+                    # Restore aspect ratio
+                    aspect_ratio = state.get('video_aspect_ratio', 'fit')
+                    self._set_aspect_ratio(aspect_ratio)
+                    
                     print(f"Loaded state: {folder}")
         except Exception as e:
             print(f"Failed to load state: {e}")
@@ -3958,7 +3970,8 @@ class MusicPanelWidget(QWidget):
                 'folder': self._music_folder or '',
                 'last_track_path': current_track_path,
                 'last_position': position,
-                'volume': self.player_bar.volume_slider.value()
+                'volume': self.player_bar.volume_slider.value(),
+                'video_aspect_ratio': getattr(self, '_current_aspect_ratio', 'fit')
             }
             
             with open(self._config_path, 'w', encoding='utf-8') as f:
