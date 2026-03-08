@@ -1197,20 +1197,20 @@ class HardwarePanelWidget(QWidget):
                             if cat == 'essential':
                                 if sr.success:
                                     results['essential']['success'] += 1
-                                    results['essential']['items'].append(f"V {sr.displayName}")
+                                    results['essential']['items'].append(f"V {sr.display_name}")
                                     print(f"[Boost] Essential service stopped: {sr.name} ({sr.status})")
                                 else:
-                                    results['essential']['items'].append(f"X {sr.displayName}")
+                                    results['essential']['items'].append(f"X {sr.display_name}")
                                     print(f"[Boost] Essential service failed: {sr.name}")
                             else:
                                 key = 'basic_services' if cat == 'basic' else 'advanced_services'
                                 if sr.success:
                                     results[key]['stopped'] += 1
-                                    results[key]['items'].append(f"V {sr.displayName}")
+                                    results[key]['items'].append(f"V {sr.display_name}")
                                     print(f"[Boost] Stopped service: {sr.name} ({sr.status})")
                                 else:
                                     results[key]['failed'] += 1
-                                    results[key]['items'].append(f"X {sr.displayName}")
+                                    results[key]['items'].append(f"X {sr.display_name}")
                                     print(f"[Boost] Failed to stop {sr.name}")
                 else:
                     # Native module not available
