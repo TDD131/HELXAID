@@ -98,11 +98,6 @@ This project is under active development and contains known limitations:
 
 ## Changelog
 
-### v4.6
-- Ensure only one launcher instance runs at a time
-- Game library defaults to empty on first launch
-- Bulk action delete text fixed
-
 ### v4.7
 - Improved first-launch state handling
 - CPU Controller access restricted based on tool availability
