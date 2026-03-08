@@ -45,7 +45,7 @@ HELXAID currently consists of the following main components, each operating as a
 | Module | Status |
 |------|------|
 | HELXAID (Game Launcher) | ~95% |
-| HELXAIC (Music Player) | ~90% |
+| HELXAIC (Music Player) | ~87% |
 | HELXAIL (CPU Controller) | ~90% |
 | HELXAIR (Crosshair Overlay) | ~100% | (New Feature Maybe?)
 | HELXAIRO (Macro Setting) | ~74% | 
