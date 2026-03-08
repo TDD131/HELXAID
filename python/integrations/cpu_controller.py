@@ -370,17 +370,14 @@ def _execute_ryzenadj_elevated(ryzenadj_path: str, args: list) -> tuple:
         # Temp paths for script and output log
         temp_dir = tempfile.gettempdir()
         ps_script_path = os.path.join(temp_dir, "helxaid_ryzenadj.ps1")
+        vbs_script_path = os.path.join(temp_dir, "helxaid_ryzenadj.vbs")
         log_path = os.path.join(temp_dir, "helxaid_ryzenadj_output.txt")
         err_path = os.path.join(temp_dir, "helxaid_ryzenadj_error.txt")
         
         print(f"[CPU DEBUG] PS script: {ps_script_path}")
         print(f"[CPU DEBUG] Log path: {log_path}")
         
-        # PowerShell script uses Start-Process -Wait -PassThru to properly manage
-        # the RyzenAdj process lifecycle. The try/catch suppresses crash dialogs
-        # and WER reporting that would otherwise flood Reliability Monitor.
-        # -NoNewWindow keeps it hidden, -Wait ensures we block until it finishes,
-        # -RedirectStandardOutput/-Error captures all output to files.
+        # PowerShell script
         ps_script = f'''
 $ErrorActionPreference = 'SilentlyContinue'
 try {{
@@ -400,16 +397,21 @@ try {{
         
         with open(ps_script_path, 'w', encoding='utf-8') as f:
             f.write(ps_script)
+            
+        # VBS wrapper for 100% silent execution
+        vbs_script = f'''Set objShell = CreateObject("WScript.Shell")\nobjShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{ps_script_path}""", 0, False\n'''
+        with open(vbs_script_path, 'w', encoding='utf-8') as f:
+            f.write(vbs_script)
         
-        # Execute PowerShell script with elevation
-        print("[CPU DEBUG] Calling ShellExecuteW with runas...")
+        # Execute VBS script with elevation
+        print("[CPU DEBUG] Calling ShellExecuteW with runas (wscript.exe)...")
         ret = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", "powershell.exe",
-            f'-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File "{ps_script_path}"',
+            None, "runas", "wscript.exe",
+            f'//B //Nologo "{vbs_script_path}"',
             None, 0  # SW_HIDE
         )
         
-        print(f"[CPU DEBUG] ShellExecuteW returned: {ret}")
+        print(f"[CPU DEBUG] ShellExecuteW (wscript) returned: {ret}")
         
         if ret > 32:
             # Wait for the script to complete (Start-Process -Wait blocks inside PS)
@@ -428,19 +430,18 @@ try {{
             else:
                 print("[CPU DEBUG] Log file not found (script may still be running)")
             
-            # Cleanup error log
+            # Cleanup err/script/wrapper
             if os.path.exists(err_path):
-                try:
-                    os.remove(err_path)
-                except OSError:
-                    pass
-            
-            # Cleanup script
+                try: os.remove(err_path)
+                except OSError: pass
+
             if os.path.exists(ps_script_path):
-                try:
-                    os.remove(ps_script_path)
-                except OSError:
-                    pass
+                try: os.remove(ps_script_path)
+                except OSError: pass
+                
+            if os.path.exists(vbs_script_path):
+                try: os.remove(vbs_script_path)
+                except OSError: pass
                 
             print("[CPU DEBUG] Elevated execution SUCCESS")
             return True, None
