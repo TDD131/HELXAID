@@ -8036,6 +8036,7 @@ Stylesheet Selector:
         """Check for application updates."""
         try:
             import urllib.request
+            import urllib.error
             import json
             import threading
             
@@ -8055,6 +8056,19 @@ Stylesheet Selector:
                         QMetaObject.invokeMethod(self, "_on_update_result", Qt.QueuedConnection,
                                                  Q_ARG(str, latest_version),
                                                  Q_ARG(str, release_url))
+                except urllib.error.HTTPError as e:
+                    if e.code == 404:
+                        print("[UpdateCheck] No releases found on GitHub yet.")
+                        from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                        QMetaObject.invokeMethod(self, "_on_update_result", Qt.QueuedConnection,
+                                                 Q_ARG(str, "NO_RELEASES"),
+                                                 Q_ARG(str, ""))
+                    else:
+                        print(f"[UpdateCheck] HTTP Error: {e}")
+                        from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                        QMetaObject.invokeMethod(self, "_on_update_result", Qt.QueuedConnection,
+                                                 Q_ARG(str, "ERROR"),
+                                                 Q_ARG(str, str(e)))
                 except Exception as e:
                     print(f"[UpdateCheck] Failed: {e}")
                     from PySide6.QtCore import QMetaObject, Qt, Q_ARG
@@ -8085,6 +8099,10 @@ Stylesheet Selector:
             return
             
         CURRENT_VERSION = "4.8"
+        
+        if latest_version == "NO_RELEASES":
+            QMessageBox.information(self, "Update", f"No releases have been published on GitHub yet.\n\nYour current version: {CURRENT_VERSION}")
+            return
         
         # Simple string comparison
         if latest_version and latest_version != CURRENT_VERSION:
