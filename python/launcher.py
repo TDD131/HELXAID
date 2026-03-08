@@ -6179,6 +6179,62 @@ Stylesheet Selector:
         # Switch to the CPU panel
         self.switch_panel(cpu_panel_index)
     
+    def _reload_music_panel(self):
+        """Replace the music panel with an 'unavailable' placeholder.
+        
+        Called after FFprobe/FFmpeg is uninstalled so the user sees the
+        HELXAIC panel reflect the missing dependency immediately, without
+        needing to restart the application.
+        
+        Stops any active playback first so no audio/video leaks when the
+        MusicPanelWidget is destroyed.
+        """
+        # Stop playback gracefully before destroying the widget
+        if hasattr(self, 'music_panel'):
+            try:
+                self.music_panel._stop()
+            except Exception:
+                pass
+
+        # Find the current stack index so we can insert the placeholder at the same slot
+        music_panel_index = self.content_stack.indexOf(self.music_panel) if hasattr(self, 'music_panel') else 1
+        if music_panel_index < 0:
+            music_panel_index = 1  # Default music panel index
+
+        # Remove existing music panel from the stacked widget
+        if hasattr(self, 'music_panel'):
+            self.content_stack.removeWidget(self.music_panel)
+            self.music_panel.deleteLater()
+
+        # Build a minimal "unavailable" placeholder that matches the CPU panel style
+        placeholder = QWidget()
+        placeholder.setObjectName("musicPanel")
+        ph_layout = QVBoxLayout(placeholder)
+        ph_layout.setContentsMargins(40, 30, 40, 30)
+        ph_layout.addStretch()
+
+        title_lbl = QLabel("FFmpeg Not Found")
+        title_lbl.setStyleSheet("font-size: 24px; color: #FDA903; font-weight: bold;")
+        title_lbl.setAlignment(Qt.AlignCenter)
+        ph_layout.addWidget(title_lbl)
+
+        info_lbl = QLabel(
+            "HELXAIC (Music Player) requires FFmpeg / FFprobe for audio duration reading.\n"
+            "The external tool was removed. Re-install FFmpeg and restart the application."
+        )
+        info_lbl.setStyleSheet("font-size: 14px; color: #9DB2BF;")
+        info_lbl.setAlignment(Qt.AlignCenter)
+        info_lbl.setWordWrap(True)
+        ph_layout.addWidget(info_lbl)
+        ph_layout.addStretch()
+
+        # Insert placeholder at the same index as the original music panel
+        self.content_stack.insertWidget(music_panel_index, placeholder)
+        self.music_panel = placeholder
+
+        # Navigate to the music panel so the change is visible immediately
+        self.switch_panel(music_panel_index)
+
     def _on_boost_profile_changed(self, profile: str):
         """Handle boost profile selection change."""
         # Map profile names to RyzenAdj power-saving values
@@ -8186,6 +8242,13 @@ Stylesheet Selector:
             msg += "\n\nFailed to remove:\n" + "\n".join(f"  - {n}" for n in failed)
 
         QMessageBox.information(self, "Uninstall Complete", msg.strip())
+
+        # Trigger live panel reloads so the user sees the "unavailable" state
+        # immediately without having to restart the application.
+        if any("RyzenAdj" in n for n in removed):
+            self._reload_cpu_panel()
+        if any("FFmpeg" in n for n in removed):
+            self._reload_music_panel()
 
     def check_for_updates(self):
         """Check for application updates."""
