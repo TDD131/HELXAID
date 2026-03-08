@@ -169,10 +169,14 @@ This project prioritizes:
 
 ---
 
-## ✦ Platform
+## ✦ Tech Stack & Platform
 
-- Windows 10+
-- Built primarily with Python, HTML, CSS, JS, and C++
+- **Operating System:** Windows 10 / Windows 11
+- **Core Application Engine:** Python (PySide6 / PyQt)
+- **Native Hardware Layer:** C++ (with `pybind11` for direct Windows API & HID hooking)
+- **Frontend / Modern UI Modules:** HTML5, CSS3, JavaScript (rendered natively via QtWebEngine)
+- **System Automation Scripts:** PowerShell & VBScript (for silent execution & OS-level telemetry manipulation)
+- **Build System:** CMake (Native Module) & PyInstaller (Release Packaging)
 
 ---
 
