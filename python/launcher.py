@@ -5230,37 +5230,81 @@ Stylesheet Selector:
             
             # Auto-download button
             def do_download():
-                try:
-                    from integrations.tools_downloader import download_ryzenadj, RYZENADJ_DIR
-                    from PySide6.QtWidgets import QProgressDialog, QMessageBox
-                    
-                    # Show progress dialog
-                    progress = QProgressDialog("Downloading RyzenAdj...", "Cancel", 0, 100, self)
-                    progress.setWindowTitle("Installing RyzenAdj")
-                    progress.setWindowModality(Qt.WindowModal)
-                    progress.setMinimumDuration(0)
-                    progress.show()
-                    
-                    def update_progress(downloaded: int, total: int):
-                        if progress.wasCanceled():
-                            return
-                        percent = int((downloaded / total) * 100) if total > 0 else 0
-                        progress.setValue(percent)
-                        progress.setLabelText(f"Downloading... {downloaded // 1024} KB / {total // 1024} KB")
-                    
-                    success, error = download_ryzenadj(update_progress)
+                """Start RyzenAdj download in a background QThread.
+
+                Spawning the download in a QThread keeps the main thread
+                free so the UI never becomes "not responding" during the
+                (potentially large) download. Progress is forwarded to the
+                QProgressDialog via Qt signals which are thread-safe.
+                """
+                from PySide6.QtWidgets import QProgressDialog, QMessageBox
+                from PySide6.QtCore import QThread, Signal as QSignal, QMetaObject, Qt as Qt2
+
+                class _RyzenDownloadWorker(QThread):
+                    """Background thread that downloads and extracts RyzenAdj.
+
+                    Signals:
+                        progress_update(int, int): (downloaded_bytes, total_bytes)
+                        finished(bool, str):        (success, error_message_or_empty)
+                    """
+                    progress_update = QSignal(int, int)
+                    finished        = QSignal(bool, str)
+
+                    def run(self):
+                        from integrations.tools_downloader import download_ryzenadj
+
+                        def on_progress(downloaded: int, total: int):
+                            # Emit from worker thread — Qt will deliver to main thread
+                            self.progress_update.emit(downloaded, total)
+
+                        success, error = download_ryzenadj(on_progress)
+                        self.finished.emit(success, error or "")
+
+                # Progress dialog displayed on the main thread
+                progress = QProgressDialog("Downloading RyzenAdj...", "Cancel", 0, 100, self)
+                progress.setWindowTitle("Installing RyzenAdj")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.setAutoClose(False)
+                progress.setAutoReset(False)
+                progress.show()
+
+                worker = _RyzenDownloadWorker()
+                # Keep a reference so it is not garbage-collected mid-download
+                self._ryzen_download_worker = worker
+
+                def on_progress(downloaded: int, total: int):
+                    """Forward download progress to the QProgressDialog (main thread)."""
+                    if progress.wasCanceled():
+                        worker.terminate()
+                        return
+                    if total > 0:
+                        pct = int((downloaded / total) * 100)
+                        progress.setValue(pct)
+                        progress.setLabelText(
+                            f"Downloading... {downloaded // 1024} KB / {total // 1024} KB"
+                        )
+
+                def on_finished(success: bool, error: str):
+                    """Called on main thread when the worker thread exits."""
                     progress.close()
-                    
                     if success:
-                        QMessageBox.information(self, "Download Complete", 
-                            "RyzenAdj installed successfully!\n\nReloading CPU Controller...")
-                        # Reload the CPU panel
+                        QMessageBox.information(
+                            self, "Download Complete",
+                            "RyzenAdj installed successfully!\n\nReloading CPU Controller..."
+                        )
+                        # Rebuild the CPU panel live so it shows the full interface
                         self._reload_cpu_panel()
                     else:
-                        QMessageBox.critical(self, "Download Failed", f"Failed to install RyzenAdj:\n{error}")
-                except Exception as e:
-                    from PySide6.QtWidgets import QMessageBox
-                    QMessageBox.critical(self, "Error", f"Download error: {e}")
+                        QMessageBox.critical(
+                            self, "Download Failed",
+                            f"Failed to install RyzenAdj:\n{error}"
+                        )
+
+                worker.progress_update.connect(on_progress)
+                worker.finished.connect(on_finished)
+                worker.start()
+
             
             download_btn = AnimatedButton("Download RyzenAdj (Auto-Install)")
             download_btn.setFixedSize(300, 50)
