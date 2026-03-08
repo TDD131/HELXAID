@@ -252,7 +252,7 @@ class HardwarePanelWidget(QWidget):
     """
     
     # Signal to handle cross-thread updates back to GUI (must be defined at class level)
-    boost_completed_signal = Signal(object, str, object, int)
+    boost_completed_signal = Signal(dict, str, str, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1177,12 +1177,13 @@ class HardwarePanelWidget(QWidget):
                 input_path = os.path.join(tempfile.gettempdir(), "helxaid_boost_input.txt")
                 log_path = os.path.join(tempfile.gettempdir(), "helxaid_boost_svc.log")
                 task_script = os.path.join(appdata_dir, "boost_services.ps1")
+                vbs_script = os.path.join(appdata_dir, "boost_wrapper.vbs")
                 task_name = "HELXAID_BoostService"
                 
                 if boost_engine:
                     # --- Native implementation ---
-                    boost_engine.write_boost_script(task_script, input_path, log_path)
-                    task_exists = boost_engine.ensure_task_exists(task_name, task_script)
+                    boost_engine.write_boost_script(task_script, vbs_script, input_path, log_path)
+                    task_exists = boost_engine.ensure_task_exists(task_name, vbs_script)
                     
                     if not task_exists:
                         print("[Boost] Scheduled task creation failed/denied")
@@ -1265,13 +1266,13 @@ class HardwarePanelWidget(QWidget):
             print(f"[Boost] Complete - {summary}")
             
             # Schedule UI update in main thread safely using Signal
-            self.boost_completed_signal.emit(results, summary, None, total_failed)
+            self.boost_completed_signal.emit(results, summary, "", total_failed)
                 
         except Exception as e:
             print(f"[Boost] Error: {e}")
-            self.boost_completed_signal.emit(None, "", str(e), 0)
+            self.boost_completed_signal.emit({}, "", str(e), 0)
     
-    @Slot(object, str, object, int)
+    @Slot(dict, str, str, int)
     def _boost_complete_safe(self, results, summary, error, total_failed):
         """Wrapper strictly for cross-thread calls"""
         self._boost_complete(results, summary, error, total_failed)
