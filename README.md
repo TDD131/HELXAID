@@ -93,16 +93,6 @@ HELXAID currently consists of the following main components, each operating as a
 
 ---
 
-## Known Issues
-
-This project is under active development and contains known limitations:
-
-- Application may freeze for several minutes when adding a large number of games
-- Some UI elements overlap at certain sizes
-- Certain fields should be empty on first launch but are not yet fully enforced
-
----
-
 ## Changelog
 
 ### v4.7
