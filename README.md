@@ -2,66 +2,107 @@
   <img src="python/UI%20Icons/launcher-icon.png" width="220" alt="HELXAID Logo">
 </p>
 
-<h1 align="center">HELXAID</h1>
+<h1 align="center">HELXAID :: Unified Gaming Command Center</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/status-active_development-blue" alt="Status">
+  <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
+  <img src="https://img.shields.io/badge/Platform-Windows_10%2B-lightgray?style=for-the-badge&logo=windows" alt="Platform">
+  <img src="https://img.shields.io/badge/Version-v4.9-orange?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
-  <b>An actively developed desktop utility suite for gamers and power users.<br>Combines a game launcher, system controls, and automation features into a single unified platform.</b>
+  <b>A modular, high-performance desktop utility suite designed for gamers and power users.</b><br>
+  <i>Instead of running multiple scattered applications, HELXAID provides a centralized, hardware-accelerated control layer for launching games, tuning CPU performance, managing media, and automating inputs.</i>
 </p>
 
 ---
 
-## Overview
+## ✦ The Arsenal (Modules)
 
-HELXAID is designed to reduce tool fragmentation.  
-Instead of running multiple separate applications for launching games, controlling system performance, managing media, and using overlays or macros, HELXAID provides a centralized control layer.
+HELXAID is built entirely on a modular architecture. Each module serves a highly specific, uncompromising purpose, interacting with hardware at its core without bloated overhead.
 
-The project is modular by design, allowing each component to evolve independently while sharing a common core.
+<table align="center">
+  <tr>
+    <td width="50%" valign="top">
+      <h3>1. HELXAID (Game Launcher)</h3>
+      <p>The core hub. Automatically scans Steam, Google Play Games, and custom directories. Tracks playtime and fetches metadata automatically.</p>
+      <b>Status: ~95% Complete</b>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/ss-home.png" width="90%" alt="Game Launcher UI">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/ss-stats.png" width="90%" alt="Stats UI">
+    </td>
+    <td width="50%" valign="top">
+      <h3>2. HELXTATS (System Optimization)</h3>
+      <p>A completely silent hardware optimizer. Clears standby memory, halts telemetry, and injects game processes with High Priority via native C++ hooks and VBS execution.</p>
+      <b>Status: ~50% Complete</b>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>3. HELXAIL (CPU Controller)</h3>
+      <p>Hardware-level processor management. Natively interfaces with tools like RyzenAdj to tune power limits, display refresh rates, and boost timings directly from the GUI.</p>
+      <b>Status: ~90% Complete</b>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/ss-cpu.png" width="90%" alt="CPU Controller UI">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/ss-macro.png" width="90%" alt="Macro UI">
+    </td>
+    <td width="50%" valign="top">
+      <h3>4. HELXAIRO (Hardware Macro)</h3>
+      <p>Record, map, and execute hardware key sequences. Directly hooks into mouse/keyboard hardware via HID to assign rapid fire, DPI loops, and media controls.</p>
+      <b>Status: ~74% Complete</b>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>5. HELXAIC (Media Player)</h3>
+      <p>Your integrated gaming soundtrack engine. Snappy, metadata-aware Spotify-like interface built to run MP3/MP4 files seamlessly in the background without draining resources.</p>
+      <b>Status: ~87% Complete</b>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/ss-music.png" width="90%" alt="Music Player UI">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/ss-crosshair.png" width="90%" alt="Crosshair UI">
+    </td>
+    <td width="50%" valign="top">
+      <h3>6. HELXAIR (Crosshair Overlay)</h3>
+      <p>Custom on-screen crosshair overlay completely decoupled from game memory logic, ensuring 100% safety from aggressive anti-cheat systems.</p>
+      <b>Status: 100% Complete</b>
+    </td>
+  </tr>
+</table>
 
 ---
 
-## Components
+## ✦ Installation & Update Protocol
 
-HELXAID currently consists of the following main components, each operating as a focused module:
+HELXAID updates natively through GitHub Releases. The integrated OTA (Over-The-Air) updater compares local and server tags.
 
-- **HELXAID** (Game Launcher)  
-  Core hub for game library management and universal launching.
-
-- **HELXAIC** (Music Player)  
-  Integrated local media player acting as your gaming background soundtrack.
-
-- **HELXAIL** (CPU Controller)  
-  System-level processor management integrating with tools like RyzenAdj.
-
-- **HELXAIR** (Crosshair Overlay)  
-  In-game custom crosshair layer to aid in first-person shooters.
-
-- **HELXAIRO** (Macro Setting)  
-  Hardware key mapping and input sequence automation.
-
-- **HELXTATS** (Stats & Monitoring)  
-  Hardware monitoring suite integrating PC booster, CPU stats, and driver health.
+1. Download the latest `HELXAID.exe` from the [Releases Tab](../../releases).
+2. Run the executable. It automatically unpacks and installs into `C:\Program Files`.
+3. Critical configurations and save states persist inside `%APPDATA%\HELXAID`.
 
 ---
 
-## Modules & Progress
+## ✦ Built For The Edge
 
-| Module | Status |
-|------|------|
-| HELXAID (Game Launcher) | ~95% |
-| HELXAIC (Music Player) | ~87% |
-| HELXAIL (CPU Controller) | ~90% |
-| HELXAIR (Crosshair Overlay) | ~100% | (New Feature Maybe?)
-| HELXAIRO (Macro Setting) | ~74% | 
-| HELXTATS (System Monitoring & Cleaning) | ~50% | (Driver Cleaner didnt applied yet)
-| System Optimization (OMEN AI like concept) | Planned |
+HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++** (via `pybind11`) for native Windows API hooking.
 
 ---
 
-## Feature Notes
+## ✦ Feature Notes
 
 ### HELXAID (Game Launcher)
 - Scan and manage Steam & Google Play Games libraries automatically
@@ -93,7 +134,7 @@ HELXAID currently consists of the following main components, each operating as a
 
 ---
 
-## Changelog
+## ✦ Changelog
 
 ### v4.7
 - Improved first-launch state handling
@@ -115,7 +156,7 @@ HELXAID currently consists of the following main components, each operating as a
 
 ---
 
-## Development Status
+## ✦ Development Status
 
 HELXAID is under active development.  
 Features, APIs, and internal structures may change as the project evolves.
@@ -128,14 +169,13 @@ This project prioritizes:
 
 ---
 
-## Platform
+## ✦ Platform
 
-- Windows
-- Built primarily with Python, HTML, CSS and JS
+- Windows 10+
+- Built primarily with Python, HTML, CSS, JS, and C++
 
 ---
 
-## Disclaimer
+## ✦ Disclaimer & Warning
 
-This project is experimental and intended for personal or advanced user use.  
-Use at your own discretion.
+**Warning:** This suite controls low-level hardware parameters (like CPU Power Limits and Windows Services). Experimental by nature, designed for power users who know their hardware limits. Use at your own discretion.
