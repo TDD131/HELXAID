@@ -1301,30 +1301,51 @@ class HardwarePanelWidget(QWidget):
         # -- Success path: log results, send notification, but keep boost active --
         
         # Show tray notification on the first boost cycle only (to avoid spam).
-        # The checkbox guard was removed because notify_boost_cb was never created,
-        # causing notifications to be silently suppressed every time.
+        # Uses a multi-strategy approach to find tray_icon because self.window()
+        # may not directly return the GameLauncher window when nested in tab widgets.
         if cycle == 1:
             try:
+                from PySide6.QtWidgets import QSystemTrayIcon, QApplication
+                from PySide6.QtGui import QIcon
+
+                tray = None
+
+                # Strategy 1: look on the direct parent window
                 main_window = self.window()
+                print(f"[Boost] self.window() = {main_window.__class__.__name__}, has tray_icon = {hasattr(main_window, 'tray_icon')}")
                 if hasattr(main_window, 'tray_icon') and main_window.tray_icon:
-                    from PySide6.QtWidgets import QSystemTrayIcon
-                    if total_failed == 0:
-                        main_window.tray_icon.showMessage(
-                            "Boosting...",
-                            summary if summary else "Optimizations applied successfully.",
-                            main_window.windowIcon(),
-                            5000
-                        )
+                    tray = main_window.tray_icon
+
+                # Strategy 2: scan all top-level widgets for one that has tray_icon
+                if tray is None:
+                    for widget in QApplication.topLevelWidgets():
+                        if hasattr(widget, 'tray_icon') and widget.tray_icon:
+                            tray = widget.tray_icon
+                            print(f"[Boost] Found tray_icon on {widget.__class__.__name__}")
+                            break
+
+                # Strategy 3: create a temporary QSystemTrayIcon for this notification only
+                if tray is None:
+                    print("[Boost] No tray_icon found on any window, creating temporary one")
+                    tray = QSystemTrayIcon()
+                    # Use app icon or a blank icon
+                    app_icon = QApplication.windowIcon()
+                    if not app_icon.isNull():
+                        tray.setIcon(app_icon)
                     else:
-                        main_window.tray_icon.showMessage(
-                            "Boosting... (with warnings)",
-                            summary if summary else "Some items failed to apply.",
-                            main_window.windowIcon(),
-                            5000
-                        )
-                    print("[Boost] Windows notification sent via tray icon")
+                        tray.setIcon(QIcon())
+                    tray.show()
+                    _temp_tray = tray  # keep alive for duration of message
                 else:
-                    print("[Boost] Tray icon not found, skipping notification")
+                    _temp_tray = None
+
+                notif_msg = summary if summary else "Optimizations applied."
+                if total_failed == 0:
+                    tray.showMessage("Boosting...", notif_msg, tray.icon(), 5000)
+                else:
+                    tray.showMessage("Boosting... (warnings)", notif_msg, tray.icon(), 5000)
+                print(f"[Boost] Notification sent: 'Boosting...' | {notif_msg}")
+
             except Exception as e:
                 print(f"[Boost] Notification error: {e}")
         
