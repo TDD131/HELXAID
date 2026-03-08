@@ -2785,7 +2785,7 @@ class MusicPanelWidget(QWidget):
             finished = Signal(str)
             error    = Signal(str)
 
-            def __init__(self, url: str, output_dir: str, fmt: str):
+            def __init__(self, url: str, output_dir: str, fmt: str, quality_idx: int = 0):
                 super().__init__()
                 # url:        The YouTube URL to download
                 # output_dir: Directory where the file will be saved
@@ -2793,6 +2793,7 @@ class MusicPanelWidget(QWidget):
                 self.url        = url
                 self.output_dir = output_dir
                 self.fmt        = fmt
+                self.quality_idx = quality_idx
                 self._cancelled = False
 
             def cancel(self):
@@ -2813,12 +2814,25 @@ class MusicPanelWidget(QWidget):
                 # - audio: extract audio stream and re-encode to MP3 via FFmpeg
                 # - video: download best H.264 + AAC and merge into MP4 via FFmpeg
                 if self.fmt == 'audio':
+                    q_map = ['0', '2', '5', '9']
+                    q_val = q_map[self.quality_idx] if self.quality_idx < len(q_map) else '0'
                     extra = [
-                        '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+                        '-x', '--audio-format', 'mp3', '--audio-quality', q_val,
                     ]
                 else:
+                    if self.quality_idx == 0:
+                        f_str = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+                    elif self.quality_idx == 1:
+                        f_str = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
+                    elif self.quality_idx == 2:
+                        f_str = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best'
+                    elif self.quality_idx == 3:
+                        f_str = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best'
+                    else:
+                        f_str = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360][ext=mp4]/best'
+                    
                     extra = [
-                        '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                        '-f', f_str,
                         '--merge-output-format', 'mp4',
                     ]
 
@@ -3006,16 +3020,42 @@ class MusicPanelWidget(QWidget):
         layout.addWidget(url_group)
 
         # Format selector
-        fmt_group = QGroupBox("Format")
+        fmt_group = QGroupBox("Format & Quality")
         fmt_layout = QHBoxLayout(fmt_group)
         btn_group = QButtonGroup(dialog)
-        rb_audio = QRadioButton("Audio only  (MP3)")
-        rb_video = QRadioButton("Video  (MP4, best quality)")
+        rb_audio = QRadioButton("Audio (MP3)")
+        rb_video = QRadioButton("Video (MP4)")
         rb_audio.setChecked(True)
         btn_group.addButton(rb_audio, 0)
         btn_group.addButton(rb_video, 1)
         fmt_layout.addWidget(rb_audio)
         fmt_layout.addWidget(rb_video)
+        
+        quality_combo = QComboBox()
+        quality_combo.setObjectName("ytQualityCombo")
+        quality_combo.setStyleSheet("""
+            QComboBox {
+                background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); 
+                border-radius: 4px; padding: 2px 8px; font-size: 12px; color: #e0e0e0;
+            }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background: #1a1a2e; color: #e0e0e0; selection-background-color: #FF5B06; }
+        """)
+        
+        def update_quality_options():
+            quality_combo.clear()
+            if rb_audio.isChecked():
+                quality_combo.addItems(["Best (320kbps)", "High (256kbps)", "Medium (128kbps)", "Low (64kbps)"])
+            else:
+                quality_combo.addItems(["Best Available", "1080p", "720p", "480p", "360p"])
+                
+        rb_audio.toggled.connect(update_quality_options)
+        update_quality_options()
+        
+        qual_lbl = QLabel(" Quality: ")
+        qual_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+        fmt_layout.addWidget(qual_lbl)
+        fmt_layout.addWidget(quality_combo)
         fmt_layout.addStretch()
         layout.addWidget(fmt_group)
 
@@ -3073,6 +3113,7 @@ class MusicPanelWidget(QWidget):
             download_btn.setToolTip("Install FFmpeg and add it to PATH to enable downloads.")
             rb_audio.setEnabled(False)
             rb_video.setEnabled(False)
+            quality_combo.setEnabled(False)
 
 
         # Worker handle (kept in closure)
@@ -3085,6 +3126,7 @@ class MusicPanelWidget(QWidget):
                 return
 
             fmt = 'audio' if rb_audio.isChecked() else 'video'
+            q_idx = quality_combo.currentIndex()
             out_dir = folder_edit.text().strip() or os.path.expanduser("~/Downloads")
             os.makedirs(out_dir, exist_ok=True)
 
@@ -3093,6 +3135,7 @@ class MusicPanelWidget(QWidget):
             url_edit.setEnabled(False)
             rb_audio.setEnabled(False)
             rb_video.setEnabled(False)
+            quality_combo.setEnabled(False)
             browse_btn.setEnabled(False)
             cancel_btn.setText("Stop")
 
@@ -3101,7 +3144,7 @@ class MusicPanelWidget(QWidget):
             status_lbl.setVisible(True)
             status_lbl.setText("Starting download...")
 
-            worker = DownloadWorker(url, out_dir, fmt)
+            worker = DownloadWorker(url, out_dir, fmt, q_idx)
             _worker[0] = worker
 
             # Trim status to last line for readability
