@@ -1258,15 +1258,24 @@ class HardwarePanelWidget(QWidget):
             
             print(f"[Boost] Complete - {summary}")
             
-            # Schedule UI update in main thread
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._boost_complete(results, summary, None, total_failed))
+            # Schedule UI update in main thread safely
+            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+            QMetaObject.invokeMethod(self, "_boost_complete_safe", Qt.QueuedConnection, 
+                                     Q_ARG(object, results), Q_ARG(str, summary), 
+                                     Q_ARG(object, None), Q_ARG(int, total_failed))
                 
         except Exception as e:
             print(f"[Boost] Error: {e}")
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(0, lambda: self._boost_complete(None, None, str(e)))
+            from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+            QMetaObject.invokeMethod(self, "_boost_complete_safe", Qt.QueuedConnection, 
+                                     Q_ARG(object, None), Q_ARG(str, None), 
+                                     Q_ARG(object, str(e)), Q_ARG(int, 0))
     
+    @QtCore.Slot(object, str, object, int)
+    def _boost_complete_safe(self, results, summary, error, total_failed):
+        """Wrapper strictly for cross-thread calls"""
+        self._boost_complete(results, summary, error, total_failed)
+        
     def _boost_complete(self, results, summary, error, total_failed=0):
         """Called in main thread after a single boost cycle completes.
         
