@@ -8088,75 +8088,97 @@ Stylesheet Selector:
 
     def uninstall_external_tools(self):
         """Remove external runtime tools from the system.
-        
-        Targets the optional external software components that HELXAID relies on:
-        - RyzenAdj: stored in %APPDATA%\\HELXAID\\tools\\ryzenadj (and variants)
-        - FFmpeg/FFprobe: path taken from the stored 'ffprobe_path' setting if set
-        
-        Only removes the tool files/folders, not any user data or settings.
-        The button calling this method is gated behind Developer Mode so it cannot
-        be triggered accidentally by a normal user.
+
+        Dynamically resolves where each tool actually lives on this machine
+        by calling the same helper functions the rest of the code uses, so it
+        always targets the right location regardless of whether the tool was
+        downloaded to AppData, a legacy assets folder, or a user-specified path.
+
+        Tools targeted:
+        - RyzenAdj: resolved via get_ryzenadj_path() from cpu_controller module
+        - FFmpeg/FFprobe: resolved from 'ffprobe_path' in PlaylistWidget settings
+          (stored inside the main settings JSON under key 'ffprobe_path')
+
+        Only the tool files/folders are removed; user data is left intact.
+        The button is gated behind Developer Mode to prevent accidental use.
         """
         import shutil
 
-        # Identify candidate paths for each external tool.
-        # RyzenAdj is always stored under the HELXAID AppData tools folder.
-        appdata_tools = os.path.join(os.environ.get("APPDATA", ""), "HELXAID", "tools")
-        ryzenadj_path  = os.path.join(appdata_tools, "ryzenadj")
-        ryzenadj_path2 = os.path.join(appdata_tools, "RyzenAdj")
+        targets = []   # List of (absolute_path, display_name) to be deleted
+        seen_paths = set()
 
-        # FFprobe path is read from settings (user may have set a custom location).
-        # We only target the parent folder if it was explicitly configured in settings.
+        # ---- RyzenAdj ----
+        # Use the same resolver the CPU Controller uses at runtime, so we always
+        # delete from whatever path the tool was actually loaded from.
+        try:
+            from integrations.cpu_controller import get_ryzenadj_path
+            ryzenadj_exe = get_ryzenadj_path()
+            # Target the parent folder (e.g. .../tools/ryzenadj/) not just the exe,
+            # so all auxiliary DLLs that ship alongside it are also removed.
+            ryzenadj_dir = os.path.dirname(ryzenadj_exe)
+            if os.path.exists(ryzenadj_exe) and ryzenadj_dir not in seen_paths:
+                targets.append((ryzenadj_dir, f"RyzenAdj  ({ryzenadj_dir})"))
+                seen_paths.add(ryzenadj_dir)
+        except Exception as e:
+            print(f"[UninstallTools] Could not resolve RyzenAdj path: {e}")
+
+        # ---- FFmpeg / FFprobe ----
+        # The path is stored by PlaylistWidget in settings under 'ffprobe_path'.
+        # We remove only the immediate parent folder of ffprobe.exe so we don't
+        # accidentally wipe a user's full FFmpeg install if they pointed it at a
+        # system-wide location.
         ffprobe_exe = self.settings.get("ffprobe_path", "")
-        ffprobe_folder = os.path.dirname(ffprobe_exe) if ffprobe_exe else ""
-
-        # Build the list of targets that actually exist on this machine
-        targets = []
-        for p in [ryzenadj_path, ryzenadj_path2]:
-            if os.path.exists(p) and p not in [t[0] for t in targets]:
-                targets.append((p, "RyzenAdj"))
-        if ffprobe_folder and os.path.isdir(ffprobe_folder):
-            targets.append((ffprobe_folder, "FFmpeg/FFprobe"))
+        if not ffprobe_exe:
+            # Fallback: check alternate key name
+            ffprobe_exe = self.settings.get("ffprobe_exe", "")
+        if ffprobe_exe and os.path.isfile(ffprobe_exe):
+            ffprobe_dir = os.path.dirname(ffprobe_exe)
+            if ffprobe_dir not in seen_paths:
+                targets.append((ffprobe_dir, f"FFmpeg/FFprobe  ({ffprobe_dir})"))
+                seen_paths.add(ffprobe_dir)
 
         if not targets:
             QMessageBox.information(
                 self, "Uninstall External Tools",
                 "No installed external tools were found on this system.\n\n"
-                "Either they were never downloaded, or they are stored in a custom location."
+                "Either they were never downloaded, already removed,\n"
+                "or stored in a location HELXAID does not manage."
             )
             return
 
-        # Build a human-readable list of what will be deleted and confirm
-        names = "\n".join(f"  - {name}  ({path})" for path, name in targets)
+        # Show confirmation listing all discovered paths before touching anything
+        names = "\n".join(f"  - {label}" for _, label in targets)
         confirm = QMessageBox.warning(
             self, "Uninstall External Tools",
             f"The following external tools will be permanently deleted:\n\n{names}\n\n"
             "This action cannot be undone. Features that depend on these tools\n"
-            "(CPU Controller, Music duration reading) may stop working.\n\n"
+            "(CPU Controller, Music duration reading) will stop working.\n\n"
             "Are you sure?",
             QMessageBox.Yes | QMessageBox.No
         )
         if confirm != QMessageBox.Yes:
             return
 
-        # Perform deletion and track results
+        # Perform deletion and collect results
         removed, failed = [], []
-        for path, name in targets:
+        for path, label in targets:
+            display_name = label.split("  ")[0]   # strip the parenthesised path for summary
             try:
                 if os.path.isdir(path):
                     shutil.rmtree(path)
                 else:
                     os.remove(path)
-                removed.append(name)
+                removed.append(display_name)
             except Exception as e:
-                failed.append(f"{name}: {e}")
+                failed.append(f"{display_name}: {e}")
 
-        # Also clear the ffprobe_path setting if we just deleted it
-        if ffprobe_folder and any("FFmpeg" in n for n in removed):
+        # Clear stored ffprobe_path setting so it no longer references a deleted file
+        if ffprobe_exe and "FFmpeg/FFprobe" in removed:
             self.settings.pop("ffprobe_path", None)
+            self.settings.pop("ffprobe_exe", None)
             save_settings(self.settings)
 
-        # Show final summary
+        # Build and show result summary
         msg = ""
         if removed:
             msg += "Successfully removed:\n" + "\n".join(f"  - {n}" for n in removed)
