@@ -505,7 +505,7 @@ class HardwarePanelWidget(QWidget):
         self.custom_mode_btn_ram.setFixedSize(200, 35)
         self.custom_mode_btn_ram.setCursor(Qt.PointingHandCursor)
         self.custom_mode_btn_ram.setToolTip("Save current settings as a custom preset")
-        self.custom_mode_btn_ram.clicked.connect(self._open_custom_preset_dialog)
+        self.custom_mode_btn_ram.clicked.connect(self._save_custom_preset)
         self.custom_mode_btn_ram.setStyleSheet("""
             QPushButton {
                 background: #333;
@@ -655,11 +655,13 @@ class HardwarePanelWidget(QWidget):
         
         right_layout.addWidget(self._ram_tab_stack, stretch=1)
         
-        # Set initial tab
         self._current_ram_tab = 0
         self._update_ram_tab_buttons()
         
         main_layout.addWidget(right_panel, stretch=1)
+        
+        # Load preset settings for processes and services tabs
+        self._load_custom_preset_settings()
         
         return page
     
@@ -703,14 +705,121 @@ class HardwarePanelWidget(QWidget):
                     }
                 """)
     
-    def _open_custom_preset_dialog(self):
-        """Open the Custom Preset configuration dialog."""
+    def _save_custom_preset(self):
+        """Save all selections across the 4 tabs into booster_settings.json."""
+        import json
+        import os
+        from launcher import APPDATA_DIR
+        from RamCleanerPresetDialog import ESSENTIAL_OPTIMIZATIONS
+        
+        settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
+        
+        # Read current settings
+        settings = {}
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+            except:
+                pass
+                
+        # 1. Essential
+        if hasattr(self, '_essential_checks'):
+            selected = []
+            for i, cb in enumerate(self._essential_checks):
+                if cb.isChecked() and i < len(ESSENTIAL_OPTIMIZATIONS):
+                    selected.append(ESSENTIAL_OPTIMIZATIONS[i]["id"])
+            settings["essential_optimizations"] = selected
+            
+        # 2. Processes
+        if hasattr(self, '_process_checks') and hasattr(self, '_process_data'):
+            selected = []
+            for i, cb in enumerate(self._process_checks):
+                if cb.isChecked() and i < len(self._process_data):
+                    selected.append(self._process_data[i]["name"])
+            settings["processes_to_close"] = selected
+            
+        # 3. Basic Services
+        if hasattr(self, '_basic_service_checks') and hasattr(self, '_basic_service_data'):
+            selected = []
+            for i, cb in enumerate(self._basic_service_checks):
+                if cb.isChecked() and i < len(self._basic_service_data):
+                    selected.append(self._basic_service_data[i]["name"])
+            settings["basic_services_to_stop"] = selected
+            
+        # 4. Advanced Services
+        if hasattr(self, '_advanced_service_checks') and hasattr(self, '_advanced_service_data'):
+            selected = []
+            for i, cb in enumerate(self._advanced_service_checks):
+                if cb.isChecked() and i < len(self._advanced_service_data):
+                    selected.append(self._advanced_service_data[i]["name"])
+            settings["advanced_services_to_stop"] = selected
+            
         try:
-            from RamCleanerPresetDialog import RamCleanerPresetDialog
-            dialog = RamCleanerPresetDialog(self)
-            dialog.exec()
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=4)
+            print(f"[Booster] Custom preset saved successfully.")
+            
+            # Show notification
+            if hasattr(self.window(), 'tray_icon') and self.window().tray_icon:
+                from PySide6.QtWidgets import QSystemTrayIcon
+                self.window().tray_icon.showMessage(
+                    "HELXAID Booster",
+                    "Custom boost preset has been saved successfully.",
+                    QSystemTrayIcon.Information,
+                    3000
+                )
         except Exception as e:
-            print(f"[RAM] Failed to open preset dialog: {e}")
+            print(f"[Booster] Error saving custom preset: {e}")
+
+    def _load_custom_preset_settings(self):
+        """Load processes and services checked states from booster_settings.json."""
+        import json
+        import os
+        from launcher import APPDATA_DIR
+        
+        settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
+        if not os.path.exists(settings_path):
+            return
+            
+        try:
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+                
+            # Note: Essential tab already loads its own state via _load_essential_states
+            
+            # 2. Processes (Since processes are loaded dynamically, we just set the tracking set.
+            #   _populate_processes_tab will read from it when it builds the list.)
+            if "processes_to_close" in settings:
+                if not hasattr(self, '_checked_process_names') or not self._checked_process_names:
+                    self._checked_process_names = set(settings["processes_to_close"])
+                
+            # 3. Basic Services
+            if "basic_services_to_stop" in settings and hasattr(self, '_basic_service_checks') and hasattr(self, '_basic_service_data'):
+                saved_basic = set(settings["basic_services_to_stop"])
+                for i, cb in enumerate(self._basic_service_checks):
+                    if i < len(self._basic_service_data):
+                        svc_name = self._basic_service_data[i]["name"]
+                        cb.blockSignals(True)
+                        cb.setChecked(svc_name in saved_basic)
+                        cb.blockSignals(False)
+                if hasattr(self, '_update_basic_count'):
+                    self._update_basic_count()
+                        
+            # 4. Advanced Services
+            if "advanced_services_to_stop" in settings and hasattr(self, '_advanced_service_checks') and hasattr(self, '_advanced_service_data'):
+                saved_adv = set(settings["advanced_services_to_stop"])
+                for i, cb in enumerate(self._advanced_service_checks):
+                    if i < len(self._advanced_service_data):
+                        svc_name = self._advanced_service_data[i]["name"]
+                        cb.blockSignals(True)
+                        cb.setChecked(svc_name in saved_adv)
+                        cb.blockSignals(False)
+                if hasattr(self, '_update_advanced_count'):
+                    self._update_advanced_count()
+                        
+        except Exception as e:
+            print(f"[Booster] Error loading custom preset settings: {e}")
     
     def _run_manual_boost(self):
         """Run manual boost applying optimizations from ALL 4 tabs in background thread.
