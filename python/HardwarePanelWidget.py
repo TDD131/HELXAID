@@ -1300,34 +1300,33 @@ class HardwarePanelWidget(QWidget):
         
         # -- Success path: log results, send notification, but keep boost active --
         
-        # Show notification if enabled (only on first cycle to avoid spam)
+        # Show tray notification on the first boost cycle only (to avoid spam).
+        # The checkbox guard was removed because notify_boost_cb was never created,
+        # causing notifications to be silently suppressed every time.
         if cycle == 1:
-            show_notification = getattr(self, 'notify_boost_cb', None) and self.notify_boost_cb.isChecked()
-            
-            if show_notification:
-                try:
-                    main_window = self.window()
-                    if hasattr(main_window, 'tray_icon') and main_window.tray_icon:
-                        from PySide6.QtWidgets import QSystemTrayIcon
-                        if total_failed == 0:
-                            main_window.tray_icon.showMessage(
-                                "Boost Active",
-                                "Optimizations applied successfully. Re-applying every 60s.",
-                                main_window.windowIcon(),
-                                5000
-                            )
-                        else:
-                            main_window.tray_icon.showMessage(
-                                "Boost Active (with warnings)",
-                                "Some items failed to apply. Re-applying every 60s.",
-                                main_window.windowIcon(),
-                                5000
-                            )
-                        print("[Boost] Windows notification sent via tray icon")
+            try:
+                main_window = self.window()
+                if hasattr(main_window, 'tray_icon') and main_window.tray_icon:
+                    from PySide6.QtWidgets import QSystemTrayIcon
+                    if total_failed == 0:
+                        main_window.tray_icon.showMessage(
+                            "Boosting...",
+                            summary if summary else "Optimizations applied successfully.",
+                            main_window.windowIcon(),
+                            5000
+                        )
                     else:
-                        print("[Boost] Tray icon not found, skipping notification")
-                except Exception as e:
-                    print(f"[Boost] Notification error: {e}")
+                        main_window.tray_icon.showMessage(
+                            "Boosting... (with warnings)",
+                            summary if summary else "Some items failed to apply.",
+                            main_window.windowIcon(),
+                            5000
+                        )
+                    print("[Boost] Windows notification sent via tray icon")
+                else:
+                    print("[Boost] Tray icon not found, skipping notification")
+            except Exception as e:
+                print(f"[Boost] Notification error: {e}")
         
         # Refresh processes list after closing some
         if results and results['processes']['closed'] > 0:
