@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QCheckBox
 )
 from smooth_scroll import SmoothScrollArea, SmoothTableWidget
-from PySide6.QtCore import Qt, Signal, QTimer, QSize
+from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QLinearGradient, QConicalGradient
 
 import pyqtgraph as pg
