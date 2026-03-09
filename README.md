@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Platform-Windows_10%2B-lightgray?style=for-the-badge&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-v4.10-orange?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v4.10.1-orange?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
@@ -137,6 +137,10 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 ---
 
 ## ✦ Changelog
+
+### v4.10.1
+- Updated deployment instructions: `HELXAID` is now exclusively instructed to be downloaded natively as `.exe` file without needing zip extraction.
+- Excluded `--onefile` build instructions from the workflow guide to significantly reduce Anti-Virus *False-Positives* (Windows Defender).
 
 ### v4.10
 - Removed Save Custom Preset. Instead, everytime user check/uncheck the checkbox it will automatically saved.
