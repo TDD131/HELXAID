@@ -61,6 +61,7 @@ class HardwareMonitor:
             "cpu_temp": 0, "gpu_temp": 0,
             "cpu_load": 0, "gpu_load": 0,
             "fan_speed": 0, "power": 0,
+            "cpu_fan_speed": 0, "gpu_fan_speed": 0, "sys_fan_speed": 0,
             "cpu_clock": 0,  # Real-time CPU clock in MHz from LHM
             "status": "unavailable"
         }
@@ -112,6 +113,9 @@ class HardwareMonitor:
         cpu_load = 0
         gpu_load = 0
         fan_speed = 0
+        cpu_fan_speed = 0
+        gpu_fan_speed = 0
+        sys_fan_speed = 0
         power = 0
         cpu_clock = 0
         status = "unavailable"
@@ -130,6 +134,9 @@ class HardwareMonitor:
                         fan_speed = sensors.get("fan_speed", 0)
                         power = sensors.get("power", 0)
                         cpu_clock = sensors.get("cpu_clock", 0)
+                        cpu_fan_speed = fan_speed  # HWiNFO default mapping
+                        sys_fan_speed = sensors.get("sys_fan", 0)
+                        gpu_fan_speed = sensors.get("gpu_fan", 0)
                         if cpu_temp > 0 or gpu_temp > 0:
                             status = "hwinfo"
                             # Print once when first successful
@@ -138,6 +145,15 @@ class HardwareMonitor:
                                 self._hwinfo_logged = True
             except Exception:
                 pass  # Silently fall back to LHM
+                
+        # Try getting NVIDIA GPU fan speed directly via pynvml (most reliable for NVIDIA)
+        try:
+            import pynvml
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            gpu_fan_speed = float(pynvml.nvmlDeviceGetFanSpeed(handle))
+        except Exception:
+            pass
         
         # Priority 2: Try LHM/OHM via WMI if HWiNFO didn't provide data
         if status == "unavailable":
@@ -153,7 +169,7 @@ if ($sensors) {{
         gpu_temp = ($sensors | Where-Object {{$_.SensorType -eq 'Temperature' -and $_.Name -like '*GPU*'}} | Select-Object -First 1).Value
         cpu_load = ($sensors | Where-Object {{$_.SensorType -eq 'Load' -and ($_.Name -like '*CPU*' -or $_.Name -like '*Total*')}} | Select-Object -First 1).Value
         gpu_load = ($sensors | Where-Object {{$_.SensorType -eq 'Load' -and $_.Name -like '*GPU*'}} | Select-Object -First 1).Value
-        fan = ($sensors | Where-Object {{$_.SensorType -eq 'Fan'}} | Select-Object -First 1).Value
+        fans = @($sensors | Where-Object {{$_.SensorType -eq 'Fan'}} | Select-Object Name, Value)
         power = ($sensors | Where-Object {{$_.SensorType -eq 'Power' -and $_.Name -like '*Package*'}} | Select-Object -First 1).Value
         cpu_clock = ($sensors | Where-Object {{$_.SensorType -eq 'Clock' -and ($_.Name -like '*Core*' -or $_.Name -like '*CPU*')}} | Measure-Object -Property Value -Average).Average
     }}
@@ -172,9 +188,24 @@ if ($sensors) {{
                             gpu_temp = float(data.get('gpu_temp') or 0)
                             cpu_load = float(data.get('cpu_load') or 0)
                             gpu_load = float(data.get('gpu_load') or 0)
-                            fan_speed = float(data.get('fan') or 0)
                             power = float(data.get('power') or 0)
                             cpu_clock = float(data.get('cpu_clock') or 0)
+                            
+                            fans_data = data.get('fans', [])
+                            if isinstance(fans_data, list):
+                                for f in fans_data:
+                                    fname = str(f.get('Name', '')).lower()
+                                    fval = float(f.get('Value', 0))
+                                    if "cpu" in fname:
+                                        cpu_fan_speed = max(cpu_fan_speed, fval)
+                                    elif "gpu" in fname:
+                                        if gpu_fan_speed == 0:  # Only override if pynvml failed
+                                            gpu_fan_speed = max(gpu_fan_speed, fval)
+                                    else:
+                                        sys_fan_speed = max(sys_fan_speed, fval)
+                                        
+                            fan_speed = cpu_fan_speed or sys_fan_speed or gpu_fan_speed
+
                             if cpu_temp > 0 or gpu_temp > 0:
                                 status = "lhm"
                         except (json.JSONDecodeError, ValueError, TypeError):
@@ -188,6 +219,8 @@ if ($sensors) {{
             "cpu_temp": cpu_temp, "gpu_temp": gpu_temp,
             "cpu_load": cpu_load, "gpu_load": gpu_load,
             "fan_speed": fan_speed, "power": power,
+            "cpu_fan_speed": cpu_fan_speed, "gpu_fan_speed": gpu_fan_speed,
+            "sys_fan_speed": sys_fan_speed,
             "cpu_clock": cpu_clock,
             "status": status
         }
@@ -426,6 +459,105 @@ if ($sensors) {{
         
         return []
     
+    def get_smart_disks(self) -> List[Dict]:
+        """
+        Get Physical Disk S.M.A.R.T info (Health, Temperature) via LibreHardwareMonitor.
+        """
+        smart_disks = []
+        if os.name != 'nt':
+            return smart_disks
+        
+        try:
+            ps_script = '''
+$result = @()
+$lhm_hw = Get-WmiObject -Namespace root/LibreHardwareMonitor -Class Hardware -ErrorAction SilentlyContinue | Where-Object HardwareType -eq 'Storage'
+if ($lhm_hw) {
+    try {
+        $sensors = Get-WmiObject -Namespace root/LibreHardwareMonitor -Class Sensor -ErrorAction SilentlyContinue
+        foreach ($hw in $lhm_hw) {
+            $id = $hw.Identifier
+            $hw_sensors = $sensors | Where-Object { $_.Identifier -like "$id*" }
+            
+            $temp_val = 0
+            $health_pct = 100
+            
+            # Find temperature
+            $temp_sensor = $hw_sensors | Where-Object { $_.SensorType -eq 'Temperature' } | Select-Object -First 1
+            if ($temp_sensor -ne $null) { $temp_val = $temp_sensor.Value }
+            
+            # Find health
+            $pct_used = $hw_sensors | Where-Object { $_.Name -match 'Percentage Used|Degradation' } | Select-Object -First 1
+            $rem_life = $hw_sensors | Where-Object { $_.Name -match 'Remaining Life|Available Spare' } | Select-Object -First 1
+            
+            if ($pct_used -ne $null) {
+                # Wear level is 'Percentage Used', health is 100 - wear
+                $health_pct = 100 - $pct_used.Value
+            } elseif ($rem_life -ne $null) {
+                $health_pct = $rem_life.Value
+            }
+            
+            if ($health_pct -lt 0) { $health_pct = 0 }
+            if ($health_pct -gt 100) { $health_pct = 100 }
+            
+            $model_name = $hw.Name
+            $is_ssd = ($model_name -match "NVMe|SSD|M\.2|WD.*|Samsung.*EVO|KINGSTON|Crucial")
+            
+            $status = "OK"
+            if ($health_pct -lt 20) { $status = "Warning" }
+            if ($health_pct -lt 5) { $status = "Critical" }
+            
+            $result += @{
+                model = $model_name
+                temp = [math]::Round($temp_val, 0)
+                health_percent = [math]::Round($health_pct, 0)
+                status = $status
+                type = if ($is_ssd) { "SSD" } else { "HDD" }
+            }
+        }
+    } catch {}
+} else {
+    try {
+        $phys = Get-PhysicalDisk -ErrorAction SilentlyContinue
+        foreach ($p in $phys) {
+            $health = 100
+            if ($p.HealthStatus -ne "Healthy") { $health = 50 }
+            $result += @{
+                model = $p.FriendlyName
+                temp = 0
+                health_percent = $health
+                status = $p.HealthStatus
+                type = if ($p.MediaType -match "SSD") { "SSD" } else { "HDD" }
+            }
+        }
+    } catch {}
+}
+$result | ConvertTo-Json -Compress
+'''
+            res = subprocess.run(
+                ['powershell', '-NoProfile', '-Command', ps_script],
+                capture_output=True, text=True, timeout=8,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            
+            if res.returncode == 0 and res.stdout.strip():
+                import json
+                data = json.loads(res.stdout.strip())
+                if isinstance(data, dict):
+                    data = [data]
+                if isinstance(data, list):
+                    for item in data:
+                        smart_disks.append({
+                            'model': item.get('model', 'Unknown'),
+                            'temp': float(item.get('temp', 0)),
+                            'health_percent': float(item.get('health_percent', 100)),
+                            'status': item.get('status', 'OK'),
+                            'type': str(item.get('type', 'HDD')).upper()
+                        })
+        except Exception as e:
+            print(f"[Hardware] SMART disks error: {e}")
+        
+        return smart_disks
+
     def get_disk_details(self) -> Dict[str, Dict]:
         """
         Get detailed disk info (model, type, serial) via WMI.

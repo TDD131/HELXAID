@@ -505,28 +505,7 @@ class HardwarePanelWidget(QWidget):
         self.items_label.setAlignment(Qt.AlignCenter)
         left_layout.addWidget(self.items_label)
         
-        # Custom toggle button (toggle on/off for custom mode)
-        self.custom_mode_btn_ram = QPushButton("Save Custom Preset")
-        self.custom_mode_btn_ram.setObjectName("ramCustomBtn")
-        self.custom_mode_btn_ram.setFixedSize(200, 35)
-        self.custom_mode_btn_ram.setCursor(Qt.PointingHandCursor)
-        self.custom_mode_btn_ram.setToolTip("Save current settings as a custom preset")
-        self.custom_mode_btn_ram.clicked.connect(self._save_custom_preset)
-        self.custom_mode_btn_ram.setStyleSheet("""
-            QPushButton {
-                background: #333;
-                color: #e0e0e0;
-                border: 1px solid #555;
-                border-radius: 6px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background: #444;
-                border-color: #FF5B06;
-            }
-        """)
-        left_layout.addWidget(self.custom_mode_btn_ram, alignment=Qt.AlignCenter)
-        
+
         # Manual Boost button
         self.manual_boost_btn = QPushButton("MANUAL BOOST")
         self.manual_boost_btn.setObjectName("manualBoostBtn")
@@ -549,25 +528,7 @@ class HardwarePanelWidget(QWidget):
         """)
         left_layout.addWidget(self.manual_boost_btn)
         
-        left_layout.addSpacing(10)
-        
-        # Memory Usage section
-        mem_label = QLabel("Memory Usage:")
-        mem_label.setStyleSheet("color: #888888; font-size: 11px; background: transparent;")
-        left_layout.addWidget(mem_label)
-        
-        # Memory bar
-        self.ram_usage_bar = ProgressBarWidget()
-        self.ram_usage_bar.setObjectName("ramUsageBar")
-        self.ram_usage_bar.setFixedHeight(20)
-        left_layout.addWidget(self.ram_usage_bar)
-        
-        # Memory stats
-        self.ram_stats_label = QLabel("Total: 0 GB\nUsed: 0 GB\nFree: 0 GB")
-        self.ram_stats_label.setObjectName("ramStatsLabel")
-        self.ram_stats_label.setStyleSheet("color: #888888; font-size: 10px; background: transparent;")
-        left_layout.addWidget(self.ram_stats_label)
-        
+
         left_layout.addStretch()
         
         # Notification checkboxes
@@ -669,6 +630,9 @@ class HardwarePanelWidget(QWidget):
         # Load preset settings for processes and services tabs
         self._load_custom_preset_settings()
         
+        # Force a UI sync of all checked items now that all tabs are built
+        self._update_total_items_count()
+        
         return page
     
     def _on_ram_mode_selected(self, mode_index: int):
@@ -764,16 +728,7 @@ class HardwarePanelWidget(QWidget):
         try:
             with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=4)
-            print(f"[Booster] Custom preset saved successfully.")
-            
-            # Show notification
-            if hasattr(self.window(), 'tray_icon') and self.window().tray_icon:
-                self.window().tray_icon.showMessage(
-                    "HELXAID Booster",
-                    "Custom boost preset has been saved successfully.",
-                    self.window().windowIcon(),
-                    3000
-                )
+            print("[Booster] Custom preset auto-saved.")
         except Exception as e:
             print(f"[Booster] Error saving custom preset: {e}")
 
@@ -1048,6 +1003,22 @@ class HardwarePanelWidget(QWidget):
                 border-color: #ffffff;
             }}
         """)
+        
+        if hasattr(self, 'clean_btn'):
+            self.clean_btn.setStyleSheet(f"""
+                QPushButton#cleanRamButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, {gradient_stops});
+                    color: #ffffff;
+                    border: 2px solid rgba(255, 91, 6, 0.8);
+                    border-radius: 12px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    text-shadow: 0 0 10px #ff5500;
+                }}
+                QPushButton#cleanRamButton:hover {{
+                    border-color: #ffffff;
+                }}
+            """)
     
     def _run_boost_worker(self, boost_data):
         """Worker function that runs in background thread."""
@@ -1412,21 +1383,21 @@ class HardwarePanelWidget(QWidget):
             print("[Boost] Button reset to MANUAL BOOST")
             
             if hasattr(self, 'clean_btn'):
-                self.clean_btn.setText("Clean RAM")
+                # Reset Quick Setup boost button back to idle MANUAL BOOST dark style
+                self.clean_btn.setText("MANUAL BOOST")
+                self.clean_btn.setEnabled(True)
                 self.clean_btn.setStyleSheet("""
                     QPushButton#cleanRamButton {
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
-                        color: #ffffff;
-                        border: none;
-                        border-radius: 12px;
-                        font-size: 14px;
+                        background: #333;
+                        color: #e0e0e0;
+                        border: 1px solid #555;
+                        border-radius: 6px;
+                        font-size: 12px;
                         font-weight: 600;
                     }
                     QPushButton#cleanRamButton:hover {
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7B26, stop:1 #FDC933);
-                    }
-                    QPushButton#cleanRamButton:pressed {
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #E54B00, stop:1 #DD9903);
+                        background: #444;
+                        border-color: #FF5B06;
                     }
                 """)
         except Exception as e:
@@ -1551,7 +1522,7 @@ class HardwarePanelWidget(QWidget):
         if hasattr(self, '_advanced_service_checks'):
             total += sum(1 for cb in self._advanced_service_checks if cb.isChecked())
         
-        # Update the label
+        # Update the Booster tab label
         if hasattr(self, 'items_label'):
             if total == 0:
                 self.items_label.setText("0 items to be optimized")
@@ -1559,6 +1530,15 @@ class HardwarePanelWidget(QWidget):
                 self.items_label.setText("1 item to be optimized")
             else:
                 self.items_label.setText(f"{total} items to be optimized")
+
+        # Sync Quick Setup tab items label (mirrors Booster tab)
+        if hasattr(self, 'qs_items_label'):
+            if total == 0:
+                self.qs_items_label.setText("0 items to be optimized")
+            elif total == 1:
+                self.qs_items_label.setText("1 item to be optimized")
+            else:
+                self.qs_items_label.setText(f"{total} items to be optimized")
     
     def _create_essential_tab(self) -> QWidget:
         """Create Essential Optimizations tab content matching reference design."""
@@ -1691,6 +1671,8 @@ class HardwarePanelWidget(QWidget):
             cb.toggled.connect(self._update_essential_count)
             cb.toggled.connect(self._save_essential_states)
             cb.toggled.connect(self._update_total_items_count)
+            # Autosave preset on every toggle so user never needs to manually save
+            cb.toggled.connect(self._save_custom_preset)
             self._essential_checks.append(cb)
             cb_layout.addWidget(cb)
             table.setCellWidget(idx, 0, cb_widget)
@@ -2510,6 +2492,8 @@ class HardwarePanelWidget(QWidget):
                 cb.setChecked(True)
             cb.toggled.connect(self._update_processes_count)
             cb.toggled.connect(self._update_total_items_count)
+            # Autosave preset on every toggle so user never needs to manually save
+            cb.toggled.connect(self._save_custom_preset)
             self._process_checks.append(cb)
             self._process_data.append({'pids': proc['pids'], 'name': proc['name'], 'count': proc['count']})
             cb_layout.addWidget(cb)
@@ -2789,6 +2773,8 @@ class HardwarePanelWidget(QWidget):
             if check_storage is not None:
                 check_storage.append(cb)
                 cb.toggled.connect(self._update_total_items_count)
+                # Autosave preset on every toggle so user never needs to manually save
+                cb.toggled.connect(self._save_custom_preset)
                 if tab_id == "basic":
                     cb.toggled.connect(self._update_basic_count)
                 else:
@@ -3099,10 +3085,10 @@ class HardwarePanelWidget(QWidget):
         return scroll
     
     def _create_ram_cleaner_section(self):
-        """Create the RAM Cleaner section with gauge."""
+        """Create the Quick Setup Booster section, mirroring the Booster tab layout."""
         container = QFrame()
         container.setObjectName("ramCleanerContainer")
-        container.setFixedWidth(320)
+        container.setFixedWidth(240)
         container.setStyleSheet("""
             QFrame#ramCleanerContainer {
                 background: rgba(24, 24, 28, 0.95);
@@ -3110,123 +3096,60 @@ class HardwarePanelWidget(QWidget):
                 border-radius: 16px;
             }
         """)
-        
+
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
-        
-        # Title
-        title = QLabel("RAM Cleaner")
+        layout.setContentsMargins(10, 20, 10, 20)
+        layout.setSpacing(10)
+
+        # Title - matches the Booster tab title style
+        title = QLabel("BOOSTER")
         title.setObjectName("ramCleanerTitle")
-        title.setStyleSheet("color: #e0e0e0; font-size: 18px; font-weight: 600; background: transparent;")
+        title.setStyleSheet("color: #e0e0e0; font-size: 16px; font-weight: 700; background: transparent;")
+        title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
-        
-        # Circular gauge (overview page gauge - separate from RAM page gauge)
+
+        # Circular gauge (Quick Setup overview gauge, separate from Booster tab gauge)
         self.overview_ram_gauge = CircularGauge()
         self.overview_ram_gauge.setObjectName("overviewRamGauge")
-        self.overview_ram_gauge.setMinimumSize(200, 200)
+        self.overview_ram_gauge.setFixedSize(180, 180)
         layout.addWidget(self.overview_ram_gauge, alignment=Qt.AlignCenter)
-        
-        # Before/After stats
-        stats_row = QHBoxLayout()
-        
-        # Before
-        before_col = QVBoxLayout()
-        before_label = QLabel("Before:")
-        before_label.setObjectName("beforeLabel")
-        before_label.setStyleSheet("color: #888888; font-size: 11px; background: transparent;")
-        self.before_value = QLabel("0 GB / 0%")
-        self.before_value.setObjectName("beforeValue")
-        self.before_value.setStyleSheet("color: #e0e0e0; font-size: 13px; font-weight: 500; background: transparent;")
-        before_col.addWidget(before_label)
-        before_col.addWidget(self.before_value)
-        stats_row.addLayout(before_col)
-        
-        # After
-        after_col = QVBoxLayout()
-        after_label = QLabel("After:")
-        after_label.setObjectName("afterLabel")
-        after_label.setStyleSheet("color: #888888; font-size: 11px; background: transparent;")
-        self.after_value = QLabel("Estimated")
-        self.after_value.setObjectName("afterValue")
-        self.after_value.setStyleSheet("color: #4ade80; font-size: 13px; font-weight: 500; background: transparent;")
-        after_col.addWidget(after_label)
-        after_col.addWidget(self.after_value)
-        stats_row.addLayout(after_col)
-        
-        layout.addLayout(stats_row)
-        
-        # Used/Free bar
-        self.ram_bar = ProgressBarWidget()
-        self.ram_bar.setObjectName("ramUsageBar")
-        self.ram_bar.setLabel("Used")
-        layout.addWidget(self.ram_bar)
-        
-        # Free label
-        self.free_label = QLabel("Free: 0 GB")
-        self.free_label.setObjectName("freeRamLabel")
-        self.free_label.setStyleSheet("color: #888888; font-size: 12px; background: transparent;")
-        layout.addWidget(self.free_label)
-        
-        # Custom mode toggle button
-        self._custom_mode_active = False
-        self.custom_mode_btn = QPushButton("Custom Preset")
-        self.custom_mode_btn.setObjectName("customModeButton")
-        self.custom_mode_btn.setCursor(Qt.PointingHandCursor)
-        self.custom_mode_btn.setFixedHeight(36)
-        self.custom_mode_btn.setCheckable(True)
-        self.custom_mode_btn.clicked.connect(lambda: self._toggle_custom_mode())
-        # Initial inactive style
-        self.custom_mode_btn.setStyleSheet("""
-            QPushButton#customModeButton {
-                background: rgba(60, 60, 70, 0.8);
-                color: #aaaaaa;
-                border: 1px solid rgba(100, 100, 100, 0.3);
-                border-radius: 8px;
-                font-size: 12px;
-                font-weight: 500;
-            }
-            QPushButton#customModeButton:hover {
-                background: rgba(80, 80, 90, 0.9);
-                color: #dddddd;
-                border-color: rgba(255, 91, 6, 0.5);
-            }
-        """)
-        layout.addWidget(self.custom_mode_btn)
-        
-        # Clean RAM button
-        self.clean_btn = QPushButton("Clean RAM")
+
+        # Items to be optimized label - synced from _update_total_items_count
+        self.qs_items_label = QLabel("0 items to be optimized")
+        self.qs_items_label.setObjectName("qsItemsLabel")
+        self.qs_items_label.setStyleSheet("color: #e0e0e0; font-size: 14px; background: transparent;")
+        self.qs_items_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.qs_items_label)
+
+        layout.addSpacing(15)
+
+        # MANUAL BOOST button - triggers full boost (not just RAM clean)
+        self.clean_btn = QPushButton("MANUAL BOOST")
         self.clean_btn.setObjectName("cleanRamButton")
         self.clean_btn.setCursor(Qt.PointingHandCursor)
-        self.clean_btn.setFixedHeight(48)
-        
-        def _on_clean_btn_clicked():
-            if getattr(self, '_is_boosting', False):
-                self._run_manual_boost()
-            else:
-                self._clean_ram()
-                
-        self.clean_btn.clicked.connect(_on_clean_btn_clicked)
+        self.clean_btn.setFixedHeight(40)
+        # Always triggers the full manual boost, same as the Booster tab button
+        self.clean_btn.clicked.connect(self._run_manual_boost)
         self.clean_btn.setStyleSheet("""
             QPushButton#cleanRamButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
-                color: #ffffff;
-                border: none;
-                border-radius: 12px;
-                font-size: 14px;
+                background: #333;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 6px;
+                font-size: 12px;
                 font-weight: 600;
             }
             QPushButton#cleanRamButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7B26, stop:1 #FDC933);
-            }
-            QPushButton#cleanRamButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #E54B00, stop:1 #DD9903);
+                background: #444;
+                border-color: #FF5B06;
             }
         """)
         layout.addWidget(self.clean_btn)
-        
+
+        # Keep custom mode flag for internal compatibility (no button shown)
+        self._custom_mode_active = False
+
         layout.addStretch()
-        
         return container
     
     def _create_stats_grid(self):
@@ -3350,7 +3273,7 @@ class HardwarePanelWidget(QWidget):
         # Disk S.M.A.R.T card (below Network)
         disk_health_card = StatsCard("Disk S.M.A.R.T")
         disk_health_card.setObjectName("diskHealthCard")
-        disk_health_card.setMinimumHeight(220)
+        disk_health_card.setMinimumHeight(120)
         
         # Container for disk health items (vertical layout with scroll)
         self.disk_health_container = QVBoxLayout()
@@ -3385,7 +3308,7 @@ class HardwarePanelWidget(QWidget):
                 min-height: 20px;
             }
         """)
-        disk_scroll.setMinimumHeight(180)
+        disk_scroll.setMinimumHeight(80)
         
         disk_health_card.addWidget(disk_scroll)
         grid.addWidget(disk_health_card, 2, 1)
@@ -3404,7 +3327,7 @@ class HardwarePanelWidget(QWidget):
         self.disk_chart.getAxis('left').setWidth(30)
         self.disk_chart.disableAutoRange(axis='y')  # Keep Y fixed at 0-100
         self.disk_chart.enableAutoRange(axis='x')   # X auto-range
-        self.disk_chart.setXRange(0, 60, padding=0)  # Default to View All (60 data points)
+        self.disk_chart.setXRange(0, 63, padding=0)  # Default to View All (60 data points + 3 padding for text)
         self.disk_usage_curve = self.disk_chart.plot(pen=pg.mkPen('#f97316', width=2), name='Usage')
         # Text label at leading edge showing current value
         self.disk_leading_text = pg.TextItem(text='0%', color='#f97316', anchor=(0, 0.5))
@@ -3436,11 +3359,10 @@ class HardwarePanelWidget(QWidget):
         disk_card.addWidget(disk_bars_widget)
         grid.addWidget(disk_card, 1, 0, 2, 1)  # Span 2 rows in column 0
         
-        # Hardware Health card (compact)
+        # Hardware Health card (compact + responsive width)
         health_card = StatsCard("Health")
         health_card.setObjectName("healthCard")
         health_card.setMaximumHeight(125)
-        health_card.setMaximumWidth(446)
         
         # Check if LibreHardwareMonitor or HWiNFO is available for temps
         try:
@@ -3526,117 +3448,13 @@ class HardwarePanelWidget(QWidget):
         
         health_row.addStretch()
         
-        # Install or Start button for hardware monitor (LibreHardwareMonitor or HWiNFO)
-        if not self._hwmon_available:
-            # Not installed - show Install button
-            install_col = QVBoxLayout()
-            install_col.setSpacing(2)
-            self.install_monitor_btn = QPushButton("📥 Install")
-            self.install_monitor_btn.setObjectName("installHWMonBtn")
-            self.install_monitor_btn.setFixedSize(70, 30)
-            self.install_monitor_btn.setCursor(Qt.PointingHandCursor)
-            self.install_monitor_btn.setStyleSheet("""
-                QPushButton {
-                    background: #526D82; color: #DDE6ED; border: none; 
-                    border-radius: 6px; font-size: 10px; font-weight: 600;
-                }
-                QPushButton:hover { background: #9DB2BF; color: #27374D; }
-            """)
-            self.install_monitor_btn.setToolTip("Install LibreHardwareMonitor for temperature monitoring")
-            self.install_monitor_btn.clicked.connect(self._install_librehwmon)
-            install_col.addWidget(self.install_monitor_btn, alignment=Qt.AlignCenter)
-            health_row.addLayout(install_col)
-        else:
-            # Installed - show Start button to launch as admin
-            start_col = QVBoxLayout()
-            start_col.setSpacing(2)
-            self.start_monitor_btn = QPushButton("Start")
-            self.start_monitor_btn.setObjectName("startHWMonBtn")
-            self.start_monitor_btn.setFixedSize(70, 30)
-            self.start_monitor_btn.setCursor(Qt.PointingHandCursor)
-            self.start_monitor_btn.setStyleSheet("""
-                QPushButton {
-                    background: #4ade80; color: #1a1a2e; border: none; 
-                    border-radius: 6px; font-size: 10px; font-weight: 600;
-                }
-                QPushButton:hover { background: #22c55e; }
-            """)
-            self.start_monitor_btn.setToolTip("Choose and launch hardware monitor (LibreHardwareMonitor or HWiNFO)")
-            self.start_monitor_btn.clicked.connect(self._show_hwmon_selection_dialog)
-            start_col.addWidget(self.start_monitor_btn, alignment=Qt.AlignCenter)
-            health_row.addLayout(start_col)
+        health_row.addStretch()
         
         health_widget = QWidget()
         health_widget.setObjectName("healthWidget")
         health_widget.setLayout(health_row)
         health_card.addWidget(health_widget)
-        grid.addWidget(health_card, 3, 0)  # Single column, Fan card beside it
-        
-        # Fan Speed card (beside Health)
-        fan_card = StatsCard("Fan Speed")
-        fan_card.setObjectName("fanSpeedCard")
-        fan_card.setMaximumHeight(125)
-        
-        fan_row = QHBoxLayout()
-        fan_row.setSpacing(15)
-        fan_row.setContentsMargins(5, 5, 5, 5)
-        
-        # CPU Fan Section
-        cpu_fan_box = QVBoxLayout()
-        cpu_fan_box.setSpacing(2)
-        cpu_fan_header = QLabel("🌀 CPU")
-        cpu_fan_header.setObjectName("cpuFanHeader")
-        cpu_fan_header.setStyleSheet("color: #60a5fa; font-size: 11px; font-weight: bold; background: transparent;")
-        cpu_fan_header.setAlignment(Qt.AlignCenter)
-        
-        self.cpu_fan_value = QLabel("-- RPM")
-        self.cpu_fan_value.setObjectName("cpuFanValue")
-        self.cpu_fan_value.setStyleSheet("color: #22d3ee; font-size: 13px; font-weight: 600; background: transparent;")
-        self.cpu_fan_value.setAlignment(Qt.AlignCenter)
-        
-        cpu_fan_box.addWidget(cpu_fan_header)
-        cpu_fan_box.addWidget(self.cpu_fan_value)
-        fan_row.addLayout(cpu_fan_box)
-        
-        # GPU Fan Section
-        gpu_fan_box = QVBoxLayout()
-        gpu_fan_box.setSpacing(2)
-        gpu_fan_header = QLabel("🌀 GPU")
-        gpu_fan_header.setObjectName("gpuFanHeader")
-        gpu_fan_header.setStyleSheet("color: #a78bfa; font-size: 11px; font-weight: bold; background: transparent;")
-        gpu_fan_header.setAlignment(Qt.AlignCenter)
-        
-        self.gpu_fan_value = QLabel("-- RPM")
-        self.gpu_fan_value.setObjectName("gpuFanValue")
-        self.gpu_fan_value.setStyleSheet("color: #c084fc; font-size: 13px; font-weight: 600; background: transparent;")
-        self.gpu_fan_value.setAlignment(Qt.AlignCenter)
-        
-        gpu_fan_box.addWidget(gpu_fan_header)
-        gpu_fan_box.addWidget(self.gpu_fan_value)
-        fan_row.addLayout(gpu_fan_box)
-        
-        # System/Chassis Fan Section
-        sys_fan_box = QVBoxLayout()
-        sys_fan_box.setSpacing(2)
-        sys_fan_header = QLabel("🌀 SYS")
-        sys_fan_header.setObjectName("sysFanHeader")
-        sys_fan_header.setStyleSheet("color: #4ade80; font-size: 11px; font-weight: bold; background: transparent;")
-        sys_fan_header.setAlignment(Qt.AlignCenter)
-        
-        self.sys_fan_value = QLabel("-- RPM")
-        self.sys_fan_value.setObjectName("sysFanValue")
-        self.sys_fan_value.setStyleSheet("color: #86efac; font-size: 13px; font-weight: 600; background: transparent;")
-        self.sys_fan_value.setAlignment(Qt.AlignCenter)
-        
-        sys_fan_box.addWidget(sys_fan_header)
-        sys_fan_box.addWidget(self.sys_fan_value)
-        fan_row.addLayout(sys_fan_box)
-        
-        fan_widget = QWidget()
-        fan_widget.setObjectName("fanWidget")
-        fan_widget.setLayout(fan_row)
-        fan_card.addWidget(fan_widget)
-        grid.addWidget(fan_card, 3, 1)
+        grid.addWidget(health_card, 3, 0, 1, 2)  # Make Health card span both columns
         
         return container
     
@@ -3706,6 +3524,12 @@ class HardwarePanelWidget(QWidget):
     
     def _update_stats(self):
         """Update all stats from hardware monitor."""
+        # Throttled check for hardware monitor running status (every 5 updates)
+        self._hwmon_check_counter += 1
+        if self._hwmon_check_counter >= 5:
+            self._hwmon_check_counter = 0
+            self._update_hwmon_button_status()
+
         try:
             snapshot = self.monitor.get_snapshot()
             
@@ -3731,20 +3555,8 @@ class HardwarePanelWidget(QWidget):
             if hasattr(self, 'ram_usage_bar'):
                 self.ram_usage_bar.setValue(ram_percent)
             
-            # Only update before_value if not cleaning and widget exists
-            if not getattr(self, '_is_cleaning', False):
-                if hasattr(self, 'before_value'):
-                    self.before_value.setText(f"{ram['used']:.1f} GB / {ram['percent']:.0f}%")
-                    # Estimate after cleanup (~15% of used RAM typically freed)
-                    estimated_freed = ram['used'] * 0.15
-                    estimated_after = ram['used'] - estimated_freed
-                    estimated_percent = (estimated_after / ram['total']) * 100 if ram['total'] > 0 else 0
-                    if hasattr(self, 'after_value'):
-                        self.after_value.setText(f"~{estimated_after:.1f} GB / {estimated_percent:.0f}%")
-            
-            if hasattr(self, 'free_label'):
-                self.free_label.setText(f"Free: {ram['free']:.1f} GB")
-            
+
+
             # Update RAM stats label (Total/Used/Free) - RAM Cleaner left panel
             if hasattr(self, 'ram_stats_label'):
                 self.ram_stats_label.setText(f"Total: {ram['total']:.1f} GB\nUsed: {ram['used']:.1f} GB\nFree: {ram['free']:.1f} GB")
@@ -3761,7 +3573,7 @@ class HardwarePanelWidget(QWidget):
             if self._chart_auto_scroll['ram'] and hasattr(self, 'ram_chart'):
                 x_max = len(self._ram_history)
                 x_min = max(0, x_max - self._chart_display_length)
-                self.ram_chart.setXRange(x_min, x_max, padding=0)
+                self.ram_chart.setXRange(x_min, x_max + 3, padding=0)
             # Update leading edge text position and value
             if hasattr(self, 'ram_leading_text'):
                 self.ram_leading_text.setText(f'{ram_percent:.0f}%')
@@ -3780,7 +3592,7 @@ class HardwarePanelWidget(QWidget):
             if self._chart_auto_scroll['cpu']:
                 x_max = len(self._cpu_history)
                 x_min = max(0, x_max - self._chart_display_length)
-                self.cpu_chart.setXRange(x_min, x_max, padding=0)
+                self.cpu_chart.setXRange(x_min, x_max + 3, padding=0)
             # Update leading edge text position and value
             self.cpu_leading_text.setText(f'{cpu_usage:.0f}%')
             self.cpu_leading_text.setPos(len(self._cpu_history) - 1, cpu_usage)
@@ -3800,7 +3612,7 @@ class HardwarePanelWidget(QWidget):
             if self._chart_auto_scroll['disk']:
                 x_max = len(self._disk_usage_history)
                 x_min = max(0, x_max - self._chart_display_length)
-                self.disk_chart.setXRange(x_min, x_max, padding=0)
+                self.disk_chart.setXRange(x_min, x_max + 3, padding=0)
             # Update leading edge text position and value
             self.disk_leading_text.setText(f'{disk_activity:.1f}%')
             self.disk_leading_text.setPos(len(self._disk_usage_history) - 1, disk_activity)
@@ -3873,37 +3685,40 @@ class HardwarePanelWidget(QWidget):
                 if item.widget():
                     item.widget().deleteLater()
             
-            # Fetch disk details once (WMI query)
-            if not self._disk_details_fetched:
-                self._disk_details = self.monitor.get_disk_details()
-                self._disk_details_fetched = True
+            # Fetch disk SMART info once
+            if not getattr(self, '_disk_smart_fetched', False):
+                self._smart_disks = self.monitor.get_smart_disks()
+                self._disk_smart_fetched = True
             
-            for disk in disks:  # Show all drives
-                drive_path = disk['drive']
-                details = self._disk_details.get(drive_path, {})
-                
-                # Create a row for each disk with detailed info
+            display_disks = getattr(self, '_smart_disks', [])
+            
+            for pdisk in display_disks:
+                # Create a row for each physical disk
                 disk_row = QWidget()
                 disk_row.setStyleSheet("background: transparent;")
                 main_layout = QVBoxLayout()
                 main_layout.setContentsMargins(8, 6, 8, 6)
                 main_layout.setSpacing(4)
                 
-                # Row 1: Drive letter + Type badge + Model name
+                # Row 1: Model name + status etc
                 top_row = QHBoxLayout()
                 top_row.setSpacing(8)
                 
-                drive_label = QLabel(f"{drive_path}")
+                model_name = pdisk['model']
+                if len(model_name) > 30:
+                    model_name = model_name[:27] + "..."
+                drive_label = QLabel(model_name)
                 drive_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 600; background: transparent;")
-                top_row.addWidget(drive_label)
+                top_row.addWidget(drive_label, alignment=Qt.AlignVCenter)
                 
                 # Health status
-                health_label = QLabel("OK")
-                health_label.setStyleSheet("color: #4ade80; font-size: 10px; font-weight: 600; background: transparent;")
-                top_row.addWidget(health_label)
+                status_color = "#4ade80" if pdisk['status'] == "OK" else "#f97316" if pdisk['status'] == "Warning" else "#ef4444"
+                health_label = QLabel(pdisk['status'])
+                health_label.setStyleSheet(f"color: {status_color}; font-size: 10px; font-weight: 600; background: transparent;")
+                top_row.addWidget(health_label, alignment=Qt.AlignVCenter)
                 
                 # Disk type badge (SSD/HDD)
-                disk_type = details.get('type', 'HDD')
+                disk_type = pdisk['type']
                 type_color = "#22d3ee" if disk_type == 'SSD' else "#fbbf24"
                 type_label = QLabel(disk_type)
                 type_label.setStyleSheet(f"""
@@ -3914,43 +3729,34 @@ class HardwarePanelWidget(QWidget):
                     padding: 1px 4px;
                     border-radius: 3px;
                 """)
-                top_row.addWidget(type_label)
+                top_row.addWidget(type_label, alignment=Qt.AlignVCenter)
                 
-                # File system
-                fstype = disk.get('fstype', 'NTFS')
-                fstype_label = QLabel(f"[{fstype}]")
-                fstype_label.setStyleSheet("color: #60a5fa; font-size: 9px; background: transparent;")
-                top_row.addWidget(fstype_label)
+                # Temperature
+                if pdisk['temp'] > 0:
+                    temp_label = QLabel(f"{pdisk['temp']:.0f}°C")
+                    temp_label.setStyleSheet("color: #60a5fa; font-size: 9px; background: transparent; font-weight: bold;")
+                    top_row.addWidget(temp_label, alignment=Qt.AlignVCenter)
                 
                 top_row.addStretch()
                 
-                # Usage percentage (right side)
-                usage_pct = disk.get('percent', 0)
-                usage_color = "#4ade80" if usage_pct < 70 else "#f97316" if usage_pct < 90 else "#ef4444"
-                usage_label = QLabel(f"{usage_pct:.0f}%")
-                usage_label.setStyleSheet(f"color: {usage_color}; font-size: 11px; font-weight: 600; background: transparent;")
-                top_row.addWidget(usage_label)
+                # Health percentage (right side)
+                health_pct = pdisk['health_percent']
+                health_label_value = QLabel(f"{health_pct:.0f}%")
+                health_label_value.setStyleSheet(f"color: {status_color}; font-size: 11px; font-weight: 600; background: transparent;")
+                top_row.addWidget(health_label_value, alignment=Qt.AlignVCenter)
                 
                 top_widget = QWidget()
                 top_widget.setLayout(top_row)
                 top_widget.setStyleSheet("background: transparent;")
                 main_layout.addWidget(top_widget)
                 
-                # Row 2: Model name (truncated if too long)
-                model = details.get('model', 'Unknown')
-                if len(model) > 40:
-                    model = model[:37] + "..."
-                model_label = QLabel(f"{model}")
-                model_label.setStyleSheet("color: #888888; font-size: 10px; background: transparent;")
-                main_layout.addWidget(model_label)
-                
-                # Row 3: Progress bar + Size info
+                # Row 2: Progress bar (Health left)
                 bar_row = QHBoxLayout()
                 bar_row.setSpacing(10)
                 
                 bar = QProgressBar()
                 bar.setFixedHeight(6)
-                bar.setValue(int(usage_pct))
+                bar.setValue(int(health_pct))
                 bar.setTextVisible(False)
                 bar.setStyleSheet(f"""
                     QProgressBar {{
@@ -3959,19 +3765,11 @@ class HardwarePanelWidget(QWidget):
                         border: none;
                     }}
                     QProgressBar::chunk {{
-                        background: {usage_color};
+                        background: {status_color};
                         border-radius: 3px;
                     }}
                 """)
                 bar_row.addWidget(bar, stretch=1)
-                
-                # Size: Used / Total (Free)
-                free_gb = disk.get('free', 0)
-                total_gb = disk.get('total', 0)
-                used_gb = disk.get('used', 0)
-                size_label = QLabel(f"{used_gb:.0f}/{total_gb:.0f} GB ({free_gb:.0f} free)")
-                size_label.setStyleSheet("color: #aaaaaa; font-size: 9px; background: transparent;")
-                bar_row.addWidget(size_label)
                 
                 bar_widget = QWidget()
                 bar_widget.setLayout(bar_row)
@@ -3980,6 +3778,8 @@ class HardwarePanelWidget(QWidget):
                 
                 disk_row.setLayout(main_layout)
                 self.disk_health_container.addWidget(disk_row)
+                
+            self.disk_health_container.addStretch()
             
             # Temps and Hardware Stats from LHM
             temps = snapshot["temps"]
@@ -3987,7 +3787,6 @@ class HardwarePanelWidget(QWidget):
             gpu_temp = temps.get("gpu_temp", 0)
             cpu_load = temps.get("cpu_load", 0)
             gpu_load = temps.get("gpu_load", 0)
-            fan_speed = temps.get("fan_speed", 0)
             power = temps.get("power", 0)
             
             # CPU Temp
@@ -4013,16 +3812,6 @@ class HardwarePanelWidget(QWidget):
                 self.gpu_load_value.setText(f"{gpu_load:.0f}%")
                 color = "#60a5fa" if gpu_load < 80 else "#f97316" if gpu_load < 95 else "#ef4444"
                 self.gpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
-            
-            # Fan Speed (now in separate Fan Speed card)
-            if fan_speed > 0:
-                self.cpu_fan_value.setText(f"{fan_speed:.0f} RPM")
-                self.gpu_fan_value.setText("N/A")  # Requires NVML for NVIDIA
-                self.sys_fan_value.setText("N/A")  # Not available via LHM
-            else:
-                self.cpu_fan_value.setText("-- RPM")
-                self.gpu_fan_value.setText("-- RPM")
-                self.sys_fan_value.setText("-- RPM")
             
             # Power
             if power > 0:
@@ -4054,119 +3843,57 @@ class HardwarePanelWidget(QWidget):
             print(f"[Hardware] Update error: {e}")
     
 
-    
-    def _toggle_custom_mode(self):
-        """Toggle custom cleaning mode on/off."""
-        self._custom_mode_active = not self._custom_mode_active
-        self._update_custom_mode_style()
-        print(f"[Hardware] Custom mode: {'ON' if self._custom_mode_active else 'OFF'}")
-    
-    def _update_custom_mode_style(self):
-        """Update Custom button styling based on active state."""
-        if self._custom_mode_active:
-            self.custom_mode_btn.setStyleSheet("""
-                QPushButton#customModeButton {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
-                    color: #ffffff;
-                    border: none;
-                    border-radius: 8px;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                QPushButton#customModeButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7B26, stop:1 #FDC933);
-                }
-            """)
-            self.custom_mode_btn.setText("Custom Preset")
-        else:
-            self.custom_mode_btn.setStyleSheet("""
-                QPushButton#customModeButton {
-                    background: rgba(60, 60, 70, 0.8);
-                    color: #aaaaaa;
-                    border: 1px solid rgba(100, 100, 100, 0.3);
-                    border-radius: 8px;
-                    font-size: 12px;
-                    font-weight: 500;
-                }
-                QPushButton#customModeButton:hover {
-                    background: rgba(80, 80, 90, 0.9);
-                    color: #dddddd;
-                    border-color: rgba(255, 91, 6, 0.5);
-                }
-            """)
-            self.custom_mode_btn.setText("Custom Preset")
-        
-        # Throttled check for hardware monitor running status (every 5 updates)
-        self._hwmon_check_counter += 1
-        if self._hwmon_check_counter >= 5:
-            self._hwmon_check_counter = 0
-            self._update_hwmon_button_status()
-    
     def _clean_ram(self):
-        """Clean RAM and show results."""
+        """Clean RAM and show results (legacy fallback - Quick Setup now uses _run_manual_boost)."""
         from PySide6.QtWidgets import QApplication
-        
-        self._is_cleaning = True  # Flag to prevent before_value updates
-        self.clean_btn.setText("Cleaning...")
-        self.clean_btn.setEnabled(False)
-        
-        # Stop timer and process any pending events
+
+        if hasattr(self, 'clean_btn'):
+            self.clean_btn.setText("Cleaning...")
+            self.clean_btn.setEnabled(False)
+
+        # Stop timer and flush pending events
         self._update_timer.stop()
-        QApplication.processEvents()  # Flush pending timer callbacks
-        
-        # Get before stats and immediately display it
-        before_ram = self.monitor.get_ram_info()
-        before_used = before_ram['used']
-        before_percent = before_ram['percent']
-        self.before_value.setText(f"{before_used:.1f} GB / {before_percent:.0f}%")
-        print(f"[Hardware] Before: {before_used:.2f} GB ({before_percent:.0f}%)")
-        
-        # Apply essential optimizations ONLY if Custom mode is ON
+        QApplication.processEvents()
+
+        # Apply essential optimizations when custom mode is ON
         if self._custom_mode_active:
             try:
                 opt_results = self._apply_essential_optimizations()
                 if opt_results:
-                    print(f"[Hardware] Custom mode ON - Essential optimizations applied: {list(opt_results.keys())}")
+                    print(f"[Hardware] Essential optimizations applied: {list(opt_results.keys())}")
             except Exception as e:
                 print(f"[Hardware] Essential optimizations error: {e}")
-        else:
-            print("[Hardware] Custom mode OFF - Skipping essential optimizations")
-        
-        # Clean RAM (existing monitor method)
+
+        # Clean RAM via monitor
         result = self.monitor.clean_ram()
-        
-        # Get after stats
-        after_ram = self.monitor.get_ram_info()
-        after_used = after_ram['used']
-        after_percent = after_ram['percent']
-        print(f"[Hardware] After: {after_used:.2f} GB ({after_percent:.0f}%)")
-        
-        # Update UI
-        cleaned = result.get("processes_cleaned", 0)
-        freed = max(0, before_used - after_used)
-        
-        self.after_value.setText(f"{after_used:.1f} GB / {after_percent:.0f}%")
-        
-        # Reset button
-        self.clean_btn.setText(f"Cleaned! ({freed:.2f} GB freed)")
-        
-        # Resume timer after 10 seconds
+        before_used = 0
+        freed = result.get("freed_gb", 0) if isinstance(result, dict) else 0
+        cleaned = result.get("processes_cleaned", 0) if isinstance(result, dict) else 0
+
+        if hasattr(self, 'clean_btn'):
+            self.clean_btn.setText(f"Cleaned! ({freed:.2f} GB freed)")
+
+        # Resume timer after 10 seconds and reset button
         def _resume_timer():
-            self._is_cleaning = False
-            self.clean_btn.setText("Clean RAM")
-            self.clean_btn.setEnabled(True)
-            self.after_value.setText("Estimated")  # Reset after value
+            if hasattr(self, 'clean_btn'):
+                self.clean_btn.setText("MANUAL BOOST")
+                self.clean_btn.setEnabled(True)
             self._update_timer.start(self.monitor.update_interval_ms)
-        
+
         QTimer.singleShot(10000, _resume_timer)
-        
         print(f"[Hardware] RAM cleaned: {cleaned} processes, ~{freed:.2f} GB freed")
+
     
     def showEvent(self, event):
         """Start updates when visible."""
         super().showEvent(event)
         if not self._update_timer.isActive():
             self._update_timer.start(self.monitor.update_interval_ms)
+            
+        # Auto-launch hardware monitor in background if it's not already running
+        if hasattr(self, '_is_hwmon_running') and not self._is_hwmon_running():
+            print("[Hardware] Auto-launching monitor silently in backend...")
+            self._start_librehwmon(silent_launch=True)
     
     def hideEvent(self, event):
         """Stop updates when hidden."""
@@ -4248,7 +3975,7 @@ class HardwarePanelWidget(QWidget):
             if state["success"]:
                 # Update Install button to Start button
                 if hasattr(self, 'install_monitor_btn') and self.install_monitor_btn:
-                    self.install_monitor_btn.setText("▶️ Start")
+                    self.install_monitor_btn.setText("Start")
                     self.install_monitor_btn.setStyleSheet("""
                         QPushButton {
                             background: #4ade80; color: #1a1a2e; border: none; 
@@ -4493,8 +4220,10 @@ class HardwarePanelWidget(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Install error: {e}")
     
-    def _start_librehwmon(self):
-        """Launch hardware monitor as Administrator (LibreHardwareMonitor or HWiNFO)."""
+    def _start_librehwmon(self, silent_launch=False):
+        """Launch hardware monitor as Administrator (LibreHardwareMonitor or HWiNFO).
+        If silent_launch is True, it runs hidden in the background.
+        """
         try:
             from integrations.tools_downloader import (
                 get_librehwmon_path, get_hwinfo_path, get_hwinfo32_path,
@@ -4529,9 +4258,12 @@ class HardwarePanelWidget(QWidget):
             if tool_name == "HWiNFO":
                 self._enable_hwinfo_shared_memory(exe_path)
             
+            # Determine window visibility (0: Hidden/Backend, 1: Normal)
+            show_cmd = 0 if silent_launch else 1
+            
             result = ctypes.windll.shell32.ShellExecuteW(
                 None, "runas", exe_path, None, 
-                os.path.dirname(exe_path), 1  # SW_SHOWNORMAL
+                os.path.dirname(exe_path), show_cmd
             )
             
             if result > 32:
@@ -4560,7 +4292,7 @@ class HardwarePanelWidget(QWidget):
     def _reset_monitor_btn(self, btn):
         """Reset monitor button back to Start state."""
         if btn:
-            btn.setText("▶️ Start")
+            btn.setText("Start")
             btn.setStyleSheet("""
                 QPushButton {
                     background: #4ade80; color: #1a1a2e; border: none; 
@@ -4644,7 +4376,7 @@ class HardwarePanelWidget(QWidget):
             """)
             btn.setEnabled(False)
         else:
-            btn.setText("▶️ Start")
+            btn.setText("Start")
             btn.setStyleSheet("""
                 QPushButton {
                     background: #4ade80; color: #1a1a2e; border: none; 

@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Platform-Windows_10%2B-lightgray?style=for-the-badge&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-v4.9-orange?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v4.10-orange?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
@@ -138,16 +138,15 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ## ✦ Changelog
 
-### v4.7
-- Improved first-launch state handling
-- CPU Controller access restricted based on tool availability
-- Added debug feedback when RyzenAdj is missing
-- Macro state resets on first launch
-
-### v4.8
-- Universal Scan (combines Steam & Google Play Games library scanning)
-- Check for Updates functionality via GitHub releases
-- Fullscreen (F11) and window maximize state behavior fixes
+### v4.10
+- **Issue #14:** Removed Save Custom Preset. Instead, everytime user check/uncheck the checkbox it will automatically saved.
+- **Issue #13:** Minor Issue - Disk SMART now shows physical drive health & temperature correctly instead of free space.
+- **Issue #12:** Minor Issue - Chart number clipping at the edge has been fixed.
+- **Issue #10:** Minor Issue - Fixed "Item to be optimized" count so it accurately syncs with checkbox states when opening the app.
+- **Issue #9:** Minor Issue - The text version in UI now accurately syncs with the current version.
+- **Issue #8:** Hardware health is now correctly forced to launch required third-party apps like LibreHardwareMonitor first.
+- **Issue #5:** Minor Issue - Status Boosting now correctly syncs from the Booster tab to the Quick Setup Tab.
+- **Issue #2:** Minor Issue - "Save Custom Preset" button now correctly captures right-panel states and works as intended on the Booster tab.
 
 ### v4.9
 - **HELXTATS Boost Engine Rewrite:** fully silent native C++ execution using VBScript wrapper (no PowerShell popups, no annoying beeps)
@@ -155,6 +154,17 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - Fixed FFmpeg local detection logic, ensuring reliable parsing inside Music Player
 - Refined tray notification messaging and behaviors for Booster
 - Support for auto-fetching required binaries (FFmpeg, RyzenAdj) to local AppData
+
+### v4.8
+- Universal Scan (combines Steam & Google Play Games library scanning)
+- Check for Updates functionality via GitHub releases
+- Fullscreen (F11) and window maximize state behavior fixes
+
+### v4.7
+- Improved first-launch state handling
+- CPU Controller access restricted based on tool availability
+- Added debug feedback when RyzenAdj is missing
+- Macro state resets on first launch
 
 ---
 

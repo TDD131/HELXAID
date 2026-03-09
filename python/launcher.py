@@ -8065,7 +8065,7 @@ Stylesheet Selector:
 
         # Version label and Update button
         version_layout = QHBoxLayout()
-        version_label = QLabel("Version - 4.8")
+        version_label = QLabel("Version - 4.9")
         version_label.setStyleSheet("color: #888888; font-size: 11px;")
         
         check_update_btn = AnimatedButton("Check for Updates")
