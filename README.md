@@ -139,14 +139,13 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 ## ✦ Changelog
 
 ### v4.10
-- **Fixes #14:** Removed Save Custom Preset. Instead, everytime user check/uncheck the checkbox it will automatically saved.
-- **Fixes #13:** Minor Issue - Disk SMART now shows physical drive health & temperature correctly instead of free space.
-- **Fixes #12:** Minor Issue - Chart number clipping at the edge has been fixed.
-- **Fixes #10:** Minor Issue - Fixed "Item to be optimized" count so it accurately syncs with checkbox states when opening the app.
-- **Fixes #9:** Minor Issue - The text version in UI now accurately syncs with the current version.
-- **Fixes #8:** Hardware health is now correctly forced to launch required third-party apps like LibreHardwareMonitor first.
-- **Fixes #5:** Minor Issue - Status Boosting now correctly syncs from the Booster tab to the Quick Setup Tab.
-- **Fixes #2:** Minor Issue - "Save Custom Preset" button now correctly captures right-panel states and works as intended on the Booster tab.
+- Removed Save Custom Preset. Instead, everytime user check/uncheck the checkbox it will automatically saved.
+- Disk SMART now shows physical drive health & temperature correctly instead of free space.
+- Chart number clipping at the edge has been fixed.
+- Fixed "Item to be optimized" count so it accurately syncs with checkbox states when opening the app.
+- The text version in UI now accurately syncs with the current version.
+- Hardware health is now correctly forced to launch required third-party apps like LibreHardwareMonitor first.
+- Status Boosting now correctly syncs from the Booster tab to the Quick Setup Tab.
 
 ### v4.9
 - **HELXTATS Boost Engine Rewrite:** fully silent native C++ execution using VBScript wrapper (no PowerShell popups, no annoying beeps)
