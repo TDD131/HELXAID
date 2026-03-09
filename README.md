@@ -110,29 +110,29 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - Manage local custom game folders
 - Track playtime and automatically fetch game icons and background metadata
 
-### 2. HELXTATS (System Optimization)
-- Real-time Hardware stats (CPU, GPU, RAM) tracking
-- Memory (RAM) cleaning optimization capabilities
-- Silent background execution without disturbing active gameplay
+### 2. HELXAIC (Media Player)
+- Play local audio and video files (MP3, WAV, FLAC, MP4) as background music
+- Modern, animated Spotify-style playlist interface with smooth column sorting
+- Auto-extracts file metadata, playback duration, and album cover art
+- Built-in volume, repeat/shuffle, and video background fit controls
 
 ### 3. HELXAIL (CPU Controller)
 - CPU control via RyzenAdj
 - Accessible only when required tools (RyzenAdj / UXTU) are available
 - Debug handling when required dependencies are missing
 
-### 4. HELXAIRO (Hardware Macro)
+### 4. HELXAIR (Crosshair Overlay)
+- Customizable on-screen crosshair overlay (color, size, opacity)
+- Works without hooking into game memory (safer for anti-cheats)
+
+### 5. HELXAIRO (Hardware Macro)
 - Map hardware keys to custom sequences and mouse inputs (integrated natively with C++)
 - Control DPI, rapid fire, and basic multimedia actions
 
-### 5. HELXAIC (Media Player)
-- Play local audio and video files (MP3, WAV, FLAC, MP4) as background music
-- Modern, animated Spotify-style playlist interface with smooth column sorting
-- Auto-extracts file metadata, playback duration, and album cover art
-- Built-in volume, repeat/shuffle, and video background fit controls
-
-### 6. HELXAIR (Crosshair Overlay)
-- Customizable on-screen crosshair overlay (color, size, opacity)
-- Works without hooking into game memory (safer for anti-cheats)
+### 6. HELXTATS (System Optimization)
+- Real-time Hardware stats (CPU, GPU, RAM) tracking
+- Memory (RAM) cleaning optimization capabilities
+- Silent background execution without disturbing active gameplay
 
 ---
 
