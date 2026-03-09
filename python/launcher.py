@@ -8065,7 +8065,7 @@ Stylesheet Selector:
 
         # Version label and Update button
         version_layout = QHBoxLayout()
-        version_label = QLabel("Version - 4.9")
+        version_label = QLabel("Version - 4.10")
         version_label.setStyleSheet("color: #888888; font-size: 11px;")
         
         check_update_btn = AnimatedButton("Check for Updates")
@@ -8288,7 +8288,7 @@ Stylesheet Selector:
             import json
             import threading
             
-            CURRENT_VERSION = "4.9"
+            CURRENT_VERSION = "4.10"
             API_URL = "https://api.github.com/repos/TDD131/HELXAID/releases/latest"
             
             def run_check():
@@ -8346,7 +8346,7 @@ Stylesheet Selector:
             QMessageBox.warning(self, "Update Error", f"Failed to check for updates!\n\nPlease ensure your internet connection is stable.\nError: {release_url}")
             return
             
-        CURRENT_VERSION = "4.9"
+        CURRENT_VERSION = "4.10"
         
         if latest_version == "NO_RELEASES":
             QMessageBox.information(self, "Update", f"No releases have been published on GitHub yet.\n\nYour current version: {CURRENT_VERSION}")

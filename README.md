@@ -90,8 +90,8 @@ HELXAID is built entirely on a modular architecture. Each module serves a highly
 
 HELXAID is distributed as a **100% Portable Executable**. It leaves zero system registry footprints and runs completely standalone.
 
-1. Download the latest `HELXAID_vX.Y.zip` from the [Releases Tab](../../releases).
-2. Extract the `.zip` archive and run `HELXAID.exe` natively from any directory.
+1. Download the latest `HELXAID.exe` from the [Releases Tab](../../releases).
+2. Run `HELXAID.exe` natively from any directory.
 3. The integrated OTA (Over-The-Air) updater will notify you of new updates by comparing local and server tags.
 4. User configurations, game paths, and hardware presets are securely preserved inside `%APPDATA%\HELXAID`.
 
