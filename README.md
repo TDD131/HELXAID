@@ -34,12 +34,12 @@ HELXAID is built entirely on a modular architecture. Each module serves a highly
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="assets/ss-stats.png" width="90%" alt="Stats UI">
+      <img src="assets/ss-music.png" width="90%" alt="Music Player UI">
     </td>
     <td width="50%" valign="top">
-      <h3>2. HELXTATS (System Optimization)</h3>
-      <p>A completely silent hardware optimizer. Clears standby memory, halts telemetry, and injects game processes with High Priority via native C++ hooks and VBS execution.</p>
-      <b>Status: ~50% Complete</b>
+      <h3>2. HELXAIC (Media Player)</h3>
+      <p>Your integrated gaming soundtrack engine. Snappy, metadata-aware Spotify-like interface built to run MP3/MP4 files seamlessly in the background without draining resources.</p>
+      <b>Status: ~87% Complete</b>
     </td>
   </tr>
   <tr>
@@ -54,32 +54,32 @@ HELXAID is built entirely on a modular architecture. Each module serves a highly
   </tr>
   <tr>
     <td width="50%" align="center">
-      <img src="assets/ss-macro.png" width="90%" alt="Macro UI">
-    </td>
-    <td width="50%" valign="top">
-      <h3>4. HELXAIRO (Hardware Macro)</h3>
-      <p>Record, map, and execute hardware key sequences. Directly hooks into mouse/keyboard hardware via HID to assign rapid fire, DPI loops, and media controls.</p>
-      <b>Status: ~74% Complete</b>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <h3>5. HELXAIC (Media Player)</h3>
-      <p>Your integrated gaming soundtrack engine. Snappy, metadata-aware Spotify-like interface built to run MP3/MP4 files seamlessly in the background without draining resources.</p>
-      <b>Status: ~87% Complete</b>
-    </td>
-    <td width="50%" align="center">
-      <img src="assets/ss-music.png" width="90%" alt="Music Player UI">
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
       <img src="assets/ss-crosshair.png" width="90%" alt="Crosshair UI">
     </td>
     <td width="50%" valign="top">
-      <h3>6. HELXAIR (Crosshair Overlay)</h3>
+      <h3>4. HELXAIR (Crosshair Overlay)</h3>
       <p>Custom on-screen crosshair overlay completely decoupled from game memory logic, ensuring 100% safety from aggressive anti-cheat systems.</p>
       <b>Status: 100% Complete</b>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>5. HELXAIRO (Hardware Macro)</h3>
+      <p>Record, map, and execute hardware key sequences. Directly hooks into mouse/keyboard hardware via HID to assign rapid fire, DPI loops, and media controls.</p>
+      <b>Status: ~74% Complete</b>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/ss-macro.png" width="90%" alt="Macro UI">
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/ss-stats.png" width="90%" alt="Stats UI">
+    </td>
+    <td width="50%" valign="top">
+      <h3>6. HELXTATS (System Optimization)</h3>
+      <p>A completely silent hardware optimizer. Clears standby memory, halts telemetry, and injects game processes with High Priority via native C++ hooks and VBS execution.</p>
+      <b>Status: ~50% Complete</b>
     </td>
   </tr>
 </table>
