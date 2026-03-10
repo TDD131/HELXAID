@@ -160,13 +160,6 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - Hardware health is now correctly forced to launch required third-party apps like LibreHardwareMonitor first.
 - Status Boosting now correctly syncs from the Booster tab to the Quick Setup Tab.
 
-### v4.9
-- **HELXTATS Boost Engine Rewrite:** fully silent native C++ execution using VBScript wrapper (no PowerShell popups, no annoying beeps)
-- **YouTube Downloader Enhancements:** Added format (MP3/MP4) and specific Quality options (e.g. 320kbps, 1080p, etc.)
-- Fixed FFmpeg local detection logic, ensuring reliable parsing inside Music Player
-- Refined tray notification messaging and behaviors for Booster
-- Support for auto-fetching required binaries (FFmpeg, RyzenAdj) to local AppData
-
 ---
 
 ## ✦ Development Status
