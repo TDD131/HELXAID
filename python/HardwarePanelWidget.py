@@ -3448,7 +3448,39 @@ class HardwarePanelWidget(QWidget):
         
         health_row.addStretch()
         
-        health_row.addStretch()
+        # Hardware Monitor Button
+        hwmon_box = QVBoxLayout()
+        hwmon_box.setSpacing(2)
+        
+        self.install_monitor_btn = QPushButton("Start" if self._hwmon_available else "Download LHM")
+        self.install_monitor_btn.setFixedSize(100, 26)
+        
+        if self._hwmon_available:
+            self.install_monitor_btn.setStyleSheet("""
+                QPushButton {
+                    background: #4ade80; color: #1a1a2e; border: none; 
+                    border-radius: 6px; font-size: 10px; font-weight: 600;
+                }
+                QPushButton:hover { background: #22c55e; }
+            """)
+            self.install_monitor_btn.setToolTip("Launch LibreHardwareMonitor as Administrator")
+            self.install_monitor_btn.clicked.connect(lambda: self._start_librehwmon())
+        else:
+            self.install_monitor_btn.setStyleSheet("""
+                QPushButton {
+                    background: #FF5B06; color: #fff; border: none; 
+                    border-radius: 6px; font-size: 10px; font-weight: 600;
+                }
+                QPushButton:hover { background: #ff722e; }
+            """)
+            self.install_monitor_btn.setToolTip("Download LibreHardwareMonitor for full temperature data")
+            self.install_monitor_btn.clicked.connect(self._show_hwmon_selection_dialog)
+            
+        hwmon_box.addStretch()
+        hwmon_box.addWidget(self.install_monitor_btn)
+        hwmon_box.addStretch()
+        health_row.addLayout(hwmon_box)
+
         
         health_widget = QWidget()
         health_widget.setObjectName("healthWidget")

@@ -514,6 +514,15 @@ def show_download_dialog(parent, tool_name: str, download_func: Callable) -> boo
                     exe = sys.executable
                     args = sys.argv  # argv[0] is launcher.py
 
+                if parent:
+                    try:
+                        parent.window().confirm_on_exit = False
+                    except AttributeError:
+                        pass
+                
+                if "--force-restart" not in args:
+                    args.append("--force-restart")
+                        
                 QProcess.startDetached(exe, args)
                 QApplication.quit()
             except Exception as restart_err:

@@ -1173,8 +1173,8 @@ class MusicPanelWidget(QWidget):
         container = QWidget()
         container.setStyleSheet("""
             QWidget {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1a1a2e, stop:0.5 #16213e, stop:1 #0f0f1a);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a);
             }
         """)
         container_layout = QVBoxLayout(container)

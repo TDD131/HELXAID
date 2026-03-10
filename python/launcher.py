@@ -1855,12 +1855,12 @@ def set_startup_enabled(enabled):
             # Get the executable path
             if getattr(sys, 'frozen', False):
                 # Running as compiled .exe
-                exe_path = sys.executable
+                exe_path = f'"{sys.executable}" --minimized'
             else:
                 # Running as script
-                python_exe = sys.executable
+                python_exe = sys.executable.replace("python.exe", "pythonw.exe")
                 script_path = os.path.abspath(__file__)
-                exe_path = f'"{python_exe}" "{script_path}"'
+                exe_path = f'"{python_exe}" "{script_path}" --minimized'
             
             # Open registry key for writing
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_SET_VALUE)
@@ -4831,15 +4831,6 @@ class GameLauncher(QWidget):
                 # Check if RyzenAdj is available now
                 ryzenadj_available = is_ryzenadj_available()
                 
-                # If RyzenAdj not available, prompt download
-                if not ryzenadj_available:
-                    # Show download prompt
-                    if ensure_ryzenadj(self):
-                        # Download successful, reload panel
-                        self._reload_cpu_panel()
-                        self._cpu_panel_has_ryzenadj = True
-                        return
-                
                 # Check if panel needs reload (status changed)
                 panel_needs_reload = hasattr(self, '_cpu_panel_has_ryzenadj') and self._cpu_panel_has_ryzenadj != ryzenadj_available
                 
@@ -5215,19 +5206,34 @@ Stylesheet Selector:
         
         # Check if RyzenAdj is available - if not, show download prompt
         if not is_ryzenadj_available():
-            layout.addStretch()
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
             
-            no_ryzenadj_label = QLabel("RyzenAdj Not Found")
-            no_ryzenadj_label.setStyleSheet("font-size: 24px; color: #FDA903; font-weight: bold;")
-            no_ryzenadj_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(no_ryzenadj_label)
+            container = QWidget()
+            container.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a);
+                }
+            """)
+            container_layout = QVBoxLayout(container)
+            container_layout.setAlignment(Qt.AlignCenter)
+            container_layout.setSpacing(20)
             
-            info_label = QLabel("CPU Control requires RyzenAdj.\nClick below to download and install automatically.")
-            info_label.setStyleSheet("font-size: 14px; color: #9DB2BF;")
-            info_label.setAlignment(Qt.AlignCenter)
-            info_label.setWordWrap(True)
-            layout.addWidget(info_label)
+            icon_label = QLabel("")
+            icon_label.setStyleSheet("font-size: 64px; background: transparent;")
+            icon_label.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(icon_label)
             
+            title = QLabel("RyzenAdj Required")
+            title.setStyleSheet("color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
+            title.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(title)
+            
+            desc = QLabel("CPU Control requires RyzenAdj for parameter tuning.\nClick below to download and install it automatically.")
+            desc.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
+            desc.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(desc)
             # Auto-download button
             def do_download():
                 """Start RyzenAdj download in a background QThread.
@@ -5306,32 +5312,37 @@ Stylesheet Selector:
                 worker.start()
 
             
-            download_btn = AnimatedButton("Download RyzenAdj (Auto-Install)")
-            download_btn.setFixedSize(300, 50)
+            download_btn = QPushButton("Setup HELXAIL")
+            download_btn.setFixedSize(220, 50)
             download_btn.setCursor(Qt.PointingHandCursor)
-            download_btn.setStyleSheet("QPushButton { background: #526D82; color: #DDE6ED; border: none; border-radius: 12px; font-size: 14px; font-weight: 600; } QPushButton:hover { background: #9DB2BF; color: #27374D; }")
+            download_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                    color: #1a1a1a;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 16px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:1 #FFD700);
+                }
+            """)
             download_btn.clicked.connect(do_download)
+            container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
             
-            btn_container = QWidget()
-            btn_layout = QHBoxLayout(btn_container)
-            btn_layout.addStretch()
-            btn_layout.addWidget(download_btn)
-            btn_layout.addStretch()
-            layout.addWidget(btn_container)
-            
-            # Show installation path info
             try:
                 from integrations.tools_downloader import RYZENADJ_DIR
                 install_path = RYZENADJ_DIR
             except ImportError:
                 install_path = "%APPDATA%\\HELXAID\\tools\\ryzenadj"
             instructions = QLabel(f"Will be installed to:\n{install_path}")
-            instructions.setStyleSheet("font-size: 11px; color: #6c757d; margin-top: 10px;")
+            instructions.setStyleSheet("font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
-            layout.addWidget(instructions)
+            container_layout.addWidget(instructions)
             
-            layout.addStretch()
+            layout.addWidget(container)
             self.content_stack.addWidget(self.cpu_panel)
             return
         
@@ -6339,11 +6350,154 @@ Stylesheet Selector:
     
     def _setup_hardware_panel(self):
         """Setup the Hardware Monitor panel."""
-        self.hardware_panel = HardwarePanelWidget()
-        self.hardware_panel.setObjectName("hardwarePanel")
-        self.content_stack.addWidget(self.hardware_panel)
-        print("[Hardware] HardwarePanelWidget added to content stack")
-    
+        # Check if LibreHardwareMonitor or HWiNFO is available - if not, show download prompt
+        try:
+            from integrations.tools_downloader import is_librehwmon_available, is_hwinfo_available
+            has_hwmon = is_librehwmon_available() or is_hwinfo_available()
+        except ImportError:
+            has_hwmon = False
+
+        if not has_hwmon:
+            self.hardware_panel = QWidget()
+            self.hardware_panel.setObjectName("hardwarePanel")
+            layout = QVBoxLayout(self.hardware_panel)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            
+            container = QWidget()
+            container.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a);
+                }
+            """)
+            container_layout = QVBoxLayout(container)
+            container_layout.setAlignment(Qt.AlignCenter)
+            container_layout.setSpacing(20)
+            
+            icon_label = QLabel("")
+            icon_label.setStyleSheet("font-size: 64px; background: transparent;")
+            icon_label.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(icon_label)
+            
+            title = QLabel("LibreHardwareMonitor Required")
+            title.setStyleSheet("color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
+            title.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(title)
+            
+            desc = QLabel("HELXTATS requires LibreHardwareMonitor to read temperatures, fan speeds, and voltages.\nClick below to download and install it automatically.")
+            desc.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
+            desc.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(desc)
+            # Auto-download button
+            def do_download():
+                from PySide6.QtWidgets import QProgressDialog, QMessageBox
+                from PySide6.QtCore import QThread, Signal as QSignal
+                
+                class _LHMDownloadWorker(QThread):
+                    progress_update = QSignal(int, int)
+                    finished = QSignal(bool, str)
+                    
+                    def run(self):
+                        from integrations.tools_downloader import download_librehwmon
+                        def on_progress(downloaded: int, total: int):
+                            self.progress_update.emit(downloaded, total)
+                        success, error = download_librehwmon(on_progress)
+                        self.finished.emit(success, error or "")
+                        
+                progress = QProgressDialog("Downloading LibreHardwareMonitor...", "Cancel", 0, 100, self)
+                progress.setWindowTitle("Installing LHM")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.setAutoClose(False)
+                progress.setAutoReset(False)
+                progress.show()
+                
+                worker = _LHMDownloadWorker()
+                self._lhm_download_worker = worker
+                
+                def on_progress(downloaded: int, total: int):
+                    if progress.wasCanceled():
+                        worker.terminate()
+                        return
+                    if total > 0:
+                        pct = int((downloaded / total) * 100)
+                        progress.setValue(pct)
+                        progress.setLabelText(f"Downloading... {downloaded // 1024} KB / {total // 1024} KB")
+                        
+                def on_finished(success: bool, error: str):
+                    progress.close()
+                    if success:
+                        QMessageBox.information(
+                            self, "Download Complete",
+                            "LibreHardwareMonitor installed successfully!\n\nReloading HELXTATS..."
+                        )
+                        self._reload_hardware_panel()
+                    else:
+                        QMessageBox.critical(
+                            self, "Download Failed",
+                            f"Failed to install LibreHardwareMonitor:\n{error}"
+                        )
+                        
+                worker.progress_update.connect(on_progress)
+                worker.finished.connect(on_finished)
+                worker.start()
+                
+            download_btn = QPushButton("Setup HELXTATS")
+            download_btn.setFixedSize(220, 50)
+            download_btn.setCursor(Qt.PointingHandCursor)
+            download_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                    color: #1a1a1a;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 16px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:1 #FFD700);
+                }
+            """)
+            download_btn.clicked.connect(do_download)
+            container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
+            
+            try:
+                from integrations.tools_downloader import LIBREHWMON_DIR
+                install_path = LIBREHWMON_DIR
+            except ImportError:
+                install_path = "%APPDATA%\\HELXAID\\tools\\librehwmon"
+            instructions = QLabel(f"Will be installed to:\n{install_path}")
+            instructions.setStyleSheet("font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions.setAlignment(Qt.AlignCenter)
+            instructions.setWordWrap(True)
+            container_layout.addWidget(instructions)
+            
+            layout.addWidget(container)
+        else:
+            self.hardware_panel = HardwarePanelWidget()
+            self.hardware_panel.setObjectName("hardwarePanel")
+            
+        if not hasattr(self, '_hardware_panel_insert_index'):
+            self.content_stack.addWidget(self.hardware_panel)
+            print("[Hardware] HardwarePanelWidget added to content stack")
+        else:
+            self.content_stack.insertWidget(self._hardware_panel_insert_index, self.hardware_panel)
+            delattr(self, '_hardware_panel_insert_index')
+
+    def _reload_hardware_panel(self):
+        """Reload the Hardware panel after LHM installation."""
+        hw_panel_index = self.content_stack.indexOf(self.hardware_panel)
+        if hw_panel_index < 0:
+            hw_panel_index = 5  # Default Hardware panel index
+            
+        self.content_stack.removeWidget(self.hardware_panel)
+        self.hardware_panel.deleteLater()
+        
+        self._hardware_panel_insert_index = hw_panel_index
+        self._setup_hardware_panel()
+        self.switch_panel(hw_panel_index)
+        
     def _on_power_mode_changed(self, mode: str):
         """Handle Windows power mode selection change."""
         # Power plan GUIDs
@@ -8062,10 +8216,14 @@ Stylesheet Selector:
         minimize_to_tray_cb = QCheckBox("Minimize to tray on minimize")
         minimize_to_tray_cb.setChecked(self.settings.get("minimize_to_tray", True))
         layout.addWidget(minimize_to_tray_cb)
+        
+        init_overlay_cb = QCheckBox("Hide Initialize Panel")
+        init_overlay_cb.setChecked(self.settings.get("hide_initialize_panel", True))
+        layout.addWidget(init_overlay_cb)
 
         # Version label and Update button
         version_layout = QHBoxLayout()
-        version_label = QLabel("Version - 4.10.1")
+        version_label = QLabel("Version - 4.11")
         version_label.setStyleSheet("color: #888888; font-size: 11px;")
         
         check_update_btn = AnimatedButton("Check for Updates")
@@ -8156,6 +8314,7 @@ Stylesheet Selector:
             self.settings["background_mode"] = self._qs_bg_mode.currentText()
             self.settings["start_minimised"] = start_minimised_cb.isChecked()
             self.settings["minimize_to_tray"] = minimize_to_tray_cb.isChecked()
+            self.settings["hide_initialize_panel"] = init_overlay_cb.isChecked()
             self.settings["confirm_on_exit"] = confirm_exit_cb.isChecked()
             self.settings["resizable_window"] = resizable_cb.isChecked()
             self.settings["window_fullscreen"] = fullscreen_cb.isChecked()
@@ -8208,19 +8367,40 @@ Stylesheet Selector:
         seen_paths = set()
 
         # ---- RyzenAdj ----
-        # Use the same resolver the CPU Controller uses at runtime, so we always
-        # delete from whatever path the tool was actually loaded from.
         try:
-            from integrations.cpu_controller import get_ryzenadj_path
-            ryzenadj_exe = get_ryzenadj_path()
-            # Target the parent folder (e.g. .../tools/ryzenadj/) not just the exe,
-            # so all auxiliary DLLs that ship alongside it are also removed.
-            ryzenadj_dir = os.path.dirname(ryzenadj_exe)
-            if os.path.exists(ryzenadj_exe) and ryzenadj_dir not in seen_paths:
-                targets.append((ryzenadj_dir, f"RyzenAdj  ({ryzenadj_dir})"))
-                seen_paths.add(ryzenadj_dir)
+            from integrations.tools_downloader import RYZENADJ_DIR
+            if os.path.exists(RYZENADJ_DIR) and RYZENADJ_DIR not in seen_paths:
+                targets.append((RYZENADJ_DIR, f"RyzenAdj  ({RYZENADJ_DIR})"))
+                seen_paths.add(RYZENADJ_DIR)
         except Exception as e:
             print(f"[UninstallTools] Could not resolve RyzenAdj path: {e}")
+
+        # ---- LibreHardwareMonitor ----
+        try:
+            from integrations.tools_downloader import LIBREHWMON_DIR
+            if os.path.exists(LIBREHWMON_DIR) and LIBREHWMON_DIR not in seen_paths:
+                targets.append((LIBREHWMON_DIR, f"LibreHardwareMonitor  ({LIBREHWMON_DIR})"))
+                seen_paths.add(LIBREHWMON_DIR)
+        except Exception as e:
+            print(f"[UninstallTools] Could not resolve LHM path: {e}")
+
+        # ---- HWiNFO ----
+        try:
+            from integrations.tools_downloader import HWINFO_DIR
+            if os.path.exists(HWINFO_DIR) and HWINFO_DIR not in seen_paths:
+                targets.append((HWINFO_DIR, f"HWiNFO  ({HWINFO_DIR})"))
+                seen_paths.add(HWINFO_DIR)
+        except Exception as e:
+            print(f"[UninstallTools] Could not resolve HWiNFO path: {e}")
+
+        # ---- FFmpeg/FFprobe ----
+        try:
+            from integrations.tools_downloader import FFMPEG_DIR
+            if os.path.exists(FFMPEG_DIR) and FFMPEG_DIR not in seen_paths:
+                targets.append((FFMPEG_DIR, f"FFmpeg/FFprobe  ({FFMPEG_DIR})"))
+                seen_paths.add(FFMPEG_DIR)
+        except Exception as e:
+            print(f"[UninstallTools] Could not resolve FFmpeg path: {e}")
 
         if not targets:
             QMessageBox.information(
@@ -8258,7 +8438,7 @@ Stylesheet Selector:
                 failed.append(f"{display_name}: {e}")
 
         # Clear stored ffprobe_path setting so it no longer references a deleted file
-        if ffprobe_exe and "FFmpeg/FFprobe" in removed:
+        if any("FFmpeg" in n for n in removed):
             self.settings.pop("ffprobe_path", None)
             self.settings.pop("ffprobe_exe", None)
             save_settings(self.settings)
@@ -8276,6 +8456,10 @@ Stylesheet Selector:
         # so the "RyzenAdj Not Found" state is shown immediately.
         if any("RyzenAdj" in n for n in removed):
             self._reload_cpu_panel()
+            
+        # Trigger live panel reload for HELXTATS if LHM or HWiNFO was removed.
+        if any("LibreHardwareMonitor" in n or "HWiNFO" in n for n in removed):
+            self._reload_hardware_panel()
         # Note: FFprobe is NOT a core dependency — HELXAIC music playback works
         # without it (FFprobe is only a fallback for reading audio duration metadata).
         # Therefore we do NOT disable the Music Player panel when FFprobe is removed.
@@ -8288,7 +8472,7 @@ Stylesheet Selector:
             import json
             import threading
             
-            CURRENT_VERSION = "4.10.1"
+            CURRENT_VERSION = "4.11"
             API_URL = "https://api.github.com/repos/TDD131/HELXAID/releases/latest"
             
             def run_check():
@@ -8346,14 +8530,27 @@ Stylesheet Selector:
             QMessageBox.warning(self, "Update Error", f"Failed to check for updates!\n\nPlease ensure your internet connection is stable.\nError: {release_url}")
             return
             
-        CURRENT_VERSION = "4.10.1"
+        CURRENT_VERSION = "4.11"
         
         if latest_version == "NO_RELEASES":
             QMessageBox.information(self, "Update", f"No releases have been published on GitHub yet.\n\nYour current version: {CURRENT_VERSION}")
             return
         
-        # Simple string comparison
-        if latest_version and latest_version != CURRENT_VERSION:
+        # Helper to parse version strings into (Major, Minor, Patch) integer tuples
+        def parse_version(v_str):
+            parts = []
+            for p in v_str.replace('v', '').strip().split('.'):
+                try: 
+                    parts.append(int(p))
+                except ValueError: 
+                    parts.append(0)
+            # Ensure at least 3 parts (e.g., "4.10" -> (4, 10, 0))
+            while len(parts) < 3:
+                parts.append(0)
+            return tuple(parts)
+
+        # Smart semantic version comparison
+        if latest_version and parse_version(latest_version) > parse_version(CURRENT_VERSION):
             reply = QMessageBox.question(self, "Update Available!", 
                                          f"A new version ({latest_version}) is available!\n\nYour current version: {CURRENT_VERSION}\n\nWould you like to download it now?",
                                          QMessageBox.Yes | QMessageBox.No)
@@ -12428,6 +12625,17 @@ if __name__ == "__main__":
     server_name = "HELXAIDLocalServer_EXE" if is_frozen else "HELXAIDLocalServer_DEBUG"
     
     shared_mem = QSharedMemory(instance_key)
+    
+    if "--force-restart" in sys.argv:
+        import time
+        # Wait up to 5 seconds for the previous instance to shut down and release memory
+        for _ in range(50):
+            if shared_mem.attach():
+                shared_mem.detach()
+                time.sleep(0.1)
+            else:
+                break
+
     if not shared_mem.create(1):
         # Another instance is already running - try to signal it to restore
         socket = QLocalSocket()
@@ -12533,8 +12741,29 @@ if __name__ == "__main__":
                 self.status_text = status
             self.repaint()
     
-    splash = LoadingSplash()
-    splash.show()
+    # Read hide_initialize_panel setting early
+    import json
+    settings_path = os.path.join(os.getenv('APPDATA', ''), "HELXAID", "settings.json")
+    hide_initialize_panel = True
+    try:
+        if os.path.exists(settings_path):
+            with open(settings_path, 'r') as f:
+                _s = json.load(f)
+                hide_initialize_panel = _s.get("hide_initialize_panel", True)
+    except:
+        pass
+
+    if hide_initialize_panel:
+        splash = LoadingSplash()
+        # Make the splash screen completely invisible so it acts as 
+        # a silent event sink while preventing Windows/Qt from ghosting
+        # the main GameLauncher window early.
+        splash.setWindowOpacity(0.0)
+        splash.setAttribute(Qt.WA_TransparentForMouseEvents)
+        splash.show()
+    else:
+        splash = LoadingSplash()
+        splash.show()
     app.processEvents()
     
     # Progress: Loading fonts
@@ -12578,10 +12807,10 @@ if __name__ == "__main__":
     splash.setProgress(90, "Almost ready...")
     app.processEvents()
     
-    # Check if we should start minimised
-    start_min = w.settings.get("start_minimised", False)
+    # Check if we should start minimised (ONLY if it was launched from startup registry)
+    start_min = ('--minimized' in sys.argv) and w.settings.get("start_minimised", False)
     has_tray = hasattr(w, 'tray_icon') and w.tray_icon is not None
-    print(f"[Startup] start_minimised={start_min}, has_tray_icon={has_tray}")
+    print(f"[Startup] start_minimised={start_min}, has_tray_icon={has_tray}, sys.argv={sys.argv}")
     
     if start_min:
         # Start hidden to tray (don't show main window)

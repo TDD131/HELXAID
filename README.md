@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Platform-Windows_10%2B-lightgray?style=for-the-badge&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-v4.10.1-orange?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v4.11-orange?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
@@ -138,6 +138,15 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ## ✦ Changelog
 
+### V4.11
+- Sometimes CMD pop-up when launch at startup windows.
+- Fixes "Start as minimized" setting functionality.
+- Add "Hide Initialize Panel" setting functionality.
+- Improve update detection.
+- Add LHM Install panel if user didnt have (I forgot this one, sorry :( ).
+- Add LHM at the list of uninstall tools.
+- Add FFmpeg/FFprobe at the list of uninstall tools.
+
 ### v4.10.1
 - Updated deployment instructions: `HELXAID` is now exclusively instructed to be downloaded natively as `.exe` file without needing zip extraction.
 - Excluded `--onefile` build instructions from the workflow guide to significantly reduce Anti-Virus *False-Positives* (Windows Defender).
@@ -157,17 +166,6 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - Fixed FFmpeg local detection logic, ensuring reliable parsing inside Music Player
 - Refined tray notification messaging and behaviors for Booster
 - Support for auto-fetching required binaries (FFmpeg, RyzenAdj) to local AppData
-
-### v4.8
-- Universal Scan (combines Steam & Google Play Games library scanning)
-- Check for Updates functionality via GitHub releases
-- Fullscreen (F11) and window maximize state behavior fixes
-
-### v4.7
-- Improved first-launch state handling
-- CPU Controller access restricted based on tool availability
-- Added debug feedback when RyzenAdj is missing
-- Macro state resets on first launch
 
 ---
 
