@@ -149,7 +149,6 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ### v4.10.1
 - Updated deployment instructions: `HELXAID` is now exclusively instructed to be downloaded natively as `.exe` file without needing zip extraction.
-- Excluded `--onefile` build instructions from the workflow guide to significantly reduce Anti-Virus *False-Positives* (Windows Defender).
 
 ### v4.10
 - Removed Save Custom Preset. Instead, everytime user check/uncheck the checkbox it will automatically saved.
