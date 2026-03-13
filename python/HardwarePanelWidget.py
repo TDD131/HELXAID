@@ -12,15 +12,19 @@ Component Name: HardwarePanelWidget
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QStackedWidget, QGridLayout, QSlider, QSpinBox,
+    QFrame, QStackedWidget, QGridLayout, QSlider, QLineEdit,
     QScrollArea, QSizePolicy, QGraphicsDropShadowEffect, QProgressBar,
     QCheckBox
 )
 from smooth_scroll import SmoothScrollArea, SmoothTableWidget
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QLinearGradient, QConicalGradient
+from PySide6.QtGui import (
+    QPainter, QColor, QPen, QBrush, QFont, QLinearGradient, 
+    QConicalGradient, QIntValidator
+)
 
 import pyqtgraph as pg
+from datetime import datetime
 from hardware_wrapper import get_monitor, HardwareMonitor
 
 import os
@@ -120,6 +124,166 @@ class CircularGauge(QWidget):
         
         painter.end()
 
+
+class TimeAxisItem(pg.AxisItem):
+    def __init__(self, filter_mode, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.filter_mode = filter_mode
+
+    def tickStrings(self, values, scale, spacing):
+        strings = []
+        for v in values:
+            dt = datetime.fromtimestamp(v)
+            if self.filter_mode == '24 Hours':
+                strings.append(dt.strftime('%I %p'))
+            elif self.filter_mode == '7 Days':
+                strings.append(dt.strftime('%a %I%p'))
+            else:
+                strings.append(dt.strftime('%b %d'))
+        return strings
+
+class NetworkDetailPanel(QWidget):
+    """
+    Expandable panel for per-process network history graph.
+    
+    Component Name: NetworkDetailPanel
+    """
+    def __init__(self, color_hex: str = "#FF5B06", parent=None):
+        super().__init__(parent)
+        self.setObjectName("netDetailPanel")
+        # Start collapsed
+        self.setMaximumHeight(0)
+        
+        # Styles
+        self.setStyleSheet("""
+            QWidget#netDetailPanel {
+                background-color: rgba(30, 30, 35, 0.4);
+                border-top: 1px solid rgba(255, 255, 255, 0.05);
+                border-bottom-left-radius: 4px;
+                border-bottom-right-radius: 4px;
+                margin-top: -4px;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setSpacing(5)
+        
+        self.chart = pg.PlotWidget()
+        self.chart.setObjectName("netDetailChart")
+        self.chart.setFixedHeight(100)
+        self.chart.showGrid(x=False, y=True, alpha=0.1)
+        self.chart.hideAxis('bottom')
+        self.chart.getAxis('left').setWidth(40)
+        self.chart.setMouseEnabled(x=False, y=False)
+        self.chart.setMenuEnabled(False)
+        
+        self.color_hex = color_hex
+        self.color = QColor(color_hex)
+        fill_color = QColor(self.color)
+        fill_color.setAlpha(20)
+        
+        self.curve = self.chart.plot(pen=pg.mkPen(self.color, width=2), 
+                                     brush=pg.mkBrush(fill_color),
+                                     fillLevel=0)
+        self.bar_item = None
+        
+        layout.addWidget(self.chart)
+        
+        stats_layout = QHBoxLayout()
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.lbl_peak_title = QLabel("Peak:")
+        self.lbl_peak_title.setStyleSheet("color: #888888; font-size: 10px; font-weight: 500; background: transparent;")
+        self.lbl_peak_val = QLabel("0 B/s")
+        self.lbl_peak_val.setStyleSheet("color: #ffffff; font-size: 12px; font-family: 'Orbitron'; font-weight: 700; background: transparent;")
+        
+        self.lbl_low_title = QLabel("Lowest:")
+        self.lbl_low_title.setStyleSheet("color: #888888; font-size: 10px; font-weight: 500; background: transparent;")
+        self.lbl_low_val = QLabel("0 B/s")
+        self.lbl_low_val.setStyleSheet("color: #ffffff; font-size: 12px; font-family: 'Orbitron'; font-weight: 700; background: transparent;")
+        
+        stats_layout.addWidget(self.lbl_peak_title)
+        stats_layout.addWidget(self.lbl_peak_val)
+        stats_layout.addSpacing(15)
+        stats_layout.addWidget(self.lbl_low_title)
+        stats_layout.addWidget(self.lbl_low_val)
+        stats_layout.addStretch()
+        
+        layout.addLayout(stats_layout)
+        self._active_filter = "Total History"
+        
+    def _fmt_net_bytes(self, b):
+        if b >= 1024 ** 2:
+            return f"{b / (1024 ** 2):.1f} MB/s"
+        elif b >= 1024:
+            return f"{b / 1024:.1f} KB/s"
+        return f"{b} B/s"
+        
+    def set_data(self, history, explicit_filter=None, historical_points=None):
+        if explicit_filter is not None:
+            self._active_filter = explicit_filter
+            
+        if self._active_filter in ["Total History", "3 Hours"]:
+            self.chart.hideAxis('bottom')
+            if self.bar_item:
+                self.chart.removeItem(self.bar_item)
+                self.bar_item = None
+                
+            self.curve.show()
+            if not history:
+                return
+                
+            self.curve.setData(history)
+            
+            peak = max(history) if history else 0
+            non_zero = [x for x in history if x > 0]
+            lowest = min(non_zero) if non_zero else 0
+            
+            self.lbl_peak_val.setText(self._fmt_net_bytes(peak))
+            self.lbl_low_val.setText(self._fmt_net_bytes(lowest))
+            
+            y_max = max(10240, peak * 1.15)
+            self.chart.setYRange(0, y_max, padding=0)
+            
+        else:
+            if not historical_points:
+                return
+                
+            self.curve.hide()
+            if self.bar_item:
+                self.chart.removeItem(self.bar_item)
+                self.bar_item = None
+                
+            x_vals = [p['timestamp'] for p in historical_points]
+            y_vals = [p['bytes'] for p in historical_points]
+            
+            # Only reconstruct the time axis when the filter actually changes.
+            # Re-injecting a new TimeAxisItem into pyqtgraph on every tick is expensive;
+            # the axis format is fully determined by the filter string alone.
+            if not hasattr(self, '_last_axis_filter') or self._last_axis_filter != self._active_filter:
+                time_axis = TimeAxisItem(filter_mode=self._active_filter, orientation='bottom')
+                self.chart.setAxisItems({'bottom': time_axis})
+                self.chart.showAxis('bottom')
+                self._last_axis_filter = self._active_filter
+            
+            if len(x_vals) > 1:
+                width = (x_vals[1] - x_vals[0]) * 0.8
+            else:
+                width = 3000
+
+            self.bar_item = pg.BarGraphItem(x=x_vals, height=y_vals, width=width, brush=self.color_hex)
+            self.chart.addItem(self.bar_item)
+            
+            peak = max(y_vals) if y_vals else 0
+            non_zero = [x for x in y_vals if x > 0]
+            lowest = min(non_zero) if non_zero else 0
+            
+            self.lbl_peak_val.setText(self._fmt_net_bytes(peak).replace('/s', ''))
+            self.lbl_low_val.setText(self._fmt_net_bytes(lowest).replace('/s', ''))
+            
+            y_max = max(10240, peak * 1.15)
+            self.chart.setYRange(0, y_max, padding=0)
 
 class StatsCard(QFrame):
     """
@@ -261,6 +425,16 @@ class HardwarePanelWidget(QWidget):
         # Connect the signal to the safe wrapper
         self.boost_completed_signal.connect(self._boost_complete_safe)
         
+        # Initialize boosters buttons (lazy loaded in pages)
+        self.manual_boost_btn = None
+        self.clean_btn = None
+        
+        # Initialize check lists for boosters
+        self._essential_checks = []
+        self._process_checks = []
+        self._basic_service_checks = []
+        self._advanced_service_checks = []
+        
         # Initialize hardware monitor
         self.monitor = get_monitor(500)  # 500ms default
         
@@ -331,6 +505,9 @@ class HardwarePanelWidget(QWidget):
             self._page_stack.addWidget(placeholder)
         
         layout.addWidget(self._page_stack, stretch=1)
+        
+        # Initial count update (will pull from config since others aren't loaded)
+        self._update_total_items_count()
     
     def _create_navbar(self):
         """Create navigation bar with tab buttons."""
@@ -342,7 +519,7 @@ class HardwarePanelWidget(QWidget):
         navbar_layout.setSpacing(4)
         
         # Tab buttons
-        tab_names = ["Quick Setup", "Booster", "CPU", "Drive", "Health", "Fan"]
+        tab_names = ["Quick Setup", "Booster", "CPU", "Drive", "Health", "Network"]
         self._nav_buttons = []
         
         for i, name in enumerate(tab_names):
@@ -390,6 +567,12 @@ class HardwarePanelWidget(QWidget):
         for i, btn in enumerate(self._nav_buttons):
             btn.setChecked(i == index)
         
+        # Show Update Interval control only on tabs that use hardware polling
+        # 0=Quick Setup, 2=CPU, 3=Drive, 4=Health
+        interval_visible_tabs = {0, 2, 3, 4}
+        if hasattr(self, '_interval_container'):
+            self._interval_container.setVisible(index in interval_visible_tabs)
+        
         # Reset chart histories when switching pages
         self._reset_chart_histories()
     
@@ -400,7 +583,7 @@ class HardwarePanelWidget(QWidget):
             2: self._create_cpu_page,      # CPU
             3: self._create_drive_page,    # Drive
             4: self._create_health_page,   # Health
-            5: self._create_fan_page,      # Fan
+            5: self._create_network_page,  # Network
         }
         
         if index in page_creators:
@@ -792,8 +975,9 @@ class HardwarePanelWidget(QWidget):
         if getattr(self, '_is_boosting', False):
             print("[Boost] Stop requested by user")
             self._boost_cancel_requested = True
-            self.manual_boost_btn.setText("STOPPING...")
-            if hasattr(self, 'clean_btn'):
+            if self.manual_boost_btn:
+                self.manual_boost_btn.setText("STOPPING...")
+            if self.clean_btn:
                 self.clean_btn.setText("STOPPING...")
             
             # Stop the reapply timer immediately
@@ -813,8 +997,9 @@ class HardwarePanelWidget(QWidget):
         self._boost_cycle_count = 0
         
         # Change button to STOP mode with animated gradient
-        self.manual_boost_btn.setText("STOP BOOST")
-        if hasattr(self, 'clean_btn'):
+        if self.manual_boost_btn:
+            self.manual_boost_btn.setText("STOP BOOST")
+        if self.clean_btn:
             self.clean_btn.setText("STOP BOOST")
             self.clean_btn.setStyleSheet("""
                 QPushButton#cleanRamButton {
@@ -884,36 +1069,62 @@ class HardwarePanelWidget(QWidget):
         self._boost_cycle_count = getattr(self, '_boost_cycle_count', 0) + 1
         print(f"[Boost] Starting cycle #{self._boost_cycle_count}")
         
-        # Collect data from UI before starting thread (must be done in main thread)
+        # 1. Essential optimizations (always handled by _get_selected_optimizations)
         boost_data = {
-            'selected_essential': self._get_selected_optimizations() if hasattr(self, '_get_selected_optimizations') else [],
+            'selected_essential': self._get_selected_optimizations(),
             'process_data': [],
             'basic_service_data': [],
             'advanced_service_data': []
         }
         
-        # Collect checked processes (skip blacklisted)
-        if hasattr(self, '_process_checks') and hasattr(self, '_process_data'):
+        # Load config as fallback if UI is not loaded
+        config_settings = {}
+        need_config = not (self._process_checks and self._basic_service_checks and self._advanced_service_checks)
+        if need_config:
+            try:
+                import json
+                from launcher import APPDATA_DIR
+                settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        config_settings = json.load(f)
+            except Exception:
+                pass
+
+        # 2. Processes
+        if self._process_checks and getattr(self, '_process_data', None):
+            # UI loaded - use checkbox states
             blacklist = getattr(self, '_process_blacklist', set())
             for i, cb in enumerate(self._process_checks):
                 if cb.isChecked() and i < len(self._process_data):
                     proc_name = self._process_data[i]['name']
                     if proc_name not in blacklist:
                         boost_data['process_data'].append(self._process_data[i])
-                    else:
-                        print(f"[Boost] Skipping blacklisted process: {proc_name}")
-        
-        # Collect checked basic services
-        if hasattr(self, '_basic_service_checks') and hasattr(self, '_basic_service_data'):
+        else:
+            # UI not loaded - use config
+            proc_names = config_settings.get("processes_to_close", [])
+            for name in proc_names:
+                boost_data['process_data'].append({'name': name, 'pids': []})
+
+        # 3. Basic Services
+        if self._basic_service_checks and getattr(self, '_basic_service_data', None):
             for i, cb in enumerate(self._basic_service_checks):
                 if cb.isChecked() and i < len(self._basic_service_data):
                     boost_data['basic_service_data'].append(self._basic_service_data[i])
-        
-        # Collect checked advanced services
-        if hasattr(self, '_advanced_service_checks') and hasattr(self, '_advanced_service_data'):
+        else:
+            svc_names = config_settings.get("basic_services_to_stop", [])
+            for name in svc_names:
+                boost_data['basic_service_data'].append({'name': name})
+
+        # 4. Advanced Services
+        if self._advanced_service_checks and getattr(self, '_advanced_service_data', None):
             for i, cb in enumerate(self._advanced_service_checks):
                 if cb.isChecked() and i < len(self._advanced_service_data):
                     boost_data['advanced_service_data'].append(self._advanced_service_data[i])
+        else:
+            svc_names = config_settings.get("advanced_services_to_stop", [])
+            for name in svc_names:
+                boost_data['advanced_service_data'].append({'name': name})
         
         # Run in background thread
         import threading
@@ -956,7 +1167,13 @@ class HardwarePanelWidget(QWidget):
     
     def _force_boost_reset(self):
         """Force reset boost state if still in boosting/stopping state."""
-        if getattr(self, '_is_boosting', False) or self.manual_boost_btn.text() == "STOPPING...":
+        is_stopping = False
+        if self.manual_boost_btn:
+            is_stopping = self.manual_boost_btn.text() == "STOPPING..."
+        elif self.clean_btn:
+            is_stopping = self.clean_btn.text() == "STOPPING..."
+            
+        if getattr(self, '_is_boosting', False) or is_stopping:
             print("[Boost] Force reset after timeout")
             self._full_boost_reset()
     
@@ -989,7 +1206,8 @@ class HardwarePanelWidget(QWidget):
         # Build QSS gradient string
         gradient_stops = ', '.join([f'stop:{pos:.3f} {color}' for pos, color in stops])
         
-        self.manual_boost_btn.setStyleSheet(f"""
+        if self.manual_boost_btn:
+            self.manual_boost_btn.setStyleSheet(f"""
             QPushButton {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, {gradient_stops});
                 color: #ffffff;
@@ -1364,25 +1582,26 @@ class HardwarePanelWidget(QWidget):
         
         # Reset button style and text
         try:
-            self.manual_boost_btn.setEnabled(True)
-            self.manual_boost_btn.setText("MANUAL BOOST")
-            self.manual_boost_btn.setStyleSheet("""
-                QPushButton {
-                    background: #333;
-                    color: #e0e0e0;
-                    border: 1px solid #555;
-                    border-radius: 6px;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                QPushButton:hover {
-                    background: #444;
-                    border-color: #FF5B06;
-                }
-            """)
-            print("[Boost] Button reset to MANUAL BOOST")
-            
-            if hasattr(self, 'clean_btn'):
+            if self.manual_boost_btn:
+                self.manual_boost_btn.setEnabled(True)
+                self.manual_boost_btn.setText("MANUAL BOOST")
+                self.manual_boost_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #333;
+                        color: #e0e0e0;
+                        border: 1px solid #555;
+                        border-radius: 6px;
+                        font-size: 12px;
+                        font-weight: 600;
+                    }
+                    QPushButton:hover {
+                        background: #444;
+                        border-color: #FF5B06;
+                    }
+                """)
+                print("[Boost] Button reset to MANUAL BOOST")
+                
+            if self.clean_btn:
                 # Reset Quick Setup boost button back to idle MANUAL BOOST dark style
                 self.clean_btn.setText("MANUAL BOOST")
                 self.clean_btn.setEnabled(True)
@@ -1506,39 +1725,56 @@ class HardwarePanelWidget(QWidget):
         """Update the items_label with total selected items from ALL tabs."""
         total = 0
         
-        # 1. Essential tab
-        if hasattr(self, '_essential_checks'):
-            total += sum(1 for cb in self._essential_checks if cb.isChecked())
+        # Check if UI is loaded
+        ui_loaded = any([self._essential_checks, self._process_checks, 
+                         self._basic_service_checks, self._advanced_service_checks])
         
-        # 2. Processes tab
-        if hasattr(self, '_process_checks'):
-            total += sum(1 for cb in self._process_checks if cb.isChecked())
-        
-        # 3. Basic Services tab
-        if hasattr(self, '_basic_service_checks'):
-            total += sum(1 for cb in self._basic_service_checks if cb.isChecked())
-        
-        # 4. Advanced Services tab
-        if hasattr(self, '_advanced_service_checks'):
-            total += sum(1 for cb in self._advanced_service_checks if cb.isChecked())
+        if ui_loaded:
+            # 1. Essential tab
+            if self._essential_checks:
+                total += sum(1 for cb in self._essential_checks if cb.isChecked())
+            
+            # 2. Processes tab
+            if self._process_checks:
+                total += sum(1 for cb in self._process_checks if cb.isChecked())
+            
+            # 3. Basic Services tab
+            if self._basic_service_checks:
+                total += sum(1 for cb in self._basic_service_checks if cb.isChecked())
+            
+            # 4. Advanced Services tab
+            if self._advanced_service_checks:
+                total += sum(1 for cb in self._advanced_service_checks if cb.isChecked())
+        else:
+            # UI not loaded - read from config
+            try:
+                import json
+                from launcher import APPDATA_DIR
+                settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        settings = json.load(f)
+                    total += len(settings.get("essential_optimizations", []))
+                    total += len(settings.get("processes_to_close", []))
+                    total += len(settings.get("basic_services_to_stop", []))
+                    total += len(settings.get("advanced_services_to_stop", []))
+                else:
+                    # Default if no file (all Essentials except 0 and 7)
+                    from RamCleanerPresetDialog import ESSENTIAL_OPTIMIZATIONS
+                    total = len(ESSENTIAL_OPTIMIZATIONS) - 2
+            except Exception:
+                pass
         
         # Update the Booster tab label
+        text = f"{total} items to be optimized" if total != 1 else "1 item to be optimized"
+        if total == 0: text = "0 items to be optimized"
+        
         if hasattr(self, 'items_label'):
-            if total == 0:
-                self.items_label.setText("0 items to be optimized")
-            elif total == 1:
-                self.items_label.setText("1 item to be optimized")
-            else:
-                self.items_label.setText(f"{total} items to be optimized")
+            self.items_label.setText(text)
 
         # Sync Quick Setup tab items label (mirrors Booster tab)
         if hasattr(self, 'qs_items_label'):
-            if total == 0:
-                self.qs_items_label.setText("0 items to be optimized")
-            elif total == 1:
-                self.qs_items_label.setText("1 item to be optimized")
-            else:
-                self.qs_items_label.setText(f"{total} items to be optimized")
+            self.qs_items_label.setText(text)
     
     def _create_essential_tab(self) -> QWidget:
         """Create Essential Optimizations tab content matching reference design."""
@@ -1937,6 +2173,22 @@ class HardwarePanelWidget(QWidget):
         """Get list of selected optimization IDs."""
         from RamCleanerPresetDialog import ESSENTIAL_OPTIMIZATIONS
         
+        # If UI not loaded yet, return what's in the config file
+        if not self._essential_checks:
+            try:
+                import json
+                from launcher import APPDATA_DIR
+                settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        settings = json.load(f)
+                    return settings.get("essential_optimizations", [])
+                
+                # Default fallback if no file (all except 0 and 7)
+                return [ESSENTIAL_OPTIMIZATIONS[i]["id"] for i in range(len(ESSENTIAL_OPTIMIZATIONS)) if i not in [0, 7]]
+            except Exception:
+                return []
+            
         selected = []
         for i, cb in enumerate(self._essential_checks):
             if cb.isChecked() and i < len(ESSENTIAL_OPTIMIZATIONS):
@@ -2988,24 +3240,471 @@ class HardwarePanelWidget(QWidget):
         
         return page
     
-    def _create_fan_page(self):
-        """Create Fan Speed detailed page."""
+    def _create_network_page(self):
+        """Create Network detailed page with live per-process bandwidth monitoring.
+
+        Starts a NetworkMonitor QThread that samples psutil every second and
+        distributes observed network bytes across processes by their active
+        connection count. The tab updates live once data arrives.
+        """
+        from PySide6.QtWidgets import QComboBox, QScrollArea, QFrame, QProgressBar, QFileIconProvider
+        from PySide6.QtCore import QFileInfo
+        from PySide6.QtGui import QIcon
+        from smooth_scroll import SmoothScrollArea
+        from NetworkMonitor import NetworkMonitor
+        import psutil
+        import os
+
+        # -- One-time NIC baseline for the adapter combo --
+        nic_stats = psutil.net_io_counters(pernic=True)
+        active_nics = [
+            name for name, s in nic_stats.items()
+            if (s.bytes_sent + s.bytes_recv) > 0
+        ]
+        display_nic = max(active_nics, key=lambda n: nic_stats[n].bytes_sent + nic_stats[n].bytes_recv) if active_nics else None
+
+
+
         page = QWidget()
-        page.setObjectName("fanPage")
+        page.setObjectName("networkPage")
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setContentsMargins(10, 10, 10, 0)
+        layout.setSpacing(20)
+
+        # ---- 1. Top Section (Stats & Limit) ----------------------------------
+        top_section = QHBoxLayout()
+        top_section.setSpacing(20)
+
+        # Left: Session total - starts at 0, updated live by the monitor
+        total_data_layout = QVBoxLayout()
+        total_data_layout.setSpacing(0)
+        self._net_total_lbl = QLabel("0 B")
+        self._net_total_lbl.setObjectName("netTotalLabel")
+        self._net_total_lbl.setStyleSheet("color: #ffffff; font-size: 28px; font-weight: 700; background: transparent;")
+        self._net_nic_lbl = QLabel("Loading history...")
+        self._net_nic_lbl.setObjectName("netNicLabel")
+        self._net_nic_lbl.setStyleSheet("color: #aaaaaa; font-size: 11px; font-weight: 500; background: transparent;")
+        total_data_layout.addWidget(self._net_total_lbl)
+        total_data_layout.addWidget(self._net_nic_lbl)
+        total_data_layout.addStretch()
+        top_section.addLayout(total_data_layout)
+
+        # Middle: Info text
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(4)
+        info_title = QLabel("Network usage history")
+        info_title.setObjectName("netInfoTitle")
+        info_title.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 600; background: transparent;")
+        info_desc = QLabel("Tracks total data used by each app over time. Saved to local history.")
+        info_desc.setObjectName("netInfoDesc")
+        info_desc.setWordWrap(True)
+        info_desc.setStyleSheet("color: #888888; font-size: 11px; background: transparent;")
+        info_layout.addWidget(info_title)
+        info_layout.addWidget(info_desc)
+        info_layout.addStretch()
+        top_section.addLayout(info_layout, stretch=1)
+
+        # Right: Adapter selector
+        ctrl_layout = QVBoxLayout()
+        ctrl_layout.setSpacing(10)
+
+        common_style = """
+            QComboBox, QPushButton {
+                background-color: #202020;
+                color: #e0e0e0;
+                border: 1px solid #333333;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #2a2a2a; border-color: #444444; }
+            QComboBox::drop-down { border: none; }
+        """
+
+        adapter_combo = QComboBox()
+        adapter_combo.setObjectName("netAdapterCombo")
+        if active_nics:
+            for nic_name in active_nics:
+                adapter_combo.addItem(f" {nic_name}")
+            if display_nic in active_nics:
+                adapter_combo.setCurrentIndex(active_nics.index(display_nic))
+        else:
+            adapter_combo.addItem(" No active adapter")
+        adapter_combo.setStyleSheet(common_style)
+        adapter_combo.setFixedWidth(180)
+
+        ctrl_layout.addWidget(adapter_combo, alignment=Qt.AlignRight)
+        ctrl_layout.addStretch()
+        top_section.addLayout(ctrl_layout)
+
+        layout.addLayout(top_section)
+
+        # ---- 2. Middle Section (section title) --------------------------------
+        filter_section = QHBoxLayout()
+        stat_title = QLabel("Usage statistics")
+        stat_title.setObjectName("netStatTitle")
+        stat_title.setStyleSheet("color: #e0e0e0; font-size: 13px; font-weight: 600; background: transparent;")
+        filter_section.addWidget(stat_title)
+        filter_section.addStretch()
+
+        # "Total History" dropdown filter
+        self._net_time_filter = QComboBox()
+        self._net_time_filter.setObjectName("netTimeFilter")
+        self._net_time_filter.addItems(["3 Hours", "24 Hours", "7 Days", "30 Days", "Total History"])
+        self._net_time_filter.setCurrentText("Total History")
+        self._net_time_filter.setCursor(Qt.PointingHandCursor)
+        self._net_time_filter.setStyleSheet("""
+            QComboBox {
+                color: #FF5B06;
+                font-size: 11px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #1A1A1A;
+                color: #AAAAAA;
+                border: 1px solid #333333;
+                selection-background-color: #FF5B06;
+                selection-color: #FFFFFF;
+                font-weight: 600;
+            }
+        """)
+        filter_section.addWidget(self._net_time_filter)
         
-        title = QLabel("Fan Speed Monitor")
-        title.setStyleSheet("color: #e0e0e0; font-size: 18px; font-weight: 600; background: transparent;")
-        layout.addWidget(title)
-        
-        placeholder = QLabel("Fan detailed view coming soon...")
-        placeholder.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
-        placeholder.setAlignment(Qt.AlignCenter)
-        layout.addWidget(placeholder, stretch=1)
-        
+        def on_time_filter_changed(text):
+            if hasattr(self, '_net_monitor') and self._net_monitor is not None:
+                self._net_monitor.set_timeframe_filter(text)
+                
+        self._net_time_filter.currentTextChanged.connect(on_time_filter_changed)
+
+        layout.addLayout(filter_section)
+
+        # ---- 3. Scrollable process list --------------------------------------
+        scroll_area = SmoothScrollArea()
+        scroll_area.setObjectName("netScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical { background: #1e1e1e; width: 6px; margin: 0px; }
+            QScrollBar::handle:vertical { background: #444; min-height: 20px; border-radius: 3px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        self._net_list_widget = QWidget()
+        self._net_list_widget.setObjectName("netListWidget")
+        self._net_list_widget.setStyleSheet("background: transparent;")
+        self._net_list_layout = QVBoxLayout(self._net_list_widget)
+        self._net_list_layout.setObjectName("netListLayout")
+        self._net_list_layout.setContentsMargins(0, 0, 10, 0)
+        self._net_list_layout.setSpacing(2)
+
+        # Placeholder shown while waiting for first data tick
+        self._net_placeholder = QLabel("Monitoring... first update in 1 second")
+        self._net_placeholder.setObjectName("netPlaceholder")
+        self._net_placeholder.setStyleSheet("color: #555555; font-size: 12px; background: transparent;")
+        self._net_placeholder.setAlignment(Qt.AlignCenter)
+        self._net_list_layout.addWidget(self._net_placeholder)
+        self._net_list_layout.addStretch()
+
+        # Dict: process name -> {'size_lbl': QLabel, 'prog': QProgressBar}
+        self._net_rows = {}
+        self._net_icon_provider = QFileIconProvider()
+
+        scroll_area.setWidget(self._net_list_widget)
+        layout.addWidget(scroll_area, stretch=1)
+
+        # ---- 4. Start background monitor ------------------------------------
+        # Stop any previous monitor cleanly to avoid orphaned threads.
+        if hasattr(self, '_net_monitor') and self._net_monitor is not None:
+            try:
+                self._net_monitor.stop()
+                self._net_monitor.wait(1000)
+            except Exception:
+                pass
+
+        self._net_monitor = NetworkMonitor(parent=None)
+        self._net_monitor.data_updated.connect(self._on_net_data_updated)
+        self._net_monitor.start()
+
+        # Shutdown monitor when the page widget is destroyed
+        page.destroyed.connect(lambda: self._stop_net_monitor())
+
         return page
-    
+
+    def _stop_net_monitor(self):
+        """Stop the NetworkMonitor thread gracefully."""
+        if hasattr(self, '_net_monitor') and self._net_monitor is not None:
+            try:
+                self._net_monitor.stop()
+            except Exception:
+                pass
+            self._net_monitor = None
+
+    def _on_net_data_updated(self, data):
+        """Receive live data from NetworkMonitor and refresh Network tab widgets.
+
+        Delivered on the main thread every second via queued signal connection.
+
+        Args:
+            data: dict with keys:
+                'session_bytes' (int) -- bytes this session on active NIC
+                'nic_name' (str)      -- active NIC display name
+                'processes' (list)    -- dicts with name/exe_path/rate_bytes/total_bytes
+        """
+        import os
+        from PySide6.QtWidgets import QFileIconProvider
+
+        # Guard: widgets may be destroyed if user navigated to another tab
+        # or closed the panel. Accessing a deleted C++ QObject raises RuntimeError.
+        if not hasattr(self, '_net_total_lbl') or self._net_total_lbl is None:
+            return
+        try:
+            self._net_total_lbl.setText(self._fmt_net_bytes(data.get('session_bytes', 0)))
+            nic_name = data.get('nic_name', '')
+            current_filter = self._net_time_filter.currentText() if hasattr(self, '_net_time_filter') else "Total History"
+            self._net_nic_lbl.setText(f"{current_filter}  |  {nic_name}" if nic_name else current_filter)
+        except RuntimeError:
+            return
+
+        processes = data.get('processes', [])
+        if not processes:
+            return
+
+        try:
+            if hasattr(self, '_net_placeholder') and self._net_placeholder is not None:
+                self._net_placeholder.setVisible(False)
+        except RuntimeError:
+            pass
+
+        max_total = max((p['total_bytes'] for p in processes), default=1) or 1
+
+        for i, entry in enumerate(processes):
+            name = entry['name']
+            total_bytes = entry['total_bytes']
+            rate_bytes = entry['rate_bytes']
+            exe_path = entry.get('exe_path')
+            history = entry.get('history', [])
+
+            total_str = self._fmt_net_bytes(total_bytes)
+            if rate_bytes >= 1024 * 1024:
+                rate_str = f"{rate_bytes / (1024 * 1024):.1f} MB/s"
+            elif rate_bytes >= 1024:
+                rate_str = f"{rate_bytes / 1024:.1f} KB/s"
+            elif rate_bytes > 0:
+                rate_str = f"{rate_bytes} B/s"
+            else:
+                rate_str = ""
+            display_str = f"{total_str}  {rate_str}".strip() if rate_str else total_str
+            pct = int((total_bytes / max_total) * 100)
+
+            if name in self._net_rows:
+                try:
+                    row = self._net_rows[name]
+                    row['size_lbl'].setText(display_str)
+                    # Keep the relative-usage bar in sync on every tick.
+                    # pct is recalculated each update against the current max_total
+                    # so bars always reflect the current top-consumer proportions.
+                    row['prog'].setValue(pct)
+                    hist_data = None
+                    if row.get('is_expanded') and current_filter != "Total History":
+                        if hasattr(self, '_net_monitor') and self._net_monitor is not None:
+                            hist_data = self._net_monitor.fetch_historical_points(name, current_filter)
+                            
+                    # Only update the chart when the panel is visible (is_expanded) to avoid
+                    # wasting CPU computing graph data for collapsed rows every second.
+                    if row.get('is_expanded'):
+                        row['detail'].set_data(history, explicit_filter=current_filter, historical_points=hist_data)
+                    
+                    # Ensure the widget is at the correct sorted position in the layout
+                    # Index i because we want it to match the 'processes' list order.
+                    if self._net_list_layout.indexOf(row['container']) != i:
+                        self._net_list_layout.insertWidget(i, row['container'])
+                except RuntimeError:
+                    del self._net_rows[name]
+            else:
+                try:
+                    self._build_net_row(name, exe_path, display_str, pct, i)
+                except Exception:
+                    pass
+
+        # Cleanup: Remove rows that are no longer in the top 15 active/active-ish processes
+        active_names = {p['name'] for p in processes}
+        for name in list(self._net_rows.keys()):
+            if name not in active_names:
+                try:
+                    row = self._net_rows.pop(name)
+                    self._net_list_layout.removeWidget(row['container'])
+                    row['container'].deleteLater()
+                except (RuntimeError, KeyError):
+                    pass
+
+    def _build_net_row(self, name, exe_path, display_str, pct, position):
+        """Create and append a new process row to the network list.
+
+        Only called once per unique process name. Subsequent ticks only update
+        the mutable widget refs stored in self._net_rows.
+
+        Args:
+            name:         Process exe name, e.g. "chrome.exe".
+            exe_path:     Absolute path to exe for icon extraction, or None.
+            display_str:  Formatted label text (total + rate).
+            pct:          Progress bar fill percentage 0-100.
+            position:     The index in the layout to insert the widget at.
+        """
+        from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QFileIconProvider, QWidget
+        from PySide6.QtCore import QFileInfo, QPropertyAnimation, QEasingCurve, Qt
+        import os
+
+        layout = self._net_list_layout
+        
+        container = QWidget()
+        container.setObjectName(f"netContainer_{name}")
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        item_frame = QFrame()
+        item_frame.setObjectName("netItemFrame")
+        item_frame.setFixedHeight(46)
+        item_frame.setStyleSheet("""
+            QFrame#netItemFrame { background-color: #222222; border-radius: 4px; }
+            QFrame#netItemFrame:hover { background-color: #282828; }
+        """)
+
+        item_layout = QHBoxLayout(item_frame)
+        item_layout.setContentsMargins(12, 6, 12, 6)
+        item_layout.setSpacing(12)
+
+        # Icon label
+        icon_lbl = QLabel()
+        icon_lbl.setObjectName(f"netIcon_{name}")
+        icon_lbl.setFixedSize(24, 24)
+        icon_lbl.setStyleSheet("background: transparent;")
+
+        pixmap = None
+        provider = self._net_icon_provider
+        try:
+            if name.lower() in ('system', 'idle'):
+                icon = provider.icon(QFileIconProvider.IconType.Computer)
+                if not icon.isNull():
+                    pixmap = icon.pixmap(24, 24)
+            elif exe_path and os.path.exists(exe_path):
+                icon = provider.icon(QFileInfo(exe_path))
+                if not icon.isNull():
+                    pixmap = icon.pixmap(24, 24)
+            else:
+                icon = provider.icon(QFileInfo(name))
+                if not icon.isNull():
+                    pixmap = icon.pixmap(24, 24)
+        except Exception:
+            pass
+
+        # Deterministic color per name so the same app always gets the same color
+        colors = ['#ff6b35', '#22d3ee', '#a78bfa', '#fbbf24', '#f87171',
+                  '#c084fc', '#4ade80', '#60a5fa', '#fcd34d']
+        c = colors[hash(name) % len(colors)]
+
+        if pixmap and not pixmap.isNull():
+            icon_lbl.setPixmap(pixmap)
+        else:
+            icon_lbl.setFixedSize(16, 16)
+            icon_lbl.setStyleSheet(f"background-color: {c}; border-radius: 3px;")
+
+        # Name + rate row
+        right_layout = QVBoxLayout()
+        right_layout.setSpacing(1)
+        right_layout.setAlignment(Qt.AlignVCenter)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+
+        name_lbl = QLabel(name)
+        name_lbl.setObjectName(f"netName_{name}")
+        name_lbl.setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: 500; background: transparent;")
+
+        size_lbl = QLabel(display_str)
+        size_lbl.setObjectName(f"netSize_{name}")
+        size_lbl.setStyleSheet("color: #aaaaaa; font-size: 11px; background: transparent;")
+
+        top_row.addWidget(name_lbl)
+        top_row.addStretch()
+        top_row.addWidget(size_lbl)
+
+        prog = QProgressBar()
+        prog.setObjectName(f"netProg_{name}")
+        prog.setFixedHeight(4)
+        prog.setTextVisible(False)
+        prog.setValue(pct)
+        prog.setStyleSheet("""
+            QProgressBar { background-color: #333333; border-radius: 2px; border: none; }
+            QProgressBar::chunk { background-color: #FF5B06; border-radius: 2px; }
+        """)
+
+        right_layout.addLayout(top_row)
+        right_layout.addWidget(prog)
+        item_layout.addWidget(icon_lbl)
+        item_layout.addLayout(right_layout)
+        
+        detail_panel = NetworkDetailPanel(color_hex=c, parent=container)
+        
+        container_layout.addWidget(item_frame)
+        container_layout.addWidget(detail_panel)
+        
+        # Click interaction
+        row_dict = {'container': container, 'frame': item_frame, 'size_lbl': size_lbl, 'prog': prog, 'detail': detail_panel, 'is_expanded': False, 'anim': None}
+        self._net_rows[name] = row_dict
+        
+        def toggle_expansion(event):
+            is_expanded = row_dict['is_expanded']
+            
+            # Collapse others
+            for other_name, other_row in self._net_rows.items():
+                if other_name != name and other_row['is_expanded']:
+                    other_row['is_expanded'] = False
+                    anim = other_row['anim']
+                    if anim:
+                        anim.stop()
+                    anim = QPropertyAnimation(other_row['detail'], b"maximumHeight")
+                    anim.setDuration(300)
+                    anim.setStartValue(other_row['detail'].height())
+                    anim.setEndValue(0)
+                    anim.setEasingCurve(QEasingCurve.OutCubic)
+                    other_row['anim'] = anim
+                    anim.start()
+                    
+            target_height = 0 if is_expanded else 160
+            row_dict['is_expanded'] = not is_expanded
+            
+            anim = row_dict['anim']
+            if anim:
+                anim.stop()
+            anim = QPropertyAnimation(row_dict['detail'], b"maximumHeight")
+            anim.setDuration(300)
+            anim.setStartValue(row_dict['detail'].height())
+            anim.setEndValue(target_height)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            row_dict['anim'] = anim
+            anim.start()
+
+        item_frame.mousePressEvent = toggle_expansion
+
+        layout.insertWidget(position, container)
+
+    @staticmethod
+    def _fmt_net_bytes(b):
+        """Format raw byte count as human-readable string (GB / MB / KB / B)."""
+        if b >= 1024 ** 3:
+            return f"{b / (1024 ** 3):.2f} GB"
+        elif b >= 1024 ** 2:
+            return f"{b / (1024 ** 2):.1f} MB"
+        elif b >= 1024:
+            return f"{b / 1024:.1f} KB"
+        return f"{b} B"
+
     def _create_header(self):
         """Create header with title and update interval control."""
         header = QWidget()
@@ -3021,30 +3720,57 @@ class HardwarePanelWidget(QWidget):
         
         header_layout.addStretch()
         
-        # Update interval control
+        # Update interval control — wrapped in a single container for easy show/hide
+        self._interval_container = QWidget()
+        self._interval_container.setObjectName("intervalContainer")
+        interval_layout = QHBoxLayout(self._interval_container)
+        interval_layout.setContentsMargins(0, 0, 0, 0)
+        interval_layout.setSpacing(4)
+        
         interval_label = QLabel("Update Interval:")
         interval_label.setObjectName("intervalLabel")
         interval_label.setStyleSheet("color: #888888; font-size: 12px; background: transparent;")
-        header_layout.addWidget(interval_label)
+        interval_layout.addWidget(interval_label)
         
-        self.interval_spinbox = QSpinBox()
-        self.interval_spinbox.setObjectName("intervalSpinbox")
-        self.interval_spinbox.setRange(100, 1000)
-        self.interval_spinbox.setSingleStep(100)
-        self.interval_spinbox.setValue(500)
-        self.interval_spinbox.setSuffix(" ms")
-        self.interval_spinbox.setFixedWidth(100)
-        self.interval_spinbox.valueChanged.connect(self._on_interval_changed)
-        self.interval_spinbox.setStyleSheet("""
-            QSpinBox {
-                background: rgba(40, 44, 52, 0.9);
-                color: #e0e0e0;
-                border: 1px solid rgba(80, 80, 80, 0.4);
-                border-radius: 6px;
-                padding: 4px 8px;
+        self.interval_input = QLineEdit()
+        self.interval_input.setObjectName("intervalInput")
+        self.interval_input.setText("500")
+        self.interval_input.setFixedWidth(60)
+        self.interval_input.setAlignment(Qt.AlignCenter)
+        
+        # QIntValidator with a wide range so intermediate values (e.g. "1", "50") are
+        # never marked Invalid — the actual 100-5000 clamping happens inside the slot.
+        validator = QIntValidator(1, 9999, self)
+        self.interval_input.setValidator(validator)
+
+        # editingFinished fires on focus-loss; returnPressed fires on Enter key press.
+        # Both are needed because QIntValidator can suppress editingFinished on Enter
+        # when the field contains an "Intermediate" value like "1" or "50".
+        self.interval_input.editingFinished.connect(self._on_interval_input_finished)
+        self.interval_input.returnPressed.connect(self._on_interval_input_finished)
+        
+        self.interval_input.setStyleSheet("""
+            QLineEdit {
+                background: rgba(30, 30, 30, 0.9);
+                color: #ffffff;
+                border: none;
+                border-radius: 4px;
+                padding: 4px;
+                font-family: 'Orbitron';
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLineEdit:focus {
+                background: rgba(40, 40, 40, 1.0);
             }
         """)
-        header_layout.addWidget(self.interval_spinbox)
+        interval_layout.addWidget(self.interval_input)
+        
+        ms_label = QLabel("ms")
+        ms_label.setStyleSheet("color: #888888; font-size: 11px; font-weight: 600; margin-left: 2px;")
+        interval_layout.addWidget(ms_label)
+        
+        header_layout.addWidget(self._interval_container)
         
         return header
     
@@ -3360,9 +4086,9 @@ class HardwarePanelWidget(QWidget):
         grid.addWidget(disk_card, 1, 0, 2, 1)  # Span 2 rows in column 0
         
         # Hardware Health card (compact + responsive width)
-        health_card = StatsCard("Health")
+        health_card = StatsCard("System Vitals")
         health_card.setObjectName("healthCard")
-        health_card.setMaximumHeight(125)
+        health_card.setMaximumHeight(165)
         
         # Check if LibreHardwareMonitor or HWiNFO is available for temps
         try:
@@ -3378,114 +4104,148 @@ class HardwarePanelWidget(QWidget):
             self._hwinfo_available = False
             self._hwmon_available = False
         
-        health_row = QHBoxLayout()
-        health_row.setSpacing(20)
-        health_row.setContentsMargins(5, 5, 5, 5)
-        
-        # CPU Section
-        cpu_box = QVBoxLayout()
-        cpu_box.setSpacing(2)
-        cpu_header = QLabel("CPU")
-        cpu_header.setObjectName("cpuHeader")
-        cpu_header.setStyleSheet("color: #ff6b35; font-size: 11px; font-weight: bold; background: transparent;")
-        cpu_header.setAlignment(Qt.AlignCenter)
-        
+        # ── System Vitals: QGridLayout table ──────────────────────────────────
+        # Grid column mapping:
+        #  0 = component label  1 = VLine  2 = Temp  3 = VLine  4 = Load  5 = VLine  6 = Power
+        # Grid row mapping:
+        #  0 = column headers   1 = HLine  2 = CPU   3 = HLine  4 = iGPU  5 = HLine  6 = dGPU
+        vitals_grid = QGridLayout()
+        vitals_grid.setSpacing(0)
+        vitals_grid.setContentsMargins(6, 4, 6, 4)
+        # Give fixed widths to value columns so they stay aligned regardless of content
+        vitals_grid.setColumnMinimumWidth(0, 40)   # label
+        vitals_grid.setColumnMinimumWidth(2, 50)   # temp
+        vitals_grid.setColumnMinimumWidth(4, 44)   # load
+        vitals_grid.setColumnMinimumWidth(6, 44)   # power
+        vitals_grid.setColumnStretch(0, 1)
+        vitals_grid.setColumnStretch(2, 1)
+        vitals_grid.setColumnStretch(4, 1)
+        vitals_grid.setColumnStretch(6, 1)
+
+        def _vline():
+            """Thin vertical separator between columns."""
+            f = QFrame()
+            f.setFrameShape(QFrame.VLine)
+            f.setStyleSheet("background: #2a2a3a; max-width: 1px; border: none;")
+            f.setFixedWidth(1)
+            return f
+
+        def _hline(cols=7):
+            """Thin horizontal separator spanning all grid columns."""
+            f = QFrame()
+            f.setFrameShape(QFrame.HLine)
+            f.setStyleSheet("background: #2a2a3a; max-height: 1px; border: none;")
+            f.setFixedHeight(1)
+            return f
+
+        def _hdr(text, align=Qt.AlignCenter):
+            """Small column header label."""
+            lbl = QLabel(text)
+            lbl.setStyleSheet("color: #555577; font-size: 9px; font-weight: 600; background: transparent;")
+            lbl.setAlignment(align)
+            return lbl
+
+        # Row 0 — column headers
+        vitals_grid.addWidget(_hdr("", Qt.AlignLeft),        0, 0)
+        vitals_grid.addWidget(_hdr("Temp"),                  0, 2)
+        vitals_grid.addWidget(_hdr("Load"),                  0, 4)
+        vitals_grid.addWidget(_hdr("Pwr"),                   0, 6)
+        # Vertical separators in header row
+        vitals_grid.addWidget(_vline(), 0, 1, 7, 1)  # span all 7 data rows + header
+        vitals_grid.addWidget(_vline(), 0, 3, 7, 1)
+        vitals_grid.addWidget(_vline(), 0, 5, 7, 1)
+
+        # Row 1 — horizontal separator under headers
+        vitals_grid.addWidget(_hline(), 1, 0, 1, 7)
+
+        # ── CPU Row (row 2) ──────────────────────────────
+        cpu_lbl = QLabel("CPU")
+        cpu_lbl.setObjectName("cpuHeader")
+        cpu_lbl.setStyleSheet("color: #ff6b35; font-size: 11px; font-weight: bold; background: transparent;")
+        cpu_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        vitals_grid.addWidget(cpu_lbl, 2, 0)
+
         self.cpu_temp_value = QLabel("--°C")
         self.cpu_temp_value.setObjectName("cpuTempValue")
-        self.cpu_temp_value.setStyleSheet("color: #4ade80; font-size: 13px; font-weight: 600; background: transparent;")
+        self.cpu_temp_value.setStyleSheet("color: #4ade80; font-size: 12px; font-weight: 600; background: transparent;")
         self.cpu_temp_value.setAlignment(Qt.AlignCenter)
-        
+        vitals_grid.addWidget(self.cpu_temp_value, 2, 2)
+
         self.cpu_load_value = QLabel("--%")
         self.cpu_load_value.setObjectName("cpuLoadValue")
-        self.cpu_load_value.setStyleSheet("color: #60a5fa; font-size: 11px; font-weight: 500; background: transparent;")
+        self.cpu_load_value.setStyleSheet("color: #60a5fa; font-size: 12px; font-weight: 500; background: transparent;")
         self.cpu_load_value.setAlignment(Qt.AlignCenter)
-        
-        cpu_box.addWidget(cpu_header)
-        cpu_box.addWidget(self.cpu_temp_value)
-        cpu_box.addWidget(self.cpu_load_value)
-        health_row.addLayout(cpu_box)
-        
-        # GPU Section
-        gpu_box = QVBoxLayout()
-        gpu_box.setSpacing(2)
-        gpu_header = QLabel("GPU")
-        gpu_header.setObjectName("gpuHeader")
-        gpu_header.setStyleSheet("color: #22d3ee; font-size: 11px; font-weight: bold; background: transparent;")
-        gpu_header.setAlignment(Qt.AlignCenter)
-        
-        self.gpu_temp_value = QLabel("--°C")
-        self.gpu_temp_value.setObjectName("gpuTempValue")
-        self.gpu_temp_value.setStyleSheet("color: #4ade80; font-size: 13px; font-weight: 600; background: transparent;")
-        self.gpu_temp_value.setAlignment(Qt.AlignCenter)
-        
-        self.gpu_load_value = QLabel("--%")
-        self.gpu_load_value.setObjectName("gpuLoadValue")
-        self.gpu_load_value.setStyleSheet("color: #60a5fa; font-size: 11px; font-weight: 500; background: transparent;")
-        self.gpu_load_value.setAlignment(Qt.AlignCenter)
-        
-        gpu_box.addWidget(gpu_header)
-        gpu_box.addWidget(self.gpu_temp_value)
-        gpu_box.addWidget(self.gpu_load_value)
-        health_row.addLayout(gpu_box)
-        
-        # Power Section (FAN moved to separate card)
-        pwr_box = QVBoxLayout()
-        pwr_box.setSpacing(2)
-        pwr_header = QLabel("PWR")
-        pwr_header.setObjectName("pwrHeader")
-        pwr_header.setStyleSheet("color: #fbbf24; font-size: 11px; font-weight: bold; background: transparent;")
-        pwr_header.setAlignment(Qt.AlignCenter)
-        
-        self.power_value = QLabel("--")
-        self.power_value.setObjectName("powerValue")
-        self.power_value.setStyleSheet("color: #fbbf24; font-size: 13px; font-weight: 500; background: transparent;")
-        self.power_value.setAlignment(Qt.AlignCenter)
-        
-        pwr_box.addWidget(pwr_header)
-        pwr_box.addWidget(self.power_value)
-        pwr_box.addStretch()
-        health_row.addLayout(pwr_box)
-        
-        health_row.addStretch()
-        
-        # Hardware Monitor Button
-        hwmon_box = QVBoxLayout()
-        hwmon_box.setSpacing(2)
-        
-        self.install_monitor_btn = QPushButton("Start" if self._hwmon_available else "Download LHM")
-        self.install_monitor_btn.setFixedSize(100, 26)
-        
-        if self._hwmon_available:
-            self.install_monitor_btn.setStyleSheet("""
-                QPushButton {
-                    background: #4ade80; color: #1a1a2e; border: none; 
-                    border-radius: 6px; font-size: 10px; font-weight: 600;
-                }
-                QPushButton:hover { background: #22c55e; }
-            """)
-            self.install_monitor_btn.setToolTip("Launch LibreHardwareMonitor as Administrator")
-            self.install_monitor_btn.clicked.connect(lambda: self._start_librehwmon())
-        else:
-            self.install_monitor_btn.setStyleSheet("""
-                QPushButton {
-                    background: #FF5B06; color: #fff; border: none; 
-                    border-radius: 6px; font-size: 10px; font-weight: 600;
-                }
-                QPushButton:hover { background: #ff722e; }
-            """)
-            self.install_monitor_btn.setToolTip("Download LibreHardwareMonitor for full temperature data")
-            self.install_monitor_btn.clicked.connect(self._show_hwmon_selection_dialog)
-            
-        hwmon_box.addStretch()
-        hwmon_box.addWidget(self.install_monitor_btn)
-        hwmon_box.addStretch()
-        health_row.addLayout(hwmon_box)
+        vitals_grid.addWidget(self.cpu_load_value, 2, 4)
+
+        self.cpu_power_value = QLabel("--W")
+        self.cpu_power_value.setObjectName("cpuPowerValue")
+        self.cpu_power_value.setStyleSheet("color: #fbbf24; font-size: 12px; font-weight: 500; background: transparent;")
+        self.cpu_power_value.setAlignment(Qt.AlignCenter)
+        vitals_grid.addWidget(self.cpu_power_value, 2, 6)
+
+        # Row 3 — horizontal separator
+        vitals_grid.addWidget(_hline(), 3, 0, 1, 7)
+
+        # ── iGPU Row (row 4) ─────────────────────────────
+        igpu_lbl = QLabel("iGPU")
+        igpu_lbl.setObjectName("igpuHeader")
+        igpu_lbl.setStyleSheet("color: #22d3ee; font-size: 11px; font-weight: bold; background: transparent;")
+        igpu_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        vitals_grid.addWidget(igpu_lbl, 4, 0)
+
+        self.igpu_temp_value = QLabel("--°C")
+        self.igpu_temp_value.setObjectName("igpuTempValue")
+        self.igpu_temp_value.setStyleSheet("color: #4ade80; font-size: 12px; font-weight: 600; background: transparent;")
+        self.igpu_temp_value.setAlignment(Qt.AlignCenter)
+        vitals_grid.addWidget(self.igpu_temp_value, 4, 2)
+
+        self.igpu_load_value = QLabel("--%")
+        self.igpu_load_value.setObjectName("igpuLoadValue")
+        self.igpu_load_value.setStyleSheet("color: #60a5fa; font-size: 12px; font-weight: 500; background: transparent;")
+        self.igpu_load_value.setAlignment(Qt.AlignCenter)
+        vitals_grid.addWidget(self.igpu_load_value, 4, 4)
+
+        self.igpu_power_value = QLabel("--W")
+        self.igpu_power_value.setObjectName("igpuPowerValue")
+        self.igpu_power_value.setStyleSheet("color: #fbbf24; font-size: 12px; font-weight: 500; background: transparent;")
+        self.igpu_power_value.setAlignment(Qt.AlignCenter)
+        vitals_grid.addWidget(self.igpu_power_value, 4, 6)
+
+        # Row 5 — horizontal separator
+        vitals_grid.addWidget(_hline(), 5, 0, 1, 7)
+
+        # ── dGPU Row (row 6) ─────────────────────────────
+        dgpu_lbl = QLabel("dGPU")
+        dgpu_lbl.setObjectName("dgpuHeader")
+        dgpu_lbl.setStyleSheet("color: #a78bfa; font-size: 11px; font-weight: bold; background: transparent;")
+        dgpu_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        vitals_grid.addWidget(dgpu_lbl, 6, 0)
+
+        self.dgpu_temp_value = QLabel("--°C")
+        self.dgpu_temp_value.setObjectName("dgpuTempValue")
+        self.dgpu_temp_value.setStyleSheet("color: #4ade80; font-size: 12px; font-weight: 600; background: transparent;")
+        self.dgpu_temp_value.setAlignment(Qt.AlignCenter)
+        vitals_grid.addWidget(self.dgpu_temp_value, 6, 2)
+
+        self.dgpu_load_value = QLabel("--%")
+        self.dgpu_load_value.setObjectName("dgpuLoadValue")
+        self.dgpu_load_value.setStyleSheet("color: #a78bfa; font-size: 12px; font-weight: 500; background: transparent;")
+        self.dgpu_load_value.setAlignment(Qt.AlignCenter)
+        vitals_grid.addWidget(self.dgpu_load_value, 6, 4)
+
+        self.dgpu_power_value = QLabel("--W")
+        self.dgpu_power_value.setObjectName("dgpuPowerValue")
+        self.dgpu_power_value.setStyleSheet("color: #fbbf24; font-size: 12px; font-weight: 500; background: transparent;")
+        self.dgpu_power_value.setAlignment(Qt.AlignCenter)
+        vitals_grid.addWidget(self.dgpu_power_value, 6, 6)
+
+        # Wrap grid in a container widget to add to StatsCard
+        health_inner = QWidget()
+        health_inner.setObjectName("healthInner")
+        health_inner.setLayout(vitals_grid)
 
         
-        health_widget = QWidget()
-        health_widget.setObjectName("healthWidget")
-        health_widget.setLayout(health_row)
-        health_card.addWidget(health_widget)
+        health_card.addWidget(health_inner)
         grid.addWidget(health_card, 3, 0, 1, 2)  # Make Health card span both columns
         
         return container
@@ -3548,6 +4308,20 @@ class HardwarePanelWidget(QWidget):
             }
         """)
     
+    def _on_interval_input_finished(self):
+        """Handle interval text input completion."""
+        text = self.interval_input.text()
+        if not text:
+            return
+        try:
+            val = int(text)
+            # Ensure it stays within logical bounds if validator didn't catch it
+            val = max(100, min(val, 5000))
+            self.interval_input.setText(str(val))
+            self._on_interval_changed(val)
+        except ValueError:
+            pass
+
     def _on_interval_changed(self, value: int):
         """Handle update interval change."""
         self.monitor.set_update_interval(value)
@@ -3816,10 +4590,16 @@ class HardwarePanelWidget(QWidget):
             # Temps and Hardware Stats from LHM
             temps = snapshot["temps"]
             cpu_temp = temps.get("cpu_temp", 0)
-            gpu_temp = temps.get("gpu_temp", 0)
             cpu_load = temps.get("cpu_load", 0)
-            gpu_load = temps.get("gpu_load", 0)
-            power = temps.get("power", 0)
+            cpu_power = temps.get("cpu_power", temps.get("power", 0))
+            
+            igpu_temp = temps.get("igpu_temp", 0)
+            igpu_load = temps.get("igpu_load", 0)
+            igpu_power = temps.get("igpu_power", 0)
+            
+            dgpu_temp = temps.get("dgpu_temp", 0)
+            dgpu_load = temps.get("dgpu_load", 0)
+            dgpu_power = temps.get("dgpu_power", 0)
             
             # CPU Temp
             if cpu_temp > 0:
@@ -3833,23 +4613,47 @@ class HardwarePanelWidget(QWidget):
                 color = "#60a5fa" if cpu_load < 80 else "#f97316" if cpu_load < 95 else "#ef4444"
                 self.cpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
-            # GPU Temp
-            if gpu_temp > 0:
-                self.gpu_temp_value.setText(f"{gpu_temp:.0f}°C")
-                color = "#4ade80" if gpu_temp < 75 else "#f97316" if gpu_temp < 90 else "#ef4444"
-                self.gpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
+            # CPU Power
+            if cpu_power > 0:
+                self.cpu_power_value.setText(f"{cpu_power:.0f}W")
+                color = "#fbbf24" if cpu_power < 45 else "#f97316" if cpu_power < 65 else "#ef4444"
+                self.cpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
-            # GPU Load
-            if gpu_load > 0:
-                self.gpu_load_value.setText(f"{gpu_load:.0f}%")
-                color = "#60a5fa" if gpu_load < 80 else "#f97316" if gpu_load < 95 else "#ef4444"
-                self.gpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+            # iGPU Temp
+            if igpu_temp > 0:
+                self.igpu_temp_value.setText(f"{igpu_temp:.0f}°C")
+                color = "#4ade80" if igpu_temp < 75 else "#f97316" if igpu_temp < 90 else "#ef4444"
+                self.igpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
             
-            # Power
-            if power > 0:
-                self.power_value.setText(f"{power:.0f}W")
-                color = "#fbbf24" if power < 45 else "#f97316" if power < 65 else "#ef4444"
-                self.power_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 500; background: transparent;")
+            # iGPU Load
+            if igpu_load > 0:
+                self.igpu_load_value.setText(f"{igpu_load:.0f}%")
+                color = "#60a5fa" if igpu_load < 80 else "#f97316" if igpu_load < 95 else "#ef4444"
+                self.igpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+            
+            # iGPU Power
+            if igpu_power > 0:
+                self.igpu_power_value.setText(f"{igpu_power:.0f}W")
+                color = "#fbbf24" if igpu_power < 30 else "#f97316" if igpu_power < 50 else "#ef4444"
+                self.igpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+            
+            # dGPU Temp
+            if dgpu_temp > 0:
+                self.dgpu_temp_value.setText(f"{dgpu_temp:.0f}°C")
+                color = "#4ade80" if dgpu_temp < 75 else "#f97316" if dgpu_temp < 90 else "#ef4444"
+                self.dgpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
+            
+            # dGPU Load
+            if dgpu_load > 0:
+                self.dgpu_load_value.setText(f"{dgpu_load:.0f}%")
+                color = "#a78bfa" if dgpu_load < 80 else "#f97316" if dgpu_load < 95 else "#ef4444"
+                self.dgpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+            
+            # dGPU Power
+            if dgpu_power > 0:
+                self.dgpu_power_value.setText(f"{dgpu_power:.0f}W")
+                color = "#fbbf24" if dgpu_power < 60 else "#f97316" if dgpu_power < 120 else "#ef4444"
+                self.dgpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
         
         
             # Auto-refresh Processes list every 3 seconds (6 intervals at 500ms)
@@ -4007,7 +4811,7 @@ class HardwarePanelWidget(QWidget):
             if state["success"]:
                 # Update Install button to Start button
                 if hasattr(self, 'install_monitor_btn') and self.install_monitor_btn:
-                    self.install_monitor_btn.setText("Start")
+                    self.install_monitor_btn.setText("Open Monitor")
                     self.install_monitor_btn.setStyleSheet("""
                         QPushButton {
                             background: #4ade80; color: #1a1a2e; border: none; 
@@ -4081,7 +4885,7 @@ class HardwarePanelWidget(QWidget):
         layout.addWidget(title)
         
         # Description
-        desc = QLabel("Choose a hardware monitor to get temperature, fan speed, and power data.")
+        desc = QLabel("Choose a hardware monitor to get temperature, system status, and power data.")
         desc.setWordWrap(True)
         desc.setAlignment(Qt.AlignCenter)
         layout.addWidget(desc)
@@ -4180,7 +4984,7 @@ class HardwarePanelWidget(QWidget):
                 if btn:
                     btn.setText("✓ Launched")
                     from PySide6.QtCore import QTimer
-                    QTimer.singleShot(3000, lambda: btn.setText("Start"))
+                    QTimer.singleShot(3000, lambda: btn.setText("Open Monitor"))
             else:
                 print(f"[Hardware] Failed to start {tool_name} (code: {result})")
         except Exception as e:
@@ -4324,7 +5128,7 @@ class HardwarePanelWidget(QWidget):
     def _reset_monitor_btn(self, btn):
         """Reset monitor button back to Start state."""
         if btn:
-            btn.setText("Start")
+            btn.setText("Open Monitor")
             btn.setStyleSheet("""
                 QPushButton {
                     background: #4ade80; color: #1a1a2e; border: none; 
@@ -4391,24 +5195,16 @@ class HardwarePanelWidget(QWidget):
             return False
     
     def _update_hwmon_button_status(self):
-        """Update hardware monitor button based on running state."""
+        """Update hardware monitor button to always be clickable for opening the panel."""
         btn = getattr(self, 'start_monitor_btn', None) or getattr(self, 'install_monitor_btn', None)
         if not btn:
             return
         
-        is_running = self._is_hwmon_running()
-        
-        if is_running:
-            btn.setText("✓ Running")
-            btn.setStyleSheet("""
-                QPushButton {
-                    background: #22c55e; color: #1a1a2e; border: none; 
-                    border-radius: 6px; font-size: 10px; font-weight: 600;
-                }
-            """)
-            btn.setEnabled(False)
-        else:
-            btn.setText("Start")
+        # Don't disable the button. If it's available, show standard "Open Panel" styling.
+        if getattr(self, '_hwmon_available', False):
+            if btn.text() not in ["✓ Launched", "Download LHM"]:
+                # Optionally, we could show "Open HWiNFO" if HWiNFO is used, but "Open Panel" or "Open LHM" is fine.
+                btn.setText("Open Monitor")
             btn.setStyleSheet("""
                 QPushButton {
                     background: #4ade80; color: #1a1a2e; border: none; 

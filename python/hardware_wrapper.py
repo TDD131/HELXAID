@@ -117,8 +117,18 @@ class HardwareMonitor:
         gpu_fan_speed = 0
         sys_fan_speed = 0
         power = 0
+        gpu_power = 0
+        cpu_power = 0
         cpu_clock = 0
         status = "unavailable"
+        
+        igpu_temp = 0
+        igpu_load = 0
+        igpu_power = 0
+        
+        dgpu_temp = 0
+        dgpu_load = 0
+        dgpu_power = 0
         
         # Priority 1: Try HWiNFO (fast, direct shared memory access)
         if HWINFO_AVAILABLE:
@@ -146,12 +156,22 @@ class HardwareMonitor:
             except Exception:
                 pass  # Silently fall back to LHM
                 
-        # Try getting NVIDIA GPU fan speed directly via pynvml (most reliable for NVIDIA)
+        # Try getting NVIDIA GPU info directly via pynvml (most reliable for NVIDIA)
         try:
             import pynvml
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            gpu_fan_speed = float(pynvml.nvmlDeviceGetFanSpeed(handle))
+            try: gpu_fan_speed = float(pynvml.nvmlDeviceGetFanSpeed(handle))
+            except Exception: pass
+            
+            try: dgpu_temp = float(pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU))
+            except Exception: pass
+            
+            try: dgpu_load = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
+            except Exception: pass
+            
+            try: dgpu_power = float(pynvml.nvmlDeviceGetPowerUsage(handle)) / 1000.0
+            except Exception: pass
         except Exception:
             pass
         
@@ -214,6 +234,17 @@ if ($sensors) {{
                 except Exception:
                     pass
         
+        # Helper: Map generic gpu to igpu or duplicate
+        if dgpu_temp > 0 and abs(gpu_temp - dgpu_temp) < 2 and abs(gpu_load - dgpu_load) < 5:
+            # The generic GPU temp picked up by HWiNFO/LHM is likely the dGPU. So no iGPU.
+            igpu_temp = 0
+            igpu_load = 0
+            igpu_power = 0
+        else:
+            igpu_temp = gpu_temp
+            igpu_load = gpu_load
+            igpu_power = gpu_power
+
         # Update cache
         self._temp_cache = {
             "cpu_temp": cpu_temp, "gpu_temp": gpu_temp,
@@ -222,6 +253,9 @@ if ($sensors) {{
             "cpu_fan_speed": cpu_fan_speed, "gpu_fan_speed": gpu_fan_speed,
             "sys_fan_speed": sys_fan_speed,
             "cpu_clock": cpu_clock,
+            "cpu_power": power,             # Store generic power as cpu_power
+            "igpu_temp": igpu_temp, "igpu_load": igpu_load, "igpu_power": igpu_power,
+            "dgpu_temp": dgpu_temp, "dgpu_load": dgpu_load, "dgpu_power": dgpu_power,
             "status": status
         }
     
