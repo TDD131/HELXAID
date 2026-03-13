@@ -2,7 +2,7 @@
   <img src="python/UI%20Icons/launcher-icon.png" width="220" alt="HELXAID Logo">
 </p>
 
-<h1 align="center">HELXAID :: Unified Gaming Command Center</h1>
+<h1 align="center">HELXAID : Unified Gaming Command Center</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
