@@ -7,7 +7,7 @@ env/
 venv/
 ENV/
 
-# Configuration (Don't leak your API keys!)
+# Configuration
 python/settings.json
 python/config.json
 python/music_panel_state.json
@@ -21,8 +21,6 @@ python/web/temp/
 # IDEs & Tools
 .vscode/
 .idea/
-.gemini/
-.agent/
 .vercel/
 web/
 
