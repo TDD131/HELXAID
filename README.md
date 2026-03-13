@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Platform-Windows_10%2B-lightgray?style=for-the-badge&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-v4.11-orange?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v4.12-orange?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
@@ -118,7 +118,7 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ### 3. HELXAIL (CPU Controller)
 - CPU control via RyzenAdj
-- Accessible only when required tools (RyzenAdj / UXTU) are available
+- Accessible only when required tools RyzenAdj are available
 - Debug handling when required dependencies are missing
 
 ### 4. HELXAIR (Crosshair Overlay)
@@ -129,14 +129,36 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - Map hardware keys to custom sequences and mouse inputs (integrated natively with C++)
 - Control DPI, rapid fire, and basic multimedia actions
 
-### 6. HELXTATS (System Optimization)
-- Real-time Hardware stats (CPU, GPU, RAM) tracking
+### 6. HELXTATS (System Optimization, Hardware Stats, Network Stats)
+- Real-time Hardware stats (CPU, RAM, Disk tracking; GPU requires LibreHardwareMonitor)
 - Memory (RAM) cleaning optimization capabilities
+- Network stats tracking (Bytes Sent, Bytes Received, Packets Sent, Packets Received, Errors, Collisions, Speed, Status, Type, Up Time)
 - Silent background execution without disturbing active gameplay
 
 ---
 
 ## ✦ Changelog
+
+### 4.12
+- Improve Universal Scan detection (Add Epic Games, GOG Galaxy, Ubisoft Connect, Riot Games, EA App).
+- "Hardware Health" card turned to "System Vital" card.
+- Improve hardware detection.
+- From "Fan" tab to "Network" tab at HELXTATS.
+- Add "Network" tab... Obviously... That inclued:
+-- Network Interface Name
+-- Network Interface IP
+-- Network Interface MAC
+-- Network Interface Speed
+-- Network Interface Status
+-- Network Interface Type
+-- Network Interface Up Time
+-- Network Interface Bytes Sent
+-- Network Interface Bytes Received
+-- Network Interface Packets Sent
+-- Network Interface Packets Received
+-- Network Interface Errors
+-- Network Interface Collisions
+- Fixes "Update Interval" label appeared at all Tab, now it only appears at "Quick Setup", "CPU", "Drive", "System Vital" Tab.
 
 ### V4.11
 - Sometimes CMD pop-up when launch at startup windows.
@@ -149,15 +171,7 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ### v4.10.1
 - Updated deployment instructions: `HELXAID` is now exclusively instructed to be downloaded natively as `.exe` file without needing zip extraction.
-
-### v4.10
-- Removed Save Custom Preset. Instead, everytime user check/uncheck the checkbox it will automatically saved.
-- Disk SMART now shows physical drive health & temperature correctly instead of free space.
-- Chart number clipping at the edge has been fixed.
-- Fixed "Item to be optimized" count so it accurately syncs with checkbox states when opening the app.
-- The text version in UI now accurately syncs with the current version.
-- Hardware health is now correctly forced to launch required third-party apps like LibreHardwareMonitor first.
-- Status Boosting now correctly syncs from the Booster tab to the Quick Setup Tab.
+- Excluded `--onefile` build instructions from the workflow guide to significantly reduce Anti-Virus *False-Positives* (Windows Defender).
 
 ---
 
@@ -177,9 +191,9 @@ This project prioritizes:
 ## ✦ Tech Stack & Platform
 
 - **Operating System:** Windows 10 / Windows 11
-- **Core Application Engine:** Python (PySide6 / PyQt)
+- **Core Application Engine:** Python (PySide6)
 - **Native Hardware Layer:** C++ (with `pybind11` for direct Windows API & HID hooking)
-- **Frontend / Modern UI Modules:** HTML5, CSS3, JavaScript (rendered natively via QtWebEngine)
+- **Frontend / Auxiliary Modules:** HTML5, CSS3, JavaScript (Vue.js compiled app for the ControlHub panel)
 - **System Automation Scripts:** PowerShell & VBScript (for silent execution & OS-level telemetry manipulation)
 - **Build System:** CMake (Native Module) & PyInstaller (Release Packaging)
 
