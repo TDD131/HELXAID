@@ -2799,6 +2799,7 @@ class MusicPanelWidget(QWidget):
             status   = Signal(str)
             finished = Signal(str)
             error    = Signal(str)
+            status   = Signal(str)
 
             def __init__(self, url: str, output_dir: str, fmt: str, quality_idx: int = 0):
                 super().__init__()
@@ -2820,14 +2821,29 @@ class MusicPanelWidget(QWidget):
                     except Exception:
                         pass
 
+            def get_f_str(self):
+                """Helper to get format string based on selected quality."""
+                if self.fmt == 'audio':
+                    return 'bestaudio/best'
+                if self.quality_idx == 0:
+                    return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+                elif self.quality_idx == 1:
+                    return 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
+                elif self.quality_idx == 2:
+                    return 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best'
+                elif self.quality_idx == 3:
+                    return 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best'
+                else:
+                    return 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360][ext=mp4]/best'
+
             def run(self):
                 """Execute yt-dlp as a subprocess and stream its output."""
                 import yt_dlp as _yt_dlp_mod
                 main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
-
                 # Build yt-dlp arguments based on selected format:
                 # - audio: extract audio stream and re-encode to MP3 via FFmpeg
                 # - video: download best H.264 + AAC and merge into MP4 via FFmpeg
+                f_str = self.get_f_str()
                 if self.fmt == 'audio':
                     q_map = ['0', '2', '5', '9']
                     q_val = q_map[self.quality_idx] if self.quality_idx < len(q_map) else '0'
@@ -2835,17 +2851,6 @@ class MusicPanelWidget(QWidget):
                         '-x', '--audio-format', 'mp3', '--audio-quality', q_val,
                     ]
                 else:
-                    if self.quality_idx == 0:
-                        f_str = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-                    elif self.quality_idx == 1:
-                        f_str = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
-                    elif self.quality_idx == 2:
-                        f_str = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best'
-                    elif self.quality_idx == 3:
-                        f_str = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best'
-                    else:
-                        f_str = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360][ext=mp4]/best'
-                    
                     extra = [
                         '-f', f_str,
                         '--merge-output-format', 'mp4',
@@ -2856,6 +2861,7 @@ class MusicPanelWidget(QWidget):
                     sys.executable, main_py,
                     '--newline',           # flush one line at a time for progress parsing
                     '--progress',
+                    '--no-playlist',       # Only download the specific video, even if URL is a mix
                     '--no-warnings',
                     '--no-check-certificate',
                     '--socket-timeout', '20',
@@ -2929,6 +2935,63 @@ class MusicPanelWidget(QWidget):
 
                 except Exception as exc:
                     self.error.emit(str(exc))
+
+        # ---- Metadata Worker (for size estimate) ----
+        class MetadataWorker(QThread):
+            metadata = Signal(dict)
+            error    = Signal(str)
+
+            def __init__(self, url, fmt, quality_idx):
+                super().__init__()
+                self.url = url
+                self.fmt = fmt
+                self.quality_idx = quality_idx
+
+            def run(self):
+                try:
+                    import yt_dlp as _yt_dlp_mod
+                    main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
+                    
+                    # Determine format string (same as DownloadWorker)
+                    dw = DownloadWorker(self.url, "", self.fmt, self.quality_idx)
+                    f_str = dw.get_f_str()
+                    
+                    cmd = [
+                        sys.executable, main_py,
+                        '--simulate',
+                        '--no-playlist',
+                        '--no-check-certificate',
+                        '--format', f_str,
+                        '--print', 'filesize,filesize_approx',
+                        self.url
+                    ]
+                    
+                    startupinfo = None
+                    if sys.platform == 'win32':
+                        from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
+                        startupinfo = STARTUPINFO()
+                        startupinfo.dwFlags |= STARTF_USESHOWWINDOW
+                        
+                    res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', startupinfo=startupinfo)
+                    if res.returncode == 0:
+                        lines = [l.strip() for l in res.stdout.strip().split('\n') if l.strip() and l.strip() != 'NA']
+                        size_raw = lines[0] if lines else "Unknown"
+                        
+                        # Helper for human readable if it's just bytes
+                        try:
+                            val = int(size_raw)
+                            for unit in ['B','KB','MB','GB']:
+                                if val < 1024:
+                                    size_raw = f"{val:.1f} {unit}"
+                                    break
+                                val /= 1024
+                        except: pass
+                        
+                        self.metadata.emit({'size': size_raw})
+                    else:
+                        self.error.emit("Failed")
+                except Exception as e:
+                    self.error.emit(str(e))
 
         # ---- Build dialog ----
         dialog = QDialog(self)
@@ -3215,6 +3278,43 @@ class MusicPanelWidget(QWidget):
 
         cancel_btn.clicked.connect(on_cancel)
         download_btn.clicked.connect(start_download)
+
+        # ---- Dynamic Size Estimate Logic ----
+        from PySide6.QtCore import QTimer
+        size_timer = QTimer(dialog)
+        size_timer.setSingleShot(True)
+        _size_worker = [None]
+
+        def update_size_estimate():
+            url = url_edit.text().strip()
+            if not url or len(url) < 10:
+                qual_lbl.setText(" Quality: ")
+                return
+
+            if _size_worker[0] and _size_worker[0].isRunning():
+                _size_worker[0].terminate()
+
+            qual_lbl.setText(" Estimating size... ")
+            fmt = 'audio' if rb_audio.isChecked() else 'video'
+            worker = MetadataWorker(url, fmt, quality_combo.currentIndex())
+            _size_worker[0] = worker
+            
+            def on_meta(data):
+                qual_lbl.setText(f" Estimated Size: {data.get('size', 'Unknown')} ")
+                qual_lbl.setStyleSheet("color: #FF5B06; font-size: 11px; background: transparent; font-weight: bold;")
+                
+            def on_meta_err(_):
+                qual_lbl.setText(" Quality: ")
+                qual_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
+
+            worker.metadata.connect(on_meta)
+            worker.error.connect(on_meta_err)
+            worker.start()
+
+        url_edit.textChanged.connect(lambda: size_timer.start(800))
+        size_timer.timeout.connect(update_size_estimate)
+        rb_audio.toggled.connect(update_size_estimate)
+        quality_combo.currentIndexChanged.connect(update_size_estimate)
 
         dialog.exec()
 

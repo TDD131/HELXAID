@@ -139,12 +139,30 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ## ✦ Changelog
 
+### 4.13
+
+- Add Estimated Size at Youtube Downloader.
+- Add `--no-playlist` flag so that even if the link is a playlist, it will only download the first video.
+
 ### 4.12
 - Improve Universal Scan detection (Add Epic Games, GOG Galaxy, Ubisoft Connect, Riot Games, EA App).
 - "Hardware Health" card turned to "System Vital" card.
 - Improve hardware detection.
 - From "Fan" tab to "Network" tab at HELXTATS.
-- Add "Network" tab... Obviously... That included: Network Interface Name, Network Interface IP, Network Interface MAC,  Network Interface Speed,  Network Interface Status,  Network Interface Type,  Network Interface Up Time,  Network Interface Bytes Sent,  Network Interface Bytes Received,  Network Interface Packets Sent,  Network Interface Packets Received,  Network Interface Errors, and Network Interface Collisions.
+- Add "Network" tab... Obviously... That included:
+-- Network Interface Name
+-- Network Interface IP
+-- Network Interface MAC
+-- Network Interface Speed
+-- Network Interface Status
+-- Network Interface Type
+-- Network Interface Up Time
+-- Network Interface Bytes Sent
+-- Network Interface Bytes Received
+-- Network Interface Packets Sent
+-- Network Interface Packets Received
+-- Network Interface Errors
+-- Network Interface Collisions
 - Fixes "Update Interval" label appeared at all Tab, now it only appears at "Quick Setup", "CPU", "Drive", "System Vital" Tab.
 
 ### V4.11
