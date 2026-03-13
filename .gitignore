@@ -28,7 +28,7 @@ python/test_init.db
 .idea/
 .vercel/
 .agent/
-.agents/
+.agents/*
 !.agents/rules/
 !.agents/workflows/
 web/
