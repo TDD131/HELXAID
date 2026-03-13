@@ -144,7 +144,7 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - "Hardware Health" card turned to "System Vital" card.
 - Improve hardware detection.
 - From "Fan" tab to "Network" tab at HELXTATS.
-- Add "Network" tab... Obviously... That inclued:
+- Add "Network" tab... Obviously... That included:
 -- Network Interface Name
 -- Network Interface IP
 -- Network Interface MAC
@@ -172,22 +172,6 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 ### v4.10.1
 - Updated deployment instructions: `HELXAID` is now exclusively instructed to be downloaded natively as `.exe` file without needing zip extraction.
 - Excluded `--onefile` build instructions from the workflow guide to significantly reduce Anti-Virus *False-Positives* (Windows Defender).
-
-### v4.10
-- Removed Save Custom Preset. Instead, everytime user check/uncheck the checkbox it will automatically saved.
-- Disk SMART now shows physical drive health & temperature correctly instead of free space.
-- Chart number clipping at the edge has been fixed.
-- Fixed "Item to be optimized" count so it accurately syncs with checkbox states when opening the app.
-- The text version in UI now accurately syncs with the current version.
-- Hardware health is now correctly forced to launch required third-party apps like LibreHardwareMonitor first.
-- Status Boosting now correctly syncs from the Booster tab to the Quick Setup Tab.
-
-### v4.9
-- **HELXTATS Boost Engine Rewrite:** fully silent native C++ execution using VBScript wrapper (no PowerShell popups, no annoying beeps)
-- **YouTube Downloader Enhancements:** Added format (MP3/MP4) and specific Quality options (e.g. 320kbps, 1080p, etc.)
-- Fixed FFmpeg local detection logic, ensuring reliable parsing inside Music Player
-- Refined tray notification messaging and behaviors for Booster
-- Support for auto-fetching required binaries (FFmpeg, RyzenAdj) to local AppData
 
 ---
 
