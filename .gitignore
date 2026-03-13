@@ -16,12 +16,21 @@ python/music_panel_state.json
 python/icons/
 python/UI Taskbar Icons/  # Depends if you want to bundle these or not
 python/web/temp/
+python/*.db
+python/*.db-shm
+python/*.db-wal
+python/network_history.json
+python/test_init.db
 *.log
 
 # IDEs & Tools
 .vscode/
 .idea/
 .vercel/
+.agent/
+.agents/
+!.agents/rules/
+!.agents/workflows/
 web/
 
 # Native Build files

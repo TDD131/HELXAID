@@ -144,6 +144,9 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - "Hardware Health" card turned to "System Vital" card.
 - Improve hardware detection.
 - From "Fan" tab to "Network" tab at HELXTATS.
+<<<<<<< HEAD
+- Add "Network" tab... Obviously... That included: Network Interface Name, Network Interface IP, Network Interface MAC,  Network Interface Speed,  Network Interface Status,  Network Interface Type,  Network Interface Up Time,  Network Interface Bytes Sent,  Network Interface Bytes Received,  Network Interface Packets Sent,  Network Interface Packets Received,  Network Interface Errors, and Network Interface Collisions.
+=======
 - Add "Network" tab... Obviously... That included:
 -- Network Interface Name
 -- Network Interface IP
