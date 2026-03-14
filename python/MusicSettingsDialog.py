@@ -290,7 +290,7 @@ class MusicSettingsDialog(QDialog):
         
         folder = QFileDialog.getExistingDirectory(
             self, 
-            "Select Music Folder",
+            "Select Media Folder",
             start_dir,
             QFileDialog.ShowDirsOnly
         )

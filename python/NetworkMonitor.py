@@ -1,6 +1,7 @@
 from PySide6.QtCore import QThread, Signal
 
 import psutil
+import socket
 import time
 import collections
 import json
@@ -26,7 +27,12 @@ class NetworkMonitor(QThread):
         self._running = False
         
         self._exe_cache: dict[str, str] = {}
-        
+
+        self._etw_monitor = None
+        self._etw_enabled = False
+        self._etw_last_totals: dict[str, int] = {}
+        self._etw_baseline_snapshot: dict[str, int] = {}
+
         # history buffer of rate_bytes (rolling 60 seconds)
         self._history_buffers = collections.defaultdict(lambda: collections.deque([0]*60, maxlen=60))
         
@@ -46,6 +52,21 @@ class NetworkMonitor(QThread):
 
         # Load DB
         self._init_db()
+
+        self._init_etw()
+
+    def _init_etw(self):
+        try:
+            from native_wrapper import get_etw_network_monitor
+
+            self._etw_monitor = get_etw_network_monitor()
+            self._etw_enabled = bool(self._etw_monitor)
+            if self._etw_enabled:
+                print("[NetworkMonitor] ETW network monitor available")
+        except Exception as e:
+            print(f"[NetworkMonitor] ETW init error: {e}")
+            self._etw_monitor = None
+            self._etw_enabled = False
 
     def set_timeframe_filter(self, filter_name: str):
         self._active_filter = filter_name
@@ -175,6 +196,11 @@ class NetworkMonitor(QThread):
 
     def stop(self):
         self._running = False
+        try:
+            if self._etw_monitor is not None:
+                self._etw_monitor.stop()
+        except Exception:
+            pass
         self._flush_to_db()
 
     def _flush_to_db(self):
@@ -244,6 +270,22 @@ class NetworkMonitor(QThread):
     def run(self):
         self._running = True
 
+        if self._etw_enabled and self._etw_monitor is not None:
+            try:
+                started = self._etw_monitor.start()
+                if not started:
+                    try:
+                        err = self._etw_monitor.get_last_error() if hasattr(self._etw_monitor, 'get_last_error') else ''
+                        if err:
+                            print(f"[NetworkMonitor] ETW start failed: {err}")
+                    except Exception:
+                        pass
+                    self._etw_enabled = False
+            except Exception:
+                self._etw_enabled = False
+
+        etw_empty_ticks = 0
+
         prev_nic = psutil.net_io_counters(pernic=True)
         # initial total calculation
         display_nic = self._pick_best_nic(prev_nic)
@@ -260,6 +302,16 @@ class NetworkMonitor(QThread):
                 self._baseline_needs_update = False
                 baseline_refresh_count = 0
 
+                if self._etw_enabled and self._etw_monitor is not None:
+                    try:
+                        snap_totals: dict[str, int] = collections.defaultdict(int)
+                        for s in self._etw_monitor.get_process_stats():
+                            name = (s.get('name') or '').strip() or f"PID {s.get('pid', 0)}"
+                            snap_totals[name] += int(s.get('bytes_total', 0))
+                        self._etw_baseline_snapshot = dict(snap_totals)
+                    except Exception:
+                        pass
+
             curr_nic = psutil.net_io_counters(pernic=True)
             nic_delta = self._compute_nic_delta(prev_nic, curr_nic)
             prev_nic = curr_nic
@@ -267,15 +319,125 @@ class NetworkMonitor(QThread):
             display_nic = self._pick_best_nic(curr_nic)
             tick_bytes = nic_delta.get(display_nic, 0)
 
+            if self._etw_enabled and self._etw_monitor is not None:
+                try:
+                    stats = self._etw_monitor.get_process_stats()
+                except Exception:
+                    stats = []
+
+                if stats:
+                    etw_empty_ticks = 0
+                    totals_now: dict[str, int] = collections.defaultdict(int)
+                    exe_path_now: dict[str, str] = {}
+
+                    for s in stats:
+                        name = (s.get('name') or '').strip() or f"PID {s.get('pid', 0)}"
+                        totals_now[name] += int(s.get('bytes_total', 0))
+                        exe_path = (s.get('exe_path') or '').strip()
+                        if exe_path:
+                            exe_path_now[name] = exe_path
+
+                    for name, exe_path in exe_path_now.items():
+                        self._exe_cache[name.lower()] = exe_path
+
+                    # If baseline snapshot hasn't been captured yet, capture it now.
+                    if not self._etw_baseline_snapshot:
+                        self._etw_baseline_snapshot = dict(totals_now)
+
+                    # Per-tick deltas (rate) and live totals since baseline refresh.
+                    for name, total in totals_now.items():
+                        last_total = self._etw_last_totals.get(name, total)
+                        tick_delta = max(0, total - last_total)
+                        self._etw_last_totals[name] = total
+
+                        base_total = self._etw_baseline_snapshot.get(name, total)
+                        live_total = max(0, total - base_total)
+
+                        self._live_session_deltas[name] = live_total
+                        self._unsaved_buffer[name] += tick_delta
+                        self._history_buffers[name].append(tick_delta)
+
+                    # Keep history buffers moving for names that disappeared.
+                    active_names = set(self._baseline_totals.keys()) | set(self._live_session_deltas.keys())
+                    for name in active_names:
+                        if name not in totals_now:
+                            self._history_buffers[name].append(0)
+
+                    session_bytes = sum(self._baseline_totals.values()) + sum(self._live_session_deltas.values())
+
+                    top_entries = sorted(
+                        [
+                            {
+                                'name': name,
+                                'exe_path': self._exe_cache.get(name.lower()),
+                                'rate_bytes': int(self._history_buffers[name][-1]) if self._history_buffers[name] else 0,
+                                'total_bytes': self._baseline_totals.get(name, 0) + self._live_session_deltas.get(name, 0),
+                                'history': list(self._history_buffers[name]),
+                            }
+                            for name in active_names
+                        ],
+                        key=lambda x: x['total_bytes'],
+                        reverse=True,
+                    )[:15]
+
+                    self.data_updated.emit({
+                        'session_bytes': session_bytes,
+                        'nic_name': display_nic or '',
+                        'processes': top_entries,
+                    })
+
+                    tick_count += 1
+                    if tick_count >= self.SAVE_INTERVAL:
+                        self._flush_to_db()
+                        tick_count = 0
+
+                    baseline_refresh_count += 1
+                    continue
+                else:
+                    etw_empty_ticks += 1
+                    if etw_empty_ticks >= 10:
+                        try:
+                            err = self._etw_monitor.get_last_error() if hasattr(self._etw_monitor, 'get_last_error') else ''
+                            if err:
+                                print(f"[NetworkMonitor] Disabling ETW (no events): {err}")
+                            else:
+                                print("[NetworkMonitor] Disabling ETW (no events)")
+                        except Exception:
+                            pass
+                        self._etw_enabled = False
+
             pid_conn_count: dict[int, int] = collections.Counter()
+            unknown_conn_count = 0
             try:
+                tcp_states = {
+                    'ESTABLISHED',
+                    'CLOSE_WAIT',
+                    'SYN_SENT',
+                    'SYN_RECEIVED',
+                    'LISTEN',
+                    'FIN_WAIT1',
+                    'FIN_WAIT2',
+                    'TIME_WAIT',
+                    'LAST_ACK',
+                    'CLOSING',
+                }
+
+                # Count both TCP and UDP sockets.
+                # UDP sockets appear with status 'NONE' in psutil; without counting them,
+                # apps that use UDP heavily can be underrepresented.
                 for conn in psutil.net_connections(kind='inet'):
-                    if conn.pid and conn.status in ('ESTABLISHED', 'CLOSE_WAIT', 'SYN_SENT', 'SYN_RECEIVED'):
+                    if not conn.pid:
+                        unknown_conn_count += 1
+                        continue
+                    if conn.type == socket.SOCK_DGRAM:
                         pid_conn_count[conn.pid] += 1
+                    else:
+                        if (conn.status or '').upper() in tcp_states:
+                            pid_conn_count[conn.pid] += 1
             except Exception:
                 pass
 
-            total_conns = sum(pid_conn_count.values()) or 1
+            total_conns = (sum(pid_conn_count.values()) + unknown_conn_count) or 1
 
             name_conn_count: dict[str, int] = collections.Counter()
             for pid, count in pid_conn_count.items():
@@ -289,6 +451,9 @@ class NetworkMonitor(QThread):
                     name = f"PID {pid}"
                 name_conn_count[name] += count
 
+            if unknown_conn_count > 0:
+                name_conn_count['Unknown'] += unknown_conn_count
+            
             session_bytes = sum(self._baseline_totals.values()) + sum(self._live_session_deltas.values())
 
             for name, conn_count in name_conn_count.items():

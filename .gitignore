@@ -10,7 +10,7 @@ ENV/
 # Configuration
 python/settings.json
 python/config.json
-python/music_panel_state.json
+python/music_page.json
 
 # Local Data
 python/icons/
@@ -21,11 +21,13 @@ python/*.db-shm
 python/*.db-wal
 python/network_history.json
 python/test_init.db
+python/music_panel_state.json
 *.log
 
 # IDEs & Tools
 .vscode/
 .idea/
+.windsurf/
 .vercel/
 .agent/
 .agents/
@@ -36,6 +38,7 @@ web/
 
 # Native Build files
 helxaid_native/build/
+helxaid_native/build_ninja/
 helxaid_native/bin/
 helxaid_native/obj/
 *.pyd

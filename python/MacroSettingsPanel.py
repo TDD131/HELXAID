@@ -2304,6 +2304,7 @@ class MacroSettingsPanel(QWidget):
             QCheckBox::indicator:checked {
                 background: #FF5B06;
                 border-color: transparent;
+                image: url(:/qt-project.org/styles/commonstyle/images/checkbox_checked.png);
             }
         """)
         self._drag_mode_checkbox.stateChanged.connect(self._toggle_indicator_drag_mode)

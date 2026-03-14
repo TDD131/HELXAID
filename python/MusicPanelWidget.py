@@ -12,12 +12,13 @@ from PySide6.QtWidgets import (
     QSlider, QTableWidget, QTableWidgetItem, QHeaderView,
     QFrame, QStackedWidget, QSizePolicy, QAbstractItemView,
     QScrollArea, QLineEdit, QSpinBox, QSpacerItem,
-    QDialog, QComboBox, QRadioButton, QButtonGroup
+    QDialog, QComboBox, QRadioButton, QButtonGroup,
+    QProgressBar, QGroupBox, QSplitter, QApplication
 )
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import (
     Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
-    QSize, QPoint, QUrl
+    QSize, QPoint, QUrl, QThread, QSettings
 )
 from PySide6.QtGui import (
     QPixmap, QIcon, QFont, QColor, QPalette, QCursor,
@@ -29,6 +30,55 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from VideoPlayerWidget import VideoPlayerWidget
 
 import os
+import sys
+import json
+import subprocess
+import tempfile
+import urllib.request
+import hashlib
+from typing import Optional
+from functools import partial
+
+
+class ClickSlider(QSlider):
+    """Custom slider that jumps to mouse click position."""
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            from PySide6.QtWidgets import QStyle, QStyleOptionSlider
+            
+            # Prepare style option for the slider
+            opt = QStyleOptionSlider()
+            self.initStyleOption(opt)
+            
+            # Get the groove rectangle
+            sr = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
+            
+            # Calculate position within the groove
+            if self.orientation() == Qt.Horizontal:
+                slider_length = sr.width()
+                slider_pos = event.position().x() - sr.x()
+            else:
+                slider_length = sr.height()
+                slider_pos = event.position().y() - sr.y()
+            
+            # Calculate value from 0 to 1 ratio
+            if slider_length > 0:
+                # Invert for vertical sliders as they are bottom-to-top
+                if self.orientation() == Qt.Vertical:
+                    ratio = 1.0 - (slider_pos / slider_length)
+                else:
+                    ratio = slider_pos / slider_length
+                
+                # Snap ratio to [0, 1]
+                ratio = max(0.0, min(1.0, ratio))
+                
+                new_val = self.minimum() + int(ratio * (self.maximum() - self.minimum()))
+                self.setValue(new_val)
+                self.sliderMoved.emit(new_val)
+                
+        # Call base class to ensure sliderPressed and other logic still fires
+        super().mousePressEvent(event)
 
 
 class VolumeSlider(QSlider):
@@ -146,6 +196,719 @@ class MarqueeLabel(QLabel):
         painter.drawText(-self._offset + text_width + 50, y, self._full_text)
         
         painter.end()
+
+
+# ---- YouTube Downloader Classes ----
+
+class DownloadWorker(QThread):
+    """
+    Background worker for downloading YouTube content using yt-dlp.
+    Handles both audio (MP3) and video (MP4) with quality selection.
+    
+    Component Name: DownloadWorker
+    """
+    progress = Signal(int)
+    status   = Signal(str)
+    finished = Signal(str)
+    error    = Signal(str)
+
+    def __init__(self, url, out_dir, fmt, quality_idx):
+        super().__init__()
+        self.url = url
+        self.out_dir = out_dir
+        self.fmt = fmt
+        self.quality_idx = quality_idx
+        self._is_cancelled = False
+        self._proc = None
+
+    def cancel(self):
+        """Abort the current download process."""
+        self._is_cancelled = True
+        if self._proc:
+            if sys.platform == 'win32':
+                import subprocess
+                subprocess.run(['taskkill', '/F', '/T', '/PID', str(self._proc.pid)], 
+                             capture_output=True, creationflags=0x08000000)
+            else:
+                self._proc.terminate()
+
+    def get_f_str(self):
+        """Map quality index to yt-dlp format strings."""
+        if self.fmt == 'audio':
+            # Audio Qualities: Best, High (256), Med (128), Low (64)
+            q_map = ['bestaudio/best', 'bestaudio[abr<=256]', 'bestaudio[abr<=128]', 'bestaudio[abr<=64]']
+            return q_map[min(self.quality_idx, len(q_map)-1)]
+        else:
+            # Video Qualities: BestAvailable, 1080p, 720p, 480p, 360p
+            res_map = ['best', '1080', '720', '480', '360']
+            res = res_map[min(self.quality_idx, len(res_map)-1)]
+            if res == 'best':
+                return 'bestvideo+bestaudio/best'
+            return f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
+
+    def run(self):
+        """Execute the download in a shell via yt-dlp module."""
+        import subprocess
+        import os
+        import sys
+        
+        try:
+            import yt_dlp as _yt_dlp_mod
+            main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
+            
+            f_str = self.get_f_str()
+            out_tmpl = os.path.join(self.out_dir, '%(title)s.%(ext)s')
+
+            # If HELXAID bundles ffmpeg, tell yt-dlp explicitly so it can merge
+            # separate video+audio streams into a single file.
+            ffmpeg_location = None
+            try:
+                appdata = os.environ.get('APPDATA', '')
+                helxaid_ffmpeg_bin = os.path.join(appdata, 'HELXAID', 'tools', 'ffmpeg', 'bin')
+                if os.path.isdir(helxaid_ffmpeg_bin):
+                    ffmpeg_location = helxaid_ffmpeg_bin
+            except Exception:
+                ffmpeg_location = None
+            
+            # Build command line
+            cmd = [
+                sys.executable, main_py,
+                '--newline',
+                '--no-playlist',
+                '--no-check-certificate',
+                '--format', f_str,
+                '--output', out_tmpl,
+                '--progress-template', '"[download] %(progress._percent_str)s"',
+                self.url
+            ]
+
+            if ffmpeg_location:
+                cmd.extend(['--ffmpeg-location', ffmpeg_location])
+            
+            if self.fmt == 'audio':
+                # Convert to mp3 and remove the original downloaded container
+                # so the user only gets a single mp3 file.
+                cmd.extend(['--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0', '--no-keep-video'])
+            else:
+                # Force a single merged output container when possible.
+                cmd.extend(['--merge-output-format', 'mp4'])
+
+            startupinfo = None
+            if sys.platform == 'win32':
+                from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
+                startupinfo = STARTUPINFO()
+                startupinfo.dwFlags |= STARTF_USESHOWWINDOW
+                
+            self._proc = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE, 
+                text=True, 
+                encoding='utf-8', 
+                errors='replace',
+                startupinfo=startupinfo
+            )
+            
+            while not self._is_cancelled:
+                line = self._proc.stdout.readline()
+                if not line:
+                    break
+                
+                clean_line = line.strip()
+                if not clean_line:
+                    continue
+                
+                self.status.emit(clean_line)
+                
+                # Parse progress percent
+                if '[download]' in clean_line and '%' in clean_line:
+                    try:
+                        # Extract percentage (e.g., "[download] 12.5%")
+                        parts = clean_line.split()
+                        for p in parts:
+                            if '%' in p:
+                                val_str = p.replace('%', '').replace('"', '').strip()
+                                val = float(val_str)
+                                self.progress.emit(int(val))
+                                break
+                    except:
+                        pass
+            
+            self._proc.wait()
+            
+            if self._is_cancelled:
+                self.error.emit("Download cancelled by user.")
+            elif self._proc.returncode == 0:
+                self.finished.emit("Download successful!")
+            else:
+                err_msg = self._proc.stderr.read()
+                self.error.emit(err_msg or f"yt-dlp exited with code {self._proc.returncode}")
+                
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class MetadataWorker(QThread):
+    """
+    Worker for fetching media metadata and estimating file size before download.
+    
+    Component Name: MetadataWorker
+    """
+    metadata = Signal(dict)
+    error    = Signal(str)
+
+    def __init__(self, url, fmt, quality_idx):
+        super().__init__()
+        self.url = url
+        self.fmt = fmt
+        self.quality_idx = quality_idx
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    def run(self):
+        import subprocess
+        import os
+        import sys
+        
+        if self._is_cancelled: return
+
+        try:
+            import yt_dlp as _yt_dlp_mod
+            main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
+            
+            dw = DownloadWorker(self.url, "", self.fmt, self.quality_idx)
+            f_str = dw.get_f_str()
+            
+            # Request Title, Thumbnail URL, and Size
+            cmd = [
+                sys.executable, main_py,
+                '--simulate',
+                '--no-playlist',
+                '--no-check-certificate',
+                '--quiet',
+                '--no-warnings',
+                '--format', f_str,
+                '--print', 'title',
+                '--print', 'thumbnail',
+                '--print', 'filesize,filesize_approx',
+                self.url
+            ]
+            
+            startupinfo = None
+            if sys.platform == 'win32':
+                from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
+                startupinfo = STARTUPINFO()
+                startupinfo.dwFlags |= STARTF_USESHOWWINDOW
+                
+            res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', startupinfo=startupinfo)
+            
+            if self._is_cancelled: return
+
+            if res.returncode == 0:
+                lines = [l.strip() for l in res.stdout.strip().split('\n') if l.strip()]
+                
+                title = lines[0] if len(lines) > 0 else "Unknown Title"
+                thumb_url = lines[1] if len(lines) > 1 else None
+                size_raw = lines[2] if len(lines) > 2 and lines[2] != 'NA' else "Unknown"
+                
+                if size_raw != "Unknown":
+                    try:
+                        val = int(size_raw)
+                        for unit in ['B','KB','MB','GB']:
+                            if val < 1024:
+                                size_raw = f"{val:.1f} {unit}"
+                                break
+                            val /= 1024
+                    except: pass
+                
+                if not self._is_cancelled:
+                    self.metadata.emit({
+                        'title': title,
+                        'thumb_url': thumb_url,
+                        'size': size_raw
+                    })
+            else:
+                if not self._is_cancelled:
+                    self.error.emit("Failed to fetch meta.")
+        except Exception as e:
+            if not self._is_cancelled:
+                self.error.emit(str(e))
+
+
+class ImageLoader(QThread):
+    """Async image downloader for previews."""
+    loaded = Signal(bytes)
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+    def run(self):
+        try:
+            data = urllib.request.urlopen(self.url, timeout=10).read()
+            if data: self.loaded.emit(data)
+        except: pass
+
+
+class YouTubeDownloaderPanel(QFrame):
+    """
+    Integrated YouTube downloader panel that replaces the floating dialog.
+    Matches the sleek dark design of HELXAID.
+    
+    Component Name: YouTubeDownloaderPanel
+    """
+    downloadFinished = Signal(str)
+    closeRequested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ytDownloaderPanel")
+        self._worker = None
+        self._size_worker = None
+        self._img_worker = None
+        self._setup_ui()
+        self._apply_style()
+
+    def _cleanup_worker(self, attr_name):
+        """Safely stop and delete a worker attribute."""
+        worker = getattr(self, attr_name, None)
+        if worker:
+            # Clear reference first so any late signals can be ignored by guards
+            setattr(self, attr_name, None)
+            try:
+                # Disconnect signals to stop callbacks; safe even if already disconnected
+                worker.disconnect()
+            except Exception:
+                pass
+
+            # Politely request cancellation if the worker supports it.
+            # We intentionally avoid QThread.terminate() here because forcibly
+            # killing threads can crash the Python/Qt runtime, especially while
+            # running subprocesses (yt-dlp) for size estimation or downloads.
+            try:
+                if hasattr(worker, 'cancel'):
+                    worker.cancel()
+            except Exception:
+                pass
+
+    def closeEvent(self, event):
+        """Ensure all threads are killed when panel closes."""
+        self._cleanup_worker('_worker')
+        self._cleanup_worker('_size_worker')
+        self._cleanup_worker('_img_worker')
+        for w in self._thread_graveyard:
+            try: w.terminate()
+            except: pass
+        super().closeEvent(event)
+
+    def _setup_ui(self):
+        # Master layout for the panel frame
+        master_layout = QVBoxLayout(self)
+        master_layout.setContentsMargins(0, 0, 0, 0)
+        master_layout.setSpacing(0)
+
+        # Content in a Scroll Area for small windowed mode
+        from smooth_scroll import SmoothScrollArea
+        self.scroll_area = SmoothScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("background: transparent; border: none;")
+        
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("ytScrollContent")
+        layout = QVBoxLayout(self.scroll_content)
+        layout.setContentsMargins(15, 20, 15, 15)
+        layout.setSpacing(15)
+
+        # Header with close button
+        header_row = QHBoxLayout()
+        title = QLabel("YouTube Downloader")
+        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #FF5B06;")
+        header_row.addWidget(title)
+        
+        header_row.addStretch()
+        
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(24, 24)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton { background: transparent; color: #888; border: none; font-size: 20px; font-weight: bold; }
+            QPushButton:hover { color: #FF5B06; }
+        """)
+        close_btn.clicked.connect(self.closeRequested.emit)
+        header_row.addWidget(close_btn)
+        layout.addLayout(header_row)
+
+        # URL input
+        url_lbl = QLabel("Paste URL:")
+        url_lbl.setStyleSheet("color: #888; font-size: 11px; font-weight: bold;")
+        layout.addWidget(url_lbl)
+        
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("https://www.youtube.com/...")
+        layout.addWidget(self.url_edit)
+
+        # ---- Preview Section (Thumbnail + Title) ----
+        self.preview_section = QFrame()
+        self.preview_section.setObjectName("ytPreviewSection")
+        self.preview_section.setStyleSheet("""
+            QFrame#ytPreviewSection {
+                background: rgba(0,0,0,0.2);
+                border: 1px solid rgba(255, 91, 6, 0.1);
+                border-radius: 8px;
+            }
+        """)
+        self.preview_section.hide()
+        
+        preview_layout = QVBoxLayout(self.preview_section)
+        preview_layout.setContentsMargins(10, 10, 10, 10)
+        preview_layout.setSpacing(8)
+
+        # Image Container
+        self.thumb_container = QFrame()
+        self.thumb_container.setFixedSize(270, 152) # 16:9 balanced for 320px panel
+        self.thumb_container.setStyleSheet("background: rgba(0,0,0,0.4); border-radius: 4px;")
+        
+        thumb_inner_layout = QVBoxLayout(self.thumb_container)
+        thumb_inner_layout.setContentsMargins(0,0,0,0)
+        
+        self.thumb_lbl = QLabel()
+        self.thumb_lbl.setAlignment(Qt.AlignCenter)
+        thumb_inner_layout.addWidget(self.thumb_lbl)
+        preview_layout.addWidget(self.thumb_container, 0, Qt.AlignCenter)
+
+        # Title below image
+        self.title_lbl = QLabel("")
+        self.title_lbl.setStyleSheet("color: #FF5B06; font-size: 11px; font-weight: bold;")
+        self.title_lbl.setWordWrap(True)
+        self.title_lbl.setAlignment(Qt.AlignCenter)
+        preview_layout.addWidget(self.title_lbl)
+        
+        layout.addWidget(self.preview_section)
+
+        # Format & Quality
+        fmt_group = QGroupBox("Format & Quality")
+        fmt_layout = QVBoxLayout(fmt_group)
+        
+        self.rb_audio = QRadioButton("Audio (MP3)")
+        self.rb_video = QRadioButton("Video (MP4)")
+        self.rb_audio.setChecked(True)
+        fmt_layout.addWidget(self.rb_audio)
+        fmt_layout.addWidget(self.rb_video)
+        
+        self.quality_combo = QComboBox()
+        self.quality_combo.setObjectName("ytQualityCombo")
+
+        # Ensure the dropdown popup is opaque. The popup is a separate top-level
+        # view and may not reliably inherit the parent stylesheet.
+        try:
+            from PySide6.QtGui import QPalette, QColor
+            view = self.quality_combo.view()
+            view.setAutoFillBackground(True)
+            pal = view.palette()
+            pal.setColor(QPalette.Base, QColor(15, 15, 25))
+            pal.setColor(QPalette.Text, QColor(224, 224, 224))
+            view.setPalette(pal)
+            view.setStyleSheet("""
+                QAbstractItemView {
+                    background-color: rgba(15, 15, 25, 0.98);
+                    border: 1px solid rgba(255,255,255,0.12);
+                    color: #e0e0e0;
+                    selection-background-color: rgba(255, 91, 6, 0.35);
+                    selection-color: #ffffff;
+                    outline: 0;
+                }
+                QAbstractItemView::item {
+                    padding: 6px 8px;
+                    background: transparent;
+                }
+                QAbstractItemView::item:hover {
+                    background: rgba(255, 91, 6, 0.22);
+                    color: #ffffff;
+                }
+            """)
+        except Exception:
+            pass
+        
+        def update_opts():
+            self.quality_combo.clear()
+            if self.rb_audio.isChecked():
+                self.quality_combo.addItems(["Best (320kbps)", "High (256kbps)", "Medium (128kbps)", "Low (64kbps)"])
+            else:
+                self.quality_combo.addItems(["Best Available", "1080p", "720p", "480p", "360p"])
+                idx = self.quality_combo.findText("1080p")
+                if idx >= 0:
+                    self.quality_combo.setCurrentIndex(idx)
+        
+        self.rb_audio.toggled.connect(update_opts)
+        update_opts()
+        
+        # Size Preview
+        self.size_lbl = QLabel("Ready")
+        self.size_lbl.setStyleSheet("color: #888; font-size: 11px; margin-top: 5px;")
+        self.size_lbl.setWordWrap(True)
+        
+        fmt_layout.addWidget(QLabel("Quality:"))
+        fmt_layout.addWidget(self.quality_combo)
+        fmt_layout.addWidget(self.size_lbl)
+        layout.addWidget(fmt_group)
+
+        # Output Folder
+        folder_group = QGroupBox("Save to")
+        folder_layout = QHBoxLayout(folder_group)
+        
+        self.folder_edit = QLineEdit()
+        self.folder_edit.setReadOnly(True)
+        settings = QSettings("TDD131", "HELXAID")
+        last_dir = settings.value("YouTubeDownloader/last_output_dir", "", type=str)
+        default_path = os.path.join(os.environ.get("USERPROFILE", ""), "Downloads")
+        self.folder_edit.setText(last_dir or default_path)
+        
+        browse_btn = QPushButton("...")
+        browse_btn.setFixedSize(30, 26)
+        browse_btn.setStyleSheet("background: rgba(255,255,255,0.1); font-weight: normal;")
+        
+        def pick_folder():
+            from PySide6.QtWidgets import QFileDialog
+            start_dir = self.folder_edit.text().strip() or default_path
+            d = QFileDialog.getExistingDirectory(self, "Select Output Folder", start_dir)
+            if d:
+                self.folder_edit.setText(d)
+                settings.setValue("YouTubeDownloader/last_output_dir", d)
+        
+        browse_btn.clicked.connect(pick_folder)
+        folder_layout.addWidget(self.folder_edit, 1)
+        folder_layout.addWidget(browse_btn)
+        layout.addWidget(folder_group)
+
+        # Progress Section
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
+        self.status_lbl = QLabel("")
+        self.status_lbl.setStyleSheet("color: #888; font-size: 10px;")
+        self.status_lbl.setWordWrap(True)
+        self.status_lbl.setVisible(False)
+        layout.addWidget(self.status_lbl)
+
+        layout.addStretch()
+
+        # Action Button
+        self.download_btn = QPushButton("Start Download")
+        self.download_btn.setObjectName("ytPanelDownloadBtn")
+        self.download_btn.setFixedHeight(40)
+        self.download_btn.setStyleSheet("""
+            QPushButton#ytPanelDownloadBtn {
+                background-color: #FF5B06;
+                color: #ffffff;
+                border: 1px solid rgba(255, 91, 6, 0.55);
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton#ytPanelDownloadBtn:hover { background-color: #FF7B26; }
+            QPushButton#ytPanelDownloadBtn:pressed { background-color: #E94F00; }
+            QPushButton#ytPanelDownloadBtn:focus { outline: 0; }
+            QPushButton#ytPanelDownloadBtn:disabled { background-color: #333; color: #666; border-color: rgba(255,255,255,0.08); }
+        """)
+        self.download_btn.clicked.connect(self._start_download)
+        layout.addWidget(self.download_btn)
+
+        # Finalize Scroll Area
+        self.scroll_area.setWidget(self.scroll_content)
+        master_layout.addWidget(self.scroll_area)
+
+        # Timer for size estimate
+        self.size_timer = QTimer(self)
+        self.size_timer.setSingleShot(True)
+        self.size_timer.timeout.connect(self._update_size_estimate)
+        self.url_edit.textChanged.connect(lambda: self.size_timer.start(800))
+        
+        # Debounce radio buttons too to avoid rapid-toggle hitch
+        self.rb_audio.toggled.connect(lambda: self.size_timer.start(300))
+        self.quality_combo.currentIndexChanged.connect(lambda: self.size_timer.start(300))
+
+    def _apply_style(self):
+        self.setStyleSheet("""
+            QFrame#ytDownloaderPanel {
+                background: rgba(15, 15, 25, 0.95);
+                border-left: 1px solid rgba(255, 91, 6, 0.2);
+            }
+            QLabel { color: #e0e0e0; background: transparent; }
+            QLineEdit {
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 4px; padding: 6px; color: #fff; font-size: 12px;
+            }
+            QLineEdit:focus { border-color: #FF5B06; }
+            QGroupBox {
+                border: 1px solid rgba(255, 91, 6, 0.1);
+                border-radius: 6px; margin-top: 15px; padding-top: 15px;
+                color: #888; font-size: 11px;
+            }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; color: #FF5B06; }
+            QComboBox {
+                background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 4px; padding: 4px; color: #e0e0e0;
+            }
+            QComboBox QAbstractItemView {
+                background: rgba(15, 15, 25, 0.98);
+                border: 1px solid rgba(255,255,255,0.12);
+                selection-background-color: rgba(255, 91, 6, 0.35);
+                selection-color: #ffffff;
+                outline: 0;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 6px 8px;
+                background: transparent;
+                color: #e0e0e0;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background: rgba(255, 91, 6, 0.22);
+                color: #ffffff;
+            }
+            QRadioButton { color: #ccc; font-size: 12px; }
+            QRadioButton::indicator {
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                border: 2px solid rgba(255,255,255,0.35);
+                background: rgba(0,0,0,0.25);
+            }
+            QRadioButton::indicator:hover {
+                border-color: rgba(255, 91, 6, 0.85);
+            }
+            QRadioButton::indicator:checked {
+                border-color: rgba(255, 91, 6, 0.95);
+                background: #FF5B06;
+            }
+            QProgressBar {
+                border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;
+                background: rgba(0,0,0,0.4); text-align: center; color: #fff; height: 16px;
+            }
+            QProgressBar::chunk { background: #FF5B06; border-radius: 3px; }
+            QPushButton#ytPanelDownloadBtn {
+                background-color: #FF5B06;
+                color: #ffffff;
+                border: 1px solid rgba(255, 91, 6, 0.55);
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton#ytPanelDownloadBtn:hover { background-color: #FF7B26; }
+            QPushButton#ytPanelDownloadBtn:pressed { background-color: #E94F00; }
+            QPushButton#ytPanelDownloadBtn:focus { outline: 0; }
+            QPushButton#ytPanelDownloadBtn:disabled { background-color: #333; color: #666; border-color: rgba(255,255,255,0.08); }
+        """)
+
+    def _update_size_estimate(self):
+        url = self.url_edit.text().strip()
+        
+        # Basic validation to avoid yt-dlp noise on random text
+        # Must have at least one dot and look like a potential link
+        if not url or len(url) < 8 or '.' not in url:
+            self.size_lbl.setText("Ready")
+            self.size_lbl.setStyleSheet("color: #888; font-size: 11px;")
+            self.preview_section.hide()
+            self.thumb_lbl.clear()
+            self.title_lbl.clear()
+            self._cleanup_worker('_size_worker')
+            self._cleanup_worker('_img_worker')
+            return
+
+        self._cleanup_worker('_size_worker')
+        self._cleanup_worker('_img_worker')
+        
+        # Clear UI for fresh fetch
+        self.thumb_lbl.clear()
+        self.title_lbl.setText("Resolving link...")
+        self.size_lbl.setText("Fetching metadata...")
+
+        fmt = 'audio' if self.rb_audio.isChecked() else 'video'
+        worker = MetadataWorker(url, fmt, self.quality_combo.currentIndex())
+        self._size_worker = worker
+        
+        def on_meta(d):
+            # Guard: Check if this worker is still the active one
+            if self._size_worker != worker:
+                return
+            
+            try:
+                self.size_lbl.setText(f"Est. Size: {d.get('size', 'Unknown')}")
+                self.title_lbl.setText(d.get('title', ''))
+                self.preview_section.show()
+                
+                # Fetch thumbnail if available
+                thumb_url = d.get('thumb_url')
+                if thumb_url:
+                    self._cleanup_worker('_img_worker')
+                    
+                    img_worker = ImageLoader(thumb_url)
+                    self._img_worker = img_worker
+                    img_worker.loaded.connect(self._on_thumb_loaded)
+                    img_worker.finished.connect(img_worker.deleteLater)
+                    img_worker.start()
+            except RuntimeError:
+                pass
+
+        worker.metadata.connect(on_meta)
+        worker.error.connect(lambda _: self.size_lbl.setText("Meta: Failed"))
+        worker.start()
+
+    def _on_thumb_loaded(self, data):
+        # Verify img_worker still exists (might have been cleaned up)
+        pixmap = QPixmap()
+        if pixmap.loadFromData(data):
+            scaled = pixmap.scaled(self.thumb_lbl.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.thumb_lbl.setPixmap(scaled)
+
+    def _start_download(self):
+        url = self.url_edit.text().strip()
+        if not url: return
+
+        if self.download_btn.text() == "Stop":
+            self._cleanup_worker('_worker')
+            return
+
+        fmt = 'audio' if self.rb_audio.isChecked() else 'video'
+        out_dir = self.folder_edit.text().strip()
+        if not out_dir: return
+        
+        self.download_btn.setText("Stop")
+        self.progress_bar.setVisible(True)
+        self.status_lbl.setVisible(True)
+        self.progress_bar.setValue(0)
+        
+        self._cleanup_worker('_worker')
+        worker = DownloadWorker(url, out_dir, fmt, self.quality_combo.currentIndex())
+        self._worker = worker
+        worker.progress.connect(self.progress_bar.setValue)
+        worker.status.connect(lambda s: self.status_lbl.setText(s[-100:]))
+        
+        def on_done(msg):
+            self._reset_ui()
+            self.downloadFinished.emit(msg)
+            self.status_lbl.setText("Done!")
+            self._cleanup_worker('_worker')
+        
+        def on_err(msg):
+            self._reset_ui()
+            self.status_lbl.setText(f"Error: {msg}")
+            self._cleanup_worker('_worker')
+        
+        worker.finished.connect(on_done)
+        worker.error.connect(on_err)
+        worker.start()
+
+    def _reset_ui(self):
+        self.download_btn.setText("Start Download")
+        self.download_btn.setEnabled(True)
+
+    def set_url(self, url):
+        self.url_edit.setText(url)
+        self.url_edit.setFocus()
 
 
 class PlaylistHeader(QFrame):
@@ -310,18 +1073,16 @@ class PlaylistTable(QWidget):
         # Set header labels
         self.table.setHorizontalHeaderLabels(["#", "Title", "Date Added", "Duration"])
         
-        # Column widths
-        self.table.setColumnWidth(0, 50)    # #
-        self.table.setColumnWidth(1, 900)   # Title - will stretch
-        self.table.setColumnWidth(2, 140)   # Date Added - wider for full date
+        # Column widths & resize behavior (adaptive to table size)
+        self.table.setColumnWidth(0, 50)    # Index
+        self.table.setColumnWidth(2, 160)   # Date Added
         self.table.setColumnWidth(3, 80)    # Duration
         
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Fixed)  # # column fixed
-        header.setSectionResizeMode(1, QHeaderView.Interactive)  # Title - user resizable
-        header.setSectionResizeMode(2, QHeaderView.Interactive)  # Date - user resizable
-        header.setSectionResizeMode(3, QHeaderView.Interactive)  # Duration - user resizable
-        header.setStretchLastSection(True)  # Last column fills remaining
+        header.setSectionResizeMode(0, QHeaderView.Fixed)           # Index stays narrow
+        header.setSectionResizeMode(1, QHeaderView.Stretch)         # Title takes remaining space
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)# Date adapts to content
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)# Duration adapts to content
         header.setMinimumSectionSize(50)
         
         # Header click for sorting
@@ -691,8 +1452,8 @@ class PlayerBar(QFrame):
         
         self.time_current = QLineEdit("0:00")
         self.time_current.setObjectName("timeLabel")
-        self.time_current.setFixedWidth(45)
-        self.time_current.setAlignment(Qt.AlignCenter)
+        self.time_current.setFixedWidth(80)
+        self.time_current.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.time_current.setStyleSheet("""
             QLineEdit {
                 background: transparent;
@@ -703,16 +1464,18 @@ class PlayerBar(QFrame):
         """)
         self.time_current.returnPressed.connect(self._on_time_input)
         
-        self.timeline = QSlider(Qt.Horizontal)
+        self.timeline = ClickSlider(Qt.Horizontal)
         self.timeline.setObjectName("timelineSlider")
         self.timeline.setRange(0, 1000)
         self.timeline.setFixedWidth(200)
-        self.timeline.sliderMoved.connect(lambda v: self.seekChanged.emit(v / 1000.0))
+        self.timeline.sliderMoved.connect(self._on_timeline_moved)
+        self.timeline.sliderPressed.connect(lambda: setattr(self, '_is_dragging_timeline', True))
+        self.timeline.sliderReleased.connect(self._on_timeline_released)
         
         self.time_total = QLabel("0:00")
         self.time_total.setObjectName("timeDurationLabel")
-        self.time_total.setFixedWidth(40)
-        self.time_total.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.time_total.setFixedWidth(80)
+        self.time_total.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         timeline_layout.addWidget(self.time_current)
         timeline_layout.addWidget(self.timeline)
@@ -731,7 +1494,7 @@ class PlayerBar(QFrame):
         self.folder_btn.setObjectName("folderBtn")
         self.folder_btn.setFixedSize(48, 48)  # Match other buttons
         self.folder_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.folder_btn.setToolTip("Select Music Folder")
+        self.folder_btn.setToolTip("Select Media Folder")
         self.folder_btn.clicked.connect(self.folderClicked.emit)
         
         folder_icon_path = os.path.join(icons_dir, "folder-icon.png")
@@ -1014,14 +1777,35 @@ class PlayerBar(QFrame):
         self.title_label.setText(title)
         self.artist_label.setText(artist or "-")
     
-    def set_position(self, current: float, total: float):
-        if total > 0:
+    def set_position(self, current: float, total: float, skip_throttle: bool = False):
+        self._last_total_duration = total  # Store for drag updates
+        
+        # Check if user is interacting with the slider
+        is_dragging = getattr(self, '_is_dragging_timeline', False)
+        
+        if total > 0 and not is_dragging:
             self.timeline.blockSignals(True)
             self.timeline.setValue(int((current / total) * 1000))
             self.timeline.blockSignals(False)
         
-        self.time_current.setText(self._format_time(current))
-        self.time_total.setText(self._format_time(total))
+        # Don't overwrite time field while user is editing or dragging
+        if not self.time_current.hasFocus() and not is_dragging:
+            self.time_current.setText(self._format_time(current))
+            self.time_total.setText(self._format_time(total))
+    
+    def _on_timeline_moved(self, value: int):
+        """Update current time label in real-time while dragging."""
+        total = getattr(self, '_last_total_duration', 0)
+        if total > 0:
+            current = (value / 1000.0) * total
+            self.time_current.setText(self._format_time(current))
+        self.seekChanged.emit(value / 1000.0)
+    
+    def _on_timeline_released(self):
+        """Finalize seek on slider release."""
+        setattr(self, '_is_dragging_timeline', False)
+        # Emit one final seek to be sure
+        self.seekChanged.emit(self.timeline.value() / 1000.0)
     
     def _format_time(self, seconds: float) -> str:
         mins = int(seconds // 60)
@@ -1043,16 +1827,46 @@ class PlayerBar(QFrame):
                 secs = int(text)
             
             total_seconds = mins * 60 + secs
-            # Get total duration from timeline
-            total_duration = self.timeline.maximum() / 1000.0  # Approximate
-            if total_duration > 0:
-                ratio = total_seconds / (total_duration * 1000)  # Convert to slider ratio
-                self.seekChanged.emit(min(1.0, max(0.0, ratio)))
+            # Emit seek in seconds directly
+            self.seekChanged.emit(total_seconds)
         except (ValueError, IndexError):
             pass  # Invalid input, ignore
         
         # Deselect the field
         self.time_current.clearFocus()
+
+
+class _PlayerBarOverlayWindow(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QVBoxLayout
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setObjectName("playerBarOverlayWindow")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        self._lay = lay
+
+    def set_bar(self, bar: QWidget):
+        try:
+            if bar is None:
+                return
+            try:
+                bar.setParent(self)
+            except Exception:
+                pass
+            try:
+                self._lay.addWidget(bar)
+            except Exception:
+                pass
+            try:
+                bar.show()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
 
 class MusicPanelWidget(QWidget):
@@ -1107,6 +1921,15 @@ class MusicPanelWidget(QWidget):
         self._current_index = -1
         self._video_mode = False
         self._music_folder = None
+
+        self._helxaic_page_visible = False
+        self._render_gate_reason = None
+        self._video_mode_restore_pending = False
+        self._video_was_on_when_suspended = False
+
+        self._rtss_excluded_once = False
+        self._subtitle_appearance_applied_once = False
+        self._last_media_for_sub_auto_pick = None
         
         # Discord Rich Presence
         self._discord = None
@@ -1115,10 +1938,21 @@ class MusicPanelWidget(QWidget):
         # Config file for persistence (use AppData for bundled exe)
         appdata_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID")
         os.makedirs(appdata_dir, exist_ok=True)
-        self._config_path = os.path.join(appdata_dir, "music_panel_state.json")
+        self._config_path = os.path.join(appdata_dir, "music_page.json")
+        
+        # Initialize subtitle preference defaults
+        self._subtitle_style_preset = 'outline'
+        self._subtitle_font_size = 16
         
         self._setup_ui()
         self._connect_signals()
+
+        try:
+            app = QApplication.instance()
+            if app:
+                app.applicationStateChanged.connect(self._on_app_state_changed_for_render_gate)
+        except Exception:
+            pass
         
         # Ensure minimum height so PlayerBar never gets clipped
         self.setMinimumHeight(400)  # Menu(30) + Header(~200) + PlayerBar(75) + margin
@@ -1135,6 +1969,163 @@ class MusicPanelWidget(QWidget):
         self._setup_audio_device_monitor()
         
         print("[Music] Native Qt MusicPanelWidget initialized")
+
+    def _is_app_render_allowed(self) -> bool:
+        try:
+            if QApplication.applicationState() != Qt.ApplicationActive:
+                return False
+        except Exception:
+            return False
+
+        try:
+            mw = self.window()
+            if mw and mw.isMinimized():
+                return False
+        except Exception:
+            pass
+
+        return True
+
+    def _disable_video_output_and_subtitles(self, reason: str, switch_to_playlist: bool):
+        try:
+            if hasattr(self, 'video_player') and self.video_player:
+                try:
+                    self.video_player.set_render_suspended(True)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, '_player') and self._player:
+                self._player.setVideoOutput(None)
+        except Exception:
+            pass
+
+        if switch_to_playlist:
+            try:
+                self._video_mode = False
+            except Exception:
+                pass
+            try:
+                if hasattr(self, 'stack') and self.stack:
+                    self.stack.setCurrentIndex(0)
+            except Exception:
+                pass
+
+        try:
+            self._render_gate_reason = reason
+        except Exception:
+            pass
+
+    def _enable_video_output_and_subtitles(self, reason: str):
+        try:
+            if not hasattr(self, '_player') or not self._player:
+                return
+        except Exception:
+            return
+
+        try:
+            self._video_mode = True
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, 'stack') and self.stack:
+                self.stack.setCurrentIndex(1)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, 'video_player') and self.video_player:
+                self._player.setVideoOutput(self.video_player.video_widget)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, 'video_player') and self.video_player:
+                self.video_player.set_render_suspended(False)
+        except Exception:
+            pass
+
+        try:
+            self._render_gate_reason = reason
+        except Exception:
+            pass
+
+        try:
+            QTimer.singleShot(0, self._auto_pick_embedded_subtitles_if_available)
+        except Exception:
+            pass
+
+    def on_helxaic_page_hidden(self):
+        try:
+            self._helxaic_page_visible = False
+        except Exception:
+            pass
+
+        try:
+            self._video_mode_restore_pending = bool(getattr(self, '_video_mode', False))
+        except Exception:
+            self._video_mode_restore_pending = False
+
+        self._disable_video_output_and_subtitles('page_hidden', switch_to_playlist=True)
+
+    def on_helxaic_page_shown(self):
+        try:
+            self._helxaic_page_visible = True
+        except Exception:
+            pass
+
+        try:
+            if not getattr(self, '_video_mode_restore_pending', False):
+                return
+        except Exception:
+            return
+
+        if not self._is_app_render_allowed():
+            return
+
+        try:
+            self._video_mode_restore_pending = False
+        except Exception:
+            pass
+        self._enable_video_output_and_subtitles('page_shown_restore')
+
+    def _on_app_state_changed_for_render_gate(self, state):
+        try:
+            if not getattr(self, '_helxaic_page_visible', False):
+                return
+        except Exception:
+            return
+
+        allowed = self._is_app_render_allowed()
+
+        if not allowed:
+            try:
+                if getattr(self, '_video_mode', False):
+                    self._video_was_on_when_suspended = True
+                    self._disable_video_output_and_subtitles('app_inactive', switch_to_playlist=False)
+                else:
+                    self._video_was_on_when_suspended = False
+            except Exception:
+                pass
+            return
+
+        try:
+            if getattr(self, '_video_mode_restore_pending', False):
+                self._video_mode_restore_pending = False
+                self._enable_video_output_and_subtitles('app_active_restore')
+                return
+        except Exception:
+            pass
+
+        try:
+            if getattr(self, '_video_was_on_when_suspended', False) and getattr(self, '_video_mode', False):
+                self._enable_video_output_and_subtitles('app_active_resume')
+            self._video_was_on_when_suspended = False
+        except Exception:
+            pass
     
     def showEvent(self, event):
         """Force layout update when widget is shown to prevent PlayerBar clipping."""
@@ -1412,12 +2403,33 @@ class MusicPanelWidget(QWidget):
         
         # F: Toggle fullscreen
         if key == Qt.Key_F:
-            self._toggle_fullscreen()
+            try:
+                # In video view, use the VideoPlayerWidget fullscreen path so overlays
+                # (subtitles + PlayerBar overlay window) work correctly.
+                if getattr(self, '_video_mode', False) and hasattr(self, 'video_player') and self.video_player is not None:
+                    self.video_player._toggle_fullscreen()
+                else:
+                    self._toggle_fullscreen()
+            except Exception:
+                try:
+                    self._toggle_fullscreen()
+                except Exception:
+                    pass
             event.accept()
             return
         
         # Escape: Exit fullscreen
         if key == Qt.Key_Escape:
+            try:
+                # Prefer exiting VideoPlayerWidget fullscreen when in video view.
+                if getattr(self, '_video_mode', False) and hasattr(self, 'video_player') and self.video_player is not None:
+                    if getattr(self.video_player, '_is_fullscreen', False):
+                        self.video_player._toggle_fullscreen()
+                        event.accept()
+                        return
+            except Exception:
+                pass
+
             if hasattr(self, '_is_fullscreen') and self._is_fullscreen:
                 self._toggle_fullscreen()
                 event.accept()
@@ -1478,12 +2490,51 @@ class MusicPanelWidget(QWidget):
         self.video_player.backRequested.connect(self._switch_to_playlist)
         self.video_player.fullscreenToggled.connect(self._toggle_window_fullscreen)
         self.stack.addWidget(self.video_player)
+
+        try:
+            self._apply_saved_subtitle_appearance()
+        except Exception:
+            pass
         
-        layout.addWidget(self.stack, stretch=1)
+        # Main view area (Playlist + YouTube Sidebar) with user-resizable splitter
+        self.main_splitter = QSplitter(Qt.Horizontal, self)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setHandleWidth(6)
+        self.main_splitter.setOpaqueResize(True)
+
+        self.main_splitter.addWidget(self.stack)
+
+        # YouTube Panel (Initially Hidden)
+        self.yt_panel = YouTubeDownloaderPanel(self)
+        self.yt_panel.hide()
+        self.yt_panel.closeRequested.connect(self._toggle_yt_panel)
+        self.yt_panel.downloadFinished.connect(self._on_yt_download_finished)
+        self.main_splitter.addWidget(self.yt_panel)
+
+        # Keep main content dominant when splitter moves
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 0)
+        self.main_splitter.splitterMoved.connect(self._on_main_splitter_moved)
+
+        # Default (panel hidden): all width to main content
+        self._yt_last_width = 320
+        self._update_yt_panel_constraints()
+        self.main_splitter.setSizes([1, 0])
+
+        layout.addWidget(self.main_splitter, stretch=1)
         
-        # Player bar
-        self.player_bar = PlayerBar()
-        layout.addWidget(self.player_bar)
+        # Player bar (wrapped so we can detach/overlay it during fullscreen video)
+        self._player_bar_container = QFrame(self)
+        try:
+            self._player_bar_container.setContentsMargins(0, 0, 0, 0)
+        except Exception:
+            pass
+        _pb_layout = QVBoxLayout(self._player_bar_container)
+        _pb_layout.setContentsMargins(0, 0, 0, 0)
+        _pb_layout.setSpacing(0)
+        self.player_bar = PlayerBar(self._player_bar_container)
+        _pb_layout.addWidget(self.player_bar)
+        layout.addWidget(self._player_bar_container)
         
         # Main styling - gradient background
         self.setStyleSheet("""
@@ -1498,6 +2549,50 @@ class MusicPanelWidget(QWidget):
                 background: #000000;
             }
         """)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Enforce max sidebar width (<= 50% of panel)
+        self._update_yt_panel_constraints()
+        try:
+            if getattr(self, '_is_fullscreen', False) and getattr(self, '_playerbar_overlay_enabled', False):
+                self._update_playerbar_overlay_geometry()
+        except Exception:
+            pass
+
+    def _update_yt_panel_constraints(self):
+        """Clamp YouTube panel width to <= 50% of available width."""
+        if not hasattr(self, 'yt_panel'):
+            return
+        total_w = max(1, self.width())
+        # Minimum width is 20% of total, maximum is 50% of total
+        min_w = max(1, int(total_w * 0.2))
+        max_w = max(min_w, int(total_w * 0.5))
+
+        self.yt_panel.setMinimumWidth(min_w)
+        self.yt_panel.setMaximumWidth(max_w)
+
+        # If visible and currently wider than max, pull it back via splitter sizes.
+        if hasattr(self, 'main_splitter') and self.yt_panel.isVisible():
+            sizes = self.main_splitter.sizes()
+            if len(sizes) >= 2:
+                total = max(1, sizes[0] + sizes[1])
+                if sizes[1] > max_w:
+                    sizes[1] = max_w
+                    sizes[0] = max(1, total - sizes[1])
+                    self.main_splitter.setSizes(sizes)
+
+    def _on_main_splitter_moved(self, pos, index):
+        # Record the user's chosen width and keep it clamped.
+        if hasattr(self, 'main_splitter'):
+            sizes = self.main_splitter.sizes()
+            if len(sizes) >= 2:
+                # Remember last width but keep it within current min/max.
+                total_w = max(1, self.width())
+                min_w = max(1, int(total_w * 0.2))
+                max_w = max(min_w, int(total_w * 0.5))
+                self._yt_last_width = max(min_w, min(max_w, sizes[1]))
+        self._update_yt_panel_constraints()
     
     def _create_search_bar(self, parent_layout):
         """Create the search/filter bar."""
@@ -1647,7 +2742,7 @@ class MusicPanelWidget(QWidget):
     def _create_menu_bar(self, layout):
         """Create the menu bar with Audio, Video, and Tools menus."""
         from PySide6.QtWidgets import QMenuBar, QMenu
-        from PySide6.QtGui import QAction
+        from PySide6.QtGui import QAction, QActionGroup
         
         menu_bar = QMenuBar()
         menu_bar.setObjectName("musicMenuBar")
@@ -1766,21 +2861,145 @@ class MusicPanelWidget(QWidget):
         self.action_fullscreen.setShortcut("F")
         self.action_fullscreen.triggered.connect(self._toggle_fullscreen)
         video_menu.addAction(self.action_fullscreen)
+
+        # === Subtitle Menu ===
+        subtitle_menu = menu_bar.addMenu("Subtitle")
+        subtitle_menu.setObjectName("subtitleMenu")
+
+        self.action_add_subtitle = QAction("Add Subtitle File...", self)
+        self.action_add_subtitle.triggered.connect(self._add_subtitle_file)
+        subtitle_menu.addAction(self.action_add_subtitle)
+
+        subtitle_menu.addSeparator()
+
+        self._subtitle_track_menu = subtitle_menu.addMenu("Sub Track")
+        self._subtitle_track_menu.setObjectName("subtitleTrackMenu")
+        self._subtitle_track_menu.aboutToShow.connect(self._populate_subtitle_tracks_menu)
+
+        subtitle_menu.addSeparator()
+
+        self._subtitle_style_menu = subtitle_menu.addMenu("Style")
+        self._subtitle_style_menu.setObjectName("subtitleStyleMenu")
+        self._subtitle_style_menu.aboutToShow.connect(self._sync_subtitle_style_menu)
+
+        self._subtitle_style_variant_actions = {}
+        self._subtitle_style_variant_groups = {}
+        self._subtitle_style_submenus = {}
+
+        self._subtitle_style_global_group = QActionGroup(self)
+        self._subtitle_style_global_group.setExclusive(True)
+
+        def _add_variant(preset_key: str, label: str, bold: bool, italic: bool):
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.triggered.connect(lambda _c=False, pk=preset_key, b=bold, i=italic: self._set_subtitle_style_variant(pk, b, i))
+            try:
+                self._subtitle_style_global_group.addAction(act)
+            except Exception:
+                pass
+            self._subtitle_style_submenus[preset_key].addAction(act)
+            self._subtitle_style_variant_actions[(preset_key, bool(bold), bool(italic))] = act
+
+        for key, label in [
+            ("outline", "Outline"),
+            ("shadow", "Shadow"),
+            ("box", "Box"),
+        ]:
+            sub = self._subtitle_style_menu.addMenu(label)
+            sub.setObjectName(f"subtitleStyleSubMenu_{key}")
+            self._subtitle_style_submenus[key] = sub
+
+            self._subtitle_style_variant_groups[key] = self._subtitle_style_global_group
+
+            _add_variant(key, "Regular", False, False)
+            _add_variant(key, "Bold", True, False)
+            _add_variant(key, "Italic", False, True)
+            _add_variant(key, "Bold Italic", True, True)
+
+        subtitle_menu.addSeparator()
+
+        self._subtitle_size_menu = subtitle_menu.addMenu("Size")
+        self._subtitle_size_menu.setObjectName("subtitleSizeMenu")
+        self._subtitle_size_menu.aboutToShow.connect(self._sync_subtitle_size_menu)
+
+        from PySide6.QtWidgets import QWidgetAction, QWidget, QHBoxLayout, QSlider, QLabel, QSpinBox
+
+        size_widget = QWidget()
+        size_widget.setStyleSheet("""
+            QWidget { background: transparent; padding: 5px 10px; }
+            QLabel { color: #e0e0e0; font-size: 12px; min-width: 40px; }
+            QSpinBox {
+                background: rgba(50, 54, 62, 0.9);
+                color: #e0e0e0;
+                border: 1px solid rgba(80, 80, 80, 0.4);
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 12px;
+                min-width: 54px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button { width: 0px; height: 0px; border: none; }
+            QSlider::groove:horizontal { background: #333; height: 6px; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #1a1a1a; border: 1px solid #FF5B06; width: 12px; height: 12px; margin: -4px 0; border-radius: 7px; }
+            QSlider::sub-page:horizontal { background: #FF5B06; border-radius: 3px; }
+        """)
+
+        size_layout = QHBoxLayout(size_widget)
+        size_layout.setContentsMargins(10, 5, 10, 5)
+        size_layout.setSpacing(10)
+
+        size_label = QLabel("Text")
+        self._subtitle_size_slider = QSlider(Qt.Horizontal)
+        self._subtitle_size_slider.setRange(8, 48)
+        self._subtitle_size_slider.setValue(16)
+        self._subtitle_size_slider.setFixedWidth(130)
+
+        self._subtitle_size_spin = QSpinBox()
+        self._subtitle_size_spin.setRange(8, 48)
+        self._subtitle_size_spin.setValue(16)
+
+        def _apply_size(val: int):
+            try:
+                self._set_subtitle_font_size(int(val))
+            except Exception:
+                pass
+
+        def _on_slider(val: int):
+            self._subtitle_size_spin.blockSignals(True)
+            self._subtitle_size_spin.setValue(int(val))
+            self._subtitle_size_spin.blockSignals(False)
+            _apply_size(val)
+
+        def _on_spin(val: int):
+            self._subtitle_size_slider.blockSignals(True)
+            self._subtitle_size_slider.setValue(int(val))
+            self._subtitle_size_slider.blockSignals(False)
+            _apply_size(val)
+
+        self._subtitle_size_slider.valueChanged.connect(_on_slider)
+        self._subtitle_size_spin.valueChanged.connect(_on_spin)
+
+        size_layout.addWidget(size_label)
+        size_layout.addWidget(self._subtitle_size_slider)
+        size_layout.addWidget(self._subtitle_size_spin)
+
+        size_action = QWidgetAction(self)
+        size_action.setDefaultWidget(size_widget)
+        self._subtitle_size_menu.addAction(size_action)
         
         # === Tools Menu ===
         tools_menu = menu_bar.addMenu("Tools")
         tools_menu.setObjectName("toolsMenu")
         
         # Select Folder
-        self.action_select_folder = QAction("Select Music Folder...", self)
+        self.action_select_folder = QAction("Select Media Folder...", self)
         self.action_select_folder.setShortcut("Ctrl+O")
         self.action_select_folder.triggered.connect(self._browse_folder_direct)
         tools_menu.addAction(self.action_select_folder)
         
         # Download from YouTube
-        self.action_download_yt = QAction("Download from YouTube...", self)
+        self.action_download_yt = QAction("YouTube Downloader", self)
         self.action_download_yt.setShortcut("Ctrl+U")
-        self.action_download_yt.triggered.connect(self._show_youtube_download_dialog)
+        self.action_download_yt.triggered.connect(self._toggle_yt_panel)
         tools_menu.addAction(self.action_download_yt)
         
         tools_menu.addSeparator()
@@ -1841,6 +3060,670 @@ class MusicPanelWidget(QWidget):
         
         self._menu_bar_widget = menu_bar  # Store reference for fullscreen toggle
         layout.addWidget(menu_bar)
+
+        try:
+            self._apply_saved_subtitle_style_preset()
+        except Exception:
+            pass
+
+        try:
+            self._apply_saved_subtitle_font_size()
+        except Exception:
+            pass
+
+    def _get_subtitle_style_settings(self):
+        try:
+            return QSettings("TDD131", "HELXAID")
+        except Exception:
+            return QSettings()
+
+    def _apply_saved_subtitle_style_preset(self):
+        if not hasattr(self, 'video_player'):
+            return
+        s = self._get_subtitle_style_settings()
+        preset = s.value("MusicPlayer/SubtitleStylePreset", "outline", type=str)
+        preset = (preset or "outline").strip().lower()
+        if preset not in ("outline", "shadow", "box"):
+            preset = "outline"
+        try:
+            self.video_player.set_subtitle_style_preset(preset)
+        except Exception:
+            pass
+
+        try:
+            bold = bool(int(s.value("MusicPlayer/SubtitleFontBold", 1)))
+        except Exception:
+            bold = True
+        try:
+            italic = bool(int(s.value("MusicPlayer/SubtitleFontItalic", 0)))
+        except Exception:
+            italic = False
+        try:
+            self.video_player.set_subtitle_font_variant(bold, italic)
+        except Exception:
+            pass
+
+    def _apply_saved_subtitle_appearance(self):
+        try:
+            self._apply_saved_subtitle_style_preset()
+        except Exception:
+            pass
+        try:
+            self._apply_saved_subtitle_font_size()
+        except Exception:
+            pass
+
+    def _apply_saved_subtitle_font_size(self):
+        if not hasattr(self, 'video_player'):
+            return
+        s = self._get_subtitle_style_settings()
+        try:
+            pt = int(s.value("MusicPlayer/SubtitleFontSize", 16))
+        except Exception:
+            pt = 16
+        if pt < 8:
+            pt = 8
+        if pt > 48:
+            pt = 48
+        try:
+            self.video_player.set_subtitle_font_size(pt)
+        except Exception:
+            pass
+
+    def _set_subtitle_font_size(self, pt: int):
+        try:
+            v = int(pt)
+        except Exception:
+            v = 16
+        if v < 8:
+            v = 8
+        if v > 48:
+            v = 48
+        self._subtitle_font_size = v
+        try:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_subtitle_font_size(v)
+        except Exception:
+            pass
+        # Save to JSON state
+        try:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(500, self._save_state)
+        except Exception:
+            pass
+
+    def _sync_subtitle_size_menu(self):
+        if not hasattr(self, '_subtitle_size_slider') or not hasattr(self, '_subtitle_size_spin'):
+            return
+        pt = 16
+        try:
+            if hasattr(self, 'video_player'):
+                pt = int(self.video_player.get_subtitle_font_size())
+        except Exception:
+            pt = 16
+        if pt < 8:
+            pt = 8
+        if pt > 48:
+            pt = 48
+        try:
+            self._subtitle_size_slider.blockSignals(True)
+            self._subtitle_size_spin.blockSignals(True)
+            self._subtitle_size_slider.setValue(pt)
+            self._subtitle_size_spin.setValue(pt)
+        finally:
+            self._subtitle_size_slider.blockSignals(False)
+            self._subtitle_size_spin.blockSignals(False)
+
+    def _set_subtitle_style_preset(self, preset: str):
+        preset = (preset or "outline").strip().lower()
+        if preset not in ("outline", "shadow", "box"):
+            preset = "outline"
+        self._subtitle_style_preset = preset
+        try:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_subtitle_style_preset(preset)
+        except Exception:
+            pass
+        # Save to JSON state
+        try:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(500, self._save_state)
+        except Exception:
+            pass
+
+    def _set_subtitle_style_variant(self, preset: str, bold: bool, italic: bool):
+        preset = (preset or "outline").strip().lower()
+        if preset not in ("outline", "shadow", "box"):
+            preset = "outline"
+        try:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_subtitle_style_preset(preset)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_subtitle_font_variant(bool(bold), bool(italic))
+        except Exception:
+            pass
+        try:
+            s = self._get_subtitle_style_settings()
+            s.setValue("MusicPlayer/SubtitleStylePreset", preset)
+            s.setValue("MusicPlayer/SubtitleFontBold", 1 if bool(bold) else 0)
+            s.setValue("MusicPlayer/SubtitleFontItalic", 1 if bool(italic) else 0)
+            try:
+                s.sync()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _sync_subtitle_style_menu(self):
+        preset = "outline"
+        try:
+            if hasattr(self, 'video_player'):
+                preset = self.video_player.get_subtitle_style_preset()
+        except Exception:
+            preset = "outline"
+        preset = (preset or "outline").strip().lower()
+        if preset not in ("outline", "shadow", "box"):
+            preset = "outline"
+
+        bold = True
+        italic = False
+        try:
+            if hasattr(self, 'video_player'):
+                b, i = self.video_player.get_subtitle_font_variant()
+                bold = bool(b)
+                italic = bool(i)
+        except Exception:
+            bold = True
+            italic = False
+
+        try:
+            act = self._subtitle_style_variant_actions.get((preset, bool(bold), bool(italic)))
+            if act:
+                act.setChecked(True)
+        except Exception:
+            pass
+
+    def _ensure_subtitle_state(self):
+        if not hasattr(self, '_current_media_path'):
+            self._current_media_path = None
+        if not hasattr(self, '_current_media_url'):
+            self._current_media_url = None
+        if not hasattr(self, '_subtitle_extract_cache'):
+            self._subtitle_extract_cache = {}
+        if not hasattr(self, '_subtitle_embedded_reverse'):
+            self._subtitle_embedded_reverse = {}
+        if not hasattr(self, '_subtitle_extract_last_error'):
+            self._subtitle_extract_last_error = {}
+        if not hasattr(self, '_subtitle_user_disabled'):
+            self._subtitle_user_disabled = False
+        if not hasattr(self, '_subtitle_prefer_embedded'):
+            self._subtitle_prefer_embedded = True
+        if not hasattr(self, '_subtitle_pref_loaded'):
+            self._subtitle_pref_loaded = False
+
+        if not self._subtitle_pref_loaded:
+            self._subtitle_pref_loaded = True
+            try:
+                s = self._get_subtitle_style_settings()
+                mode = s.value("MusicPlayer/SubtitleDefaultMode", "embedded", type=str)
+                mode = (mode or "embedded").strip().lower()
+                self._subtitle_prefer_embedded = (mode == "embedded")
+            except Exception:
+                self._subtitle_prefer_embedded = True
+
+    def _set_subtitle_default_mode(self, mode: str):
+        self._ensure_subtitle_state()
+        m = (mode or "embedded").strip().lower()
+        if m not in ("embedded", "external"):
+            m = "embedded"
+        self._subtitle_prefer_embedded = (m == "embedded")
+        try:
+            s = self._get_subtitle_style_settings()
+            s.setValue("MusicPlayer/SubtitleDefaultMode", m)
+            try:
+                s.sync()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _on_subtitles_disabled_by_user(self):
+        self._ensure_subtitle_state()
+        self._subtitle_user_disabled = True
+        try:
+            self._set_subtitle_default_mode("external")
+        except Exception:
+            pass
+        if hasattr(self, 'video_player'):
+            try:
+                self.video_player.clear_subtitles()
+            except Exception:
+                pass
+
+    def _mark_subtitles_enabled_by_user(self):
+        self._ensure_subtitle_state()
+        self._subtitle_user_disabled = False
+
+    def _pick_best_embedded_subtitle_stream(self, streams):
+        try:
+            if not streams:
+                return None
+            def score(s):
+                lang = (s.get('lang') or '').lower().strip()
+                title = (s.get('title') or '').lower()
+                codec = (s.get('codec') or '').lower()
+                sc = 0
+                if lang in ('eng', 'en'):
+                    sc += 100
+                if 'english' in title:
+                    sc += 90
+                if codec in ('ass', 'ssa'):
+                    sc += 10
+                return sc
+            return sorted(streams, key=score, reverse=True)[0]
+        except Exception:
+            return streams[0] if streams else None
+
+    def _auto_pick_embedded_subtitles_if_available(self):
+        self._ensure_subtitle_state()
+        if not hasattr(self, 'video_player'):
+            return
+        if not self._current_media_path or not os.path.exists(self._current_media_path):
+            return
+        if getattr(self, '_subtitle_user_disabled', False):
+            return
+        if not getattr(self, '_subtitle_prefer_embedded', True):
+            return
+        try:
+            active_path = self.video_player.get_active_subtitle_path()
+        except Exception:
+            active_path = None
+        if active_path:
+            return
+
+        streams = self._list_embedded_subtitle_streams(self._current_media_path)
+        if not streams:
+            return
+        best = self._pick_best_embedded_subtitle_stream(streams)
+        if not best:
+            return
+
+        try:
+            idx = int(best.get('stream_index'))
+        except Exception:
+            return
+        codec = best.get('codec') or ''
+        out_sub = self._extract_embedded_subtitle(self._current_media_path, idx, codec)
+        if not out_sub:
+            return
+        try:
+            self.video_player.set_subtitle_file(out_sub)
+            self._mark_subtitles_enabled_by_user()
+            self._set_subtitle_default_mode("embedded")
+        except Exception:
+            pass
+
+    def _set_current_media_local_path(self, path: Optional[str]):
+        self._ensure_subtitle_state()
+        self._current_media_path = path
+        self._current_media_url = None
+
+    def _set_current_media_url(self, url: Optional[str]):
+        self._ensure_subtitle_state()
+        self._current_media_path = None
+        self._current_media_url = url
+
+    def _get_ffmpeg_bin_dir(self):
+        try:
+            appdata = os.environ.get('APPDATA', '')
+            p = os.path.join(appdata, 'HELXAID', 'tools', 'ffmpeg', 'bin')
+            if os.path.isdir(p):
+                return p
+        except Exception:
+            pass
+        return None
+
+    def _get_ffprobe_path(self):
+        bin_dir = self._get_ffmpeg_bin_dir()
+        if bin_dir:
+            exe = os.path.join(bin_dir, 'ffprobe.exe')
+            if os.path.exists(exe):
+                return exe
+        return 'ffprobe'
+
+    def _get_ffmpeg_path(self):
+        bin_dir = self._get_ffmpeg_bin_dir()
+        if bin_dir:
+            exe = os.path.join(bin_dir, 'ffmpeg.exe')
+            if os.path.exists(exe):
+                return exe
+        return 'ffmpeg'
+
+    def _list_embedded_subtitle_streams(self, video_path: str):
+        try:
+            ffprobe = self._get_ffprobe_path()
+            cmd = [
+                ffprobe,
+                '-v', 'error',
+                '-select_streams', 's',
+                '-show_entries', 'stream=index,codec_name:stream_tags=language,title',
+                '-of', 'json',
+                video_path,
+            ]
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=0x08000000)
+            if r.returncode != 0:
+                return []
+            data = json.loads(r.stdout or '{}')
+            streams = data.get('streams', []) or []
+            out = []
+            for s in streams:
+                idx = s.get('index', None)
+                codec = s.get('codec_name', '')
+                tags = s.get('tags', {}) or {}
+                lang = tags.get('language', '')
+                title = tags.get('title', '')
+                if idx is None:
+                    continue
+                out.append({'stream_index': int(idx), 'codec': codec, 'lang': lang, 'title': title})
+            return out
+        except Exception:
+            return []
+
+    def _extract_embedded_subtitle(self, video_path: str, stream_index: int, codec: str = ''):
+        self._ensure_subtitle_state()
+        codec_l = (codec or '').lower().strip()
+
+        image_based = codec_l in (
+            'hdmv_pgs_subtitle', 'pgs', 'dvd_subtitle', 'vobsub', 'dvb_subtitle',
+            'xsub', 'dvbsub',
+        )
+        if image_based:
+            cache_key = (video_path, int(stream_index), '.sup')
+            self._subtitle_extract_last_error[cache_key] = (
+                f"Embedded subtitle codec '{codec_l}' is image-based (PGS/VobSub/DVB). "
+                "HELXAIC current subtitle renderer is text-only, so this codec cannot be extracted into SRT/ASS reliably."
+            )
+            return None
+
+        out_ext = '.ass' if codec_l in ('ass', 'ssa') else '.srt'
+
+        cache_key = (video_path, int(stream_index), out_ext)
+        cached = self._subtitle_extract_cache.get(cache_key)
+        if cached and os.path.exists(cached):
+            self._subtitle_embedded_reverse[cached] = cache_key
+            return cached
+
+        ffmpeg = self._get_ffmpeg_path()
+        out_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_subs')
+        os.makedirs(out_dir, exist_ok=True)
+        h = hashlib.sha1(f"{video_path}|{stream_index}|{out_ext}".encode('utf-8', errors='replace')).hexdigest()[:16]
+        out_path = os.path.join(out_dir, f"sub_{h}_s{stream_index}{out_ext}")
+
+        if out_ext == '.ass':
+            cmd = [
+                ffmpeg,
+                '-y',
+                '-i', video_path,
+                '-map', f'0:{int(stream_index)}',
+                '-c:s', 'copy',
+                out_path,
+            ]
+        else:
+            cmd = [
+                ffmpeg,
+                '-y',
+                '-i', video_path,
+                '-map', f'0:{int(stream_index)}',
+                '-c:s', 'srt',
+                out_path,
+            ]
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=0x08000000)
+        if r.returncode == 0 and os.path.exists(out_path):
+            self._subtitle_extract_cache[cache_key] = out_path
+            self._subtitle_embedded_reverse[out_path] = cache_key
+            self._subtitle_extract_last_error[cache_key] = None
+            return out_path
+        try:
+            err = (r.stderr or '').strip()
+            self._subtitle_extract_last_error[cache_key] = err if err else f"ffmpeg failed with code {r.returncode}"
+        except Exception:
+            pass
+        return None
+
+    def _add_subtitle_file(self):
+        from PySide6.QtWidgets import QFileDialog
+        self._ensure_subtitle_state()
+        start_dir = ''
+        if self._current_media_path and os.path.exists(self._current_media_path):
+            try:
+                start_dir = os.path.dirname(self._current_media_path)
+            except Exception:
+                start_dir = ''
+        f, _ = QFileDialog.getOpenFileName(self, 'Select Subtitle File', start_dir, 'Subtitles (*.srt *.vtt *.ass *.ssa)')
+        if not f:
+            return
+        if hasattr(self, 'video_player'):
+            self._mark_subtitles_enabled_by_user()
+            try:
+                self._set_subtitle_default_mode("external")
+            except Exception:
+                pass
+            self.video_player.set_subtitle_file(f)
+
+    def _populate_subtitle_tracks_menu(self):
+        from PySide6.QtGui import QAction, QActionGroup
+        self._ensure_subtitle_state()
+        menu = self._subtitle_track_menu
+        menu.clear()
+
+        self._subtitle_action_group = QActionGroup(self)
+        self._subtitle_action_group.setExclusive(True)
+
+        active_path = None
+        if hasattr(self, 'video_player'):
+            try:
+                active_path = self.video_player.get_active_subtitle_path()
+            except Exception:
+                active_path = None
+
+        active_embedded = None
+        try:
+            if active_path:
+                active_embedded = self._subtitle_embedded_reverse.get(active_path)
+        except Exception:
+            active_embedded = None
+
+        disable_action = QAction('Disable', self)
+        disable_action.setCheckable(True)
+        disable_action.setChecked(not active_path)
+        disable_action.triggered.connect(lambda _c=False: self._on_subtitles_disabled_by_user())
+        self._subtitle_action_group.addAction(disable_action)
+        menu.addAction(disable_action)
+
+        if not (self._current_media_path and os.path.exists(self._current_media_path)):
+            try:
+                print(f"[Subtitle] No local media path for embedded subtitles. _current_media_path={self._current_media_path}")
+            except Exception:
+                pass
+
+        # Sidecar subtitles (same basename)
+        if self._current_media_path and os.path.exists(self._current_media_path):
+            base, _ext = os.path.splitext(self._current_media_path)
+            sidecars = []
+            for p in [
+                base + '.srt', base + '.vtt', base + '.ass', base + '.ssa',
+                base + '.SRT', base + '.VTT', base + '.ASS', base + '.SSA',
+            ]:
+                if os.path.exists(p) and p not in sidecars:
+                    sidecars.append(p)
+            if sidecars:
+                menu.addSeparator()
+                for p in sidecars:
+                    name = os.path.basename(p)
+                    a = QAction(name, self)
+                    a.setCheckable(True)
+                    if active_path and os.path.normcase(active_path) == os.path.normcase(p):
+                        a.setChecked(True)
+                    def _on_pick_sidecar(_c=False, _p=p):
+                        if not hasattr(self, 'video_player'):
+                            return
+                        self._mark_subtitles_enabled_by_user()
+                        try:
+                            self._set_subtitle_default_mode("external")
+                        except Exception:
+                            pass
+                        self.video_player.set_subtitle_file(_p)
+                    a.triggered.connect(_on_pick_sidecar)
+                    self._subtitle_action_group.addAction(a)
+                    menu.addAction(a)
+            else:
+                try:
+                    print(f"[Subtitle] ffprobe found 0 embedded subtitle streams for: {self._current_media_path}")
+                except Exception:
+                    pass
+
+        # Embedded subtitles
+        if self._current_media_path and os.path.exists(self._current_media_path):
+            streams = self._list_embedded_subtitle_streams(self._current_media_path)
+            if streams:
+                menu.addSeparator()
+                for s in streams:
+                    idx = s.get('stream_index')
+                    lang = s.get('lang') or ''
+                    title = s.get('title') or ''
+                    codec = s.get('codec') or ''
+                    label = f"Embedded: s:{idx}"
+                    if lang:
+                        label += f" [{lang}]"
+                    if title:
+                        label += f" {title}"
+                    if codec:
+                        label += f" ({codec})"
+                    a = QAction(label, self)
+                    a.setCheckable(True)
+
+                    try:
+                        if active_embedded and active_embedded[0] == self._current_media_path and int(active_embedded[1]) == int(idx):
+                            a.setChecked(True)
+                    except Exception:
+                        pass
+
+                    def on_pick_embedded(_c=False, stream_index=int(idx), video_path=self._current_media_path, stream_codec=codec, stream_label=label):
+                        if not hasattr(self, 'video_player'):
+                            return
+                        self._mark_subtitles_enabled_by_user()
+                        try:
+                            self._set_subtitle_default_mode("embedded")
+                        except Exception:
+                            pass
+                        try:
+                            print(f"[Subtitle] Pick embedded: path={video_path} stream={stream_index} codec={stream_codec}")
+                        except Exception:
+                            pass
+                        out_sub = self._extract_embedded_subtitle(video_path, stream_index, stream_codec)
+                        if out_sub:
+                            try:
+                                print(f"[Subtitle] Extracted embedded to: {out_sub}")
+                            except Exception:
+                                pass
+                            self.video_player.set_subtitle_file(out_sub)
+                            try:
+                                cue_count = self.video_player.get_subtitle_cue_count()
+                            except Exception:
+                                cue_count = 0
+                            try:
+                                last_err = None
+                                try:
+                                    last_err = self.video_player.get_subtitle_last_error()
+                                except Exception:
+                                    last_err = None
+                                print(f"[Subtitle] Parsed cues: {cue_count} (last_error={last_err})")
+                            except Exception:
+                                pass
+                            if cue_count > 0:
+                                return
+                            try:
+                                from PySide6.QtWidgets import QMessageBox
+                                msg = 'Embedded subtitle was extracted but no cues could be parsed.'
+                                if stream_codec:
+                                    msg += f"\n\nStream codec: {stream_codec}"
+                                if last_err:
+                                    msg += f"\n\nSubtitle parser: {last_err}"
+                                msg += "\n\nTip: If the embedded subtitle is ASS/SSA/PGS, it may not convert cleanly to SRT. Try an external .srt/.vtt file."
+                                QMessageBox.warning(self, 'No Subtitles Parsed', msg)
+                            except Exception:
+                                pass
+                            return
+                        try:
+                            from PySide6.QtWidgets import QMessageBox
+                            err = None
+                            try:
+                                codec_l = (stream_codec or '').lower().strip()
+                                image_based = codec_l in (
+                                    'hdmv_pgs_subtitle', 'pgs', 'dvd_subtitle', 'vobsub', 'dvb_subtitle',
+                                    'xsub', 'dvbsub',
+                                )
+                                if image_based:
+                                    err = self._subtitle_extract_last_error.get((video_path, int(stream_index), '.sup'))
+                                else:
+                                    err = self._subtitle_extract_last_error.get(
+                                        (video_path, int(stream_index), '.ass' if codec_l in ('ass', 'ssa') else '.srt')
+                                    )
+                            except Exception:
+                                err = None
+                            try:
+                                print(f"[Subtitle] Extraction failed: {err}")
+                            except Exception:
+                                pass
+                            msg = 'Could not extract embedded subtitles.'
+                            if stream_codec:
+                                msg += f"\n\nStream codec: {stream_codec}"
+                            if err:
+                                msg += f"\n\nffmpeg: {err[:900]}"
+                            msg += "\n\nMake sure ffmpeg is available and the subtitle format is supported."
+                            QMessageBox.warning(self, 'Subtitle Extraction Failed', msg)
+                        except Exception:
+                            pass
+
+                    a.triggered.connect(on_pick_embedded)
+                    self._subtitle_action_group.addAction(a)
+                    menu.addAction(a)
+
+    def _maybe_auto_load_sidecar_subtitles(self, media_path: str):
+        if not hasattr(self, 'video_player'):
+            return
+        try:
+            self._ensure_subtitle_state()
+            if getattr(self, '_subtitle_user_disabled', False):
+                return
+            if getattr(self, '_subtitle_prefer_embedded', True):
+                return
+        except Exception:
+            pass
+        try:
+            if self.video_player.get_active_subtitle_path():
+                return
+        except Exception:
+            pass
+        try:
+            base, _ext = os.path.splitext(media_path)
+            cand = [
+                base + '.srt', base + '.vtt', base + '.ass', base + '.ssa',
+                base + '.SRT', base + '.VTT', base + '.ASS', base + '.SSA',
+            ]
+            for p in cand:
+                if os.path.exists(p):
+                    self.video_player.set_subtitle_file(p)
+                    return
+        except Exception:
+            return
+        try:
+            self.video_player.clear_subtitles()
+        except Exception:
+            pass
     
     def _populate_audio_devices(self):
         """Populate the audio device submenu with available devices."""
@@ -2131,6 +4014,47 @@ class MusicPanelWidget(QWidget):
         """Show audio output settings dialog."""
         self._open_settings()
     
+    def _toggle_yt_panel(self):
+        """Toggle the integrated YouTube downloader sidebar."""
+        if self.yt_panel.isVisible():
+            self.yt_panel.hide()
+            if hasattr(self, 'main_splitter'):
+                # Collapse sidebar
+                self.main_splitter.setSizes([1, 0])
+        else:
+            self.yt_panel.show()
+            self._update_yt_panel_constraints()
+            if hasattr(self, 'main_splitter'):
+                max_w = self.yt_panel.maximumWidth()
+                desired = min(max_w, max(self.yt_panel.minimumWidth(), int(getattr(self, '_yt_last_width', 320) or 320)))
+                total = max(1, self.width())
+                self.main_splitter.setSizes([max(1, total - desired), desired])
+            self.yt_panel.url_edit.setFocus()
+            # If paste buffer has a YT link, auto-fill it
+            from PySide6.QtWidgets import QApplication
+            clipboard = QApplication.clipboard()
+            text = clipboard.text().strip()
+            if 'youtube.com' in text or 'youtu.be' in text:
+                self.yt_panel.set_url(text)
+
+    def _on_yt_download_finished(self, dest_path):
+        """Handle track after integrated download completion."""
+        if dest_path and os.path.isfile(dest_path):
+            from PlaylistWidget import PlaylistWidget as _PW
+            track = _PW.build_track_meta(dest_path) if hasattr(_PW, 'build_track_meta') else {
+                'path': dest_path,
+                'title': os.path.splitext(os.path.basename(dest_path))[0],
+                'artist': 'YouTube',
+                'duration': 0,
+                'is_online': False,
+                'mtime': os.path.getmtime(dest_path),
+            }
+            if not hasattr(self, '_playlist') or self._playlist is None:
+                self._playlist = []
+            self._playlist.append(track)
+            self.table.set_tracks(self._playlist)
+            print(f"[YouTube DL] Added to playlist: {os.path.basename(dest_path)}")
+
     def _rescan_folder(self):
         """Rescan current music folder."""
         if self._music_folder and os.path.exists(self._music_folder):
@@ -2550,8 +4474,23 @@ class MusicPanelWidget(QWidget):
                 print(f"Playing: {title}")
                 # Set flag to ignore StoppedState during track switch
                 self._switching_track = True
+
+                try:
+                    if hasattr(self, 'video_player'):
+                        self.video_player.clear_subtitles()
+                except Exception:
+                    pass
+
                 self._player.setSource(QUrl.fromLocalFile(path))
+                self._set_current_media_local_path(path)
+                self._maybe_auto_load_sidecar_subtitles(path)
                 self._player.play()
+
+                try:
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(0, self._auto_pick_embedded_subtitles_if_available)
+                except Exception:
+                    pass
                 # Clear flag after a short delay to allow state to settle
                 from PySide6.QtCore import QTimer
                 QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
@@ -2734,589 +4673,6 @@ class MusicPanelWidget(QWidget):
             vlc_vol = max(0, min(200, int(volume * 100)))
             self._vlc_player.audio_set_volume(vlc_vol)
     
-    def _show_youtube_download_dialog(self):
-        """Show dialog to download audio or video from a YouTube URL using yt-dlp.
-
-        Presents format options (audio MP3 / video MP4), lets the user choose an
-        output folder, then spawns yt-dlp in a background QThread so the UI
-        remains responsive. Progress is streamed line-by-line from yt-dlp's
-        stdout and reflected in a QProgressBar. On completion the downloaded
-        file is automatically added to the current playlist.
-        """
-        from PySide6.QtWidgets import (
-            QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-            QPushButton, QComboBox, QProgressBar, QFileDialog, QButtonGroup,
-            QRadioButton, QGroupBox
-        )
-        from PySide6.QtCore import QThread, Signal, Qt
-        import os, sys, subprocess, re
-
-        # ---- Check yt-dlp is available ----
-        try:
-            import yt_dlp  # noqa: F401
-        except ImportError:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(
-                self, "yt-dlp Not Found",
-                "yt-dlp is not installed.\n\nInstall it with:\n  pip install yt-dlp"
-            )
-            return
-
-        # ---- Check FFmpeg availability ----
-        # FFmpeg is required by yt-dlp to:
-        #   - Re-encode audio to MP3 (audio mode)
-        #   - Merge separate video+audio streams into MP4 (video mode)
-        # Without it, both download modes will fail at the post-processing step.
-        import shutil as _shutil
-        local_ffmpeg_dir = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'tools', 'ffmpeg', 'bin')
-        ffmpeg_bin_path = os.path.join(local_ffmpeg_dir, 'ffmpeg.exe') if sys.platform == 'win32' else os.path.join(local_ffmpeg_dir, 'ffmpeg')
-        
-        ffmpeg_ok = False
-        ffmpeg_cmd_path = ""
-        
-        if os.path.exists(ffmpeg_bin_path):
-            ffmpeg_ok = True
-            ffmpeg_cmd_path = local_ffmpeg_dir
-            print(f"[YouTube DL] Found local bundled FFmpeg at {ffmpeg_cmd_path}")
-        else:
-            ffmpeg_path = _shutil.which('ffmpeg') or _shutil.which('ffmpeg.exe')
-            ffmpeg_ok = bool(ffmpeg_path)
-            if ffmpeg_ok:
-                ffmpeg_cmd_path = os.path.dirname(ffmpeg_path)
-                print(f"[YouTube DL] Found system FFmpeg.")
-
-        # ---- Worker thread ----
-        class DownloadWorker(QThread):
-            """Background thread that runs yt-dlp and emits progress signals.
-
-            Signals:
-                progress(int):  Percentage complete (0-100).
-                status(str):    Human-readable status line from yt-dlp.
-                finished(str):  Absolute path of the downloaded file, or empty string on failure.
-                error(str):    Error message if download fails.
-            """
-            progress = Signal(int)
-            status   = Signal(str)
-            finished = Signal(str)
-            error    = Signal(str)
-            status   = Signal(str)
-
-            def __init__(self, url: str, output_dir: str, fmt: str, quality_idx: int = 0):
-                super().__init__()
-                # url:        The YouTube URL to download
-                # output_dir: Directory where the file will be saved
-                # fmt:        'audio' for MP3, 'video' for MP4
-                self.url        = url
-                self.output_dir = output_dir
-                self.fmt        = fmt
-                self.quality_idx = quality_idx
-                self._cancelled = False
-
-            def cancel(self):
-                """Signal the worker to abort. The subprocess will be killed."""
-                self._cancelled = True
-                if hasattr(self, '_proc') and self._proc:
-                    try:
-                        self._proc.terminate()
-                    except Exception:
-                        pass
-
-            def get_f_str(self):
-                """Helper to get format string based on selected quality."""
-                if self.fmt == 'audio':
-                    return 'bestaudio/best'
-                if self.quality_idx == 0:
-                    return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
-                elif self.quality_idx == 1:
-                    return 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
-                elif self.quality_idx == 2:
-                    return 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best'
-                elif self.quality_idx == 3:
-                    return 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best'
-                else:
-                    return 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360][ext=mp4]/best'
-
-            def run(self):
-                """Execute yt-dlp as a subprocess and stream its output."""
-                import yt_dlp as _yt_dlp_mod
-                main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
-                # Build yt-dlp arguments based on selected format:
-                # - audio: extract audio stream and re-encode to MP3 via FFmpeg
-                # - video: download best H.264 + AAC and merge into MP4 via FFmpeg
-                f_str = self.get_f_str()
-                if self.fmt == 'audio':
-                    q_map = ['0', '2', '5', '9']
-                    q_val = q_map[self.quality_idx] if self.quality_idx < len(q_map) else '0'
-                    extra = [
-                        '-x', '--audio-format', 'mp3', '--audio-quality', q_val,
-                    ]
-                else:
-                    extra = [
-                        '-f', f_str,
-                        '--merge-output-format', 'mp4',
-                    ]
-
-                # FFmpeg must be on PATH or bundled; yt-dlp will locate it automatically.
-                cmd = [
-                    sys.executable, main_py,
-                    '--newline',           # flush one line at a time for progress parsing
-                    '--progress',
-                    '--no-playlist',       # Only download the specific video, even if URL is a mix
-                    '--no-warnings',
-                    '--no-check-certificate',
-                    '--socket-timeout', '20',
-                    '-o', os.path.join(self.output_dir, '%(title)s.%(ext)s'),
-                ] + extra
-                if ffmpeg_cmd_path:
-                    cmd.extend(['--ffmpeg-location', ffmpeg_cmd_path])
-                cmd.append(self.url)
-
-                startupinfo = None
-                if sys.platform == 'win32':
-                    from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
-                    startupinfo = STARTUPINFO()
-                    startupinfo.dwFlags |= STARTF_USESHOWWINDOW
-
-                try:
-                    self._proc = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        encoding='utf-8',
-                        errors='replace',
-                        startupinfo=startupinfo
-                    )
-
-                    last_pct = 0
-                    dest_file = ""
-
-                    for line in self._proc.stdout:
-                        if self._cancelled:
-                            break
-                        line = line.rstrip()
-                        if not line:
-                            continue
-
-                        self.status.emit(line)
-
-                        # Parse percentage from yt-dlp's progress lines, e.g.
-                        # "[download]  42.3% of ..."
-                        pct_match = re.search(r'(\d+\.?\d*)%', line)
-                        if pct_match:
-                            pct = min(99, int(float(pct_match.group(1))))
-                            if pct > last_pct:
-                                last_pct = pct
-                                self.progress.emit(pct)
-
-                        # Parse destination file path from yt-dlp output, e.g.
-                        # "[download] Destination: /path/to/file.mp3" or
-                        # "[Merger] Merging formats into /path/to/file.mp4"
-                        for pattern in [
-                            r'\[download\] Destination: (.+)',
-                            r'\[Merger\] Merging formats into "?(.+?)"?$',
-                            r'\[ExtractAudio\] Destination: (.+)',
-                        ]:
-                            m = re.search(pattern, line)
-                            if m:
-                                dest_file = m.group(1).strip().strip('"')
-
-                    self._proc.wait()
-
-                    if self._cancelled:
-                        self.error.emit("Download cancelled.")
-                        return
-
-                    if self._proc.returncode == 0:
-                        self.progress.emit(100)
-                        self.finished.emit(dest_file)
-                    else:
-                        self.error.emit("yt-dlp exited with an error. Check the URL and try again.")
-
-                except Exception as exc:
-                    self.error.emit(str(exc))
-
-        # ---- Metadata Worker (for size estimate) ----
-        class MetadataWorker(QThread):
-            metadata = Signal(dict)
-            error    = Signal(str)
-
-            def __init__(self, url, fmt, quality_idx):
-                super().__init__()
-                self.url = url
-                self.fmt = fmt
-                self.quality_idx = quality_idx
-
-            def run(self):
-                try:
-                    import yt_dlp as _yt_dlp_mod
-                    main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
-                    
-                    # Determine format string (same as DownloadWorker)
-                    dw = DownloadWorker(self.url, "", self.fmt, self.quality_idx)
-                    f_str = dw.get_f_str()
-                    
-                    cmd = [
-                        sys.executable, main_py,
-                        '--simulate',
-                        '--no-playlist',
-                        '--no-check-certificate',
-                        '--format', f_str,
-                        '--print', 'filesize,filesize_approx',
-                        self.url
-                    ]
-                    
-                    startupinfo = None
-                    if sys.platform == 'win32':
-                        from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
-                        startupinfo = STARTUPINFO()
-                        startupinfo.dwFlags |= STARTF_USESHOWWINDOW
-                        
-                    res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', startupinfo=startupinfo)
-                    if res.returncode == 0:
-                        lines = [l.strip() for l in res.stdout.strip().split('\n') if l.strip() and l.strip() != 'NA']
-                        size_raw = lines[0] if lines else "Unknown"
-                        
-                        # Helper for human readable if it's just bytes
-                        try:
-                            val = int(size_raw)
-                            for unit in ['B','KB','MB','GB']:
-                                if val < 1024:
-                                    size_raw = f"{val:.1f} {unit}"
-                                    break
-                                val /= 1024
-                        except: pass
-                        
-                        self.metadata.emit({'size': size_raw})
-                    else:
-                        self.error.emit("Failed")
-                except Exception as e:
-                    self.error.emit(str(e))
-
-        # ---- Build dialog ----
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Download from YouTube")
-        dialog.setMinimumWidth(520)
-        dialog.setStyleSheet("""
-            QDialog {
-                background: #1a1a2e;
-                color: #e0e0e0;
-            }
-            QLabel { color: #e0e0e0; background: transparent; font-size: 13px; }
-            QLineEdit {
-                background: rgba(255,255,255,0.08);
-                border: 1px solid rgba(255,255,255,0.2);
-                border-radius: 6px;
-                padding: 6px 10px;
-                color: #e0e0e0;
-                font-size: 13px;
-            }
-            QLineEdit:focus { border: 1px solid #FF5B06; }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid rgba(255,255,255,0.15);
-                border-radius: 6px;
-                margin-top: 8px;
-                padding-top: 8px;
-                color: #aaa;
-                font-size: 11px;
-            }
-            QGroupBox::title { subcontrol-origin: margin; left: 8px; color: #FF5B06; }
-            QRadioButton { color: #e0e0e0; padding: 4px 8px; font-size: 12px; background: transparent; }
-            QRadioButton::indicator { width: 14px; height: 14px; border-radius: 7px; border: 2px solid #666; background: #2a2a2a; }
-            QRadioButton::indicator:checked { background: #FF5B06; border-color: #FF5B06; }
-            QProgressBar {
-                border: 1px solid rgba(255,255,255,0.15);
-                border-radius: 6px;
-                background: rgba(0,0,0,0.3);
-                text-align: center;
-                color: #e0e0e0;
-                font-size: 11px;
-                min-height: 20px;
-            }
-            QProgressBar::chunk { background: #FF5B06; border-radius: 5px; }
-            QPushButton {
-                background: #FF5B06;
-                color: white;
-                border: none;
-                padding: 8px 18px;
-                border-radius: 5px;
-                font-weight: bold;
-                font-size: 12px;
-            }
-            QPushButton:hover { background: #FF7B26; }
-            QPushButton:disabled { background: #444; color: #888; }
-        """)
-
-        layout = QVBoxLayout(dialog)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
-
-        # Title banner
-        banner = QLabel("Download from YouTube")
-        banner.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF5B06; background: transparent;")
-        layout.addWidget(banner)
-
-        # ---- FFmpeg warning panel ----
-        # Shown when FFmpeg is not found on PATH. Styled to match the
-        # HELXAIL 'RyzenAdj Not Found' panel so the UI language is consistent.
-        if not ffmpeg_ok:
-            from PySide6.QtWidgets import QFrame
-            warn_frame = QFrame()
-            warn_frame.setObjectName("ffmpegWarnPanel")
-            warn_frame.setStyleSheet("""
-                QFrame#ffmpegWarnPanel {
-                    background: rgba(255, 160, 0, 0.10);
-                    border: 1px solid rgba(255, 160, 0, 0.4);
-                    border-radius: 8px;
-                    padding: 4px;
-                }
-            """)
-            warn_layout = QVBoxLayout(warn_frame)
-            warn_layout.setContentsMargins(14, 10, 14, 10)
-            warn_layout.setSpacing(4)
-
-            warn_title = QLabel("FFmpeg Not Found")
-            warn_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #FDA903; background: transparent;")
-            warn_layout.addWidget(warn_title)
-
-            warn_body = QLabel(
-                "FFmpeg is required to download and convert YouTube media.\n"
-                "Install FFmpeg and ensure it is added to your system PATH,\n"
-                "then reopen this dialog."
-            )
-            warn_body.setWordWrap(True)
-            warn_body.setStyleSheet("font-size: 12px; color: #9DB2BF; background: transparent;")
-            warn_layout.addWidget(warn_body)
-
-            layout.addWidget(warn_frame)
-
-        # URL input
-        url_group = QGroupBox("YouTube URL")
-        url_layout = QHBoxLayout(url_group)
-        url_edit = QLineEdit()
-        url_edit.setObjectName("ytUrlInput")
-        url_edit.setPlaceholderText("https://www.youtube.com/watch?v=...")
-        url_layout.addWidget(url_edit)
-        layout.addWidget(url_group)
-
-        # Format selector
-        fmt_group = QGroupBox("Format & Quality")
-        fmt_layout = QHBoxLayout(fmt_group)
-        btn_group = QButtonGroup(dialog)
-        rb_audio = QRadioButton("Audio (MP3)")
-        rb_video = QRadioButton("Video (MP4)")
-        rb_audio.setChecked(True)
-        btn_group.addButton(rb_audio, 0)
-        btn_group.addButton(rb_video, 1)
-        fmt_layout.addWidget(rb_audio)
-        fmt_layout.addWidget(rb_video)
-        
-        quality_combo = QComboBox()
-        quality_combo.setObjectName("ytQualityCombo")
-        quality_combo.setStyleSheet("""
-            QComboBox {
-                background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.15); 
-                border-radius: 4px; padding: 2px 8px; font-size: 12px; color: #e0e0e0;
-            }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView { background: #1a1a2e; color: #e0e0e0; selection-background-color: #FF5B06; }
-        """)
-        
-        def update_quality_options():
-            quality_combo.clear()
-            if rb_audio.isChecked():
-                quality_combo.addItems(["Best (320kbps)", "High (256kbps)", "Medium (128kbps)", "Low (64kbps)"])
-            else:
-                quality_combo.addItems(["Best Available", "1080p", "720p", "480p", "360p"])
-                
-        rb_audio.toggled.connect(update_quality_options)
-        update_quality_options()
-        
-        qual_lbl = QLabel(" Quality: ")
-        qual_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
-        fmt_layout.addWidget(qual_lbl)
-        fmt_layout.addWidget(quality_combo)
-        fmt_layout.addStretch()
-        layout.addWidget(fmt_group)
-
-        # Output folder
-        folder_group = QGroupBox("Save to")
-        folder_layout = QHBoxLayout(folder_group)
-        default_folder = self._music_folder or os.path.expanduser("~/Downloads")
-        folder_edit = QLineEdit(default_folder)
-        folder_edit.setObjectName("ytFolderInput")
-        folder_edit.setReadOnly(True)
-        browse_btn = QPushButton("Browse...")
-        browse_btn.setStyleSheet("background: rgba(255,255,255,0.1); font-weight: normal;")
-
-        def pick_folder():
-            d = QFileDialog.getExistingDirectory(dialog, "Select Output Folder", folder_edit.text())
-            if d:
-                folder_edit.setText(d)
-
-        browse_btn.clicked.connect(pick_folder)
-        folder_layout.addWidget(folder_edit, 1)
-        folder_layout.addWidget(browse_btn)
-        layout.addWidget(folder_group)
-
-        # Progress bar + status label
-        progress_bar = QProgressBar()
-        progress_bar.setRange(0, 100)
-        progress_bar.setValue(0)
-        progress_bar.setVisible(False)
-        layout.addWidget(progress_bar)
-
-        status_lbl = QLabel("")
-        status_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
-        status_lbl.setWordWrap(True)
-        status_lbl.setVisible(False)
-        layout.addWidget(status_lbl)
-
-        # Buttons row
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("ytCancelBtn")
-        cancel_btn.setStyleSheet("background: #333; font-weight: normal;")
-        cancel_btn.clicked.connect(dialog.reject)
-        download_btn = QPushButton("Download")
-        download_btn.setObjectName("ytDownloadBtn")
-        btn_row.addWidget(cancel_btn)
-        btn_row.addWidget(download_btn)
-        layout.addLayout(btn_row)
-
-        # Gate all download controls behind FFmpeg availability.
-        # Without FFmpeg, yt-dlp cannot post-process the downloaded stream
-        # into MP3 or MP4, so attempting a download would always fail.
-        if not ffmpeg_ok:
-            download_btn.setEnabled(False)
-            download_btn.setToolTip("Install FFmpeg and add it to PATH to enable downloads.")
-            rb_audio.setEnabled(False)
-            rb_video.setEnabled(False)
-            quality_combo.setEnabled(False)
-
-
-        # Worker handle (kept in closure)
-        _worker = [None]
-
-        def start_download():
-            url = url_edit.text().strip()
-            if not url:
-                url_edit.setPlaceholderText("Please enter a URL first!")
-                return
-
-            fmt = 'audio' if rb_audio.isChecked() else 'video'
-            q_idx = quality_combo.currentIndex()
-            out_dir = folder_edit.text().strip() or os.path.expanduser("~/Downloads")
-            os.makedirs(out_dir, exist_ok=True)
-
-            # Lock UI while downloading
-            download_btn.setEnabled(False)
-            url_edit.setEnabled(False)
-            rb_audio.setEnabled(False)
-            rb_video.setEnabled(False)
-            quality_combo.setEnabled(False)
-            browse_btn.setEnabled(False)
-            cancel_btn.setText("Stop")
-
-            progress_bar.setValue(0)
-            progress_bar.setVisible(True)
-            status_lbl.setVisible(True)
-            status_lbl.setText("Starting download...")
-
-            worker = DownloadWorker(url, out_dir, fmt, q_idx)
-            _worker[0] = worker
-
-            # Trim status to last line for readability
-            worker.status.connect(lambda s: status_lbl.setText(s[-120:] if len(s) > 120 else s))
-            worker.progress.connect(progress_bar.setValue)
-
-            def on_finished(dest_path: str):
-                """Called when yt-dlp exits with code 0."""
-                status_lbl.setText("Download complete!")
-                progress_bar.setValue(100)
-                cancel_btn.setText("Close")
-                cancel_btn.clicked.disconnect()
-                cancel_btn.clicked.connect(dialog.accept)
-
-                # Auto-add downloaded file to the current playlist
-                if dest_path and os.path.isfile(dest_path):
-                    from PlaylistWidget import PlaylistWidget as _PW
-                    track = _PW.build_track_meta(dest_path) if hasattr(_PW, 'build_track_meta') else {
-                        'path': dest_path,
-                        'title': os.path.splitext(os.path.basename(dest_path))[0],
-                        'artist': 'YouTube',
-                        'duration': 0,
-                        'is_online': False,
-                        'mtime': os.path.getmtime(dest_path),
-                    }
-                    if not hasattr(self, '_playlist') or self._playlist is None:
-                        self._playlist = []
-                    self._playlist.append(track)
-                    self.table.set_tracks(self._playlist)
-                    print(f"[YouTube DL] Added to playlist: {os.path.basename(dest_path)}")
-
-            def on_error(msg: str):
-                """Called when yt-dlp fails or is cancelled."""
-                status_lbl.setText(f"Error: {msg}")
-                status_lbl.setStyleSheet("color: #ff5555; font-size: 11px; background: transparent;")
-                cancel_btn.setText("Close")
-                cancel_btn.clicked.disconnect()
-                cancel_btn.clicked.connect(dialog.reject)
-
-            worker.finished.connect(on_finished)
-            worker.error.connect(on_error)
-            worker.start()
-
-        def on_cancel():
-            """Stop button while downloading, or close if idle."""
-            if _worker[0] and _worker[0].isRunning():
-                _worker[0].cancel()
-            else:
-                dialog.reject()
-
-        cancel_btn.clicked.connect(on_cancel)
-        download_btn.clicked.connect(start_download)
-
-        # ---- Dynamic Size Estimate Logic ----
-        from PySide6.QtCore import QTimer
-        size_timer = QTimer(dialog)
-        size_timer.setSingleShot(True)
-        _size_worker = [None]
-
-        def update_size_estimate():
-            url = url_edit.text().strip()
-            if not url or len(url) < 10:
-                qual_lbl.setText(" Quality: ")
-                return
-
-            if _size_worker[0] and _size_worker[0].isRunning():
-                _size_worker[0].terminate()
-
-            qual_lbl.setText(" Estimating size... ")
-            fmt = 'audio' if rb_audio.isChecked() else 'video'
-            worker = MetadataWorker(url, fmt, quality_combo.currentIndex())
-            _size_worker[0] = worker
-            
-            def on_meta(data):
-                qual_lbl.setText(f" Estimated Size: {data.get('size', 'Unknown')} ")
-                qual_lbl.setStyleSheet("color: #FF5B06; font-size: 11px; background: transparent; font-weight: bold;")
-                
-            def on_meta_err(_):
-                qual_lbl.setText(" Quality: ")
-                qual_lbl.setStyleSheet("color: #888; font-size: 11px; background: transparent;")
-
-            worker.metadata.connect(on_meta)
-            worker.error.connect(on_meta_err)
-            worker.start()
-
-        url_edit.textChanged.connect(lambda: size_timer.start(800))
-        size_timer.timeout.connect(update_size_estimate)
-        rb_audio.toggled.connect(update_size_estimate)
-        quality_combo.currentIndexChanged.connect(update_size_estimate)
-
-        dialog.exec()
 
     def _show_load_url_dialog(self):
         """Show input dialog for stream URL."""
@@ -3653,6 +5009,7 @@ class MusicPanelWidget(QWidget):
         except Exception as e:
             print(f"VLC unavailable or failed ({e}), falling back to QMediaPlayer")
             self._player.setSource(QUrl(stream_url))
+            self._set_current_media_url(stream_url)
             self._player.play()
             
         QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
@@ -3668,6 +5025,7 @@ class MusicPanelWidget(QWidget):
         
         self._switching_track = True
         self._player.setSource(QUrl(stream_url))
+        self._set_current_media_url(stream_url)
         self._player.play()
         
         QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
@@ -3707,6 +5065,11 @@ class MusicPanelWidget(QWidget):
             # Go fullscreen
             main_window.showFullScreen()
             
+            try:
+                self._set_playerbar_overlay_enabled(True)
+            except Exception:
+                pass
+
             # Hide PlayerBar initially in fullscreen (will show on hover)
             self.player_bar.hide()
         else:
@@ -3727,48 +5090,204 @@ class MusicPanelWidget(QWidget):
                 main_window.sidebar.show()
             
             # Show PlayerBar
+            try:
+                self._set_playerbar_overlay_enabled(False)
+            except Exception:
+                pass
             self.player_bar.show()
+
+    def _set_playerbar_overlay_enabled(self, enabled: bool):
+        try:
+            enabled = bool(enabled)
+        except Exception:
+            enabled = False
+
+        if enabled == getattr(self, '_playerbar_overlay_enabled', False):
+            return
+        self._playerbar_overlay_enabled = enabled
+
+        if enabled:
+            # Remove reserved layout space and move PlayerBar into a top-level overlay.
+            # QVideoWidget is a native surface and often cannot be reliably overlaid
+            # by normal child widgets.
+            try:
+                if hasattr(self, '_player_bar_container'):
+                    self._player_bar_container.hide()
+            except Exception:
+                pass
+
+            try:
+                if not hasattr(self, '_playerbar_overlay_window') or self._playerbar_overlay_window is None:
+                    self._playerbar_overlay_window = _PlayerBarOverlayWindow()
+                self._playerbar_overlay_window.set_bar(self.player_bar)
+                self._playerbar_overlay_window.show()
+                self._update_playerbar_overlay_geometry()
+            except Exception:
+                pass
+            return
+
+        # Restore to normal layout container.
+        try:
+            try:
+                if hasattr(self, '_playerbar_overlay_window') and self._playerbar_overlay_window is not None:
+                    self._playerbar_overlay_window.hide()
+            except Exception:
+                pass
+
+            self.player_bar.setParent(self._player_bar_container)
+            try:
+                lay = self._player_bar_container.layout()
+                if lay is not None:
+                    lay.addWidget(self.player_bar)
+            except Exception:
+                pass
+            self.player_bar.show()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, '_player_bar_container'):
+                self._player_bar_container.show()
+        except Exception:
+            pass
+
+    def _update_playerbar_overlay_geometry(self):
+        try:
+            if not getattr(self, '_playerbar_overlay_enabled', False):
+                return
+            if not hasattr(self, 'video_player') or self.video_player is None:
+                return
+
+            if not hasattr(self, '_playerbar_overlay_window') or self._playerbar_overlay_window is None:
+                return
+
+            vw = None
+            try:
+                vw = getattr(self.video_player, 'video_widget', None)
+            except Exception:
+                vw = None
+            if vw is None:
+                return
+
+            # Position overlay window aligned to the video surface in global coords.
+            try:
+                from PySide6.QtCore import QPoint
+                gp = vw.mapToGlobal(QPoint(0, 0))
+                w = vw.width()
+                h = vw.height()
+            except Exception:
+                return
+
+            bar_h = self.player_bar.height() if self.player_bar.height() > 0 else 75
+            self._playerbar_overlay_window.setGeometry(int(gp.x()), int(gp.y() + max(0, h - bar_h)), int(max(1, w)), int(bar_h))
+            try:
+                self._playerbar_overlay_window.raise_()
+            except Exception:
+                pass
+        except Exception:
+            pass
     
     def _toggle_video(self):
         """Switch between playlist view and video view."""
         self._video_mode = not self._video_mode
-        
-        # Switch video output based on mode
+
         if self._video_mode:
-            # Set video output to video player widget
-            self._player.setVideoOutput(self.video_player.video_widget)
-            
-            # Re-trigger RTSS/MSI Afterburner exclusion every time the video
-            # player opens. The startup call may have been missed if RTSS was
-            # launched after this app started (the reload signal has no target
-            # then). Calling again here catches that scenario so the D3D OSD
-            # overlay is never rendered on top of the video surface.
             try:
-                import sys as _sys
-                # launcher.py exposes _exclude_from_rtss at module level;
-                # import the function without triggering a full re-import.
-                _lm = _sys.modules.get('__main__') or _sys.modules.get('launcher')
-                if _lm and hasattr(_lm, '_exclude_from_rtss'):
-                    _lm._exclude_from_rtss()
+                self._video_mode_restore_pending = False
             except Exception:
-                pass  # Non-critical: RTSS exclusion failure must never crash the video player
-            
-            # Set video title
-            if 0 <= self._current_index < len(self._playlist):
-                track = self._playlist[self._current_index]
-                self.video_player.set_title(track.get('title', 'Now Playing'))
-        else:
-            # Clear video output (audio only mode)
+                pass
+
+            if not self._is_app_render_allowed() or not getattr(self, '_helxaic_page_visible', True):
+                self._disable_video_output_and_subtitles('render_gate_block', switch_to_playlist=False)
+                self.stack.setCurrentIndex(1)
+                return
+
+            # Switch UI immediately for responsiveness, then do heavier work async.
+            self.stack.setCurrentIndex(1)
+
+            def _finish_enter_video_view():
+                try:
+                    self._player.setVideoOutput(self.video_player.video_widget)
+                except Exception:
+                    pass
+
+                try:
+                    self.video_player.set_render_suspended(False)
+                except Exception:
+                    pass
+
+                try:
+                    if not getattr(self, '_subtitle_appearance_applied_once', False):
+                        self._apply_saved_subtitle_appearance()
+                        self._subtitle_appearance_applied_once = True
+                except Exception:
+                    pass
+
+                # RTSS exclusion is expensive (file IO). Do it once per run.
+                try:
+                    if not getattr(self, '_rtss_excluded_once', False):
+                        import sys as _sys
+                        _lm = _sys.modules.get('__main__') or _sys.modules.get('launcher')
+                        if _lm and hasattr(_lm, '_exclude_from_rtss'):
+                            _lm._exclude_from_rtss()
+                        self._rtss_excluded_once = True
+                except Exception:
+                    pass
+
+                try:
+                    if 0 <= self._current_index < len(self._playlist):
+                        track = self._playlist[self._current_index]
+                        self.video_player.set_title(track.get('title', 'Now Playing'))
+                except Exception:
+                    pass
+
+                # Embedded subtitle probing can be slow (ffprobe). Only do it if the media changed.
+                try:
+                    cur = None
+                    try:
+                        cur = self._player.source().toString() if self._player.source() else None
+                    except Exception:
+                        cur = None
+
+                    if cur and cur != getattr(self, '_last_media_for_sub_auto_pick', None):
+                        self._last_media_for_sub_auto_pick = cur
+                        QTimer.singleShot(0, self._auto_pick_embedded_subtitles_if_available)
+                except Exception:
+                    pass
+
+            try:
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, _finish_enter_video_view)
+            except Exception:
+                _finish_enter_video_view()
+            return
+
+        # Leaving video view
+        try:
             self._player.setVideoOutput(None)
-        
-        self.stack.setCurrentIndex(1 if self._video_mode else 0)
-    
+        except Exception:
+            pass
+
+        try:
+            self.video_player.set_render_suspended(True)
+        except Exception:
+            pass
+
+        self.stack.setCurrentIndex(0)
+
     def _switch_to_playlist(self):
         """Switch back to playlist view (from video player back button)."""
         self._video_mode = False
-        self._player.setVideoOutput(None)  # Audio only
+        try:
+            self._player.setVideoOutput(None)
+        except Exception:
+            pass
+        try:
+            self.video_player.set_render_suspended(True)
+        except Exception:
+            pass
         self.stack.setCurrentIndex(0)
-    
+
     def _set_aspect_ratio(self, mode: str):
         """Set video aspect ratio mode: fill, fit, or stretch."""
         self._current_aspect_ratio = mode
@@ -3793,7 +5312,7 @@ class MusicPanelWidget(QWidget):
             QTimer.singleShot(500, self._save_state)
             
         print(f"Aspect ratio set to: {mode}")
-    
+
     def _toggle_fullscreen(self):
         """Toggle fullscreen mode for video player.
         
@@ -3897,7 +5416,16 @@ class MusicPanelWidget(QWidget):
         # Handle double-click to toggle fullscreen (works in both fullscreen and normal mode)
         if event.type() == QEvent.Type.MouseButtonDblClick:
             if event.button() == Qt.LeftButton:
-                self._toggle_fullscreen()
+                try:
+                    if getattr(self, '_video_mode', False) and hasattr(self, 'video_player') and self.video_player is not None:
+                        self.video_player._toggle_fullscreen()
+                    else:
+                        self._toggle_fullscreen()
+                except Exception:
+                    try:
+                        self._toggle_fullscreen()
+                    except Exception:
+                        pass
                 return True
         
         if hasattr(self, '_is_fullscreen') and self._is_fullscreen:
@@ -3905,7 +5433,16 @@ class MusicPanelWidget(QWidget):
             if event.type() == QEvent.Type.KeyPress:
                 key = event.key()
                 if key == Qt.Key_F or key == Qt.Key_Escape:
-                    self._toggle_fullscreen()
+                    try:
+                        if getattr(self, '_video_mode', False) and hasattr(self, 'video_player') and self.video_player is not None:
+                            self.video_player._toggle_fullscreen()
+                        else:
+                            self._toggle_fullscreen()
+                    except Exception:
+                        try:
+                            self._toggle_fullscreen()
+                        except Exception:
+                            pass
                     return True
             
             # Handle mouse move events for player bar hover
@@ -3955,10 +5492,12 @@ class MusicPanelWidget(QWidget):
             # Only hide if still in fullscreen when the hide is requested
             if hasattr(self, '_is_fullscreen') and self._is_fullscreen:
                 # Don't hide if cursor is over the PlayerBar area
-                cursor_pos = self.mapFromGlobal(self.cursor().pos())
-                playerbar_rect = self.player_bar.geometry()
-                if playerbar_rect.contains(cursor_pos):
-                    return  # Don't hide if hovering
+                try:
+                    local = self.player_bar.mapFromGlobal(self.cursor().pos())
+                    if QRect(0, 0, self.player_bar.width(), self.player_bar.height()).contains(local):
+                        return
+                except Exception:
+                    pass
                 
                 self._playerbar_fade_animation.setStartValue(1.0)
                 self._playerbar_fade_animation.setEndValue(0.0)
@@ -3995,7 +5534,9 @@ class MusicPanelWidget(QWidget):
     
     def _on_position(self, pos: int):
         dur = self._player.duration()
-        self.player_bar.set_position(pos / 1000.0, dur / 1000.0)
+        # Correctly check the dragging state of the timeline slider from the player bar
+        is_dragging = getattr(self.player_bar, '_is_dragging_timeline', False)
+        self.player_bar.set_position(pos / 1000.0, dur / 1000.0, skip_throttle=is_dragging)
         
         # Track position for save state (player.position() returns 0 when stopped)
         self._last_known_position = pos
@@ -4082,6 +5623,10 @@ class MusicPanelWidget(QWidget):
                                 path = track.get('path', '')
                                 if path and os.path.exists(path):
                                     self._player.setSource(QUrl.fromLocalFile(path))
+                                    try:
+                                        self._set_current_media_local_path(path)
+                                    except Exception:
+                                        pass
                                     
                                     # Restore last position after media loads
                                     last_pos = state.get('last_position', 0)
@@ -4112,6 +5657,13 @@ class MusicPanelWidget(QWidget):
                     aspect_ratio = state.get('video_aspect_ratio', 'fit')
                     self._set_aspect_ratio(aspect_ratio)
                     
+                    # Restore subtitle preferences
+                    self._subtitle_style_preset = state.get('subtitle_style_preset', 'outline')
+                    self._subtitle_font_size = state.get('subtitle_font_size', 16)
+                    # Apply after video player is available
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(0, self._apply_saved_subtitle_appearance)
+                    
                     print(f"Loaded state: {folder}")
         except Exception as e:
             print(f"Failed to load state: {e}")
@@ -4132,7 +5684,9 @@ class MusicPanelWidget(QWidget):
                 'last_track_path': current_track_path,
                 'last_position': position,
                 'volume': self.player_bar.volume_slider.value(),
-                'video_aspect_ratio': getattr(self, '_current_aspect_ratio', 'fit')
+                'video_aspect_ratio': getattr(self, '_current_aspect_ratio', 'fit'),
+                'subtitle_style_preset': getattr(self, '_subtitle_style_preset', 'outline'),
+                'subtitle_font_size': getattr(self, '_subtitle_font_size', 16)
             }
             
             with open(self._config_path, 'w', encoding='utf-8') as f:
@@ -4148,7 +5702,7 @@ class MusicPanelWidget(QWidget):
         
         start = getattr(self, '_music_folder', None) or os.path.expanduser("~")
         folder = QFileDialog.getExistingDirectory(
-            self, "Select Music Folder", start, QFileDialog.ShowDirsOnly
+            self, "Select Media Folder", start, QFileDialog.ShowDirsOnly
         )
         
         if folder:
@@ -4235,7 +5789,7 @@ class MusicPanelWidget(QWidget):
         
         start = getattr(self, '_music_folder', None) or os.path.expanduser("~")
         folder = QFileDialog.getExistingDirectory(
-            self, "Select Music Folder", start, QFileDialog.ShowDirsOnly
+            self, "Select Media Folder", start, QFileDialog.ShowDirsOnly
         )
         
         if folder:
@@ -4442,6 +5996,6 @@ if __name__ == "__main__":
     panel.show()
     
     # Panel loads last state automatically via _load_last_state()
-    # If no state, user can click folder button to select music folder
+    # If no state, user can click folder button to Select Media Folder
     
     sys.exit(app.exec())

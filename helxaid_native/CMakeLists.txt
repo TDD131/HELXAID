@@ -34,6 +34,7 @@ set(SOURCES
     src/macro_engine.cpp
     src/hid_controller.cpp
     src/boost_engine.cpp
+    src/etw_network_monitor.cpp
 )
 
 # Header files
@@ -48,6 +49,7 @@ set(HEADERS
     include/macro_engine.h
     include/hid_controller.h
     include/boost_engine.h
+    include/etw_network_monitor.h
 )
 
 # Create Python module
@@ -67,6 +69,8 @@ endif()
 # Windows-specific configuration
 if(WIN32)
     target_link_libraries(helxaid_native PRIVATE
+        advapi32
+        tdh
         shell32
         ole32
         gdi32

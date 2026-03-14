@@ -23,8 +23,6 @@ from PySide6.QtWidgets import (
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDesktopServices, QLinearGradient, QImage, QFont, QFontMetrics
 from PySide6.QtCore import Qt, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread
-# Qt Multimedia is lazy-loaded when music panel is opened to reduce startup RAM
-# from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices, QMediaMetaData
 from PlaylistWidget import PlaylistWidget
 from integrations.cpu_controller import is_uxtu_installed, is_ryzenadj_available, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
 from AnimatedButton import AnimatedButton
@@ -2572,7 +2570,7 @@ class AudioPlayerSidebar(QWidget):
         """Open folder dialog to load playlist."""
         folder = QFileDialog.getExistingDirectory(
             self,
-            "Select Music Folder",
+            "Select Media Folder",
             ""
         )
         if folder:
@@ -4371,6 +4369,12 @@ class GameLauncher(QWidget):
         
         # Setup music panel after all other UI is initialized
         self._setup_music_panel()
+
+        try:
+            self._last_panel_index = self.content_stack.currentIndex()
+            self.content_stack.currentChanged.connect(self._on_content_stack_changed)
+        except Exception:
+            pass
         
         # Setup CPU control panel (panel 2)
         self._setup_cpu_panel()
@@ -5137,7 +5141,29 @@ Stylesheet Selector:
         self.audio_player = None  # Deprecated - use music_panel directly
         
         print("[Music] Native Qt MusicPanelWidget initialized")
-    
+
+    def _on_content_stack_changed(self, new_index: int):
+        try:
+            old_index = getattr(self, '_last_panel_index', None)
+            self._last_panel_index = int(new_index)
+        except Exception:
+            old_index = getattr(self, '_last_panel_index', None)
+            self._last_panel_index = new_index
+
+        try:
+            if old_index == 1 and new_index != 1:
+                if hasattr(self, 'music_panel') and self.music_panel:
+                    self.music_panel.on_helxaic_page_hidden()
+        except Exception:
+            pass
+
+        try:
+            if new_index == 1 and old_index != 1:
+                if hasattr(self, 'music_panel') and self.music_panel:
+                    self.music_panel.on_helxaic_page_shown()
+        except Exception:
+            pass
+
     def _taskbar_prev(self):
         """Taskbar button: Previous track."""
         if hasattr(self, 'music_panel'):
@@ -5961,10 +5987,11 @@ Stylesheet Selector:
                     QCheckBox::indicator:checked { 
                         background: #FF5B06; 
                         border-color: #FF5B06; 
+                        image: url(:/qt-project.org/styles/commonstyle/images/checkbox_checked.png);
                     }
                 """)
                 control_row.addWidget(enable_cb)
-                
+
                 # Spinbox with custom arrow icons
                 from PySide6.QtWidgets import QSpinBox
                 spinbox = QSpinBox()
@@ -8223,7 +8250,7 @@ Stylesheet Selector:
 
         # Version label and Update button
         version_layout = QHBoxLayout()
-        version_label = QLabel("Version - 4.11")
+        version_label = QLabel("Version - 4.13")
         version_label.setStyleSheet("color: #888888; font-size: 11px;")
         
         check_update_btn = AnimatedButton("Check for Updates")
@@ -8472,7 +8499,7 @@ Stylesheet Selector:
             import json
             import threading
             
-            CURRENT_VERSION = "4.11"
+            CURRENT_VERSION = "4.13"
             API_URL = "https://api.github.com/repos/TDD131/HELXAID/releases/latest"
             
             def run_check():
@@ -8530,7 +8557,7 @@ Stylesheet Selector:
             QMessageBox.warning(self, "Update Error", f"Failed to check for updates!\n\nPlease ensure your internet connection is stable.\nError: {release_url}")
             return
             
-        CURRENT_VERSION = "4.11"
+        CURRENT_VERSION = "3"
         
         if latest_version == "NO_RELEASES":
             QMessageBox.information(self, "Update", f"No releases have been published on GitHub yet.\n\nYour current version: {CURRENT_VERSION}")
@@ -12650,6 +12677,15 @@ if __name__ == "__main__":
         sys.exit(0)
     
     app = QApplication(sys.argv)
+
+    # Ensure QSettings has a stable key across normal run vs Run & Debug (debugpy)
+    # so user preferences persist (e.g., YouTubeDownloader last output folder).
+    try:
+        from PySide6.QtCore import QCoreApplication
+        QCoreApplication.setOrganizationName("TDD131")
+        QCoreApplication.setApplicationName("HELXAID")
+    except Exception:
+        pass
     
     # Initialize Debug Console (captures stdout/stderr for viewing in .exe mode)
     # Press F12 to toggle visibility

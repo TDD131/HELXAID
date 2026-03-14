@@ -9,6 +9,7 @@
 #include <pybind11/stl.h>
 
 #include "boost_engine.h"
+#include "etw_network_monitor.h"
 #include "game_detector.h"
 #include "helxaid.h"
 #include "hid_controller.h"
@@ -102,6 +103,74 @@ PYBIND11_MODULE(helxaid_native, m) {
            "Find executable files (.exe, .lnk, .url, .bat, .cmd)")
       .def("find_media_files", &helxaid::FileScanner::findMediaFiles,
            py::arg("directory"), "Find media files (audio and video)");
+
+  // ===== ProcessNetworkStats =====
+  py::class_<helxaid::ProcessNetworkStats>(
+      m, "ProcessNetworkStats",
+      "Per-process ETW network usage statistics (cumulative bytes)")
+      .def(py::init<>())
+      .def_readonly("pid", &helxaid::ProcessNetworkStats::pid, "Process ID")
+      .def_readonly("process_name", &helxaid::ProcessNetworkStats::process_name,
+                    "Process executable name")
+      .def_readonly("exe_path", &helxaid::ProcessNetworkStats::exe_path,
+                    "Full path to executable")
+      .def_readonly("bytes_sent", &helxaid::ProcessNetworkStats::bytes_sent,
+                    "Total bytes sent")
+      .def_readonly("bytes_recv", &helxaid::ProcessNetworkStats::bytes_recv,
+                    "Total bytes received")
+      .def_property_readonly(
+          "bytes_total",
+          [](const helxaid::ProcessNetworkStats &s) {
+            return s.bytes_sent + s.bytes_recv;
+          },
+          "Total bytes (sent + received)")
+      .def_readonly("last_update", &helxaid::ProcessNetworkStats::last_update,
+                    "Timestamp of last update (monotonic ms)")
+      .def("__repr__", [](const helxaid::ProcessNetworkStats &s) {
+        return "<ProcessNetworkStats pid=" + std::to_string(s.pid) +
+               " name='" + s.process_name + "' total=" +
+               std::to_string(s.bytes_sent + s.bytes_recv) + ">";
+      });
+
+  // ===== ETWConfig =====
+  py::class_<helxaid::ETWConfig>(m, "ETWConfig",
+                                "ETW session configuration")
+      .def(py::init<>())
+      .def_readwrite("buffer_size_kb", &helxaid::ETWConfig::buffer_size_kb,
+                     "ETW buffer size in KB")
+      .def_readwrite("buffer_count", &helxaid::ETWConfig::buffer_count,
+                     "Number of ETW buffers")
+      .def_readwrite("flush_interval_ms",
+                     &helxaid::ETWConfig::flush_interval_ms,
+                     "Flush timer in milliseconds");
+
+  // ===== ETWNetworkMonitor =====
+  py::class_<helxaid::ETWNetworkMonitor>(
+      m, "ETWNetworkMonitor",
+      "ETW-based per-process network monitor (Windows).\n\n"
+      "Captures classic kernel TCP/IP events and provides cumulative\n"
+      "bytes sent/received per PID. Requires admin privileges on most systems.")
+      .def(py::init<>(), "Create ETW network monitor")
+      .def("start", &helxaid::ETWNetworkMonitor::start,
+           py::arg("config") = helxaid::ETWConfig(),
+           "Start ETW session")
+      .def("stop", &helxaid::ETWNetworkMonitor::stop, "Stop ETW session")
+      .def("is_running", &helxaid::ETWNetworkMonitor::isRunning,
+           "Check if ETW session is running")
+      .def("get_process_stats", &helxaid::ETWNetworkMonitor::getProcessStats,
+           "Get per-process stats snapshot")
+      .def("reset", &helxaid::ETWNetworkMonitor::reset,
+           "Clear accumulated counters")
+      .def("set_process_name_resolver",
+           &helxaid::ETWNetworkMonitor::setProcessNameResolver,
+           py::arg("resolver"),
+           "Set PID->name resolver callback")
+      .def("set_process_path_resolver",
+           &helxaid::ETWNetworkMonitor::setProcessPathResolver,
+           py::arg("resolver"),
+           "Set PID->exe path resolver callback")
+      .def("get_last_error", &helxaid::ETWNetworkMonitor::getLastError,
+           "Get last error string");
 
   // ===== Convenience functions =====
   m.def(

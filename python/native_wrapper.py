@@ -408,6 +408,121 @@ class FileScanner:
         )
 
 
+class ETWNetworkMonitor:
+    def __init__(self):
+        self._native = None
+        if NATIVE_AVAILABLE:
+            try:
+                self._native = _native_module.ETWNetworkMonitor()
+            except Exception as e:
+                print(f"[ETW] Failed to create native ETWNetworkMonitor: {e}")
+
+    def is_available(self) -> bool:
+        return self._native is not None
+
+    def start(self, config: Optional[dict] = None) -> bool:
+        if not self._native:
+            return False
+
+        try:
+            cfg = _native_module.ETWConfig()
+            if config:
+                if 'buffer_size_kb' in config:
+                    cfg.buffer_size_kb = int(config['buffer_size_kb'])
+                if 'buffer_count' in config:
+                    cfg.buffer_count = int(config['buffer_count'])
+                if 'flush_interval_ms' in config:
+                    cfg.flush_interval_ms = int(config['flush_interval_ms'])
+
+            def resolve_name(pid: int) -> str:
+                try:
+                    import psutil
+                    return psutil.Process(pid).name()
+                except Exception:
+                    return f"PID {pid}"
+
+            def resolve_path(pid: int) -> str:
+                try:
+                    import psutil
+                    return psutil.Process(pid).exe()
+                except Exception:
+                    return ""
+
+            self._native.set_process_name_resolver(resolve_name)
+            self._native.set_process_path_resolver(resolve_path)
+
+            ok = bool(self._native.start(cfg))
+            if not ok:
+                try:
+                    print(f"[ETW] start() failed: {self._native.get_last_error()}")
+                except Exception:
+                    pass
+            return ok
+        except Exception as e:
+            print(f"[ETW] start() error: {e}")
+            return False
+
+    def get_last_error(self) -> str:
+        if not self._native:
+            return ""
+        try:
+            return str(self._native.get_last_error())
+        except Exception:
+            return ""
+
+    def stop(self):
+        if not self._native:
+            return
+        try:
+            self._native.stop()
+        except Exception as e:
+            print(f"[ETW] stop() error: {e}")
+
+    def is_running(self) -> bool:
+        if not self._native:
+            return False
+        try:
+            return bool(self._native.is_running())
+        except Exception:
+            return False
+
+    def reset(self):
+        if not self._native:
+            return
+        try:
+            self._native.reset()
+        except Exception as e:
+            print(f"[ETW] reset() error: {e}")
+
+    def get_process_stats(self) -> list[dict]:
+        if not self._native:
+            return []
+        try:
+            stats = self._native.get_process_stats()
+            out = []
+            for s in stats:
+                out.append({
+                    'pid': int(s.pid),
+                    'name': str(s.process_name or ''),
+                    'exe_path': str(s.exe_path or ''),
+                    'bytes_sent': int(s.bytes_sent),
+                    'bytes_recv': int(s.bytes_recv),
+                    'bytes_total': int(s.bytes_total),
+                    'last_update': int(s.last_update),
+                })
+            return out
+        except Exception as e:
+            print(f"[ETW] get_process_stats() error: {e}")
+            return []
+
+
+def get_etw_network_monitor() -> Optional[ETWNetworkMonitor]:
+    m = ETWNetworkMonitor()
+    if m.is_available():
+        return m
+    return None
+
+
 # =============================================================================
 # Singleton instances for easy access
 # =============================================================================
