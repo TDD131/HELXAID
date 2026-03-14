@@ -140,9 +140,22 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 ## ✦ Changelog
 
 ### 4.13
-
 - Add Estimated Size at Youtube Downloader.
-- Add `--no-playlist` flag so that even if the link is a playlist, it will only download the first video.
+- Add `--no-playlist` flag so that even if the link is a playlist, it will only download the video you copied.
+- Optimized video player performance.
+- Improved Youtube Downloader, include:
+-- Preview Image.
+-- Youtube Downloader now is a panel instead of floating window.
+- Add "Subtitle" Menu at Header of HELXAIC.
+- Added Subtitle Support, include:
+-- Style, each style has it own style:
+--- Regular.
+--- Bold.
+--- Italic.
+--- Bold Italic.
+-- Size.
+- Fixes duration bar bug.
+- Upgraded Internet Data usage Software detection.
 
 ### 4.12
 - Improve Universal Scan detection (Add Epic Games, GOG Galaxy, Ubisoft Connect, Riot Games, EA App).
@@ -173,10 +186,6 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - Add LHM Install panel if user didnt have (I forgot this one, sorry :( ).
 - Add LHM at the list of uninstall tools.
 - Add FFmpeg/FFprobe at the list of uninstall tools.
-
-### v4.10.1
-- Updated deployment instructions: `HELXAID` is now exclusively instructed to be downloaded natively as `.exe` file without needing zip extraction.
-- Excluded `--onefile` build instructions from the workflow guide to significantly reduce Anti-Virus *False-Positives* (Windows Defender).
 
 ---
 
