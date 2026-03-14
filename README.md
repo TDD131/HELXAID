@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Platform-Windows_10%2B-lightgray?style=for-the-badge&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-v4.12-orange?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v4.13-orange?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
