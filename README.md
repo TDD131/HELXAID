@@ -143,9 +143,7 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - Add Estimated Size at Youtube Downloader.
 - Add `--no-playlist` flag so that even if the link is a playlist, it will only download the video you copied.
 - Optimized video player performance.
-- Improved Youtube Downloader, include:
--- Preview Image.
--- Youtube Downloader now is a panel instead of floating window.
+- Improved Youtube Downloader, include: -- Preview Image. -- Youtube Downloader now is a panel instead of floating window.
 - Add "Subtitle" Menu at Header of HELXAIC.
 - Added Subtitle Support, include:
 -- Style, each style has it own style:
