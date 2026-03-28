@@ -8665,7 +8665,7 @@ Stylesheet Selector:
             QMessageBox.warning(self, "Update Error", f"Failed to check for updates!\n\nPlease ensure your internet connection is stable.\nError: {release_url}")
             return
             
-        CURRENT_VERSION = "3"
+        CURRENT_VERSION = "4.14"
         
         if latest_version == "NO_RELEASES":
             QMessageBox.information(self, "Update", f"No releases have been published on GitHub yet.\n\nYour current version: {CURRENT_VERSION}")
