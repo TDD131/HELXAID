@@ -161,8 +161,15 @@ class _SubtitleRenderWidget(QWidget):
 
 
 class _SubtitleOverlayWindow(QWidget):
+    """Separate top-level window for subtitle overlay.
+    
+    Must use Qt::Tool window because QVideoWidget uses hardware rendering
+    (D3D/OpenGL) which always draws on top of regular child widgets.
+    A separate top-level window can properly overlay on the hardware-rendered video.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Qt::Tool is required to overlay on hardware-rendered video
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -661,13 +668,14 @@ class VideoPlayerWidget(QWidget):
 
         layout.addWidget(self.video_widget)
 
+        # Subtitle overlay window (separate top-level to overlay on hardware-rendered video)
         self._subtitle_overlay = _SubtitleOverlayWindow()
         self.subtitle_label_top = self._subtitle_overlay.label_top
         self.subtitle_label_bottom = self._subtitle_overlay.label_bottom
         self.subtitle_label = self.subtitle_label_bottom
         self._subtitle_overlay_visible = False
         self._subtitle_overlay_timer = QTimer(self)
-        self._subtitle_overlay_timer.setInterval(500)
+        self._subtitle_overlay_timer.setInterval(100)  # Reduced from 500ms for smoother updates
         self._subtitle_overlay_timer.timeout.connect(self._update_subtitle_overlay_geometry)
         try:
             QApplication.instance().applicationStateChanged.connect(self._on_app_state_changed)
@@ -824,6 +832,7 @@ class VideoPlayerWidget(QWidget):
                 self._subtitle_overlay_visible = False
                 return
 
+            # Use global coordinates for separate top-level window
             top_left = self.video_widget.mapToGlobal(QPoint(0, 0))
             w = self.video_widget.width()
             h = self.video_widget.height()
@@ -844,6 +853,16 @@ class VideoPlayerWidget(QWidget):
                 self._subtitle_overlay.hide()
                 self._subtitle_overlay_visible = False
                 return
+
+            # Cache video size to skip unnecessary geometry recalculations
+            if hasattr(self, '_last_video_size'):
+                current_size = self.video_widget.size()
+                if self._last_video_size == current_size and self._subtitle_overlay_visible:
+                    # Size unchanged and visible - skip recalculation
+                    return
+                self._last_video_size = current_size
+            else:
+                self._last_video_size = self.video_widget.size()
 
             if not self._subtitle_overlay_visible:
                 self._subtitle_overlay.show()
@@ -943,24 +962,41 @@ class VideoPlayerWidget(QWidget):
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._toggle_fullscreen()
-        super().mouseDoubleClickEvent(event)
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space:
             self._toggle_play()
+            event.accept()
         elif event.key() == Qt.Key_Escape:
-            if self._is_fullscreen:
+            # Check parent's fullscreen state
+            parent = self.parentWidget()
+            is_fullscreen = False
+            while parent:
+                if hasattr(parent, '_is_fullscreen'):
+                    is_fullscreen = parent._is_fullscreen
+                    break
+                parent = parent.parentWidget()
+            if is_fullscreen:
                 self._toggle_fullscreen()
+            event.accept()
         elif event.key() == Qt.Key_F:
             self._toggle_fullscreen()
+            event.accept()
         elif event.key() == Qt.Key_Left:
             self._seek_relative(-5)
+            event.accept()
         elif event.key() == Qt.Key_Right:
             self._seek_relative(5)
+            event.accept()
         elif event.key() == Qt.Key_Up:
             self._adjust_volume(5)
+            event.accept()
         elif event.key() == Qt.Key_Down:
             self._adjust_volume(-5)
+            event.accept()
         else:
             super().keyPressEvent(event)
 
@@ -1017,13 +1053,23 @@ class VideoPlayerWidget(QWidget):
         self.bottom_bar.volume_slider.setValue(new_vol)
 
     def _toggle_fullscreen(self):
-        self._is_fullscreen = not self._is_fullscreen
-        print(f"Fullscreen: {'ON' if self._is_fullscreen else 'OFF'}")
+        # Determine new state based on current fullscreen state from parent
+        # The parent (MusicPanelWidget) owns the fullscreen state
+        parent = self.parentWidget()
+        is_currently_fullscreen = False
+        while parent:
+            if hasattr(parent, '_is_fullscreen'):
+                is_currently_fullscreen = parent._is_fullscreen
+                break
+            parent = parent.parentWidget()
+        
+        new_fullscreen = not is_currently_fullscreen
+        print(f"VideoPlayer requesting fullscreen: {'ON' if new_fullscreen else 'OFF'}")
 
-        # Emit signal for parent to handle fullscreen on the main window
-        self.fullscreenToggled.emit(self._is_fullscreen)
+        # Emit signal for parent to handle fullscreen
+        self.fullscreenToggled.emit(new_fullscreen)
 
-        if not self._is_fullscreen:
+        if not new_fullscreen:
             # IMMEDIATELY stop PlayerBar animation and reset
             self._stop_playerbar_animation_now()
 

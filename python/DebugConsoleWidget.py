@@ -8,6 +8,8 @@ Component Name: DebugConsoleWidget
 """
 
 import sys
+import json
+import re
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout
 )
@@ -73,6 +75,10 @@ class DebugConsoleWidget(QWidget):
         self.console = QTextEdit()
         self.console.setObjectName("debugConsole")
         self.console.setReadOnly(True)
+        try:
+            self.console.document().setMaximumBlockCount(5000)
+        except Exception:
+            pass
         self.console.setFont(QFont("Consolas", 9))
         self.console.setStyleSheet("""
             QTextEdit {
@@ -134,10 +140,31 @@ class DebugConsoleWidget(QWidget):
         """)
         btn_layout.addWidget(self.auto_scroll_btn)
         
+        # Pretty-Print button
+        pretty_btn = QPushButton("Pretty-Print")
+        pretty_btn.setObjectName("debugPrettyBtn")
+        pretty_btn.setCursor(Qt.PointingHandCursor)
+        pretty_btn.clicked.connect(self.pretty_print_json)
+        pretty_btn.setToolTip("Find and format JSON strings in the console for better readability")
+        pretty_btn.setStyleSheet("""
+            QPushButton {
+                background: #333;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background: #444;
+                border-color: #2ecc71;
+            }
+        """)
+        btn_layout.addWidget(pretty_btn)
+        
         btn_layout.addStretch()
         
         # Close button
-        close_btn = QPushButton("Close (F11)")
+        close_btn = QPushButton("Close (F9)")
         close_btn.setObjectName("debugCloseBtn")
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.clicked.connect(self.hide)
@@ -214,10 +241,56 @@ class DebugConsoleWidget(QWidget):
     
     def keyPressEvent(self, event):
         """Handle key press."""
-        if event.key() == Qt.Key_F11:
+        # Sync with F9 toggle used in the main launcher
+        if event.key() == Qt.Key_F9:
             self.hide()
         else:
             super().keyPressEvent(event)
+
+    def pretty_print_json(self):
+        """Search for JSON blobs in the console and format them with indentation."""
+        text = self.console.toPlainText()
+        
+        # Simple regex to find potential JSON objects/arrays
+        # Looks for content between balanced { } or [ ]
+        # This is a heuristic, but works well for logs
+        json_pattern = re.compile(r'(\{.*\}|\[.*\])', re.DOTALL)
+        
+        def beautify(match):
+            raw_json = match.group(0)
+            try:
+                # Try to parse and re-format
+                parsed = json.loads(raw_json)
+                return json.dumps(parsed, indent=4)
+            except:
+                return raw_json
+                
+        # To avoid mangling everything, we try a more targeted approach:
+        # split by lines and try to parse each line
+        lines = text.split('\n')
+        new_lines = []
+        changed = False
+        
+        for line in lines:
+            stripped = line.strip()
+            if (stripped.startswith('{') and stripped.endswith('}')) or \
+               (stripped.startswith('[') and stripped.endswith(']')):
+                try:
+                    parsed = json.loads(stripped)
+                    formatted = json.dumps(parsed, indent=4)
+                    new_lines.append(formatted)
+                    changed = True
+                except:
+                    new_lines.append(line)
+            else:
+                new_lines.append(line)
+                
+        if changed:
+            self.console.setPlainText('\n'.join(new_lines))
+            # Scroll to end
+            cursor = self.console.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            self.console.setTextCursor(cursor)
     
     def closeEvent(self, event):
         """Handle close - just hide instead."""

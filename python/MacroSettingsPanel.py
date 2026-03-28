@@ -234,6 +234,123 @@ class HotkeyRecordButton(QPushButton):
         self.setText(key.upper())
 
 
+class DeviceWarningOverlay(QWidget):
+    """
+    Overlay panel that displays a warning when the mouse is disconnected
+    or not a Furycube G13 Pro device. Used in DPI tab, Advanced settings,
+    and Wireless Pairing sections.
+    """
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_StyledBackground)
+        self.setObjectName("deviceWarningOverlay")
+        self.setMinimumHeight(80)
+        self.setMinimumWidth(300)
+        self.setStyleSheet("""
+            QWidget#deviceWarningOverlay {
+                background: rgba(255, 60, 60, 0.15);
+                border: 1px solid rgba(255, 60, 60, 0.4);
+                border-radius: 8px;
+            }
+        """)
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setSpacing(12)
+        
+        # Warning icon
+        icon_label = QLabel("!")
+        icon_label.setStyleSheet("""
+            QLabel {
+                color: #ff6b6b;
+                font-size: 24px;
+                font-weight: bold;
+                background: transparent;
+            }
+        """)
+        icon_label.setFixedWidth(30)
+        icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(icon_label)
+        
+        # Warning text container
+        text_container = QWidget()
+        text_container.setStyleSheet("background: transparent;")
+        text_layout = QVBoxLayout(text_container)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(2)
+        
+        self._title_label = QLabel("Device Not Connected")
+        self._title_label.setStyleSheet("""
+            QLabel {
+                color: #ff6b6b;
+                font-size: 14px;
+                font-weight: bold;
+                background: transparent;
+            }
+        """)
+        text_layout.addWidget(self._title_label)
+        
+        self._desc_label = QLabel("Connect your Furycube G13 Pro to use this feature.")
+        self._desc_label.setStyleSheet("""
+            QLabel {
+                color: #aa8888;
+                font-size: 11px;
+                background: transparent;
+            }
+        """)
+        text_layout.addWidget(self._desc_label)
+        
+        layout.addWidget(text_container, 1)
+        # Show by default - will be hidden if device is connected
+        self.show()
+    
+    def set_disconnected(self):
+        """Set overlay to show disconnected state."""
+        self._title_label.setText("Device Not Connected")
+        self._desc_label.setText("Connect your Furycube G13 Pro to use this feature.")
+        self.show()
+    
+    def set_wrong_device(self, device_name: str = ""):
+        """Set overlay to show wrong device state."""
+        self._title_label.setText("Unsupported Device")
+        if device_name:
+            self._desc_label.setText(f"Connected device '{device_name}' is not a Furycube G13 Pro.")
+        else:
+            self._desc_label.setText("The connected device is not a Furycube G13 Pro.")
+        self.show()
+    
+    def check_and_update(self, hw_manager):
+        """
+        Check hardware state and update overlay visibility.
+        Returns True if device is connected and correct, False otherwise.
+        
+        Args:
+            hw_manager: HardwareManager instance to query state from
+            
+        Returns:
+            bool: True if device is OK (connected + correct device), False otherwise
+        """
+        try:
+            state = hw_manager.get_state()
+            connected = state.get('connected', False)
+            
+            if not connected:
+                self.set_disconnected()
+                return False
+            
+            # Check if device is Furycube G13 Pro
+            # The HardwareManager/FurycubeHID only connects to Furycube devices,
+            # so if connected=True, it's the correct device
+            self.hide()
+            return True
+            
+        except Exception as e:
+            print(f"[DeviceWarningOverlay] Error checking state: {e}")
+            self.set_disconnected()
+            return False
+
+
 class MacroSettingsPanel(QWidget):
     """
     Settings panel for the macro system (fits in content stack).
@@ -257,6 +374,7 @@ class MacroSettingsPanel(QWidget):
         
         # UI now ONLY uses HardwareManager to avoid thread contention/freezes
         self._hw_manager = get_hardware_manager()
+        self._hw_manager.start_manager()  # Start the background thread
         self._setup_ui()
         
         # Timer for fast UI status updates (macro lists, active markers)
@@ -279,6 +397,9 @@ class MacroSettingsPanel(QWidget):
         
         # Initial battery read after 1 second delay
         QTimer.singleShot(1000, self._update_battery_display)
+        
+        # Initial device warning check after HardwareManager has time to initialize
+        QTimer.singleShot(2000, self._check_device_warnings_initial)
         
         # Auto-initialize and start macro bridge (no manual start/stop needed)
         # This makes all macro features work immediately without user intervention
@@ -1639,6 +1760,12 @@ class MacroSettingsPanel(QWidget):
         dpi_scroll.setWidget(dpi_content)
         dpi_tab_layout = QVBoxLayout(dpi_tab)
         dpi_tab_layout.setContentsMargins(0, 0, 0, 0)
+        dpi_tab_layout.setSpacing(0)
+        
+        # Add device warning overlay OUTSIDE scroll area so it's always visible
+        self._dpi_device_warning = DeviceWarningOverlay(dpi_tab)
+        dpi_tab_layout.addWidget(self._dpi_device_warning)
+        
         dpi_tab_layout.addWidget(dpi_scroll)
         
         self._page_stack.addWidget(dpi_tab)
@@ -2380,6 +2507,12 @@ class MacroSettingsPanel(QWidget):
         advanced_layout = QVBoxLayout(advanced_group)
         advanced_layout.setSpacing(10)
         
+        # Device warning overlay for Advanced section
+        self._advanced_device_warning = DeviceWarningOverlay(advanced_group)
+        advanced_layout.addWidget(self._advanced_device_warning)
+        self._advanced_device_warning.raise_()
+        self._advanced_device_warning.show()
+        
         # Long Distance Mode checkbox
         self._long_distance_check = QCheckBox("Long Distance Mode")
         self._long_distance_check.setStyleSheet(self._drag_mode_checkbox.styleSheet())
@@ -2464,7 +2597,15 @@ class MacroSettingsPanel(QWidget):
         # === PAIR TOOL ===
         pair_group = QGroupBox("Wireless Pairing")
         pair_group.setStyleSheet(general_group.styleSheet())
-        pair_layout = QHBoxLayout(pair_group)
+        pair_outer_layout = QVBoxLayout(pair_group)
+        pair_outer_layout.setSpacing(10)
+        
+        # Device warning overlay for Wireless Pairing section
+        self._pairing_device_warning = DeviceWarningOverlay(pair_group)
+        pair_outer_layout.addWidget(self._pairing_device_warning)
+        
+        pair_layout = QHBoxLayout()
+        pair_outer_layout.addLayout(pair_layout)
         
         pair_btn = QPushButton("Pair Tool")
         pair_btn.setStyleSheet("""
@@ -4386,6 +4527,9 @@ class MacroSettingsPanel(QWidget):
             state = self._hw_manager.get_state()
             is_connected = state.get('connected', False)
             
+            # Update device warning overlays
+            self._update_device_warnings(is_connected)
+            
             if not is_connected:
                 self._battery_label.setText("---%")
                 self._charging_label.setText("")
@@ -4446,6 +4590,55 @@ class MacroSettingsPanel(QWidget):
                 self._battery_label.setText("READING...")
         except Exception as e:
             print(f"[MacroSettingsPanel] Battery update error: {e}")
+    
+    def _update_device_warnings(self, is_connected: bool):
+        """
+        Update all device warning overlays based on connection state.
+        Called periodically from _update_battery_display.
+        
+        Args:
+            is_connected: Whether the Furycube G13 Pro is connected
+        """
+        try:
+            # Update DPI tab warning
+            if hasattr(self, '_dpi_device_warning'):
+                if is_connected:
+                    self._dpi_device_warning.hide()
+                else:
+                    self._dpi_device_warning.set_disconnected()
+                    self._dpi_device_warning.show()
+                    print("[HELXAIRO] DPI warning shown (disconnected)")
+            
+            # Update Advanced settings warning
+            if hasattr(self, '_advanced_device_warning'):
+                if is_connected:
+                    self._advanced_device_warning.hide()
+                else:
+                    self._advanced_device_warning.set_disconnected()
+                    self._advanced_device_warning.show()
+            
+            # Update Wireless Pairing warning
+            if hasattr(self, '_pairing_device_warning'):
+                if is_connected:
+                    self._pairing_device_warning.hide()
+                else:
+                    self._pairing_device_warning.set_disconnected()
+                    self._pairing_device_warning.show()
+                    
+        except Exception as e:
+            print(f"[MacroSettingsPanel] Device warning update error: {e}")
+    
+    def _check_device_warnings_initial(self):
+        """Initial check of device warnings when panel first loads."""
+        try:
+            state = self._hw_manager.get_state()
+            is_connected = state.get('connected', False)
+            print(f"[HELXAIRO] Device warning check: connected={is_connected}")
+            self._update_device_warnings(is_connected)
+        except Exception as e:
+            print(f"[MacroSettingsPanel] Initial device warning check error: {e}")
+            # Default to showing warning if we can't check state
+            self._update_device_warnings(False)
     
     def _on_refresh_connection_clicked(self):
         """Force the HardwareManager to re-enumerate and reconnect to the mouse.

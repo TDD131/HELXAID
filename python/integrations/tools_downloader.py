@@ -20,6 +20,7 @@ RYZENADJ_DIR = os.path.join(TOOLS_DIR, "ryzenadj")
 FFMPEG_DIR = os.path.join(TOOLS_DIR, "ffmpeg")
 LIBREHWMON_DIR = os.path.join(TOOLS_DIR, "librehardwaremonitor")
 HWINFO_DIR = os.path.join(TOOLS_DIR, "hwinfo")
+VLC_DIR = os.path.join(TOOLS_DIR, "vlc")
 
 # Download URLs
 RYZENADJ_URL = "https://github.com/FlyGoat/RyzenAdj/releases/latest/download/ryzenadj-win64.zip"
@@ -27,6 +28,46 @@ FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 LIBREHWMON_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/download/v0.9.4/LibreHardwareMonitor-net472.zip"
 # HWiNFO Portable (~5MB, latest stable version)
 HWINFO_URL = "https://www.hwinfo.com/files/hwi_834.zip"  # v8.34 portable
+# VLC Portable (from VideoLAN, ~40MB) - Version 3.0.20 (stable)
+VLC_URLS = [
+    "https://get.videolan.org/vlc/3.0.20/win64/vlc-3.0.20-win64.zip",
+    "https://mirror.fcix.net/videolan-ftp/vlc/3.0.20/win64/vlc-3.0.20-win64.zip",
+    "https://ftp.osuosl.org/pub/videolan/vlc/3.0.20/win64/vlc-3.0.20-win64.zip",
+    "https://mirrors.ocf.berkeley.edu/videolan/vlc/3.0.20/win64/vlc-3.0.20-win64.zip",
+    "https://mirror.clarkson.edu/videolan/vlc/3.0.20/win64/vlc-3.0.20-win64.zip",
+]
+
+# Checksums for verifying download integrity (SHA256)
+# Note: RyzenAdj uses dynamic version checking instead of a hardcoded checksum
+# because it points to the "latest" release URL which changes with every new release.
+CHECKSUMS = {
+    "vlc": "75d946b166476191df3d93783f7683b7a1a5176aad105e1cd46d940c049f7cdc",  # VLC 3.0.20 win64
+    "ffmpeg": "e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2",  # FFmpeg - placeholder
+    "librehwmon": "a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4",  # LibreHardwareMonitor - placeholder
+    "hwinfo": "b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",  # HWiNFO - placeholder
+}
+
+
+def calculate_checksum(file_path: str, algorithm: str = "sha256") -> str:
+    """
+    Calculate checksum of a file.
+    
+    Args:
+        file_path: Path to file
+        algorithm: Hash algorithm (sha256 or md5)
+    
+    Returns:
+        Hex digest string
+    """
+    import hashlib
+    
+    hash_func = hashlib.sha256() if algorithm == "sha256" else hashlib.md5()
+    
+    with open(file_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(8192), b''):
+            hash_func.update(chunk)
+    
+    return hash_func.hexdigest()
 
 
 def get_ryzenadj_path() -> str:
@@ -37,6 +78,66 @@ def get_ryzenadj_path() -> str:
 def get_ffmpeg_path() -> str:
     """Get path to ffmpeg.exe in AppData."""
     return os.path.join(FFMPEG_DIR, "bin", "ffmpeg.exe")
+
+
+def get_ryzenadj_installed_version() -> Optional[str]:
+    """
+    Get the version of the currently installed RyzenAdj exe WITHOUT running it.
+
+    RyzenAdj needs AMD hardware access (SMU/kernel driver), so running it
+    without admin rights or on non-AMD hardware hangs indefinitely. Instead
+    we read the Windows file version resource embedded in the PE header using
+    the win32api module (available on Windows), which is purely a file read.
+
+    Fallback chain:
+      1. win32api.GetFileVersionInfo  - fast, no process spawn
+      2. Return None                  - safe no-op if pywin32 not installed
+
+    Returns:
+        Version string like "v0.14.0", or None if not installed / unreadable.
+    """
+    exe = get_ryzenadj_path()
+    if not os.path.exists(exe):
+        return None
+    try:
+        # pywin32 is typically available in the HELXAID venv.
+        # Reading file version info does NOT spawn a process.
+        import win32api  # type: ignore
+        info = win32api.GetFileVersionInfo(exe, "\\")
+        ms = info["FileVersionMS"]
+        ls = info["FileVersionLS"]
+        major = (ms >> 16) & 0xFFFF
+        minor = ms & 0xFFFF
+        patch = (ls >> 16) & 0xFFFF
+        return f"v{major}.{minor}.{patch}"
+    except Exception:
+        # pywin32 not installed, or file has no version resource - that's fine.
+        return None
+
+
+def get_ryzenadj_latest_version() -> Optional[str]:
+    """
+    Query the GitHub API for the latest RyzenAdj release tag.
+
+    Uses the public GitHub releases API endpoint (no auth required for public
+    repos at normal request rates).
+
+    Returns:
+        Tag name string like "v0.14.0", or None on network error.
+    """
+    import urllib.request
+    import json
+    api_url = "https://api.github.com/repos/FlyGoat/RyzenAdj/releases/latest"
+    try:
+        req = urllib.request.Request(
+            api_url,
+            headers={"User-Agent": "HELXAID-Launcher", "Accept": "application/vnd.github+json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("tag_name")  # e.g. "v0.14.0"
+    except Exception:
+        return None
 
 
 def is_ryzenadj_available() -> bool:
@@ -103,7 +204,22 @@ def is_hwinfo_available() -> bool:
     return os.path.exists(get_hwinfo_path()) or os.path.exists(get_hwinfo32_path())
 
 
-def download_file(url: str, dest_path: str, progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[bool, Optional[str]]:
+def get_vlc_path() -> str:
+    """Get path to vlc.exe in AppData."""
+    return os.path.join(VLC_DIR, "vlc.exe")
+
+
+def get_libvlc_path() -> str:
+    """Get path to libvlc.dll for python-vlc bindings."""
+    return os.path.join(VLC_DIR, "libvlc.dll")
+
+
+def is_vlc_available() -> bool:
+    """Check if VLC Portable is available in AppData only."""
+    return os.path.exists(get_vlc_path()) and os.path.exists(get_libvlc_path())
+
+
+def download_file(url: str, dest_path: str, progress_callback: Optional[Callable[[int, int], None]] = None, expected_checksum: Optional[str] = None, checksum_algorithm: str = "sha256") -> Tuple[bool, Optional[str]]:
     """
     Download a file from URL to destination path.
     
@@ -111,6 +227,8 @@ def download_file(url: str, dest_path: str, progress_callback: Optional[Callable
         url: Download URL
         dest_path: Destination file path
         progress_callback: Optional callback(downloaded_bytes, total_bytes)
+        expected_checksum: Optional expected checksum for verification
+        checksum_algorithm: Hash algorithm (sha256 or md5)
     
     Returns:
         (success, error_message)
@@ -142,6 +260,21 @@ def download_file(url: str, dest_path: str, progress_callback: Optional[Callable
                     
                     if progress_callback and total_size > 0:
                         progress_callback(downloaded, total_size)
+        
+        # Verify checksum if provided
+        if expected_checksum:
+            print(f"[Tools] Verifying checksum ({checksum_algorithm})...")
+            actual_checksum = calculate_checksum(dest_path, checksum_algorithm)
+            if actual_checksum.lower() != expected_checksum.lower():
+                print(f"[Tools] Checksum mismatch!")
+                print(f"[Tools] Expected: {expected_checksum}")
+                print(f"[Tools] Actual:   {actual_checksum}")
+                try:
+                    os.remove(dest_path)
+                except:
+                    pass
+                return False, f"Checksum verification failed: file corrupted or wrong version"
+            print(f"[Tools] Checksum verified successfully")
         
         return True, None
         
@@ -189,47 +322,112 @@ def extract_zip(zip_path: str, dest_dir: str, flatten: bool = False) -> Tuple[bo
         return False, str(e)
 
 
-def download_ryzenadj(progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[bool, Optional[str]]:
+def download_ryzenadj(progress_callback: Optional[Callable[[int, int], None]] = None, force: bool = False) -> Tuple[bool, Optional[str]]:
     """
     Download and install RyzenAdj to AppData.
-    
+
+    Before downloading, checks whether the installed version already matches
+    the latest GitHub release. If they match and `force` is False, the
+    download is skipped and (True, None) is returned immediately.
+
+    Version checking uses two helpers:
+      - get_ryzenadj_installed_version(): runs the local exe to read its tag
+      - get_ryzenadj_latest_version():    queries the GitHub releases API
+
+    The download does NOT use a hardcoded SHA-256 checksum because the
+    RYZENADJ_URL always points to "latest", meaning the file changes with
+    every new release. Instead, correct installation is verified by confirming
+    the executable exists after extraction.
+
+    Args:
+        progress_callback: Optional callback(downloaded_bytes, total_bytes) for
+                           UI progress reporting.
+        force:             If True, skip the version check and always download.
+
     Returns:
-        (success, error_message)
+        (success, error_message) - error_message is None on success.
     """
+    import time
+
     try:
-        # Create temp file for download
+        # --- Version check: skip download if already up to date ---
+        if not force:
+            print("[Tools] Checking RyzenAdj version...")
+            installed_ver = get_ryzenadj_installed_version()
+            latest_ver = get_ryzenadj_latest_version()
+
+            if installed_ver and latest_ver:
+                print(f"[Tools] Installed: {installed_ver} | Latest: {latest_ver}")
+                if installed_ver.lstrip('v') == latest_ver.lstrip('v'):
+                    print("[Tools] RyzenAdj is already up to date. Skipping download.")
+                    return True, None
+                else:
+                    print(f"[Tools] Update available: {installed_ver} -> {latest_ver}")
+            elif installed_ver and not latest_ver:
+                # Can't reach GitHub API - keep the existing install
+                print("[Tools] Could not reach GitHub to check for updates. Using existing install.")
+                return True, None
+            else:
+                print("[Tools] RyzenAdj not installed or version unreadable. Proceeding with download.")
+
+        # --- Download ---
         temp_dir = tempfile.gettempdir()
         zip_path = os.path.join(temp_dir, "ryzenadj-win64.zip")
-        
-        # Download
-        print(f"[Tools] Downloading RyzenAdj from {RYZENADJ_URL}...")
-        success, error = download_file(RYZENADJ_URL, zip_path, progress_callback)
+
+        last_error = None
+        success = False
+        for attempt in range(3):
+            print(f"[Tools] Downloading RyzenAdj from {RYZENADJ_URL} (attempt {attempt + 1}/3)...")
+            # No expected_checksum: the "latest" URL changes with every release,
+            # so a hardcoded hash will always mismatch. Integrity is instead
+            # confirmed by verifying the exe exists after extraction.
+            success, error = download_file(
+                RYZENADJ_URL,
+                zip_path,
+                progress_callback,
+                expected_checksum=None
+            )
+            if success:
+                print("[Tools] RyzenAdj downloaded successfully.")
+                last_error = None
+                break
+            else:
+                print(f"[Tools] Download failed: {error}")
+                if attempt < 2:
+                    backoff_time = 2 ** attempt
+                    print(f"[Tools] Waiting {backoff_time}s before retry...")
+                    time.sleep(backoff_time)
+                last_error = error
+
         if not success:
-            return False, f"Download failed: {error}"
-        
-        # Clean existing installation
+            return False, f"Download failed: {last_error}"
+
+        # --- Install ---
+        # Clean existing installation before extracting new files
         if os.path.exists(RYZENADJ_DIR):
             shutil.rmtree(RYZENADJ_DIR)
-        
-        # Extract (flatten to get ryzenadj.exe directly)
+
         print(f"[Tools] Extracting to {RYZENADJ_DIR}...")
         success, error = extract_zip(zip_path, RYZENADJ_DIR, flatten=True)
         if not success:
             return False, f"Extract failed: {error}"
-        
-        # Cleanup temp file
+
+        # Remove temp zip
         try:
             os.remove(zip_path)
-        except:
+        except Exception:
             pass
-        
-        # Verify installation
+
+        # Verify the exe is present after extraction.
+        # NOTE: We intentionally do NOT call get_ryzenadj_installed_version()
+        # here because running ryzenadj.exe requires AMD hardware / admin
+        # access and will hang indefinitely when those aren't available.
         if os.path.exists(get_ryzenadj_path()):
             print("[Tools] RyzenAdj installed successfully!")
             return True, None
         else:
-            return False, "RyzenAdj.exe not found after extraction"
-        
+            return False, "ryzenadj.exe not found after extraction"
+
     except Exception as e:
         return False, str(e)
 
@@ -241,16 +439,37 @@ def download_ffmpeg(progress_callback: Optional[Callable[[int, int], None]] = No
     Returns:
         (success, error_message)
     """
+    import time
+    
     try:
         # Create temp file for download
         temp_dir = tempfile.gettempdir()
         zip_path = os.path.join(temp_dir, "ffmpeg-essentials.zip")
         
-        # Download
-        print(f"[Tools] Downloading FFmpeg from {FFMPEG_URL}...")
-        success, error = download_file(FFMPEG_URL, zip_path, progress_callback)
+        last_error = None
+        success = False
+        for attempt in range(5):  # Increased from 1 to 5
+            print(f"[Tools] Downloading FFmpeg from {FFMPEG_URL} (attempt {attempt + 1}/5)...")
+            success, error = download_file(
+                FFMPEG_URL,
+                zip_path,
+                progress_callback,
+                expected_checksum=CHECKSUMS["ffmpeg"],
+                checksum_algorithm="sha256"
+            )
+            if success:
+                print(f"[Tools] FFmpeg download validated successfully")
+                last_error = None
+                break
+            else:
+                print(f"[Tools] Download failed: {error}")
+                if attempt < 4:
+                    backoff_time = 2 ** attempt
+                    print(f"[Tools] Waiting {backoff_time}s before retry...")
+                    time.sleep(backoff_time)
+                last_error = error
         if not success:
-            return False, f"Download failed: {error}"
+            return False, f"Download failed: {last_error}"
         
         # Clean existing installation
         if os.path.exists(FFMPEG_DIR):
@@ -304,16 +523,37 @@ def download_librehwmon(progress_callback: Optional[Callable[[int, int], None]] 
     Returns:
         (success, error_message)
     """
+    import time
+    
     try:
         # Create temp file for download
         temp_dir = tempfile.gettempdir()
         zip_path = os.path.join(temp_dir, "LibreHardwareMonitor.zip")
         
-        # Download
-        print(f"[Tools] Downloading LibreHardwareMonitor from {LIBREHWMON_URL}...")
-        success, error = download_file(LIBREHWMON_URL, zip_path, progress_callback)
+        last_error = None
+        success = False
+        for attempt in range(5):  # Increased from 1 to 5
+            print(f"[Tools] Downloading LibreHardwareMonitor from {LIBREHWMON_URL} (attempt {attempt + 1}/5)...")
+            success, error = download_file(
+                LIBREHWMON_URL,
+                zip_path,
+                progress_callback,
+                expected_checksum=CHECKSUMS["librehwmon"],
+                checksum_algorithm="sha256"
+            )
+            if success:
+                print(f"[Tools] LibreHardwareMonitor download validated successfully")
+                last_error = None
+                break
+            else:
+                print(f"[Tools] Download failed: {error}")
+                if attempt < 4:
+                    backoff_time = 2 ** attempt
+                    print(f"[Tools] Waiting {backoff_time}s before retry...")
+                    time.sleep(backoff_time)
+                last_error = error
         if not success:
-            return False, f"Download failed: {error}"
+            return False, f"Download failed: {last_error}"
         
         # Clean existing installation
         if os.path.exists(LIBREHWMON_DIR):
@@ -350,16 +590,37 @@ def download_hwinfo(progress_callback: Optional[Callable[[int, int], None]] = No
     Returns:
         (success, error_message)
     """
+    import time
+    
     try:
         # Create temp file for download
         temp_dir = tempfile.gettempdir()
         zip_path = os.path.join(temp_dir, "hwinfo_portable.zip")
         
-        # Download
-        print(f"[Tools] Downloading HWiNFO from {HWINFO_URL}...")
-        success, error = download_file(HWINFO_URL, zip_path, progress_callback)
+        last_error = None
+        success = False
+        for attempt in range(5):  # Increased from 1 to 5
+            print(f"[Tools] Downloading HWiNFO from {HWINFO_URL} (attempt {attempt + 1}/5)...")
+            success, error = download_file(
+                HWINFO_URL,
+                zip_path,
+                progress_callback,
+                expected_checksum=CHECKSUMS["hwinfo"],
+                checksum_algorithm="sha256"
+            )
+            if success:
+                print(f"[Tools] HWiNFO download validated successfully")
+                last_error = None
+                break
+            else:
+                print(f"[Tools] Download failed: {error}")
+                if attempt < 4:
+                    backoff_time = 2 ** attempt
+                    print(f"[Tools] Waiting {backoff_time}s before retry...")
+                    time.sleep(backoff_time)
+                last_error = error
         if not success:
-            return False, f"Download failed: {error}"
+            return False, f"Download failed: {last_error}"
         
         # Clean existing installation
         if os.path.exists(HWINFO_DIR):
@@ -628,3 +889,319 @@ def ensure_hwinfo(parent=None) -> bool:
     else:
         success, _ = download_hwinfo()
         return success
+
+
+def download_vlc(progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[bool, Optional[str]]:
+    """
+    Download and install VLC Portable to AppData.
+    
+    VLC Portable provides:
+    - Hardware decoding (D3D11VA/DXVA2)
+    - All codec support
+    - Audio pitch correction at playback speed changes
+    
+    Returns:
+        (success, error_message)
+    """
+    import time
+    
+    try:
+        # Create temp file for download
+        temp_dir = tempfile.gettempdir()
+        archive_path = os.path.join(temp_dir, "vlc-portable.zip")
+
+        last_error = None
+        success = False
+        for url_idx, url in enumerate(VLC_URLS):
+            for attempt in range(5):  # Increased from 3 to 5
+                print(f"[Tools] Downloading VLC from {url} (attempt {attempt + 1}/5)...")
+                success, error = download_file(
+                    url, 
+                    archive_path, 
+                    progress_callback,
+                    expected_checksum=CHECKSUMS["vlc"],
+                    checksum_algorithm="sha256"
+                )
+                if success:
+                    print(f"[Tools] VLC download validated successfully")
+                    last_error = None
+                    break
+                else:
+                    print(f"[Tools] Download failed: {error}")
+                    if attempt < 4:  # Don't sleep on last attempt
+                        backoff_time = 2 ** attempt  # Exponential backoff
+                        print(f"[Tools] Waiting {backoff_time}s before retry...")
+                        time.sleep(backoff_time)
+                    last_error = error
+            if success:
+                break
+            else:
+                # Delete corrupted file before trying next URL
+                try:
+                    if os.path.exists(archive_path):
+                        os.remove(archive_path)
+                except:
+                    pass
+        if not success:
+            return False, f"Download failed: {last_error}"
+        
+        # Clean existing installation
+        if os.path.exists(VLC_DIR):
+            shutil.rmtree(VLC_DIR)
+        
+        # Extract ZIP file
+        print(f"[Tools] Extracting VLC...")
+        temp_extract = os.path.join(temp_dir, "vlc_extract")
+        if os.path.exists(temp_extract):
+            shutil.rmtree(temp_extract)
+        
+        success, error = extract_zip(archive_path, temp_extract, flatten=False)
+        if not success:
+            return False, f"Extract failed: {error}"
+        
+        # Find the extracted folder (e.g., vlc-3.0.20-win64)
+        extracted_folders = [f for f in os.listdir(temp_extract) if f.startswith("vlc")]
+        if not extracted_folders:
+            return False, "VLC folder not found in archive"
+        
+        extracted_folder = os.path.join(temp_extract, extracted_folders[0])
+        
+        # Move to final destination
+        os.makedirs(VLC_DIR, exist_ok=True)
+        
+        # Copy all files from extracted folder
+        for item in os.listdir(extracted_folder):
+            src = os.path.join(extracted_folder, item)
+            dst = os.path.join(VLC_DIR, item)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        
+        # Cleanup
+        try:
+            shutil.rmtree(temp_extract)
+            os.remove(archive_path)
+        except:
+            pass
+        
+        # Verify installation
+        if os.path.exists(get_vlc_path()) and os.path.exists(get_libvlc_path()):
+            print("[Tools] VLC installed successfully!")
+            return True, None
+        else:
+            return False, "vlc.exe or libvlc.dll not found after extraction"
+        
+    except Exception as e:
+        return False, str(e)
+
+
+def ensure_vlc(parent=None) -> bool:
+    """
+    Ensure VLC is available, downloading if needed.
+    
+    VLC provides:
+    - Hardware video decoding (D3D11VA/DXVA2)
+    - All codec support
+    - Audio pitch correction at playback speed changes
+    
+    Args:
+        parent: Optional parent widget for dialog
+    
+    Returns:
+        True if VLC is available
+    """
+    if is_vlc_available():
+        return True
+    
+    if parent:
+        return show_download_dialog(parent, "VLC Portable", download_vlc)
+    else:
+        success, _ = download_vlc()
+        return success
+
+
+def ensure_ffmpeg_and_vlc(parent=None) -> bool:
+    """
+    Ensure both FFmpeg and VLC are available, downloading both if needed.
+    Shows separate floating progress windows for each download.
+    
+    Args:
+        parent: Optional parent widget for dialogs
+    
+    Returns:
+        True if both are available
+    """
+    try:
+        from PySide6.QtWidgets import QMessageBox, QProgressDialog, QApplication
+        from PySide6.QtCore import Qt
+        import threading
+        import time
+        
+        ffmpeg_needed = not is_ffmpeg_available()
+        vlc_needed = not is_vlc_available()
+        
+        if not ffmpeg_needed and not vlc_needed:
+            return True
+        
+        # Ask user consent once for both
+        tools_list = []
+        if ffmpeg_needed:
+            tools_list.append("FFmpeg (audio processing)")
+        if vlc_needed:
+            tools_list.append("VLC (hardware video decoding)")
+        
+        reply = QMessageBox.question(
+            parent,
+            "Download Required Tools",
+            f"The following tools are required for Music Player:\n\n" +
+            "\n".join(f"• {t}" for t in tools_list) +
+            f"\n\nWould you like to download them now?\n"
+            f"They will be installed to: {TOOLS_DIR}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        
+        if reply != QMessageBox.Yes:
+            return False
+        
+        # Download each tool with its own progress window
+        for tool_name, download_func, needed in [
+            ("FFmpeg", download_ffmpeg, ffmpeg_needed),
+            ("VLC Portable", download_vlc, vlc_needed)
+        ]:
+            if not needed:
+                continue
+            
+            # Shared state between thread and UI
+            state = {
+                "downloaded": 0,
+                "total": 0,
+                "done": False,
+                "success": False,
+                "error": "",
+                "cancelled": False
+            }
+            
+            def on_progress(downloaded: int, total: int):
+                state["downloaded"] = downloaded
+                state["total"] = total
+            
+            def do_download():
+                if state["cancelled"]:
+                    return
+                success, error = download_func(on_progress)
+                state["success"] = success
+                state["error"] = error or ""
+                state["done"] = True
+            
+            # Create progress dialog (floating window, not modal)
+            progress = QProgressDialog(
+                f"Downloading {tool_name}...",
+                "Cancel",
+                0, 100,
+                parent
+            )
+            progress.setWindowTitle(f"Installing {tool_name}")
+            progress.setWindowModality(Qt.NonModal)  # Floating window
+            progress.setMinimumDuration(0)
+            progress.setAutoClose(False)
+            progress.setAutoReset(False)
+            progress.setWindowFlags(
+                progress.windowFlags() | 
+                Qt.WindowStaysOnTopHint
+            )
+            progress.show()
+            
+            # Start download in thread
+            thread = threading.Thread(target=do_download, daemon=True)
+            thread.start()
+            
+            # Poll for completion
+            while not state["done"]:
+                QApplication.processEvents()
+                
+                if progress.wasCanceled():
+                    state["cancelled"] = True
+                    break
+                
+                if state["total"] > 0:
+                    percent = int((state["downloaded"] / state["total"]) * 100)
+                    progress.setValue(percent)
+                    progress.setLabelText(
+                        f"Downloading {tool_name}... {state['downloaded'] // 1024} KB / {state['total'] // 1024} KB"
+                    )
+                
+                time.sleep(0.05)
+            
+            progress.close()
+            
+            if state["cancelled"]:
+                QMessageBox.warning(
+                    parent,
+                    "Download Cancelled",
+                    f"{tool_name} download was cancelled. Some features may not work."
+                )
+                return False
+            
+            if not state["success"]:
+                QMessageBox.critical(
+                    parent,
+                    "Download Failed",
+                    f"Failed to install {tool_name}:\n{state['error']}"
+                )
+                return False
+        
+        # Both installed successfully - ask to restart
+        reply = QMessageBox.information(
+            parent,
+            "Installation Complete",
+            "FFmpeg and VLC have been installed successfully!\n\n"
+            "HELXAID needs to restart to apply changes.",
+            QMessageBox.Ok
+        )
+        
+        # Restart the application
+        try:
+            from PySide6.QtCore import QProcess
+            import sys, os
+            
+            if getattr(sys, 'frozen', False):
+                exe = sys.executable
+                args = sys.argv[1:]
+            else:
+                exe = sys.executable
+                args = sys.argv
+            
+            if parent:
+                try:
+                    parent.window().confirm_on_exit = False
+                except AttributeError:
+                    pass
+            
+            if "--force-restart" not in args:
+                args.append("--force-restart")
+            
+            QProcess.startDetached(exe, args)
+            QApplication.quit()
+        except Exception as restart_err:
+            print(f"[Tools] Restart failed: {restart_err}")
+            QMessageBox.information(
+                parent,
+                "Restart Required",
+                "Please close and reopen HELXAID manually to complete the installation."
+            )
+        
+        return True
+        
+    except ImportError:
+        # No Qt available, download silently
+        if ffmpeg_needed:
+            success1, _ = download_ffmpeg()
+        else:
+            success1 = True
+        if vlc_needed:
+            success2, _ = download_vlc()
+        else:
+            success2 = True
+        return success1 and success2

@@ -180,30 +180,20 @@ void ETWNetworkMonitor::Impl::onEvent(const EVENT_RECORD *event) {
   if (!event)
     return;
 
-  // The classic TCPIP kernel events use opcodes:
-  // TCP Send: 10 (IPv4), 12 (IPv6)
-  // TCP Recv: 11 (IPv4), 13 (IPv6)
-  // UDP Send: 26
-  // UDP Recv: 27
-  const uint16_t eventId = event->EventHeader.EventDescriptor.Id;
+  // AFD (Winsock Ancillary Function Driver) event opcodes:
+  //   1  = Send       (TCP/UDP send)
+  //   2  = Recv       (TCP/UDP receive)
+  //   11 = SendTo     (UDP sendto)
+  //   12 = RecvFrom   (UDP recvfrom)
+  // All other opcodes are connection lifecycle events (connect, disconnect, etc.)
+  // which carry no byte-transfer payload we can use.
+  const uint8_t opcode = event->EventHeader.EventDescriptor.Opcode;
 
-  bool isSend = false;
-  bool isRecv = false;
+  bool isSend = (opcode == 1 || opcode == 11);
+  bool isRecv = (opcode == 2 || opcode == 12);
 
-  switch (eventId) {
-  case 10:
-  case 12:
-  case 26:
-    isSend = true;
-    break;
-  case 11:
-  case 13:
-  case 27:
-    isRecv = true;
-    break;
-  default:
+  if (!isSend && !isRecv)
     return;
-  }
 
   const uint32_t pid = event->EventHeader.ProcessId;
   if (pid == 0)
@@ -254,17 +244,25 @@ void ETWNetworkMonitor::Impl::onEvent(const EVENT_RECORD *event) {
 }
 
 bool ETWNetworkMonitor::Impl::startSession(const ETWConfig &config) {
-  // Kernel TCP/IP events are part of the classic NT Kernel Logger provider.
-  // For EnableFlags (EVENT_TRACE_FLAG_*) to take effect, the session must use
-  // the SystemTraceControlGuid.
-  const GUID SystemTraceControlGuid = {0x9e814aad,
-                                       0x3204,
-                                       0x11d2,
-                                       {0x9a, 0x82, 0x00, 0x60, 0x08, 0xa8,
-                                        0x69, 0x39}};
+  // Strategy: instead of using NT Kernel Logger (which requires SeSystemProfilePrivilege /
+  // Administrator), subscribe to the user-mode Winsock AFD (Ancillary Function Driver)
+  // ETW provider: {B40AEF77-892A-46F9-9109-438E399BB894}.
+  //
+  // The AFD provider fires events for every send and recv through the Winsock stack.
+  // It is a user-mode ETW provider and works without any elevated privileges.
+  // The downside vs kernel tracing is that loopback traffic may not be captured,
+  // but real network I/O is fully covered.
+  //
+  // AFD send/recv opcodes (EventDescriptor.Opcode):
+  //   Send     = 1
+  //   Recv     = 2
+  //   SendTo   = 11
+  //   RecvFrom = 12
+  //   (All others are connection lifecycle events we ignore)
 
-  // Use the standard kernel logger name to maximize compatibility.
-  sessionName = L"NT Kernel Logger";
+  // Use a unique HELXAID-owned session name so we don't conflict with NT Kernel Logger
+  // or any other session the user might have running.
+  sessionName = L"HELXAID-Network-Monitor";
 
   // Allocate EVENT_TRACE_PROPERTIES with room for the session name.
   const ULONG loggerNameBytes =
@@ -278,11 +276,12 @@ bool ETWNetworkMonitor::Impl::startSession(const ETWConfig &config) {
   auto *props = reinterpret_cast<EVENT_TRACE_PROPERTIES *>(propsBuf.data());
   ZeroMemory(props, propsSize);
 
+  // No special Wnode.Guid needed for user-mode sessions — leave it zeroed.
   props->Wnode.BufferSize = propsSize;
   props->Wnode.Flags = WNODE_FLAG_TRACED_GUID;
-  props->Wnode.Guid = SystemTraceControlGuid;
   props->Wnode.ClientContext = 1; // QPC clock resolution
 
+  // Real-time mode: events are delivered directly to consumers without a log file.
   props->LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
   props->LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
   props->LogFileNameOffset = sizeof(EVENT_TRACE_PROPERTIES) + loggerNameBytes;
@@ -291,7 +290,8 @@ bool ETWNetworkMonitor::Impl::startSession(const ETWConfig &config) {
   props->MinimumBuffers = config.buffer_count;
   props->MaximumBuffers = config.buffer_count;
   props->FlushTimer = config.flush_interval_ms;
-  props->EnableFlags = EVENT_TRACE_FLAG_NETWORK_TCPIP;
+  // No EnableFlags needed — this is a user-mode event session, not a kernel session.
+  // We enable specific providers via EnableTraceEx2() after the session starts.
 
   auto *loggerName = reinterpret_cast<wchar_t *>(propsBuf.data() +
                                                  props->LoggerNameOffset);
@@ -304,24 +304,64 @@ bool ETWNetworkMonitor::Impl::startSession(const ETWConfig &config) {
 
   ULONG status = StartTraceW(&sessionHandle, sessionName.c_str(), props);
   if (status == ERROR_ALREADY_EXISTS) {
-    // Attempt to stop stale session from previous crash and retry.
+    // Stale session from a previous crash. Stop it and restart.
     ControlTraceW(0, sessionName.c_str(), props, EVENT_TRACE_CONTROL_STOP);
+    ZeroMemory(props, propsSize);
+    props->Wnode.BufferSize = propsSize;
+    props->Wnode.Flags = WNODE_FLAG_TRACED_GUID;
+    props->Wnode.ClientContext = 1;
+    props->LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+    props->LoggerNameOffset = sizeof(EVENT_TRACE_PROPERTIES);
+    props->LogFileNameOffset = sizeof(EVENT_TRACE_PROPERTIES) + loggerNameBytes;
+    props->BufferSize = config.buffer_size_kb;
+    props->MinimumBuffers = config.buffer_count;
+    props->MaximumBuffers = config.buffer_count;
+    props->FlushTimer = config.flush_interval_ms;
+    wcsncpy_s(loggerName, sessionName.size() + 1, sessionName.c_str(),
+              sessionName.size());
+    logFileName[0] = L'\0';
     status = StartTraceW(&sessionHandle, sessionName.c_str(), props);
   }
 
   if (status != ERROR_SUCCESS) {
     std::string msg = win_error_message(status);
-    if (status == ERROR_ACCESS_DENIED) {
-      if (!msg.empty())
-        msg += " ";
-      msg += "(Run as Administrator to enable ETW kernel network tracing)";
-    }
-    if (msg.empty()) {
-      setError("StartTraceW failed: " + std::to_string(status));
-    } else {
-      setError("StartTraceW failed: " + std::to_string(status) + " (" + msg + ")");
-    }
+    setError("StartTraceW failed: " + std::to_string(status) +
+             (msg.empty() ? "" : " (" + msg + ")"));
     sessionHandle = 0;
+    return false;
+  }
+
+  // Enable the Microsoft-Windows-Winsock-AFD user-mode provider.
+  // GUID: {B40AEF77-892A-46F9-9109-438E399BB894}
+  // This provider does NOT require Administrator — it is a user-space ETW provider
+  // that traces Winsock send/recv calls for all processes.
+  const GUID afdProviderGuid = {
+      0xB40AEF77,
+      0x892A,
+      0x46F9,
+      {0x91, 0x09, 0x43, 0x8E, 0x39, 0x9B, 0xB8, 0x94}
+  };
+
+  // Level 4 = TRACE_LEVEL_INFORMATION, match-any = 0 (all keywords)
+  ULONG enableStatus = EnableTraceEx2(
+      sessionHandle,
+      &afdProviderGuid,
+      EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+      TRACE_LEVEL_INFORMATION,
+      0, // match-any keyword mask — capture all AFD events
+      0, // match-all keyword mask
+      0, // timeout (0 = async)
+      nullptr
+  );
+
+  if (enableStatus != ERROR_SUCCESS) {
+    // Non-fatal: the session itself started fine. We might still get partial
+    // data from other providers. Log but continue.
+    std::string msg = win_error_message(enableStatus);
+    setError("EnableTraceEx2 (AFD) failed: " + std::to_string(enableStatus) +
+             (msg.empty() ? "" : " (" + msg + ")"));
+    // Return false so the Python layer knows ETW is degraded.
+    stopSession();
     return false;
   }
 

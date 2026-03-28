@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
 from smooth_scroll import SmoothScrollArea
-from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDesktopServices, QLinearGradient, QImage, QFont, QFontMetrics
+from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDesktopServices, QLinearGradient, QImage, QFont, QFontMetrics, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread
 from PlaylistWidget import PlaylistWidget
 from integrations.cpu_controller import is_uxtu_installed, is_ryzenadj_available, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
@@ -29,6 +29,7 @@ from AnimatedButton import AnimatedButton
 from CrosshairWidget import CrosshairWidget
 from HardwarePanelWidget import HardwarePanelWidget
 from macro_system.integration.hardware_manager import get_hardware_manager
+from DebugConsoleWidget import get_debug_console, toggle_debug_console
 
 # Native C++ extensions for performance (with Python fallback)
 try:
@@ -381,12 +382,12 @@ try:
                 CreateIconFromResourceEx = user32.CreateIconFromResourceEx
                 
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                
+                print(f"[Taskbar DEBUG] Loading icons from: {os.path.join(script_dir, 'UI Taskbar Icons')}")
                 def load_icon_from_png(filename):
                     """Load a PNG file and convert to HICON."""
                     path = os.path.join(script_dir, filename)
                     if not os.path.exists(path):
-                        print(f"Icon not found: {path}")
+                        print(f"[Taskbar DEBUG] Icon NOT found on disk: {path}")
                         return 0
                     
                     try:
@@ -403,9 +404,6 @@ try:
                         ico_data = ico_buffer.read()
                         
                         # Skip ICO header (22 bytes for single-image ICO)
-                        # ICO header: 6 bytes
-                        # Directory entry: 16 bytes
-                        # Then the PNG/BMP data
                         header_size = 22
                         image_data = ico_data[header_size:]
                         
@@ -419,9 +417,11 @@ try:
                             16, 16,
                             LR_DEFAULTCOLOR
                         )
+                        if not icon:
+                            print(f"[Taskbar DEBUG] CreateIconFromResourceEx returned NULL for {filename}")
                         return icon if icon else 0
                     except Exception as e:
-                        print(f"Failed to load icon {filename}: {e}")
+                        print(f"[Taskbar DEBUG] Failed to load icon {filename} via Pillow: {e}")
                         return 0
                 
                 self.icon_prev = load_icon_from_png("UI Taskbar Icons/taskbar-previous-icon.png")
@@ -429,15 +429,15 @@ try:
                 self.icon_pause = load_icon_from_png("UI Taskbar Icons/taskbar-pause-icon.png")
                 self.icon_next = load_icon_from_png("UI Taskbar Icons/taskbar-next-icon.png")
                 
-                print(f"Loaded media icons: prev={self.icon_prev}, play={self.icon_play}, pause={self.icon_pause}, next={self.icon_next}")
+                print(f"[Taskbar DEBUG] Final HICON handles: prev={self.icon_prev}, play={self.icon_play}, pause={self.icon_pause}, next={self.icon_next}")
                 
                 # If any icons failed, use simple fallback
                 if not all([self.icon_prev, self.icon_play, self.icon_pause, self.icon_next]):
-                    print("Some icons failed to load, using fallback")
+                    print("[Taskbar DEBUG] Some icons missing, attempting system fallback...")
                     self._load_fallback_icons()
                     
             except Exception as e:
-                print(f"Could not load media icons: {e}")
+                print(f"[Taskbar DEBUG] Global icon loading error: {e}")
                 self._load_fallback_icons()
         
         def _load_fallback_icons(self):
@@ -470,10 +470,12 @@ try:
             """Initialize the ITaskbarList3 COM interface using pure ctypes."""
             try:
                 # Initialize COM
+                print("[Taskbar DEBUG] Initializing COM CoInitialize...")
                 windll.ole32.CoInitialize(None)
                 
                 # Create TaskbarList COM object
                 taskbar_ptr = c_void_p()
+                print("[Taskbar DEBUG] Calling CoCreateInstance for ToolBar interface...")
                 hr = CoCreateInstance(
                     byref(CLSID_TaskbarList),
                     None,
@@ -483,37 +485,48 @@ try:
                 )
                 
                 if hr != 0 or not taskbar_ptr:
-                    print(f"CoCreateInstance failed: {hr}")
+                    print(f"[Taskbar ERROR] CoCreateInstance failed: HRESULT {hex(hr & 0xFFFFFFFF)}")
                     self.taskbar = None
                     return
                 
                 self.taskbar = taskbar_ptr.value
+                print(f"[Taskbar DEBUG] Taskbar interface created at address {hex(self.taskbar)}")
                 
                 # Call HrInit (VTable index 3)
-                # VTable: QueryInterface(0), AddRef(1), Release(2), HrInit(3)
                 vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
                 vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 20)).contents
                 
                 HrInit_proto = WINFUNCTYPE(HRESULT, c_void_p)
                 HrInit = HrInit_proto(vtable_ptr[3])
+                print("[Taskbar DEBUG] Calling taskbar.HrInit()...")
                 hr = HrInit(self.taskbar)
                 
                 if hr != 0:
-                    print(f"HrInit failed: {hr}")
+                    print(f"[Taskbar ERROR] HrInit failed: HRESULT {hex(hr & 0xFFFFFFFF)}")
                     self.taskbar = None
                 else:
-                    print("ITaskbarList3 initialized successfully")
+                    print("[Taskbar SUCCESS] ITaskbarList3 initialized completely")
                     
             except Exception as e:
-                print(f"Could not create ITaskbarList3: {e}")
+                print(f"[Taskbar FATAL] Explosion during ITaskbarList3 init: {e}")
                 self.taskbar = None
         
-        def add_buttons(self):
+        def add_buttons(self, target_hwnd=None):
             """Add the thumbnail toolbar buttons."""
             if not self.taskbar or self.buttons_added:
+                print(f"[Taskbar DEBUG] add_buttons skipped: taskbar={bool(self.taskbar)}, added={self.buttons_added}")
                 return False
             
             try:
+                # Target exact MS proxy or root
+                if target_hwnd is None:
+                    user32 = windll.user32
+                    GA_ROOT = 2
+                    root_hwnd = user32.GetAncestor(self.hwnd, GA_ROOT)
+                    target_hwnd = root_hwnd if root_hwnd else self.hwnd
+                
+                print(f"[Taskbar DEBUG] Final AddButtons HWND: {hex(target_hwnd)}")
+                
                 buttons = (THUMBBUTTON * 3)()
                 
                 # Previous button
@@ -537,34 +550,56 @@ try:
                 buttons[2].szTip = "Next"
                 buttons[2].dwFlags = THBF_ENABLED
                 
-                # ThumbBarAddButtons is VTable index 18
-                # ITaskbarList: HrInit(3), AddTab(4), DeleteTab(5), ActivateTab(6), SetActiveAlt(7)
-                # ITaskbarList2: MarkFullscreenWindow(8)
-                # ITaskbarList3: SetProgressValue(9), SetProgressState(10), RegisterTab(11), UnregisterTab(12),
-                #                SetTabOrder(13), SetTabActive(14), ThumbBarAddButtons(15), ThumbBarUpdateButtons(16),
-                #                ThumbBarSetImageList(17), SetOverlayIcon(18), SetThumbnailTooltip(19), SetThumbnailClip(20)
                 vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
-                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 25)).contents
+                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 30)).contents
                 
-                # ThumbBarAddButtons(HWND hwnd, UINT cButtons, LPTHUMBBUTTON pButton)
                 ThumbBarAddButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
                 ThumbBarAddButtons = ThumbBarAddButtons_proto(vtable_ptr[15])
                 
-                hr = ThumbBarAddButtons(self.taskbar, self.hwnd, 3, buttons)
+                print(f"[Taskbar DEBUG] Invoking ThumbBarAddButtons on {hex(target_hwnd)}...")
+                hr = ThumbBarAddButtons(self.taskbar, target_hwnd, 3, buttons)
                 
                 if hr == 0:
                     self.buttons_added = True
-                    print("Taskbar buttons added successfully")
+                    print("[Taskbar SUCCESS] Taskbar buttons added successfully")
                     return True
                 else:
-                    print(f"ThumbBarAddButtons failed: {hr}")
+                    print(f"[Taskbar ERROR] ThumbBarAddButtons failed with HRESULT: {hex(hr & 0xFFFFFFFF)}")
                     return False
                     
             except Exception as e:
-                print(f"Could not add taskbar buttons: {e}")
+                print(f"[Taskbar FATAL] Error in add_buttons: {e}")
+                return False
+                
+        def verify_buttons(self, target_hwnd):
+            """Test if buttons genuinely exist by calling ThumbBarUpdateButtons."""
+            if not self.taskbar or not self.buttons_added:
+                return False
+            
+            try:
+                # Update but with EXACT SAME data to act as a probe
+                buttons = (THUMBBUTTON * 1)()
+                buttons[0].dwMask = THB_TOOLTIP
+                buttons[0].iId = BUTTON_PREV
+                buttons[0].szTip = "Previous"
+                
+                vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
+                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 30)).contents
+                
+                ThumbBarUpdateButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
+                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(vtable_ptr[16])
+                
+                hr = ThumbBarUpdateButtons(self.taskbar, target_hwnd, 1, buttons)
+                if hr == 0:
+                    return True
+                else:
+                    print(f"[Taskbar VERIFY FAILED] ThumbBarUpdateButtons probe returned: {hex(hr & 0xFFFFFFFF)}")
+                    return False
+            except Exception as e:
+                print(f"[Taskbar VERIFY FATAL] {e}")
                 return False
         
-        def update_play_state(self, is_playing):
+        def update_play_state(self, is_playing, target_hwnd=None):
             """Update the play/pause button icon based on playback state."""
             if not self.taskbar or not self.buttons_added:
                 return
@@ -572,6 +607,9 @@ try:
             self._is_playing = is_playing
             
             try:
+                if target_hwnd is None:
+                    target_hwnd = self.hwnd
+                    
                 buttons = (THUMBBUTTON * 1)()
                 buttons[0].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
                 buttons[0].iId = BUTTON_PLAYPAUSE
@@ -580,15 +618,14 @@ try:
                 buttons[0].dwFlags = THBF_ENABLED
                 
                 vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
-                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 25)).contents
+                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 30)).contents
                 
-                # ThumbBarUpdateButtons is VTable index 16
                 ThumbBarUpdateButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
                 ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(vtable_ptr[16])
                 
-                ThumbBarUpdateButtons(self.taskbar, self.hwnd, 1, buttons)
+                ThumbBarUpdateButtons(self.taskbar, target_hwnd, 1, buttons)
             except Exception as e:
-                print(f"Could not update taskbar button: {e}")
+                print(f"[Taskbar ERROR] Could not update play state: {e}")
         
         def handle_button_click(self, button_id):
             """Handle a button click from WM_COMMAND."""
@@ -921,8 +958,9 @@ def _create_shaped_bg_icon(pixmap):
         
         # < 2% transparent = solid square or nearly-solid rounded square.
         # No visual benefit from adding a dark background ring.
+        # is_complex = False signals the button to disable hover effect for this icon.
         if n_transp < n_total * 0.02:
-            return pixmap
+            return pixmap, False
         
         # ============================================================
         # PHASE 2: BFS exterior flood-fill + structural analysis
@@ -1032,9 +1070,11 @@ def _create_shaped_bg_icon(pixmap):
             if iso_ratio >= 1.8:
                 needs_bg = True
         
-        # --- Decision: skip if simple shape ---
+        # --- Decision: skip if simple shape (circle, rounded icon, etc.) ---
+        # is_complex = False: no hover effect on square/rounded icons.
+        # is_complex = True: hover enabled on irregular/complex icons.
         if not needs_bg:
-            return pixmap
+            return pixmap, False
         
         # ============================================================
         # BUILD BACKGROUND + COMPOSITE
@@ -1075,11 +1115,11 @@ def _create_shaped_bg_icon(pixmap):
         p.drawImage(dx, dy, icon_small)
         p.end()
         
-        return QPixmap.fromImage(result)
+        return QPixmap.fromImage(result), True  # is_complex = True → hover enabled
     
     except Exception as e:
         print(f"[IconBg] Error: {e}")
-        return pixmap
+        return pixmap, False  # On error, treat as simple shape (no hover)
 
 
 
@@ -1684,7 +1724,8 @@ DEFAULT_SETTINGS = {
     "window_geometry": None,
     "start_minimised": False,
     "minimize_to_tray": True,
-    "confirm_on_exit": True
+    "confirm_on_exit": True,
+    "developer_mode": False
 }
 
 def load_settings():
@@ -2140,8 +2181,11 @@ class AnimatedGameButton(QPushButton):
     # Simple hover animation using opacity effect instead of scale
     # (scale animation causes layout issues)
     def enterEvent(self, event):
-        # Black-to-orange gradient on hover (top=black, bottom=orange)
-        if not self._is_selected:
+        # Black-to-orange gradient on hover (top=black, bottom=orange).
+        # _disable_hover is set at icon-load time based on icon shape complexity:
+        #   True  = square/rounded icon → suppress hover (flat icon, no gradient needed)
+        #   False = complex/irregular icon → allow hover gradient
+        if not self._is_selected and not getattr(self, '_disable_hover', False):
             self.setStyleSheet("""
                 QPushButton {
                     border: none;
@@ -3187,6 +3231,33 @@ class GameLauncher(QWidget):
         
         # Run garbage collection
         gc.collect()
+
+    def _toggle_debug_from_shortcut(self):
+        """Toggle debug console from F9 shortcut."""
+        # Key must be present in settings and True.
+        # Fallback to False if missing.
+        is_dev = self.settings.get("developer_mode", False)
+        
+        # Log toggle attempt to terminal (stays in terminal even if console is hidden)
+        print(f"[Debug] F9 (Logs) toggle signal received. Developer Mode: {is_dev}")
+        
+        if is_dev:
+            toggle_debug_console()
+        else:
+            print("[Debug] F9 ignored: Developer Mode is not enabled in settings.")
+
+    def _switch_panel_from_key(self, index):
+        """Global shortcut handler for numerical panel switching (Focus-Aware)."""
+        # If user is typing in any text input, ignore the navigation shortcut
+        focus_widget = QApplication.focusWidget()
+        if focus_widget and isinstance(focus_widget, (QLineEdit, QTextEdit)):
+            return
+            
+        # Specific handling for CPU panel (panel 2) which needs state reset
+        if index == 2:
+            self._on_cpu_nav_clicked()
+        else:
+            self.switch_panel(index)
     
     def _apply_initial_size(self):
         """Apply window size after layout is complete."""
@@ -3211,6 +3282,24 @@ class GameLauncher(QWidget):
         
         # Load settings
         self.settings = load_settings()
+        
+        # Initialize Debug Console (only redirects; doesn't show window)
+        self.debug_console = get_debug_console(self)
+        
+        # Setup application-wide shortcut for F9 log toggle.
+        # QShortcut works even if child widgets have focus, unlike keyPressEvent.
+        self.f9_shortcut = QShortcut(QKeySequence(Qt.Key_F9), self)
+        self.f9_shortcut.activated.connect(self._toggle_debug_from_shortcut)
+        
+        # Numerical shortcuts for sidebar navigation (1-6)
+        # Maps keys 1-6 to panels 0-5. Focus-aware to ignore while typing in inputs.
+        self._nav_shortcuts = []
+        for i in range(1, 7):
+            key_const = getattr(Qt, f"Key_{i}")
+            shortcut = QShortcut(QKeySequence(key_const), self)
+            # Use lambda with default arg to capture current i-1 value (early binding)
+            shortcut.activated.connect(lambda idx=i-1: self._switch_panel_from_key(idx))
+            self._nav_shortcuts.append(shortcut)
         
         # Set window size based on PHYSICAL screen resolution (ignore DPI scaling)
         screen = QApplication.primaryScreen()
@@ -4394,6 +4483,10 @@ class GameLauncher(QWidget):
         
         # Install event filter for music panel keyboard shortcuts
         QApplication.instance().installEventFilter(self)
+        
+        # Explicitly switch to the first panel to trigger sidebar animations/gradients
+        self.switch_panel(0)
+        
         print(f"[TIMING] GameLauncher.__init__ DONE")
 
     def open_launcher_youtube(self):
@@ -4825,6 +4918,8 @@ class GameLauncher(QWidget):
         # Clear focus from sidebar buttons so keyboard shortcuts work
         if index == 1:  # Music panel (index 1)
             self.setFocus()  # Set focus to main window
+            if hasattr(self, 'music_panel') and hasattr(self.music_panel, 'refresh_playlist_stats'):
+                self.music_panel.refresh_playlist_stats()
         
         # Check for RyzenAdj when switching to CPU panel
         if index == 2:  # CPU Controller panel
@@ -6622,7 +6717,7 @@ Stylesheet Selector:
         dialog.setMinimumWidth(350)
         dialog.setStyleSheet("""
             QDialog {
-                background: #1a2636;
+                background: #0f0f0f;
                 color: #DDE6ED;
             }
             QLabel {
@@ -7631,28 +7726,38 @@ Stylesheet Selector:
                 is_generic = _is_generic_icon(icon_path, exe_path)
                 
                 if is_generic:
+                    # Text/title icons: game logo was generic (Unity, Unreal, Epic, etc.)
+                    # so it was replaced with a styled text label showing the game title.
+                    # These are always treated as "complex" → hover IS enabled.
                     cache_key = f"_texticon_{game.get('name', '')}_{icon_thumb_size}"
                     if cache_key in GameLauncher._icon_cache:
-                        btn.setIcon(GameLauncher._icon_cache[cache_key])
+                        # Cache hit: unpack (QIcon, is_complex) tuple
+                        icon, _ = GameLauncher._icon_cache[cache_key]
+                        btn.setIcon(icon)
                         btn.setIconSize(QSize(icon_thumb_size - 16, icon_thumb_size - 16))
+                        btn._disable_hover = False  # Text icons always get hover
                     else:
                         # Generate a text icon with the game's title
                         text_pixmap = _create_text_icon(
                             game.get("name", "?"), icon_thumb_size - 16
                         )
                         icon = QIcon(text_pixmap)
-                        GameLauncher._icon_cache[cache_key] = icon
+                        # Store as (QIcon, is_complex=True) — text icons are "complex" for hover purposes
+                        GameLauncher._icon_cache[cache_key] = (icon, True)
                         btn.setIcon(icon)
                         btn.setIconSize(QSize(icon_thumb_size - 16, icon_thumb_size - 16))
+                        btn._disable_hover = False  # Explicitly enable hover for text icons
                         print(f"[Icon] Generic icon replaced with text: {game.get('name', '?')}")
                 else:
                     # --- Normal icon loading ---
-                    # Use cached icon if available
                     # Cache key includes version so logic changes invalidate old cached icons
                     cache_key = f"{icon_path}_{icon_thumb_size}_{_BG_ICON_VERSION}"
                     if cache_key in GameLauncher._icon_cache:
-                        btn.setIcon(GameLauncher._icon_cache[cache_key])
+                        # Cache hit: unpack (QIcon, is_complex) tuple and restore hover flag
+                        icon, is_complex = GameLauncher._icon_cache[cache_key]
+                        btn.setIcon(icon)
                         btn.setIconSize(QSize(icon_thumb_size - 16, icon_thumb_size - 16))
+                        btn._disable_hover = not is_complex  # Restore from cache
                     else:
                         # Load and cache the icon
                         pixmap = QPixmap()
@@ -7665,11 +7770,14 @@ Stylesheet Selector:
                                 Qt.SmoothTransformation
                             )
                             # Add shape-matching background color.
-                            # This makes the background follow the icon's actual shape
-                            # (rounded for rounded icons, circular for circular, etc.)
-                            scaled_pixmap = _create_shaped_bg_icon(scaled_pixmap)
+                            # _create_shaped_bg_icon returns (pixmap, is_complex):
+                            #   is_complex = True  → irregular/character icon → hover ENABLED
+                            #   is_complex = False → square/rounded icon     → hover DISABLED
+                            scaled_pixmap, is_complex = _create_shaped_bg_icon(scaled_pixmap)
+                            btn._disable_hover = not is_complex
                             icon = QIcon(scaled_pixmap)
-                            GameLauncher._icon_cache[cache_key] = icon
+                            # Store as (QIcon, is_complex) tuple so cache hits restore hover flag correctly
+                            GameLauncher._icon_cache[cache_key] = (icon, is_complex)
                             btn.setIcon(icon)
                             btn.setIconSize(QSize(icon_thumb_size - 16, icon_thumb_size - 16))
             
@@ -8250,7 +8358,7 @@ Stylesheet Selector:
 
         # Version label and Update button
         version_layout = QHBoxLayout()
-        version_label = QLabel("Version - 4.13")
+        version_label = QLabel("Version - 4.14")
         version_label.setStyleSheet("color: #888888; font-size: 11px;")
         
         check_update_btn = AnimatedButton("Check for Updates")
@@ -8499,7 +8607,7 @@ Stylesheet Selector:
             import json
             import threading
             
-            CURRENT_VERSION = "4.13"
+            CURRENT_VERSION = "4.14"
             API_URL = "https://api.github.com/repos/TDD131/HELXAID/releases/latest"
             
             def run_check():
@@ -9674,33 +9782,69 @@ First Played: {first_played_formatted}
                     on_playpause=self._taskbar_playpause,
                     on_next=self._taskbar_next
                 )
+                
+                # Register the TaskbarButtonCreated message so we know EXACTLY when the taskbar is ready
+                import ctypes
+                user32 = ctypes.windll.user32
+                self._WM_TASKBARBUTTONCREATED = user32.RegisterWindowMessageW("TaskbarButtonCreated")
+                print(f"[Taskbar DEBUG] _WM_TASKBARBUTTONCREATED mapped to {self._WM_TASKBARBUTTONCREATED}")
                 # Delay button addition to ensure window is fully initialized
                 # Use longer delay and retry mechanism for reliability
                 self._taskbar_retry_count = 0
-                QTimer.singleShot(1000, self._init_taskbar_buttons)
+                
+                # If running as Admin, we must allow the Taskbar messages through UIPI
+                try:
+                    MSGFLT_ALLOW = 1
+                    user32.ChangeWindowMessageFilterEx(int(self.winId()), self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
+                    # Also allow WM_COMMAND for the buttons themselves
+                    user32.ChangeWindowMessageFilterEx(int(self.winId()), 0x0111, MSGFLT_ALLOW, None)
+                except Exception as ex:
+                    print(f"[Taskbar DEBUG] ChangeWindowMessageFilterEx error: {ex}")
+                    
+                # Setup a fallback timer (3s) just in case the msg is missed
+                QTimer.singleShot(3000, self._init_taskbar_buttons)
             except Exception as e:
                 print(f"Could not setup taskbar toolbar: {e}")
     
-    def _init_taskbar_buttons(self):
-        """Initialize taskbar thumbnail buttons with retry mechanism."""
-        if self.taskbar_toolbar:
-            success = self.taskbar_toolbar.add_buttons()
+    def _init_taskbar_buttons(self, proxy_hwnd=None):
+        """Initialize taskbar thumbnail buttons with a verified proxy HWND."""
+        if getattr(self, '_taskbar_fully_verified', False):
+            return
             
-            # Retry up to 3 times if failed
-            if not success and hasattr(self, '_taskbar_retry_count'):
-                self._taskbar_retry_count += 1
-                if self._taskbar_retry_count < 3:
-                    delay = 1000 * self._taskbar_retry_count  # 1s, 2s delays
-                    print(f"Taskbar buttons failed, retry {self._taskbar_retry_count}/3 in {delay}ms")
-                    QTimer.singleShot(delay, self._init_taskbar_buttons)
-                else:
-                    print("Taskbar buttons failed after 3 retries")
+        if not hasattr(self, 'taskbar_toolbar') or not self.taskbar_toolbar:
+            print("[Taskbar ERROR] _init_taskbar_buttons called but toolbar object is missing!")
+            return
+            
+        target_hwnd = proxy_hwnd if proxy_hwnd else getattr(self, '_verified_taskbar_hwnd', None)
+        
+        if self.taskbar_toolbar.buttons_added:
+            print("[Taskbar VERIFY] Checking if buttons ACTUALLY exist...")
+            if self.taskbar_toolbar.verify_buttons(target_hwnd):
+                print("[Taskbar VERIFY SUCCESS] Buttons are robustly confirmed on the taskbar.")
+                self._taskbar_fully_verified = True
+                return
+            else:
+                print("[Taskbar VERIFY FAILED] Windows claims successful addition but buttons are dead. Resetting COM.")
+                self.taskbar_toolbar.buttons_added = False
+                self.taskbar_toolbar._init_taskbar()  # Full COM Interface reset!
+
+        print(f"[Taskbar DEBUG] Attempting to add buttons (retry {getattr(self, '_taskbar_retry_count', 0)})...")
+        success = self.taskbar_toolbar.add_buttons(target_hwnd)
+        
+        # Validation Loop (runs continuously with increasing delays if verification fails)
+        if hasattr(self, '_taskbar_retry_count'):
+            self._taskbar_retry_count += 1
+            if self._taskbar_retry_count < 5:
+                delay = 1000 * self._taskbar_retry_count
+                print(f"[Taskbar DEBUG] Queuing next verification pass in {delay}ms...")
+                QTimer.singleShot(delay, lambda: self._init_taskbar_buttons(target_hwnd))
+            else:
+                print("[Taskbar FATAL] Taskbar buttons completely failed after 5 massive resets.")
     
     def nativeEvent(self, eventType, message):
         """Handle Windows native events for taskbar button clicks."""
         try:
-            if eventType == b"windows_generic_MSG" and self.taskbar_toolbar:
-                # Parse MSG structure - handle PySide6's shiboken.VoidPtr
+            if eventType == b"windows_generic_MSG":
                 import ctypes
                 from ctypes.wintypes import MSG
                 
@@ -9708,13 +9852,24 @@ First Played: {first_played_formatted}
                 msg_ptr = int(message)
                 msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
                 
-                WM_COMMAND = 0x0111
-                if msg.message == WM_COMMAND:
-                    # LOWORD of wParam is the button ID
-                    button_id = msg.wParam & 0xFFFF
-                    if button_id in (BUTTON_PREV, BUTTON_PLAYPAUSE, BUTTON_NEXT):
-                        self.taskbar_toolbar.handle_button_click(button_id)
-                        return True, 0
+                # 1. Listen for TaskbarButtonCreated message (EXPLORER TELLS US IT IS READY)
+                if hasattr(self, '_WM_TASKBARBUTTONCREATED') and msg.message == self._WM_TASKBARBUTTONCREATED:
+                    proxy_hwnd = msg.hwnd
+                    print(f"[Taskbar ENFORCER] Caught TaskbarButtonCreated msg! Explorer assigned HWND: {hex(proxy_hwnd)}")
+                    self._verified_taskbar_hwnd = proxy_hwnd
+                    # Delay exactly 500ms to let Explorer fully instantiate the DWM frame
+                    QTimer.singleShot(500, lambda: self._init_taskbar_buttons(proxy_hwnd))
+                    return True, 0
+
+                # 2. Listen for WM_COMMAND when buttons are clicked
+                if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
+                    WM_COMMAND = 0x0111
+                    if msg.message == WM_COMMAND:
+                        # LOWORD of wParam is the button ID
+                        button_id = msg.wParam & 0xFFFF
+                        if button_id in (BUTTON_PREV, BUTTON_PLAYPAUSE, BUTTON_NEXT):
+                            self.taskbar_toolbar.handle_button_click(button_id)
+                            return True, 0
         except Exception as e:
             # Silently ignore errors to not spam console
             pass
@@ -9742,10 +9897,12 @@ First Played: {first_played_formatted}
     
     def _update_taskbar_play_state(self, state):
         """Update taskbar button based on playback state."""
-        if self.taskbar_toolbar:
+        if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
             from PySide6.QtMultimedia import QMediaPlayer
-            is_playing = (state == QMediaPlayer.PlayingState)
-            self.taskbar_toolbar.update_play_state(is_playing)
+            # Handle both string enum (PySide6) and integer fallback just in case
+            is_playing = (state == QMediaPlayer.PlaybackState.PlayingState) if hasattr(QMediaPlayer, 'PlaybackState') else (state == QMediaPlayer.PlayingState)
+            target_hwnd = getattr(self, '_verified_taskbar_hwnd', None)
+            self.taskbar_toolbar.update_play_state(is_playing, target_hwnd=target_hwnd)
     
     def _setup_single_instance_server(self):
         """Setup local server to listen for restore signals from second instance."""

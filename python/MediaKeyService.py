@@ -83,11 +83,36 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
 # Callback function type for SetWindowsHookEx
 # LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 HOOKPROC = ctypes.WINFUNCTYPE(
-    ctypes.c_long,          # Return: LRESULT
+    ctypes.wintypes.LPARAM, # Return: LRESULT
     ctypes.c_int,           # nCode: hook code
     ctypes.wintypes.WPARAM, # wParam: message type (WM_KEYDOWN etc.)
     ctypes.wintypes.LPARAM  # lParam: pointer to KBDLLHOOKSTRUCT
 )
+
+# Set up argtypes and restype for Win32 API functions to ensure 64-bit compatibility.
+# This prevents "OverflowError: int too long to convert" when passing pointers/handles.
+user32 = ctypes.windll.user32
+
+user32.SetWindowsHookExW.argtypes = [
+    ctypes.c_int,
+    HOOKPROC,
+    ctypes.wintypes.HINSTANCE,
+    ctypes.wintypes.DWORD
+]
+user32.SetWindowsHookExW.restype = ctypes.wintypes.HHOOK
+
+user32.UnhookWindowsHookEx.argtypes = [
+    ctypes.wintypes.HHOOK
+]
+user32.UnhookWindowsHookEx.restype = ctypes.wintypes.BOOL
+
+user32.CallNextHookEx.argtypes = [
+    ctypes.wintypes.HHOOK,
+    ctypes.c_int,
+    ctypes.wintypes.WPARAM,
+    ctypes.wintypes.LPARAM
+]
+user32.CallNextHookEx.restype = ctypes.wintypes.LPARAM
 
 
 class MediaKeyService(QObject):
@@ -216,8 +241,6 @@ class MediaKeyService(QObject):
         # Get the Win32 thread ID for this thread so the main thread
         # can post WM_QUIT to break the GetMessage loop on shutdown
         self._thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
-
-        user32 = ctypes.windll.user32
 
         # Signal dispatch map: VK code -> Qt signal
         signal_map = {

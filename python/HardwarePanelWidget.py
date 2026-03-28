@@ -1357,484 +1357,115 @@ class HardwarePanelWidget(QWidget):
                             results['processes']['items'].append(f"✗ {proc_info['name']} (access denied)")
                             print(f"[Boost] Failed to close {proc_info['name']}")
             
-            # ========== 3 & 4. SERVICES (BASIC + ADVANCED) — SCHEDULED TASK ==========
+            # ========== 3 & 4. SERVICES (BASIC + ADVANCED) — DIRECT SC STOP ==========
+            # Stop services directly via subprocess 'sc stop'.
+            # This is far more reliable than the old VBS->CMD->schtasks approach,
+            # which silently failed because:
+            #   1. The SYSTEM scheduled task required UAC to create
+            #   2. The log file was never written, so status_map was always empty
+            #   3. All 13 basic services ended up as '0 stopped / 13 failed'
             all_services = []
-            
+
             for ess_svc in _essential_needs_elevation:
                 all_services.append(('essential', ess_svc))
-            
+
             for svc in boost_data.get('basic_service_data', []):
                 any_selected = True
                 all_services.append(('basic', svc))
             for svc in boost_data.get('advanced_service_data', []):
                 any_selected = True
                 all_services.append(('advanced', svc))
-            
+
             try:
                 _basic_n = len(boost_data.get('basic_service_data', []) or [])
                 _adv_n = len(boost_data.get('advanced_service_data', []) or [])
                 _esssvc_n = len(_essential_needs_elevation or [])
-                print(f"[Boost] Services selected: essential={_esssvc_n}, basic={_basic_n}, advanced={_adv_n}")
+                print(f'[Boost] Services selected: essential={_esssvc_n}, basic={_basic_n}, advanced={_adv_n}')
             except Exception:
                 pass
 
             if all_services:
-                import tempfile
-                
-                appdata_dir = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID')
-                os.makedirs(appdata_dir, exist_ok=True)
-                
-                input_path = os.path.join(tempfile.gettempdir(), "helxaid_boost_input.txt")
-                log_path = os.path.join(tempfile.gettempdir(), "helxaid_boost_svc.log")
-                task_cmd = os.path.join(appdata_dir, "boost_services_cmd.cmd")
-                task_vbs = os.path.join(appdata_dir, "boost_services_cmd.vbs")
-                task_name = "HELXAID_BoostService_CMD"
+                # 'sc stop' return codes:
+                #   0    - STOP control accepted
+                #   1062 - Service was not started (already stopped)
+                #   5    - Access denied (app not running as admin)
+                #   else - Other failure
+                CF_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
-                try:
-                    print(f"[Boost] Service log path: {log_path}")
-                except Exception:
-                    pass
-
-                def _run_hidden(cmdline: str):
+                def _stop_service_direct(svc_name):
+                    # Stop a Windows service using 'sc stop' directly.
+                    # Parameters:
+                    #   svc_name: Windows service internal name (e.g. 'SysMain')
+                    # Returns: 'OK', 'ALREADY_STOPPED', 'ACCESS_DENIED', or 'FAIL'
                     try:
-                        import subprocess
-                        cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                        p = subprocess.run(cmdline, shell=True, capture_output=True, text=True, creationflags=cf)
-                        return p.returncode, (p.stdout or '') + (p.stderr or '')
-                    except Exception as e:
-                        return -1, str(e)
+                        # Pre-check state to detect already-stopped services
+                        qr = subprocess.run(
+                            ['sc', 'query', svc_name],
+                            capture_output=True, text=True,
+                            creationflags=CF_NO_WINDOW, timeout=10
+                        )
+                        q_out = (qr.stdout or '').upper()
+                        if ('STOPPED' in q_out
+                                and 'START_PENDING' not in q_out
+                                and 'STOP_PENDING' not in q_out):
+                            return 'ALREADY_STOPPED'
 
-                def _task_exists(name: str) -> bool:
-                    rc, _out = _run_hidden(f'schtasks /query /tn "{name}"')
-                    return rc == 0
-
-                def _task_matches_expected(name: str) -> bool:
-                    rc, out = _run_hidden(f'schtasks /query /tn "{name}" /xml')
-                    if rc != 0:
-                        return False
-                    xml = (out or '').lower()
-                    cmd_ok = (
-                        ('<command>wscript.exe</command>' in xml) or
-                        ('<command>c:\\windows\\system32\\wscript.exe</command>' in xml)
-                    )
-                    principal_ok = (
-                        ('<userid>s-1-5-18</userid>' in xml) or
-                        ('<userid>system</userid>' in xml)
-                    )
-                    return bool(cmd_ok and principal_ok)
-
-                def _task_exec_command(name: str) -> str:
-                    rc, out = _run_hidden(f'schtasks /query /tn "{name}" /xml')
-                    if rc != 0:
-                        return ''
-                    low = (out or '').lower()
-                    try:
-                        start = low.find('<command>')
-                        end = low.find('</command>')
-                        if start != -1 and end != -1 and end > start:
-                            return (out or '')[start + len('<command>'):end].strip()
-                    except Exception:
-                        pass
-                    return ''
-
-                def _create_task_cmd(task_name_str: str, vbs_path: str) -> bool:
-                    try:
-                        import tempfile
-                        import ctypes
-                        import os
-
-                        def _xml_escape(s: str) -> str:
-                            return (
-                                (s or '')
-                                .replace('&', '&amp;')
-                                .replace('<', '&lt;')
-                                .replace('>', '&gt;')
-                                .replace('"', '&quot;')
-                                .replace("'", '&apos;')
-                            )
-
-                        vbs_escaped = _xml_escape(vbs_path)
-                        # SYSTEM principal: RunLevel must NOT be HighestAvailable (SYSTEM already has max privileges)
-                        # Using LeastAvailable or omitting RunLevel entirely is correct for SYSTEM accounts
-                        xml = (
-                            '<?xml version="1.0" encoding="UTF-16"?>\n'
-                            '<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
-                            '  <RegistrationInfo>\n'
-                            '    <Description>HELXAID Boost (CMD)</Description>\n'
-                            '  </RegistrationInfo>\n'
-                            '  <Triggers>\n'
-                            '    <TimeTrigger>\n'
-                            '      <StartBoundary>2000-01-01T00:00:00</StartBoundary>\n'
-                            '      <Enabled>false</Enabled>\n'
-                            '    </TimeTrigger>\n'
-                            '  </Triggers>\n'
-                            '  <Principals>\n'
-                            '    <Principal id="Author">\n'
-                            '      <UserId>S-1-5-18</UserId>\n'
-                            '      <LogonType>ServiceAccount</LogonType>\n'
-                            '    </Principal>\n'
-                            '  </Principals>\n'
-                            '  <Settings>\n'
-                            '    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n'
-                            '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n'
-                            '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n'
-                            '    <AllowHardTerminate>true</AllowHardTerminate>\n'
-                            '    <StartWhenAvailable>false</StartWhenAvailable>\n'
-                            '    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>\n'
-                            '    <IdleSettings>\n'
-                            '      <StopOnIdleEnd>false</StopOnIdleEnd>\n'
-                            '      <RestartOnIdle>false</RestartOnIdle>\n'
-                            '    </IdleSettings>\n'
-                            '    <AllowStartOnDemand>true</AllowStartOnDemand>\n'
-                            '    <Enabled>true</Enabled>\n'
-                            '    <Hidden>true</Hidden>\n'
-                            '    <RunOnlyIfIdle>false</RunOnlyIfIdle>\n'
-                            '    <WakeToRun>false</WakeToRun>\n'
-                            '    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>\n'
-                            '    <Priority>7</Priority>\n'
-                            '  </Settings>\n'
-                            '  <Actions Context="Author">\n'
-                            '    <Exec>\n'
-                            '      <Command>wscript.exe</Command>\n'
-                            '      <Arguments>//B "' + vbs_escaped + '"</Arguments>\n'
-                            '    </Exec>\n'
-                            '  </Actions>\n'
-                            '</Task>\n'
+                        # Send STOP control to the service
+                        sr = subprocess.run(
+                            ['sc', 'stop', svc_name],
+                            capture_output=True, text=True,
+                            creationflags=CF_NO_WINDOW, timeout=15
                         )
 
-                        xml_path = os.path.join(tempfile.gettempdir(), f"helxaid_boost_task_{os.getpid()}.xml")
-                        with open(xml_path, 'w', encoding='utf-16') as f:
-                            f.write(xml)
+                        if sr.returncode == 0:
+                            return 'OK'
 
-                        try:
-                            print(f"[Boost] Task XML written to: {xml_path}")
-                        except Exception:
-                            pass
+                        combined = ((sr.stdout or '') + (sr.stderr or '')).lower()
 
-                        args = f'/create /tn "{task_name_str}" /xml "{xml_path}" /f'
-                        
-                        # Check if already elevated - if so, use subprocess directly without runas
-                        # This avoids UAC prompt hang when app is already admin
-                        def _is_elevated() -> bool:
-                            try:
-                                import ctypes
-                                return ctypes.windll.shell32.IsUserAnAdmin() != 0
-                            except Exception:
-                                return False
-                        
-                        exit_code = None
-                        elevated = _is_elevated()
-                        try:
-                            print(f"[Boost] Creating task, elevated={elevated}")
-                        except Exception:
-                            pass
-                        
-                        if elevated:
-                            # Already elevated - run schtasks directly without UAC prompt
-                            try:
-                                import subprocess
-                                cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                                p = subprocess.run(
-                                    f'schtasks {args}',
-                                    shell=True,
-                                    capture_output=True,
-                                    text=True,
-                                    creationflags=cf
-                                )
-                                exit_code = p.returncode
-                                if exit_code != 0:
-                                    try:
-                                        print(f"[Boost] schtasks /create exit_code={exit_code}")
-                                        if p.stderr:
-                                            print(f"[Boost] schtasks stderr: {p.stderr.strip()}")
-                                        if p.stdout:
-                                            print(f"[Boost] schtasks stdout: {p.stdout.strip()}")
-                                    except Exception:
-                                        pass
-                            except Exception as e:
-                                print(f"[Boost] schtasks direct run error: {e}")
-                                return False
-                        else:
-                            # Not elevated - need UAC elevation via ShellExecuteExW
-                            try:
-                                from ctypes import wintypes
+                        # Exit 1062: service has not been started
+                        if sr.returncode == 1062 or 'not been started' in combined:
+                            return 'ALREADY_STOPPED'
 
-                                SEE_MASK_NOCLOSEPROCESS = 0x00000040
-                                SW_HIDE = 0
+                        # Exit 5 or access-denied in output text
+                        if (sr.returncode == 5
+                                or 'access is denied' in combined
+                                or 'access denied' in combined):
+                            return 'ACCESS_DENIED'
 
-                                class SHELLEXECUTEINFOW(ctypes.Structure):
-                                    _fields_ = [
-                                        ('cbSize', wintypes.DWORD),
-                                        ('fMask', wintypes.ULONG),
-                                        ('hwnd', wintypes.HWND),
-                                        ('lpVerb', wintypes.LPCWSTR),
-                                        ('lpFile', wintypes.LPCWSTR),
-                                        ('lpParameters', wintypes.LPCWSTR),
-                                        ('lpDirectory', wintypes.LPCWSTR),
-                                        ('nShow', ctypes.c_int),
-                                        ('hInstApp', wintypes.HINSTANCE),
-                                        ('lpIDList', wintypes.LPVOID),
-                                        ('lpClass', wintypes.LPCWSTR),
-                                        ('hkeyClass', wintypes.HKEY),
-                                        ('dwHotKey', wintypes.DWORD),
-                                        ('hIcon', wintypes.HANDLE),
-                                        ('hProcess', wintypes.HANDLE),
-                                    ]
+                        return 'FAIL'
 
-                                sei = SHELLEXECUTEINFOW()
-                                sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
-                                sei.fMask = SEE_MASK_NOCLOSEPROCESS
-                                sei.hwnd = None
-                                sei.lpVerb = 'runas'
-                                sei.lpFile = 'schtasks.exe'
-                                sei.lpParameters = args
-                                sei.lpDirectory = None
-                                sei.nShow = SW_HIDE
-
-                                ok = ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei))
-                                if not ok:
-                                    try:
-                                        print(f"[Boost] ShellExecuteExW failed: {ctypes.GetLastError()}")
-                                    except Exception:
-                                        pass
-                                    return False
-
-                                try:
-                                    WAIT_OBJECT_0 = 0
-                                    INFINITE = 0xFFFFFFFF
-                                    # Wait up to 60 seconds for UAC approval and task creation
-                                    wait_result = ctypes.windll.kernel32.WaitForSingleObject(sei.hProcess, 60000)
-                                    if wait_result != 0:  # WAIT_OBJECT_0 = 0
-                                        try:
-                                            print(f"[Boost] WaitForSingleObject result={wait_result} (timeout or failed)")
-                                        except Exception:
-                                            pass
-                                        return False
-                                    code = wintypes.DWORD()
-                                    ctypes.windll.kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(code))
-                                    exit_code = int(code.value)
-                                finally:
-                                    try:
-                                        ctypes.windll.kernel32.CloseHandle(sei.hProcess)
-                                    except Exception:
-                                        pass
-
-                                if exit_code != 0:
-                                    try:
-                                        print(f"[Boost] schtasks.exe /create exit_code={exit_code} (see {xml_path})")
-                                    except Exception:
-                                        pass
-                                    return False
-                            except Exception as e:
-                                print(f"[Boost] create task (wait) error: {e}")
-                                return False
-                        try:
-                            os.remove(xml_path)
-                        except Exception:
-                            pass
-
-                        try:
-                            rc_verify, _ = _run_hidden(f'schtasks /query /tn "{task_name_str}"')
-                            return rc_verify == 0
-                        except Exception:
-                            return False
-                    except Exception as e:
-                        print(f"[Boost] create task error: {e}")
-                        return False
-
-                def _write_service_vbs(vbs_path: str, cmd_path: str) -> None:
-                    vbs = (
-                        'On Error Resume Next\r\n'
-                        'Dim sh\r\n'
-                        'Set sh = CreateObject("WScript.Shell")\r\n'
-                        'Dim cmd\r\n'
-                        'cmd = """%ComSpec%"" /c """"' + cmd_path.replace('"', '""') + '"""""\r\n'
-                        'sh.Run cmd, 0, True\r\n'
-                    )
-                    with open(vbs_path, 'w', encoding='utf-8') as f:
-                        f.write(vbs)
-
-                def _write_service_cmd(cmd_path: str, in_path: str, out_log: str):
-                    script = (
-                        "@echo off\r\n"
-                        "setlocal EnableExtensions EnableDelayedExpansion\r\n"
-                        f"set \"IN_FILE={in_path}\"\r\n"
-                        f"set \"LOG_FILE={out_log}\"\r\n"
-                        "if not exist \"%IN_FILE%\" exit /b 0\r\n"
-                        "del /f /q \"%LOG_FILE%\" >nul 2>&1\r\n"
-                        "for /f \"usebackq tokens=1,2 delims=|\" %%A in (\"%IN_FILE%\") do (\r\n"
-                        "  set \"CAT=%%A\"\r\n"
-                        "  set \"SVC=%%B\"\r\n"
-                        "  set \"STATE=\"\r\n"
-                        "  for /f \"tokens=3\" %%S in ('sc query \"!SVC!\" ^| findstr /I \"STATE\"') do set \"STATE=%%S\"\r\n"
-                        "  if /I \"!STATE!\"==\"RUNNING\" (\r\n"
-                        "    sc stop \"!SVC!\" >nul 2>&1\r\n"
-                        "    if errorlevel 1 (\r\n"
-                        "      >>\"%LOG_FILE%\" echo !CAT!^|!SVC!^|FAIL\r\n"
-                        "    ) else (\r\n"
-                        "      >>\"%LOG_FILE%\" echo !CAT!^|!SVC!^|OK\r\n"
-                        "    )\r\n"
-                        "  ) else (\r\n"
-                        "    if /I \"!STATE!\"==\"STOPPED\" (\r\n"
-                        "      >>\"%LOG_FILE%\" echo !CAT!^|!SVC!^|ALREADY_STOPPED\r\n"
-                        "    ) else (\r\n"
-                        "      sc stop \"!SVC!\" >nul 2>&1\r\n"
-                        "      if errorlevel 1 (\r\n"
-                        "        >>\"%LOG_FILE%\" echo !CAT!^|!SVC!^|FAIL\r\n"
-                        "      ) else (\r\n"
-                        "        >>\"%LOG_FILE%\" echo !CAT!^|!SVC!^|OK\r\n"
-                        "      )\r\n"
-                        "    )\r\n"
-                        "  )\r\n"
-                        ")\r\n"
-                        "del /f /q \"%IN_FILE%\" >nul 2>&1\r\n"
-                        "exit /b 0\r\n"
-                    )
-                    with open(cmd_path, 'w', encoding='utf-8') as f:
-                        f.write(script)
-
-                try:
-                    _write_service_cmd(task_cmd, input_path, log_path)
-                except Exception as e:
-                    print(f"[Boost] Failed to write service CMD: {e}")
-
-                try:
-                    _write_service_vbs(task_vbs, task_cmd)
-                except Exception as e:
-                    print(f"[Boost] Failed to write service VBS: {e}")
-
-                task_ready = _task_exists(task_name) and _task_matches_expected(task_name)
-                try:
-                    _exists_dbg = _task_exists(task_name)
-                    _cmd_dbg = _task_exec_command(task_name) if _exists_dbg else ''
-                    print(f"[Boost] Service task exists={_exists_dbg}, ready(wscript)={task_ready}, command={_cmd_dbg}")
-                except Exception:
-                    pass
-                if not task_ready:
-                    if not _create_task_cmd(task_name, task_vbs):
-                        print("[Boost] Scheduled task creation failed/denied")
-                    else:
-                        task_ready = _task_exists(task_name) and _task_matches_expected(task_name)
-                        try:
-                            _cmd_dbg = _task_exec_command(task_name)
-                            print(f"[Boost] Service task created. ready(wscript)={task_ready}, command={_cmd_dbg}")
-                        except Exception:
-                            pass
-
-                if not task_ready:
-                    try:
-                        print("[Boost] Service task not ready; skipping service stop and marking services as setup needed")
+                    except subprocess.TimeoutExpired:
+                        return 'FAIL'
                     except Exception:
-                        pass
-                    for cat, svc in all_services:
-                        if cat == 'basic':
-                            key = 'basic_services'
-                        elif cat == 'advanced':
-                            key = 'advanced_services'
+                        return 'FAIL'
+
+                for cat, svc in all_services:
+                    svc_name = svc['name']
+                    display  = svc.get('display', svc_name)
+
+                    st = _stop_service_direct(svc_name)
+                    ok = st in ('OK', 'ALREADY_STOPPED')
+                    print(f'[Boost] Service {repr(svc_name)} -> {st}')
+
+                    if cat == 'essential':
+                        if ok:
+                            results['essential']['success'] += 1
+                            results['essential']['items'].append(f'V {display}')
                         else:
-                            continue
-                        results[key]['failed'] += 1
-                        results[key]['items'].append(f"X {svc.get('display', svc['name'])} (setup needed)")
+                            reason = 'access denied' if st == 'ACCESS_DENIED' else 'failed'
+                            results['essential']['items'].append(f'X {display} ({reason})')
+                    else:
+                        key = 'basic_services' if cat == 'basic' else 'advanced_services'
+                        if ok:
+                            results[key]['stopped'] += 1
+                            results[key]['items'].append(f'V {display}')
+                        else:
+                            results[key]['failed'] += 1
+                            reason = 'access denied' if st == 'ACCESS_DENIED' else 'failed'
+                            results[key]['items'].append(f'X {display} ({reason})')
 
-                if task_ready and _task_exists(task_name):
-                    try:
-                        try:
-                            import os
-                            if os.path.exists(log_path):
-                                try:
-                                    os.remove(log_path)
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-
-                        with open(input_path, 'w', encoding='utf-8') as f:
-                            for cat, svc in all_services:
-                                f.write(f"{cat}|{svc['name']}\n")
-
-                        try:
-                            import os
-                            print(f"[Boost] Service input file exists={os.path.exists(input_path)} size={os.path.getsize(input_path) if os.path.exists(input_path) else -1}")
-                        except Exception:
-                            pass
-
-                        run_rc, run_out = _run_hidden(f'schtasks /run /tn "{task_name}"')
-                        try:
-                            print(f"[Boost] schtasks /run rc={run_rc} out={(run_out or '').strip()}")
-                        except Exception:
-                            pass
-
-                        import time
-                        log_content = ""
-                        for _i in range(30):
-                            time.sleep(1)
-                            try:
-                                with open(log_path, 'r', encoding='utf-8', errors='ignore') as lf:
-                                    log_content = lf.read().strip()
-                                if log_content:
-                                    break
-                            except Exception:
-                                continue
-
-                        if not log_content:
-                            try:
-                                import os
-                                print(f"[Boost] Service log exists={os.path.exists(log_path)} size={os.path.getsize(log_path) if os.path.exists(log_path) else -1}")
-                                qrc, qout = _run_hidden(f'schtasks /query /tn "{task_name}" /v /fo list')
-                                print(f"[Boost] schtasks /query /v rc={qrc}")
-                                if qout:
-                                    print(qout.strip())
-                            except Exception:
-                                pass
-
-                        status_map = {}
-                        if log_content:
-                            for line in log_content.splitlines():
-                                line = (line or '').strip().lstrip('\ufeff')
-                                if not line or '|' not in line:
-                                    continue
-                                parts = line.split('|', 2)
-                                if len(parts) != 3:
-                                    continue
-                                _cat, _svc, _st = parts[0], parts[1], parts[2]
-                                status_map[(_cat, _svc)] = _st
-
-                        for cat, svc in all_services:
-                            name = svc['name']
-                            display = svc.get('display', name)
-                            st = status_map.get((cat, name)) or status_map.get((cat, name.strip()))
-                            ok = (st in ("OK", "ALREADY_STOPPED"))
-
-                            if cat == 'essential':
-                                if ok:
-                                    results['essential']['success'] += 1
-                                    results['essential']['items'].append(f"V {display}")
-                                    print(f"[Boost] Essential service stopped: {name} ({st})")
-                                else:
-                                    results['essential']['items'].append(f"X {display}")
-                                    print(f"[Boost] Essential service failed: {name}")
-                            else:
-                                key = 'basic_services' if cat == 'basic' else 'advanced_services'
-                                if ok:
-                                    results[key]['stopped'] += 1
-                                    results[key]['items'].append(f"V {display}")
-                                    print(f"[Boost] Stopped service: {name} ({st})")
-                                else:
-                                    results[key]['failed'] += 1
-                                    results[key]['items'].append(f"X {display}")
-                                    print(f"[Boost] Failed to stop {name}")
-
-                        try:
-                            if log_content:
-                                print(f"[Boost] Service log kept at: {log_path}")
-                            else:
-                                print(f"[Boost] Service log not found/empty (kept path): {log_path}")
-                        except Exception:
-                            pass
-                    except Exception as e:
-                        print(f"[Boost] Service stop (CMD task) error: {e}")
             else:
-                print("[Boost] No services selected; skipping services boost step")
+                print('[Boost] No services selected; skipping services boost step')
 
             # ========== SHOW RESULTS ==========
             if not any_selected:

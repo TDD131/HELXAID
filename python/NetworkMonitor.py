@@ -274,10 +274,14 @@ class NetworkMonitor(QThread):
             try:
                 started = self._etw_monitor.start()
                 if not started:
+                    # ETW start failed - log the reason and fall back to psutil.
+                    # With the user-mode Winsock AFD provider, admin is no longer required.
                     try:
                         err = self._etw_monitor.get_last_error() if hasattr(self._etw_monitor, 'get_last_error') else ''
                         if err:
-                            print(f"[NetworkMonitor] ETW start failed: {err}")
+                            print(f"[NetworkMonitor] ETW start failed: {err}. Using psutil fallback.")
+                        else:
+                            print("[NetworkMonitor] ETW start failed. Using psutil fallback.")
                     except Exception:
                         pass
                     self._etw_enabled = False

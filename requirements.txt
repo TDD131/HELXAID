@@ -1,0 +1,28 @@
+# HELXAID Game Launcher Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core GUI Framework
+PySide6>=6.5.0
+
+# OpenGL Support (for hardware-accelerated rendering)
+PyOpenGL>=3.1.7
+PyOpenGL_accelerate>=3.1.7
+
+# System Utilities
+psutil>=5.9.0
+
+# Media Handling
+mutagen>=1.47.0
+
+# YouTube Download (optional)
+yt-dlp>=2024.1.0
+
+# Image Processing
+Pillow>=10.0.0
+
+# Native Extensions Build (optional, for C++ acceleration)
+pybind11>=2.11.0
+
+# VLC Video Player Backend (optional, requires VLC installed separately)
+# Provides: hardware decoding, all codecs, audio pitch correction at speed changes
+python-vlc>=3.0.0

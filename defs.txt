@@ -1,0 +1,189 @@
+
+python\MusicPanelWidget.py:46:    def mousePressEvent(self, event):
+python\MusicPanelWidget.py:87:    def wheelEvent(self, event):
+python\MusicPanelWidget.py:117:    def __init__(self, text="", parent=None):
+python\MusicPanelWidget.py:133:    def setText(self, text: str):
+python\MusicPanelWidget.py:155:    def _scroll(self):
+python\MusicPanelWidget.py:178:    def paintEvent(self, event):
+python\MusicPanelWidget.py:215:    def __init__(self, url, out_dir, fmt, quality_idx):
+python\MusicPanelWidget.py:224:    def cancel(self):
+python\MusicPanelWidget.py:235:    def get_f_str(self):
+python\MusicPanelWidget.py:249:    def run(self):
+python\MusicPanelWidget.py:360:    def __init__(self, url, fmt, quality_idx):
+python\MusicPanelWidget.py:367:    def cancel(self):
+python\MusicPanelWidget.py:370:    def run(self):
+python\MusicPanelWidget.py:443:    def __init__(self, url):
+python\MusicPanelWidget.py:446:    def run(self):
+python\MusicPanelWidget.py:463:    def __init__(self, parent=None):
+python\MusicPanelWidget.py:473:    def _cleanup_worker(self, attr_name):
+python\MusicPanelWidget.py:498:    def _safe_remove_from_graveyard(self, worker):
+python\MusicPanelWidget.py:507:    def closeEvent(self, event):
+python\MusicPanelWidget.py:523:    def _setup_ui(self):
+python\MusicPanelWidget.py:651:        def update_opts():
+python\MusicPanelWidget.py:689:        def pick_folder():
+python\MusicPanelWidget.py:751:    def _apply_style(self):
+python\MusicPanelWidget.py:825:    def _update_size_estimate(self):
+python\MusicPanelWidget.py:852:        def on_meta(d):
+python\MusicPanelWidget.py:879:    def _on_thumb_loaded(self, data):
+python\MusicPanelWidget.py:898:    def _start_download(self):
+python\MusicPanelWidget.py:921:        def on_done(msg):
+python\MusicPanelWidget.py:927:        def on_err(msg):
+python\MusicPanelWidget.py:936:    def _reset_ui(self):
+python\MusicPanelWidget.py:940:    def set_url(self, url):
+python\MusicPanelWidget.py:952:    def __init__(self, parent=None):
+python\MusicPanelWidget.py:958:    def _setup_ui(self):
+python\MusicPanelWidget.py:1004:    def _apply_style(self):
+python\MusicPanelWidget.py:1050:    def set_info(self, name: str, track_count: int, total_duration: str):
+python\MusicPanelWidget.py:1054:    def set_covers(self, cover1_path: str, cover2_path: str):
+python\MusicPanelWidget.py:1082:    def __init__(self, parent=None):
+python\MusicPanelWidget.py:1092:    def _setup_ui(self):
+python\MusicPanelWidget.py:1144:    def _apply_style(self):
+python\MusicPanelWidget.py:1211:    def _on_header_click(self, column_idx: int):
+python\MusicPanelWidget.py:1229:    def _update_header_labels(self):
+python\MusicPanelWidget.py:1244:    def _on_double_click(self, row: int, column: int):
+python\MusicPanelWidget.py:1253:    def set_tracks(self, tracks: list):
+python\MusicPanelWidget.py:1257:    def _render_tracks(self):
+python\MusicPanelWidget.py:1269:        def natural_sort_key(text):
+python\MusicPanelWidget.py:1331:    def highlight_playing(self, index: int):
+python\MusicPanelWidget.py:1335:    def get_next_index(self, current_index: int) -> int:
+python\MusicPanelWidget.py:1347:    def get_prev_index(self, current_index: int) -> int:
+python\MusicPanelWidget.py:1377:    def __init__(self, parent=None):
+python\MusicPanelWidget.py:1389:    def _setup_ui(self):
+python\MusicPanelWidget.py:1585:    def _create_icon_btn(self, icon_name: str, tooltip: str) -> QPushButton:
+python\MusicPanelWidget.py:1608:    def _apply_style(self):
+python\MusicPanelWidget.py:1723:    def _toggle_shuffle(self):
+python\MusicPanelWidget.py:1728:    def _toggle_loop(self):
+python\MusicPanelWidget.py:1738:    def _update_shuffle_style(self):
+python\MusicPanelWidget.py:1758:    def _update_loop_style(self):
+python\MusicPanelWidget.py:1795:    def _on_volume_change(self, value: int):
+python\MusicPanelWidget.py:1801:    def _on_volume_input_change(self, value: int):
+python\MusicPanelWidget.py:1807:    def set_playing(self, playing: bool):
+python\MusicPanelWidget.py:1815:    def set_track_info(self, title: str, artist: str):
+python\MusicPanelWidget.py:1819:    def set_position(self, current: float, total: float, skip_throttle: bool = False):
+python\MusicPanelWidget.py:1835:    def _on_timeline_moved(self, value: int):
+python\MusicPanelWidget.py:1843:    def _on_timeline_released(self):
+python\MusicPanelWidget.py:1849:    def _format_time(self, seconds: float) -> str:
+python\MusicPanelWidget.py:1854:    def _on_time_input(self):
+python\MusicPanelWidget.py:1879:    def __init__(self, parent=None):
+python\MusicPanelWidget.py:1891:    def set_bar(self, bar: QWidget):
+python\MusicPanelWidget.py:1922:    def __init__(self, parent=None):
+python\MusicPanelWidget.py:2012:    def _is_app_render_allowed(self) -> bool:
+python\MusicPanelWidget.py:2028:    def _disable_video_output_and_subtitles(self, reason: str, switch_to_playlist: bool):
+python\MusicPanelWidget.py:2060:    def _enable_video_output_and_subtitles(self, reason: str):
+python\MusicPanelWidget.py:2100:    def on_helxaic_page_hidden(self):
+python\MusicPanelWidget.py:2113:    def on_helxaic_page_shown(self):
+python\MusicPanelWidget.py:2134:    def _on_app_state_changed_for_render_gate(self, state):
+python\MusicPanelWidget.py:2169:    def showEvent(self, event):
+python\MusicPanelWidget.py:2193:    def _check_ffmpeg(self) -> bool:
+python\MusicPanelWidget.py:2211:    def _setup_ffmpeg_required_ui(self):
+python\MusicPanelWidget.py:2269:    def _download_ffmpeg(self):
+python\MusicPanelWidget.py:2277:    def _setup_media_key_service(self):
+python\MusicPanelWidget.py:2319:    def _setup_audio_device_monitor(self):
+python\MusicPanelWidget.py:2355:    def _on_audio_devices_changed(self):
+python\MusicPanelWidget.py:2416:    def keyPressEvent(self, event):
+python\MusicPanelWidget.py:2512:    def _setup_ui(self):
+python\MusicPanelWidget.py:2607:    def resizeEvent(self, event):
+python\MusicPanelWidget.py:2617:    def _update_yt_panel_constraints(self):
+python\MusicPanelWidget.py:2639:    def _on_main_splitter_moved(self, pos, index):
+python\MusicPanelWidget.py:2651:    def _create_search_bar(self, parent_layout):
+python\MusicPanelWidget.py:2705:    def _filter_tracks(self, query: str):
+python\MusicPanelWidget.py:2727:    def _connect_signals(self):
+python\MusicPanelWidget.py:2746:    def _on_player_error(self, error, error_string):
+python\MusicPanelWidget.py:2750:    def _on_media_status(self, status):
+python\MusicPanelWidget.py:2774:    def _init_discord(self):
+python\MusicPanelWidget.py:2788:    def _update_discord(self, title: str, artist: str, is_playing: bool = True):
+python\MusicPanelWidget.py:2796:    def _create_menu_bar(self, layout):
+python\MusicPanelWidget.py:2861:        def on_crossfade_slider_change(val):
+python\MusicPanelWidget.py:2946:        def _add_variant(preset_key: str, label: str, bold: bool, italic: bool):
+python\MusicPanelWidget.py:3014:        def _apply_size(val: int):
+python\MusicPanelWidget.py:3020:        def _on_slider(val: int):
+python\MusicPanelWidget.py:3026:        def _on_spin(val: int):
+python\MusicPanelWidget.py:3134:    def _get_subtitle_style_settings(self):
+python\MusicPanelWidget.py:3140:    def _apply_saved_subtitle_style_preset(self):
+python\MusicPanelWidget.py:3166:    def _apply_saved_subtitle_appearance(self):
+python\MusicPanelWidget.py:3176:    def _apply_saved_subtitle_font_size(self):
+python\MusicPanelWidget.py:3193:    def _set_subtitle_font_size(self, pt: int):
+python\MusicPanelWidget.py:3215:    def _sync_subtitle_size_menu(self):
+python\MusicPanelWidget.py:3237:    def _set_subtitle_style_preset(self, preset: str):
+python\MusicPanelWidget.py:3254:    def _set_subtitle_style_variant(self, preset: str, bold: bool, italic: bool):
+python\MusicPanelWidget.py:3280:    def _sync_subtitle_style_menu(self):
+python\MusicPanelWidget.py:3309:    def _ensure_subtitle_state(self):
+python\MusicPanelWidget.py:3337:    def _set_subtitle_default_mode(self, mode: str):
+python\MusicPanelWidget.py:3353:    def _on_subtitles_disabled_by_user(self):
+python\MusicPanelWidget.py:3366:    def _mark_subtitles_enabled_by_user(self):
+python\MusicPanelWidget.py:3370:    def _pick_best_embedded_subtitle_stream(self, streams):
+python\MusicPanelWidget.py:3374:            def score(s):
+python\MusicPanelWidget.py:3390:    def _auto_pick_embedded_subtitles_if_available(self):
+python\MusicPanelWidget.py:3429:    def _set_current_media_local_path(self, path: Optional[str]):
+python\MusicPanelWidget.py:3434:    def _set_current_media_url(self, url: Optional[str]):
+python\MusicPanelWidget.py:3439:    def _get_ffmpeg_bin_dir(self):
+python\MusicPanelWidget.py:3449:    def _get_ffprobe_path(self):
+python\MusicPanelWidget.py:3457:    def _get_ffmpeg_path(self):
+python\MusicPanelWidget.py:3465:    def _list_embedded_subtitle_streams(self, video_path: str):
+python\MusicPanelWidget.py:3495:    def _extract_embedded_subtitle(self, video_path: str, stream_index: int, codec: str = ''):
+python\MusicPanelWidget.py:3556:    def _add_subtitle_file(self):
+python\MusicPanelWidget.py:3576:    def _populate_subtitle_tracks_menu(self):
+python\MusicPanelWidget.py:3630:                    def _on_pick_sidecar(_c=False, _p=p):
+python\MusicPanelWidget.py:3674:                    def on_pick_embedded(_c=False, stream_index=int(idx), video_path=self._current_media_path, stream_codec=codec, stream_label=label):
+python\MusicPanelWidget.py:3755:    def _maybe_auto_load_sidecar_subtitles(self, media_path: str):
+python\MusicPanelWidget.py:3788:    def _populate_audio_devices(self):
+python\MusicPanelWidget.py:3811:    def _set_audio_device(self, device):
+python\MusicPanelWidget.py:3821:    def _set_playback_speed(self, rate: float):
+python\MusicPanelWidget.py:3831:    def _start_crossfade(self):
+python\MusicPanelWidget.py:3888:    def _crossfade_tick(self):
+python\MusicPanelWidget.py:3903:    def _finish_crossfade(self):
+python\MusicPanelWidget.py:3961:    def _show_balance_dialog(self):
+python\MusicPanelWidget.py:4059:    def _apply_stereo_mode(self, dialog):
+python\MusicPanelWidget.py:4073:    def _show_audio_settings(self):
+python\MusicPanelWidget.py:4077:    def _toggle_yt_panel(self):
+python\MusicPanelWidget.py:4100:    def _on_yt_download_finished(self, dest_path):
+python\MusicPanelWidget.py:4118:    def _rescan_folder(self):
+python\MusicPanelWidget.py:4124:    def _show_convert_dialog(self):
+python\MusicPanelWidget.py:4275:        def browse_output():
+python\MusicPanelWidget.py:4310:        def start_convert():
+python\MusicPanelWidget.py:4387:    def set_playlist(self, name: str, tracks: list):
+python\MusicPanelWidget.py:4410:    def _update_covers(self, tracks: list):
+python\MusicPanelWidget.py:4414:        def run_update():
+python\MusicPanelWidget.py:4488:    def _play_track(self, index: int):
+python\MusicPanelWidget.py:4564:    def _toggle_play(self):
+python\MusicPanelWidget.py:4581:    def _prev_track(self, force_wrap=False):
+python\MusicPanelWidget.py:4642:    def _next_track(self, force_wrap=False):
+python\MusicPanelWidget.py:4703:    def _seek(self, percent: float):
+python\MusicPanelWidget.py:4714:    def _set_volume(self, value: int):
+python\MusicPanelWidget.py:4737:    def _show_load_url_dialog(self):
+python\MusicPanelWidget.py:4822:    def _fetch_url_metadata(self, url, dummy_track=None):
+python\MusicPanelWidget.py:4826:        def fetch():
+python\MusicPanelWidget.py:4898:                        def update_ui():
+python\MusicPanelWidget.py:4934:    def _load_and_play_stream(self, track):
+python\MusicPanelWidget.py:4939:        def fetch():
+python\MusicPanelWidget.py:4996:    def _revert_loading_ui(self, track, request_id):
+python\MusicPanelWidget.py:5001:        def restore():
+python\MusicPanelWidget.py:5007:    def _play_resolved_stream(self, stream_url, track, request_id):
+python\MusicPanelWidget.py:5033:                def poll_vlc():
+python\MusicPanelWidget.py:5084:    def _toggle_window_fullscreen(self, is_fullscreen: bool):
+python\MusicPanelWidget.py:5168:    def _set_playerbar_overlay_enabled(self, enabled: bool):
+python\MusicPanelWidget.py:5223:    def _update_playerbar_overlay_geometry(self):
+python\MusicPanelWidget.py:5259:    def _toggle_video(self):
+python\MusicPanelWidget.py:5277:            def _finish_enter_video_view():
+python\MusicPanelWidget.py:5347:    def _switch_to_playlist(self):
+python\MusicPanelWidget.py:5360:    def _set_aspect_ratio(self, mode: str):
+python\MusicPanelWidget.py:5385:    def _toggle_fullscreen(self):
+python\MusicPanelWidget.py:5490:    def eventFilter(self, obj, event):
+python\MusicPanelWidget.py:5544:    def _hide_playerbar_fullscreen(self):
+python\MusicPanelWidget.py:5550:    def _animate_playerbar(self, show: bool):
+python\MusicPanelWidget.py:5588:    def _on_playerbar_fade_finished(self):
+python\MusicPanelWidget.py:5594:    def mouseMoveEvent(self, event):
+python\MusicPanelWidget.py:5613:    def _on_position(self, pos: int):
+python\MusicPanelWidget.py:5646:    def _on_state(self, state):
+python\MusicPanelWidget.py:5676:    def _load_last_state(self):
+python\MusicPanelWidget.py:5720:                                        def on_media_loaded(status):
+python\MusicPanelWidget.py:5755:    def _save_state(self):
+python\MusicPanelWidget.py:5786:    def _browse_folder_direct(self):
+python\MusicPanelWidget.py:5801:    def _open_file_direct(self):
+python\MusicPanelWidget.py:5848:    def _open_settings(self):
+python\MusicPanelWidget.py:5921:    def _browse_and_load(self, dialog):
+python\MusicPanelWidget.py:5937:    def _load_tracks_from_folder(self, folder: str):
+python\MusicPanelWidget.py:5942:    def _load_tracks_fallback(self, folder: str):
+python\MusicPanelWidget.py:5983:        def _fetch_metadata(target_tracks, target_name):
+python\MusicPanelWidget.py:6089:                def update_ui():
+

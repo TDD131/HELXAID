@@ -29,6 +29,9 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 
 from VideoPlayerWidget import VideoPlayerWidget
 
+# VLC availability flag - checked lazily in _create_video_player
+_VLC_VIDEO_AVAILABLE = None
+
 import os
 import sys
 import json
@@ -36,7 +39,6 @@ import subprocess
 import tempfile
 import urllib.request
 import hashlib
-import time
 from typing import Optional
 from functools import partial
 
@@ -467,7 +469,6 @@ class YouTubeDownloaderPanel(QFrame):
         self._worker = None
         self._size_worker = None
         self._img_worker = None
-        self._thread_graveyard = []  # Track workers that are still finishing tasks
         self._setup_ui()
         self._apply_style()
 
@@ -484,25 +485,13 @@ class YouTubeDownloaderPanel(QFrame):
                 pass
 
             # Politely request cancellation if the worker supports it.
+            # We intentionally avoid QThread.terminate() here because forcibly
+            # killing threads can crash the Python/Qt runtime, especially while
+            # running subprocesses (yt-dlp) for size estimation or downloads.
             try:
                 if hasattr(worker, 'cancel'):
                     worker.cancel()
             except Exception:
-                pass
-                
-            # Move to graveyard instead of deleting immediately while running
-            if hasattr(self, '_thread_graveyard'):
-                self._thread_graveyard.append(worker)
-                # Cleanup graveyard when thread actually finishes
-                worker.finished.connect(lambda w=worker: self._safe_remove_from_graveyard(w))
-
-    def _safe_remove_from_graveyard(self, worker):
-        """Called when a worker in the graveyard finally finishes."""
-        if hasattr(self, '_thread_graveyard') and worker in self._thread_graveyard:
-            try:
-                self._thread_graveyard.remove(worker)
-                worker.deleteLater()
-            except (ValueError, RuntimeError):
                 pass
 
     def closeEvent(self, event):
@@ -510,15 +499,9 @@ class YouTubeDownloaderPanel(QFrame):
         self._cleanup_worker('_worker')
         self._cleanup_worker('_size_worker')
         self._cleanup_worker('_img_worker')
-        
-        # Power-kill everything in graveyard on app close to prevent zombie yt-dlp
-        if hasattr(self, '_thread_graveyard'):
-            for w in self._thread_graveyard:
-                try:
-                    if hasattr(w, 'cancel'): w.cancel()
-                    w.terminate()
-                except:
-                    pass
+        for w in self._thread_graveyard:
+            try: w.terminate()
+            except: pass
         super().closeEvent(event)
 
     def _setup_ui(self):
@@ -878,23 +861,11 @@ class YouTubeDownloaderPanel(QFrame):
         worker.start()
 
     def _on_thumb_loaded(self, data):
-        """Update thumbnail label with downloaded preview image."""
-        if not data:
-            return
-            
-        # Verify the widget still exists and is visible before updating
-        try:
-            if not self.isVisible() or self.thumb_lbl.isHidden():
-                return
-                
-            pixmap = QPixmap()
-            if pixmap.loadFromData(data):
-                # Scale to fit while maintaining aspect ratio
-                scaled = pixmap.scaled(self.thumb_lbl.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.thumb_lbl.setPixmap(scaled)
-        except (RuntimeError, AttributeError):
-            # Panel or label may have been destroyed
-            pass
+        # Verify img_worker still exists (might have been cleaned up)
+        pixmap = QPixmap()
+        if pixmap.loadFromData(data):
+            scaled = pixmap.scaled(self.thumb_lbl.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.thumb_lbl.setPixmap(scaled)
 
     def _start_download(self):
         url = self.url_edit.text().strip()
@@ -1049,19 +1020,10 @@ class PlaylistHeader(QFrame):
         """)
     
     def set_info(self, name: str, track_count: int, total_duration: str):
-        self._name = name # Store name for metadata refresh callbacks
         self.playlist_title.setText(name)
         self.playlist_stats.setText(f"{track_count} Media · {total_duration}")
     
     def set_covers(self, cover1_path: str, cover2_path: str):
-        # Guard against identical path updates to prevent heavy pixmap reloads/stutters
-        if getattr(self, '_last_cover1', None) == cover1_path and \
-           getattr(self, '_last_cover2', None) == cover2_path:
-            return
-            
-        self._last_cover1 = cover1_path
-        self._last_cover2 = cover2_path
-
         if cover1_path and os.path.exists(cover1_path):
             pixmap = QPixmap(cover1_path)
             self.cover_back.setPixmap(pixmap)
@@ -1315,21 +1277,7 @@ class PlaylistTable(QWidget):
             self.table.setItem(display_idx, 2, date_item)
             
             # Column 3: Duration
-            dur_val = track.get('duration', 0)
-            try:
-                if isinstance(dur_val, str) and ':' in dur_val:
-                    parts = dur_val.split(':')
-                    if len(parts) == 2:
-                        duration = float(parts[0]) * 60 + float(parts[1])
-                    elif len(parts) == 3:
-                        duration = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-                    else:
-                        duration = 0.0
-                else:
-                    duration = float(dur_val or 0)
-            except (ValueError, TypeError):
-                duration = 0.0
-                
+            duration = track.get('duration', 0)
             mins = int(duration // 60)
             secs = int(duration % 60)
             length_item = QTableWidgetItem(f"{mins}:{secs:02d}")
@@ -1831,17 +1779,6 @@ class PlayerBar(QFrame):
     def set_track_info(self, title: str, artist: str):
         self.title_label.setText(title)
         self.artist_label.setText(artist or "-")
-
-    def set_shuffle(self, enabled: bool):
-        """Set shuffle state and update UI."""
-        self._is_shuffled = enabled
-        self._update_shuffle_style()
-
-    def set_loop_mode(self, mode: str):
-        """Set loop mode (off, all, one) and update UI."""
-        if mode in ("off", "all", "one"):
-            self._loop_mode = mode
-            self._update_loop_style()
     
     def set_position(self, current: float, total: float, skip_throttle: bool = False):
         self._last_total_duration = total  # Store for drag updates
@@ -1906,7 +1843,7 @@ class _PlayerBarOverlayWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         from PySide6.QtWidgets import QVBoxLayout
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus)
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setObjectName("playerBarOverlayWindow")
 
@@ -1950,43 +1887,21 @@ class MusicPanelWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("MusicPanelWidget")
         
-        # Check FFmpeg availability first
-        self._ffmpeg_available = self._check_ffmpeg()
+        # Defer heavy initialization - set defaults first
+        self._ffmpeg_available = False
+        self._vlc_available = False
+        self._ffmpeg_checked = False
+        self._vlc_checked = False
         
-        if not self._ffmpeg_available:
-            # Create dummy attributes to prevent AttributeError
-            self._player = None
-            self._audio_output = None
-            self._playlist = []
-            self._current_index = -1
-            self._setup_ffmpeg_required_ui()
-            return
-        
-        # Qt Multimedia player
-        self._player = QMediaPlayer()
-        self._audio_output = QAudioOutput()
-        self._player.setAudioOutput(self._audio_output)
-        self._audio_output.setVolume(1.0)  # Set initial volume to 100%
-        
-        # Secondary player for crossfade
-        self._player2 = QMediaPlayer()
-        self._audio_output2 = QAudioOutput()
-        self._player2.setAudioOutput(self._audio_output2)
-        self._audio_output2.setVolume(0.0)  # Start silent
-        
-        # Crossfade state
-        self._crossfade_enabled = True  # Enabled by default
-        self._crossfade_duration = 3.0  # Default 3 seconds
-        self._crossfade_active = False
-        self._crossfade_timer = None
-        self._active_player = 1  # 1 or 2, indicates which player is "main"
-        self._user_volume = 1.0  # Store user's volume preference
-        
-        # State
+        # Create dummy attributes to prevent AttributeError during deferred init
+        self._player = None
+        self._audio_output = None
         self._playlist = []
         self._current_index = -1
-        self._shuffled_sequence = []
-        self._shuffled_pointer = -1
+        self._player2 = None
+        self._audio_output2 = None
+        
+        # State
         self._video_mode = False
         self._music_folder = None
 
@@ -1999,9 +1914,9 @@ class MusicPanelWidget(QWidget):
         self._subtitle_appearance_applied_once = False
         self._last_media_for_sub_auto_pick = None
         
-        # Discord Rich Presence
+        # Discord Rich Presence (deferred)
         self._discord = None
-        self._init_discord()
+        self._discord_init_pending = False
         
         # Config file for persistence (use AppData for bundled exe)
         appdata_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID")
@@ -2012,6 +1927,15 @@ class MusicPanelWidget(QWidget):
         self._subtitle_style_preset = 'outline'
         self._subtitle_font_size = 16
         
+        # Crossfade state defaults
+        self._crossfade_enabled = True
+        self._crossfade_duration = 3.0
+        self._crossfade_active = False
+        self._crossfade_timer = None
+        self._active_player = 1
+        self._user_volume = 1.0
+        
+        # Setup UI first (fast), then defer heavy init
         self._setup_ui()
         self._connect_signals()
 
@@ -2023,15 +1947,54 @@ class MusicPanelWidget(QWidget):
             pass
         
         # Ensure minimum height so PlayerBar never gets clipped
-        self.setMinimumHeight(400)  # Menu(30) + Header(~200) + PlayerBar(75) + margin
+        self.setMinimumHeight(400)
         
-        # Restore last state (folder, track, position, volume)
+        # Defer heavy initialization to after UI is shown
+        QTimer.singleShot(100, self._deferred_init)
+        
+        print("[Music] Native Qt MusicPanelWidget initialized")
+
+    def _deferred_init(self):
+        """
+        Perform heavy initialization after UI is shown.
+        This includes FFmpeg/VLC checks, media player creation, Discord, and loading state.
+        """
+        # Check FFmpeg and VLC availability
+        self._ffmpeg_available = self._check_ffmpeg()
+        self._vlc_available = self._check_vlc()
+        self._ffmpeg_checked = True
+        self._vlc_checked = True
+        
+        if not self._ffmpeg_available or not self._vlc_available:
+            # Replace the normal UI with the placeholder
+            # Clear existing layout and setup placeholder
+            old_layout = self.layout()
+            if old_layout:
+                while old_layout.count():
+                    item = old_layout.takeAt(0)
+                    if item.widget():
+                        item.widget().deleteLater()
+            self._setup_ffmpeg_required_ui()
+            print(f"[Music] FFmpeg/VLC not available (ffmpeg={self._ffmpeg_available}, vlc={self._vlc_available})")
+            return
+        
+        # Create media players
+        self._player = QMediaPlayer()
+        self._audio_output = QAudioOutput()
+        self._player.setAudioOutput(self._audio_output)
+        self._audio_output.setVolume(1.0)
+        
+        # Secondary player for crossfade
+        self._player2 = QMediaPlayer()
+        self._audio_output2 = QAudioOutput()
+        self._player2.setAudioOutput(self._audio_output2)
+        self._audio_output2.setVolume(0.0)
+        
+        # Initialize Discord Rich Presence (non-blocking)
+        self._init_discord()
+        
+        # Load last state (folder, track, volume)
         self._load_last_state()
-        
-        # Connect to app exit signal for final state save
-        app = QApplication.instance()
-        if app:
-            app.aboutToQuit.connect(self._save_state)
         
         # Start global media key listener for hardware media keys
         # (keyboard Fn keys, Bluetooth headphone/earbuds, USB controllers)
@@ -2041,7 +2004,125 @@ class MusicPanelWidget(QWidget):
         # connects (e.g. Bluetooth headphones, USB DAC)
         self._setup_audio_device_monitor()
         
-        print("[Music] Native Qt MusicPanelWidget initialized")
+        # Connect player signals now that player is created
+        if self._player is not None:
+            self._player.positionChanged.connect(self._on_position)
+            self._player.playbackStateChanged.connect(self._on_state)
+            self._player.errorOccurred.connect(self._on_player_error)
+            self._player.mediaStatusChanged.connect(self._on_media_status)
+        
+        # Create video player now that we have the media player
+        self._create_video_player()
+        
+        # Create playlist table
+        self._create_playlist_table()
+        
+        # Create player bar now that we have the infrastructure
+        self._create_player_bar()
+        
+        print("[Music] Deferred initialization complete")
+
+    def _create_player_bar(self):
+        """Create player bar widget after deferred init."""
+        try:
+            # Remove placeholder
+            if hasattr(self, '_player_bar_placeholder') and self._player_bar_placeholder:
+                self._player_bar_placeholder.deleteLater()
+            
+            self.player_bar = PlayerBar(self._player_bar_container)
+            self._player_bar_container.layout().addWidget(self.player_bar)
+            
+            # Connect player bar signals
+            self.player_bar.playClicked.connect(self._toggle_play)
+            self.player_bar.prevClicked.connect(self._prev_track)
+            self.player_bar.nextClicked.connect(self._next_track)
+            self.player_bar.seekChanged.connect(self._seek)
+            self.player_bar.volumeChanged.connect(self._set_volume)
+            self.player_bar.videoToggled.connect(self._toggle_video)
+            self.player_bar.folderClicked.connect(self._browse_folder_direct)
+            
+        except Exception as e:
+            print(f"[Music] Player bar creation error: {e}")
+
+    def _create_playlist_table(self):
+        """Create playlist table widget after deferred init."""
+        try:
+            # Remove placeholder
+            if hasattr(self, '_table_placeholder') and self._table_placeholder:
+                # Find parent layout
+                parent = self._table_placeholder.parent()
+                if parent and parent.layout():
+                    parent.layout().removeWidget(self._table_placeholder)
+                self._table_placeholder.deleteLater()
+            
+            self.table = PlaylistTable()
+            
+            # Find the playlist page layout and add table
+            if hasattr(self, 'stack') and self.stack.widget(0):
+                playlist_page = self.stack.widget(0)
+                if playlist_page and playlist_page.layout():
+                    # Insert at end (after header and search)
+                    playlist_page.layout().addWidget(self.table, stretch=1)
+            
+            # Connect table signal
+            if self.table is not None:
+                self.table.trackDoubleClicked.connect(self._play_track)
+
+            try:
+                if self.table is not None:
+                    tracks = getattr(self, '_playlist', None)
+                    if tracks:
+                        self.table.set_tracks(tracks)
+                    self.table.show()
+            except Exception:
+                pass
+                
+        except Exception as e:
+            print(f"[Music] Playlist table creation error: {e}")
+
+    def _create_video_player(self):
+        """Create video player widget after deferred init has media player ready."""
+        global _VLC_VIDEO_AVAILABLE
+        
+        try:
+            # Remove placeholder
+            if hasattr(self, '_video_placeholder') and self._video_placeholder:
+                self.stack.removeWidget(self._video_placeholder)
+                self._video_placeholder.deleteLater()
+            
+            # Check VLC availability lazily (first time only)
+            if _VLC_VIDEO_AVAILABLE is None:
+                try:
+                    from VLCVideoPlayerWidget import VLCVideoPlayerWidget
+                    _VLC_VIDEO_AVAILABLE = True
+                except ImportError:
+                    _VLC_VIDEO_AVAILABLE = False
+            
+            # Use VLC video player if available, otherwise fall back to Qt player
+            if _VLC_VIDEO_AVAILABLE:
+                try:
+                    from VLCVideoPlayerWidget import VLCVideoPlayerWidget
+                    self.video_player = VLCVideoPlayerWidget(self)
+                    print("[Music] Using VLC video player with hardware decoding")
+                except Exception as e:
+                    print(f"[Music] VLC video player init failed, falling back to Qt: {e}")
+                    self.video_player = VideoPlayerWidget(self._player, self)
+            else:
+                self.video_player = VideoPlayerWidget(self._player, self)
+                print("[Music] VLC not available, using Qt video player")
+            
+            self.video_player.backRequested.connect(self._switch_to_playlist)
+            self.video_player.fullscreenToggled.connect(self._toggle_window_fullscreen)
+            self.stack.addWidget(self.video_player)
+            
+            # Apply saved subtitle appearance
+            try:
+                self._apply_saved_subtitle_appearance()
+            except Exception:
+                pass
+                
+        except Exception as e:
+            print(f"[Music] Video player creation error: {e}")
 
     def _is_app_render_allowed(self) -> bool:
         try:
@@ -2208,34 +2289,6 @@ class MusicPanelWidget(QWidget):
         if hasattr(self, 'player_bar'):
             self.player_bar.updateGeometry()
             self.player_bar.update()
-            
-            # Refresh duration explicitly if VLC or QMediaPlayer is currently active
-            try:
-                if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
-                    pos = self._vlc_player.get_time()
-                    dur = self._vlc_player.get_length()
-                    if pos >= 0 and dur > 0:
-                        self.player_bar.set_position(pos / 1000.0, dur / 1000.0)
-                        # Metadata Feedback Loop for VLC
-                        if hasattr(self, '_playlist') and 0 <= self._current_index < len(self._playlist):
-                            track = self._playlist[self._current_index]
-                            if track.get('duration', 0) == 0:
-                                track['duration'] = dur / 1000.0
-                                if hasattr(self, 'table'): self.table._render_tracks()
-                                if hasattr(self, 'header'): self.header.set_info(getattr(self.header, '_name', "Playlist"), len(self._playlist), self._format_playlist_duration())
-                elif hasattr(self, '_player') and self._player:
-                    pos = self._player.position()
-                    dur = self._player.duration()
-                    if dur > 0:
-                        self.player_bar.set_position(pos / 1000.0, dur / 1000.0)
-                        # Metadata Feedback Loop for QMediaPlayer
-                        if hasattr(self, '_playlist') and 0 <= self._current_index < len(self._playlist):
-                            track = self._playlist[self._current_index]
-                            if track.get('duration', 0) == 0:
-                                track['duration'] = dur / 1000.0
-                                if hasattr(self, 'table'): self.table._render_tracks()
-            except Exception:
-                pass
     
     def _check_ffmpeg(self) -> bool:
         """Check if FFmpeg is available."""
@@ -2254,13 +2307,25 @@ class MusicPanelWidget(QWidget):
                 return result.returncode == 0
             except Exception:
                 return False
+
+    def _check_vlc(self) -> bool:
+        """Check if VLC is available."""
+        try:
+            from integrations.tools_downloader import is_vlc_available
+            return is_vlc_available()
+        except ImportError:
+            return False
     
     def _setup_ffmpeg_required_ui(self):
-        """Setup placeholder UI when FFmpeg is not available."""
+        """Setup placeholder UI when FFmpeg or VLC is not available."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
+
+        # Determine what's missing
+        missing_ffmpeg = not self._ffmpeg_available
+        missing_vlc = not self._vlc_available
+
         # Main container
         container = QWidget()
         container.setStyleSheet("""
@@ -2272,27 +2337,60 @@ class MusicPanelWidget(QWidget):
         container_layout = QVBoxLayout(container)
         container_layout.setAlignment(Qt.AlignCenter)
         container_layout.setSpacing(20)
-        
+
         # Icon
         icon_label = QLabel("")
         icon_label.setStyleSheet("font-size: 64px; background: transparent;")
         icon_label.setAlignment(Qt.AlignCenter)
         container_layout.addWidget(icon_label)
-        
-        # Title
-        title = QLabel("FFmpeg Required")
+
+        # Title - dynamic based on what's missing
+        if missing_ffmpeg and missing_vlc:
+            title_text = "FFmpeg and VLC Required"
+        elif missing_ffmpeg:
+            title_text = "FFmpeg Required"
+        else:
+            title_text = "VLC Required"
+
+        title = QLabel(title_text)
         title.setStyleSheet("color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
         title.setAlignment(Qt.AlignCenter)
         container_layout.addWidget(title)
-        
-        # Description
-        desc = QLabel("Music Player requires FFmpeg for audio/video playback.\nClick below to download and install it automatically.")
+
+        # Description - dynamic based on what's missing
+        if missing_ffmpeg and missing_vlc:
+            desc_text = "Music Player requires FFmpeg for audio processing and VLC for hardware-accelerated video playback.\nClick below to download and install both automatically."
+        elif missing_ffmpeg:
+            desc_text = "Music Player requires FFmpeg for audio processing.\nClick below to download and install it automatically."
+        else:
+            desc_text = "Music Player requires VLC for hardware-accelerated video playback.\nClick below to download and install it automatically."
+
+        desc = QLabel(desc_text)
         desc.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
         desc.setAlignment(Qt.AlignCenter)
         container_layout.addWidget(desc)
-        
-        # Download button
-        download_btn = QPushButton("Download FFmpeg")
+
+        # Features list - only show VLC features if VLC is missing
+        if missing_vlc:
+            features = QLabel("VLC Features:\n• Hardware video decoding (D3D11VA/DXVA2)\n• All codec support (MKV, AVI, MP4, WebM, etc.)\n• Audio pitch correction at playback speed changes")
+            features.setStyleSheet("color: #666666; font-size: 12px; background: transparent;")
+            features.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(features)
+
+        container_layout.addSpacing(10)
+
+        # Download button - dynamic based on what's missing
+        if missing_ffmpeg and missing_vlc:
+            btn_text = "Download FFmpeg + VLC"
+            btn_handler = self._download_ffmpeg_vlc
+        elif missing_ffmpeg:
+            btn_text = "Download FFmpeg"
+            btn_handler = self._download_ffmpeg_only
+        else:
+            btn_text = "Download VLC"
+            btn_handler = self._download_vlc_only
+
+        download_btn = QPushButton(btn_text)
         download_btn.setFixedSize(220, 50)
         download_btn.setCursor(QCursor(Qt.PointingHandCursor))
         download_btn.setStyleSheet("""
@@ -2301,23 +2399,39 @@ class MusicPanelWidget(QWidget):
                 color: #1a1a1a;
                 border: none;
                 border-radius: 12px;
-                font-size: 16px;
+                font-size: 12px;
                 font-weight: bold;
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:1 #FFD700);
             }
         """)
-        download_btn.clicked.connect(self._download_ffmpeg)
+        download_btn.clicked.connect(btn_handler)
         container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
-        
+
         layout.addWidget(container)
-    
-    def _download_ffmpeg(self):
-        """Download FFmpeg using tools_downloader and restart app."""
+
+    def _download_ffmpeg_only(self):
+        """Download only FFmpeg with floating progress window."""
         try:
             from integrations.tools_downloader import ensure_ffmpeg
             ensure_ffmpeg(self)
+        except ImportError as e:
+            print(f"[Music] Failed to import tools_downloader: {e}")
+
+    def _download_vlc_only(self):
+        """Download only VLC with floating progress window."""
+        try:
+            from integrations.tools_downloader import ensure_vlc
+            ensure_vlc(self)
+        except ImportError as e:
+            print(f"[Music] Failed to import tools_downloader: {e}")
+    
+    def _download_ffmpeg_vlc(self):
+        """Download FFmpeg and VLC with separate floating progress windows."""
+        try:
+            from integrations.tools_downloader import ensure_ffmpeg_and_vlc
+            ensure_ffmpeg_and_vlc(self)
         except ImportError as e:
             print(f"[Music] Failed to import tools_downloader: {e}")
     
@@ -2575,27 +2689,26 @@ class MusicPanelWidget(QWidget):
         playlist_layout.setSpacing(0)
         
         self.header = PlaylistHeader()
-        self.table = PlaylistTable()
         
         # Search bar
         self._create_search_bar(playlist_layout)
         
+        # Placeholder for table - created in deferred_init
+        self._table_placeholder = QWidget()
+        self._table_placeholder.setStyleSheet("background: transparent;")
         playlist_layout.addWidget(self.header)
         playlist_layout.addWidget(self._search_container)
-        playlist_layout.addWidget(self.table, stretch=1)
+        playlist_layout.addWidget(self._table_placeholder, stretch=1)
+        self.table = None  # Created in deferred_init
         
         self.stack.addWidget(playlist_page)
         
-        # === Page 1: Video View (VLC-style player) ===
-        self.video_player = VideoPlayerWidget(self._player, self)
-        self.video_player.backRequested.connect(self._switch_to_playlist)
-        self.video_player.fullscreenToggled.connect(self._toggle_window_fullscreen)
-        self.stack.addWidget(self.video_player)
-
-        try:
-            self._apply_saved_subtitle_appearance()
-        except Exception:
-            pass
+        # === Page 1: Video View ===
+        # Create placeholder for video player - actual player created in deferred_init
+        self._video_placeholder = QWidget()
+        self._video_placeholder.setStyleSheet("background: #1a1a1a;")
+        self.stack.addWidget(self._video_placeholder)
+        self.video_player = None  # Will be created in deferred_init
         
         # Main view area (Playlist + YouTube Sidebar) with user-resizable splitter
         self.main_splitter = QSplitter(Qt.Horizontal, self)
@@ -2605,12 +2718,15 @@ class MusicPanelWidget(QWidget):
 
         self.main_splitter.addWidget(self.stack)
 
-        # YouTube Panel (Initially Hidden)
-        self.yt_panel = YouTubeDownloaderPanel(self)
-        self.yt_panel.hide()
-        self.yt_panel.closeRequested.connect(self._toggle_yt_panel)
-        self.yt_panel.downloadFinished.connect(self._on_yt_download_finished)
-        self.main_splitter.addWidget(self.yt_panel)
+        # YouTube Panel - deferred creation (not needed at startup)
+        self.yt_panel = None
+        self._yt_panel_pending = False
+        self._yt_last_width = 320
+        
+        # Create a placeholder for splitter
+        self._yt_placeholder = QWidget()
+        self._yt_placeholder.hide()
+        self.main_splitter.addWidget(self._yt_placeholder)
 
         # Keep main content dominant when splitter moves
         self.main_splitter.setStretchFactor(0, 1)
@@ -2618,13 +2734,12 @@ class MusicPanelWidget(QWidget):
         self.main_splitter.splitterMoved.connect(self._on_main_splitter_moved)
 
         # Default (panel hidden): all width to main content
-        self._yt_last_width = 320
         self._update_yt_panel_constraints()
         self.main_splitter.setSizes([1, 0])
 
         layout.addWidget(self.main_splitter, stretch=1)
         
-        # Player bar (wrapped so we can detach/overlay it during fullscreen video)
+        # Player bar - create placeholder first, actual bar created in deferred_init
         self._player_bar_container = QFrame(self)
         try:
             self._player_bar_container.setContentsMargins(0, 0, 0, 0)
@@ -2633,8 +2748,14 @@ class MusicPanelWidget(QWidget):
         _pb_layout = QVBoxLayout(self._player_bar_container)
         _pb_layout.setContentsMargins(0, 0, 0, 0)
         _pb_layout.setSpacing(0)
-        self.player_bar = PlayerBar(self._player_bar_container)
-        _pb_layout.addWidget(self.player_bar)
+        
+        # Placeholder for player bar
+        self._player_bar_placeholder = QWidget()
+        self._player_bar_placeholder.setFixedHeight(75)
+        self._player_bar_placeholder.setStyleSheet("background: rgba(15, 15, 20, 0.95);")
+        _pb_layout.addWidget(self._player_bar_placeholder)
+        
+        self.player_bar = None  # Created in deferred_init
         layout.addWidget(self._player_bar_container)
         
         # Main styling - gradient background
@@ -2663,7 +2784,8 @@ class MusicPanelWidget(QWidget):
 
     def _update_yt_panel_constraints(self):
         """Clamp YouTube panel width to <= 50% of available width."""
-        if not hasattr(self, 'yt_panel'):
+        # Guard: yt_panel may be None if not yet created (lazy init)
+        if not hasattr(self, 'yt_panel') or self.yt_panel is None:
             return
         total_w = max(1, self.width())
         # Minimum width is 20% of total, maximum is 50% of total
@@ -2772,44 +2894,26 @@ class MusicPanelWidget(QWidget):
         self._track_count_label.setText(f"{len(filtered)} of {len(self._playlist)} tracks")
     
     def _connect_signals(self):
-        # Player bar
-        self.player_bar.playClicked.connect(self._toggle_play)
-        self.player_bar.prevClicked.connect(self._prev_track)
-        self.player_bar.nextClicked.connect(self._next_track)
-        self.player_bar.loopClicked.connect(self._save_state)
+        # Player bar signals - only connect if player_bar is initialized (deferred)
+        if self.player_bar is not None:
+            self.player_bar.playClicked.connect(self._toggle_play)
+            self.player_bar.prevClicked.connect(self._prev_track)
+            self.player_bar.nextClicked.connect(self._next_track)
+            self.player_bar.seekChanged.connect(self._seek)
+            self.player_bar.volumeChanged.connect(self._set_volume)
+            self.player_bar.videoToggled.connect(self._toggle_video)
+            self.player_bar.folderClicked.connect(self._browse_folder_direct)
         
-        # Background shortcut for Ctrl+K, O (displays as Ctrl+K+O)
-        from PySide6.QtGui import QKeySequence, QShortcut
-        self.sc_folder = QShortcut(QKeySequence("Ctrl+K, Ctrl+O"), self)
-        self.sc_folder.activated.connect(self._browse_folder_direct)
-        self.player_bar.seekChanged.connect(self._seek)
-        self.player_bar.volumeChanged.connect(self._set_volume)
-        self.player_bar.videoToggled.connect(self._toggle_video)
-        self.player_bar.folderClicked.connect(self._browse_folder_direct)
+        # Table signals - only connect if table is initialized (deferred)
+        if self.table is not None:
+            self.table.trackDoubleClicked.connect(self._play_track)
         
-        # Setup shuffle logic on click
-        def on_shuffle_clicked():
-            is_shuffled = getattr(self.player_bar, '_is_shuffled', False)
-            if is_shuffled:
-                # User turned it ON -> Generate fresh random deck
-                self._generate_shuffled_sequence()
-            else:
-                # User turned it OFF -> Discard/Clear old deck sequence as requested
-                self._shuffled_sequence = []
-                self._shuffled_pointer = -1
-            self._save_state()
-            
-        self.player_bar.shuffleClicked.connect(on_shuffle_clicked)
-        
-        # Table
-        self.table.trackDoubleClicked.connect(self._play_track)
-        
-        # Player signals
-        self._player.positionChanged.connect(self._on_position)
-        self._player.durationChanged.connect(self._on_duration_changed)
-        self._player.playbackStateChanged.connect(self._on_state)
-        self._player.errorOccurred.connect(self._on_player_error)
-        self._player.mediaStatusChanged.connect(self._on_media_status)
+        # Player signals - only connect if player is initialized
+        if self._player is not None:
+            self._player.positionChanged.connect(self._on_position)
+            self._player.playbackStateChanged.connect(self._on_state)
+            self._player.errorOccurred.connect(self._on_player_error)
+            self._player.mediaStatusChanged.connect(self._on_media_status)
     
     def _on_player_error(self, error, error_string):
         """Handle media player errors."""
@@ -3112,15 +3216,9 @@ class MusicPanelWidget(QWidget):
         tools_menu = menu_bar.addMenu("Tools")
         tools_menu.setObjectName("toolsMenu")
         
-        # Open Media File
-        self.action_open_file = QAction("Open Media File...", self)
-        self.action_open_file.setShortcut("Ctrl+O")
-        self.action_open_file.triggered.connect(self._open_file_direct)
-        tools_menu.addAction(self.action_open_file)
-        
         # Select Folder
-        self.action_select_folder = QAction("Select Media Folder...\tCtrl+K+O", self)
-        # We handle Ctrl+K+O via background QShortcut for better chord handling
+        self.action_select_folder = QAction("Select Media Folder...", self)
+        self.action_select_folder.setShortcut("Ctrl+O")
         self.action_select_folder.triggered.connect(self._browse_folder_direct)
         tools_menu.addAction(self.action_select_folder)
         
@@ -3860,6 +3958,13 @@ class MusicPanelWidget(QWidget):
         
         self._device_menu.clear()
         
+        # Guard: audio_output may not be initialized yet (deferred init)
+        if self._audio_output is None:
+            action = QAction("Initializing...", self)
+            action.setEnabled(False)
+            self._device_menu.addAction(action)
+            return
+        
         devices = QMediaDevices.audioOutputs()
         current_device = self._audio_output.device()
         
@@ -4144,6 +4249,13 @@ class MusicPanelWidget(QWidget):
     
     def _toggle_yt_panel(self):
         """Toggle the integrated YouTube downloader sidebar."""
+        # Lazy-create YouTube panel on first access
+        if self.yt_panel is None:
+            self._create_yt_panel()
+        
+        if self.yt_panel is None:
+            return  # Creation failed
+            
         if self.yt_panel.isVisible():
             self.yt_panel.hide()
             if hasattr(self, 'main_splitter'):
@@ -4164,6 +4276,24 @@ class MusicPanelWidget(QWidget):
             text = clipboard.text().strip()
             if 'youtube.com' in text or 'youtu.be' in text:
                 self.yt_panel.set_url(text)
+    
+    def _create_yt_panel(self):
+        """Lazy-create the YouTube downloader panel on first access."""
+        try:
+            # Remove placeholder
+            if hasattr(self, '_yt_placeholder') and self._yt_placeholder:
+                self.main_splitter.removeWidget(self._yt_placeholder)
+                self._yt_placeholder.deleteLater()
+            
+            self.yt_panel = YouTubeDownloaderPanel(self)
+            self.yt_panel.hide()
+            self.yt_panel.closeRequested.connect(self._toggle_yt_panel)
+            self.yt_panel.downloadFinished.connect(self._on_yt_download_finished)
+            self.main_splitter.addWidget(self.yt_panel)
+            print("[Music] YouTube panel created (lazy)")
+        except Exception as e:
+            print(f"[Music] Failed to create YouTube panel: {e}")
+            self.yt_panel = None
 
     def _on_yt_download_finished(self, dest_path):
         """Handle track after integrated download completion."""
@@ -4451,77 +4581,6 @@ class MusicPanelWidget(QWidget):
         convert_btn.clicked.connect(start_convert)
         
         dialog.exec()
-        
-    def _generate_shuffled_sequence(self):
-        """Generate a random Fisher-Yates shuffled sequence of track indices."""
-        if not hasattr(self, '_playlist') or not self._playlist:
-            self._shuffled_sequence = []
-            self._shuffled_pointer = -1
-            return
-            
-        import random
-        indices = list(range(len(self._playlist)))
-        random.shuffle(indices)
-        self._shuffled_sequence = indices
-        
-        # If a track is already playing, move pointer to its position in the deck
-        if self._current_index >= 0:
-            try:
-                self._shuffled_pointer = self._shuffled_sequence.index(self._current_index)
-            except ValueError:
-                self._shuffled_pointer = 0
-        else:
-            self._shuffled_pointer = 0
-            
-    def _sync_shuffled_pointer_to_current(self):
-        """Sync the shuffled pointer to the currently playing track index."""
-        if self._shuffled_sequence and self._current_index >= 0:
-            try:
-                self._shuffled_pointer = self._shuffled_sequence.index(self._current_index)
-            except ValueError:
-                # Track might not be in sequence (e.g. newly added or playlist changed)
-                self._generate_shuffled_sequence()
-    
-    def _format_playlist_duration(self) -> str:
-        """Calculate and format total playlist duration as HH:MM:SS or MM:SS."""
-        if not hasattr(self, '_playlist') or not self._playlist:
-            return "0:00"
-        
-        total = 0.0
-        for t in self._playlist:
-            dur = t.get('duration', 0)
-            try:
-                if dur is None:
-                    continue
-                if isinstance(dur, str):
-                    if ':' in dur:
-                        parts = dur.split(':')
-                        if len(parts) == 2:
-                            total += float(parts[0]) * 60 + float(parts[1])
-                        elif len(parts) == 3:
-                            total += float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-                    else:
-                        total += float(dur)
-                else:
-                    total += float(dur)
-            except (ValueError, TypeError):
-                pass
-                
-        h, m, s = int(total // 3600), int((total % 3600) // 60), int(total % 60)
-        
-        if h > 0:
-            return f"{h}:{m:02d}:{s:02d}"
-        else:
-            return f"{m}:{s:02d}"
-            
-    def refresh_playlist_stats(self):
-        """Manually trigger a UI refresh of the playlist duration and track count."""
-        if hasattr(self, 'header') and hasattr(self, '_playlist'):
-            name = self.header.playlist_title.text()
-            self.header.set_info(name, len(self._playlist), self._format_playlist_duration())
-            
-        if hasattr(self, 'table') and hasattr(self.table, '_render_tracks'):
-            self.table._render_tracks()
     
     def set_playlist(self, name: str, tracks: list):
         """Set playlist data."""
@@ -4535,8 +4594,22 @@ class MusicPanelWidget(QWidget):
         if hasattr(self, '_track_count_label'):
             self._track_count_label.setText(f"{len(tracks)} tracks")
         
-        self.header.set_info(name, len(tracks), self._format_playlist_duration())
-        self.table.set_tracks(tracks)
+        # Calculate duration
+        total = sum(t.get('duration', 0) for t in tracks)
+        h, m, s = int(total // 3600), int((total % 3600) // 60), int(total % 60)
+        duration = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
+
+        try:
+            if hasattr(self, 'header') and self.header is not None:
+                self.header.set_info(name, len(tracks), duration)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, 'table') and self.table is not None:
+                self.table.set_tracks(tracks)
+        except Exception:
+            pass
         
         # Update cover art from video thumbnails
         self._update_covers(tracks)
@@ -4685,12 +4758,9 @@ class MusicPanelWidget(QWidget):
                     QTimer.singleShot(0, self._auto_pick_embedded_subtitles_if_available)
                 except Exception:
                     pass
+                # Clear flag after a short delay to allow state to settle
+                from PySide6.QtCore import QTimer
                 QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
-                
-                # Sync shuffle pointer if active
-                if getattr(self.player_bar, '_is_shuffled', False):
-                    self._sync_shuffled_pointer_to_current()
-                    
                 self._save_state()
                 
                 # Update Discord Rich Presence
@@ -4742,26 +4812,16 @@ class MusicPanelWidget(QWidget):
             self._play_track(self._current_index)
             return
         
-        # Shuffle: navigate via the shuffled sequence deck
+        # Shuffle: pick random track (excluding current)
         if is_shuffled:
-            if not self._shuffled_sequence:
-                self._generate_shuffled_sequence()
-                
-            if self._shuffled_sequence:
-                # Move pointer backward
-                self._shuffled_pointer -= 1
-                
-                # Wrap pointer if at start
-                if self._shuffled_pointer < 0:
-                    if loop_mode == "all" or force_wrap:
-                        self._shuffled_pointer = len(self._shuffled_sequence) - 1
-                    else:
-                        self._shuffled_pointer = 0
-                        return # Stay on current
-                        
-                new_idx = self._shuffled_sequence[self._shuffled_pointer]
-                self._play_track(new_idx)
-                return
+            import random
+            if len(self._playlist) > 1:
+                available = [i for i in range(len(self._playlist)) if i != self._current_index]
+                new_idx = random.choice(available)
+            else:
+                new_idx = 0
+            self._play_track(new_idx)
+            return
         
         # Determine whether to wrap at boundaries
         can_wrap = force_wrap or loop_mode == "all"
@@ -4813,28 +4873,16 @@ class MusicPanelWidget(QWidget):
             self._play_track(self._current_index)
             return
         
-        # Shuffle: navigate via the shuffled sequence deck
+        # Shuffle: pick random track (excluding current)
         if is_shuffled:
-            if not self._shuffled_sequence:
-                self._generate_shuffled_sequence()
-                
-            if self._shuffled_sequence:
-                # Move pointer forward
-                self._shuffled_pointer += 1
-                
-                # Wrap pointer if at end
-                if self._shuffled_pointer >= len(self._shuffled_sequence):
-                    if loop_mode == "all" or force_wrap:
-                        # Reshuffle on full loop for better variety in next pass
-                        self._generate_shuffled_sequence()
-                        self._shuffled_pointer = 0
-                    else:
-                        self._shuffled_pointer = len(self._shuffled_sequence) - 1
-                        return # Stay on current
-                        
-                new_idx = self._shuffled_sequence[self._shuffled_pointer]
-                self._play_track(new_idx)
-                return
+            import random
+            if len(self._playlist) > 1:
+                available = [i for i in range(len(self._playlist)) if i != self._current_index]
+                new_idx = random.choice(available)
+            else:
+                new_idx = 0
+            self._play_track(new_idx)
+            return
         
         # Determine whether to wrap at boundaries
         can_wrap = force_wrap or loop_mode == "all"
@@ -4869,7 +4917,6 @@ class MusicPanelWidget(QWidget):
             
         if self._player.duration() > 0:
             self._player.setPosition(int(percent * self._player.duration()))
-            self._save_state()
     
     def _set_volume(self, value: int):
         # Apply curve for more natural volume feeling
@@ -4892,9 +4939,6 @@ class MusicPanelWidget(QWidget):
             # Set VLC volume (0-100+)
             vlc_vol = max(0, min(200, int(volume * 100)))
             self._vlc_player.audio_set_volume(vlc_vol)
-            
-        # Save volume change
-        self._save_state()
     
 
     def _show_load_url_dialog(self):
@@ -5214,21 +5258,10 @@ class MusicPanelWidget(QWidget):
                             
                             pos = self._vlc_player.get_time()
                             dur = self._vlc_player.get_length()
-                            if pos >= 0 and dur > 0:
-                                is_dragging = getattr(self.player_bar, '_is_dragging_timeline', False)
-                                self.player_bar.set_position(pos / 1000.0, dur / 1000.0, skip_throttle=is_dragging)
-                                
-                                # Sync metadata back to playlist dictionary if it was 0
-                                if hasattr(self, '_playlist') and 0 <= self._current_index < len(self._playlist):
-                                    track = self._playlist[self._current_index]
-                                    if track.get('duration', 0) == 0:
-                                        track['duration'] = dur / 1000.0
-                                        QTimer.singleShot(0, self.table._render_tracks)
-                                        # Also refresh header
-                                        total = sum(t.get('duration', 0) for t in self._playlist)
-                                        h, m, s = int(total // 3600), int((total % 3600) // 60), int(total % 60)
-                                        dur_str = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
-                                        self.header.set_info(self.header._name if hasattr(self.header, '_name') else "Playlist", len(self._playlist), dur_str)
+                            if pos >= 0:
+                                self.player_bar.update_time(pos)
+                            if dur > 0:
+                                self.player_bar.update_duration(dur)
                                 
                 self._vlc_timer.timeout.connect(poll_vlc)
                 
@@ -5240,14 +5273,8 @@ class MusicPanelWidget(QWidget):
             self._vlc_player.play()
             self._vlc_timer.start(500)
             
-            # Update Track UI correctly for VLC
-            self.player_bar.set_track_info(title, artist)
-            self.table.highlight_playing(self._current_index)
-            
         except Exception as e:
             print(f"VLC unavailable or failed ({e}), falling back to QMediaPlayer")
-            self.player_bar.set_track_info(title, artist)
-            self.table.highlight_playing(self._current_index)
             self._player.setSource(QUrl(stream_url))
             self._set_current_media_url(stream_url)
             self._player.play()
@@ -5255,13 +5282,29 @@ class MusicPanelWidget(QWidget):
         QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
         self._save_state()
         self._update_discord(title, artist, is_playing=True)
+        artist = track.get('artist', '')
+        
+        print(f"Playing resolved stream: {title}")
+        
+        # Update track info since we might have better data now
+        self.player_bar.set_track_info(title, artist)
+        self.table.highlight_playing(self._current_index)
+        
+        self._switching_track = True
+        self._player.setSource(QUrl(stream_url))
+        self._set_current_media_url(stream_url)
+        self._player.play()
+        
+        QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
+        self._save_state()
+        self._update_discord(title, artist, is_playing=True)
     
     def _toggle_window_fullscreen(self, is_fullscreen: bool):
-        """Toggle main window fullscreen when video player requests it.
+        """Toggle video fullscreen mode within the current window.
         
-        Preserves the main window's prior fullscreen state so that exiting
-        video fullscreen does not accidentally exit the software's own
-        fullscreen mode.
+        Video fullscreen expands the video to fill the content area by hiding
+        menu bar and sidebar, but does NOT change the window state (the
+        software itself does not go fullscreen).
         """
         self._is_fullscreen = is_fullscreen
         
@@ -5269,34 +5312,22 @@ class MusicPanelWidget(QWidget):
         main_window = self.window()
         
         if is_fullscreen:
-            # Remember whether the main window was already fullscreen
-            # before the video requested fullscreen, so we can restore
-            # the correct state on exit
-            self._was_window_fullscreen_before_video = main_window.isFullScreen()
+            # Remember whether the sidebar was visible before video fullscreen
+            # so we can restore the correct state on exit
+            if hasattr(main_window, 'sidebar'):
+                self._was_sidebar_visible_before_video = main_window.sidebar.isVisible()
+            else:
+                self._was_sidebar_visible_before_video = False
             
-            # Store original window state for restoration
-            self._original_window_flags = main_window.windowFlags()
-            self._original_geometry = main_window.geometry()
-            
-            # Hide menu bar
+            # Hide menu bar to give more space to video
             if hasattr(self, '_menu_bar_widget'):
                 self._menu_bar_widget.hide()
             
-            # Hide sidebar in launcher if available
+            # Hide sidebar in launcher if available to give more space to video
             if hasattr(main_window, 'sidebar'):
                 main_window.sidebar.hide()
-                
-            # Hide launcher top bar if available
-            if hasattr(main_window, 'top_bar_container'):
-                main_window.top_bar_container.hide()
             
-            # Briefly ignore maximize events so launcher doesn't hijack into F11 software fullscreen
-            main_window._ignore_maximize_event = True
-            QTimer.singleShot(600, lambda: setattr(main_window, '_ignore_maximize_event', False))
-            
-            # Go fullscreen
-            main_window.showFullScreen()
-            
+            # Enable playerbar overlay for hover-to-show behavior
             try:
                 self._set_playerbar_overlay_enabled(True)
             except Exception:
@@ -5304,31 +5335,15 @@ class MusicPanelWidget(QWidget):
 
             # Hide PlayerBar initially in fullscreen (will show on hover)
             self.player_bar.hide()
-            
-            # Ensure we retain focus to receive 'F' or 'Esc' keys
-            self.setFocus()
-            if hasattr(self, 'video_player') and self.video_player:
-                self.video_player.setFocus()
         else:
-            # Restore to the correct window state:
-            # If the software was already fullscreen before the video
-            # fullscreen, keep it fullscreen. Otherwise go back to normal.
-            if getattr(self, '_was_window_fullscreen_before_video', False):
-                main_window.showFullScreen()
-            else:
-                main_window.showNormal()
-            
             # Show menu bar
             if hasattr(self, '_menu_bar_widget'):
                 self._menu_bar_widget.show()
             
-            # Show sidebar in launcher if available
+            # Show sidebar in launcher if it was visible before
             if hasattr(main_window, 'sidebar'):
-                main_window.sidebar.show()
-                
-            # Show launcher top bar if available
-            if hasattr(main_window, 'top_bar_container'):
-                main_window.top_bar_container.show()
+                if getattr(self, '_was_sidebar_visible_before_video', False):
+                    main_window.sidebar.show()
             
             # Show PlayerBar
             try:
@@ -5336,9 +5351,6 @@ class MusicPanelWidget(QWidget):
             except Exception:
                 pass
             self.player_bar.show()
-            
-            # Restore focus to ensure keyboard shortcuts work
-            self.setFocus()
 
     def _set_playerbar_overlay_enabled(self, enabled: bool):
         try:
@@ -5558,12 +5570,11 @@ class MusicPanelWidget(QWidget):
         print(f"Aspect ratio set to: {mode}")
 
     def _toggle_fullscreen(self):
-        """Toggle fullscreen mode for video player.
+        """Toggle video fullscreen mode within the current window.
         
-        Preserves the main window's prior fullscreen state so that
-        exiting video fullscreen does not accidentally exit the
-        software's own fullscreen mode (e.g. when the user pressed
-        F11 before entering video fullscreen).
+        Video fullscreen expands the video to fill the content area by hiding
+        menu bar and sidebar, but does NOT change the window state (the
+        software itself does not go fullscreen).
         """
         # Don't allow fullscreen if no track is playing
         if self._current_index < 0 or not self._playlist:
@@ -5579,21 +5590,17 @@ class MusicPanelWidget(QWidget):
         sidebar = parent_window.findChild(QWidget, "sidebarNav") if parent_window else None
         
         if self._is_fullscreen:
-            # Remember whether the main window was already fullscreen
-            # BEFORE we enter video fullscreen so we can restore later
-            self._was_window_fullscreen_before_video = (
-                parent_window.isFullScreen() if parent_window else False
-            )
+            # Remember whether the sidebar was visible before video fullscreen
+            # so we can restore the correct state on exit
+            self._was_sidebar_visible_before_video = sidebar.isVisible() if sidebar else False
             
             # Switch to video view if not already
             if not self._video_mode:
                 self._toggle_video()
             
-            # Hide UI elements
+            # Hide UI elements to give more space to video
             if sidebar:
                 sidebar.hide()
-            if parent_window and hasattr(parent_window, 'top_bar_container'):
-                parent_window.top_bar_container.hide()
             if hasattr(self, '_menu_bar_widget'):
                 self._menu_bar_widget.hide()
             self.player_bar.hide()
@@ -5612,30 +5619,16 @@ class MusicPanelWidget(QWidget):
                 self._playerbar_hide_timer.timeout.connect(self._hide_playerbar_fullscreen)
                 self._playerbar_hide_timer.setSingleShot(True)
             
-            # Go fullscreen
+            # Set focus to self for keyboard input
             if parent_window:
-                self._original_geometry = parent_window.geometry()
-                
-                # Briefly ignore maximize events so launcher doesn't hijack into F11 software fullscreen
-                parent_window._ignore_maximize_event = True
-                QTimer.singleShot(600, lambda: setattr(parent_window, '_ignore_maximize_event', False))
-                
-                parent_window.showFullScreen()
-                
-                # Install event filter on parent window and video widget for key/mouse events
-                parent_window.installEventFilter(self)
-                self.video_player.video_widget.installEventFilter(self)
-                
-                # Set focus to self for keyboard input
                 self.setFocus()
             
-            print("Fullscreen: ON")
+            print("Video fullscreen: ON")
         else:
             # Show UI elements
             if sidebar:
-                sidebar.show()
-            if parent_window and hasattr(parent_window, 'top_bar_container'):
-                parent_window.top_bar_container.show()
+                if getattr(self, '_was_sidebar_visible_before_video', False):
+                    sidebar.show()
             if hasattr(self, '_menu_bar_widget'):
                 self._menu_bar_widget.show()
             self.player_bar.show()
@@ -5644,23 +5637,7 @@ class MusicPanelWidget(QWidget):
             if hasattr(self, '_playerbar_hide_timer'):
                 self._playerbar_hide_timer.stop()
             
-            # Restore window to its previous state
-            if parent_window:
-                # Remove event filters
-                parent_window.removeEventFilter(self)
-                self.video_player.video_widget.removeEventFilter(self)
-                
-                # If the software was already fullscreen before video
-                # fullscreen, keep it fullscreen. Otherwise restore
-                # the original geometry (normal/windowed mode).
-                if getattr(self, '_was_window_fullscreen_before_video', False):
-                    parent_window.showFullScreen()
-                else:
-                    parent_window.showNormal()
-                    if hasattr(self, '_original_geometry'):
-                        parent_window.setGeometry(self._original_geometry)
-            
-            print("Fullscreen: OFF")
+            print("Video fullscreen: OFF")
     
     def eventFilter(self, obj, event):
         """Event filter for fullscreen key and mouse events."""
@@ -5785,58 +5762,14 @@ class MusicPanelWidget(QWidget):
                     self._playerbar_hide_timer.start(2000)
     
     
-    def _on_duration_changed(self, duration: int):
-        """Update the player UI immediately when new media is parsed, without waiting for playback."""
-        if not hasattr(self, 'player_bar') or self.player_bar is None:
-            return
-        
-        # Update the duration natively. Handle 0 safely.
-        if duration > 0:
-            pos = self._player.position()
-            is_dragging = getattr(self.player_bar, '_is_dragging_timeline', False)
-            self.player_bar.set_position(pos / 1000.0, duration / 1000.0, skip_throttle=is_dragging)
-            
-            # Sync metadata back to playlist dictionary if it was 0 (the Feedback Loop)
-            if hasattr(self, '_playlist') and 0 <= self._current_index < len(self._playlist):
-                track = self._playlist[self._current_index]
-                if track.get('duration', 0) == 0:
-                    track['duration'] = duration / 1000.0
-                    self.table._render_tracks()
-                    # Also refresh header total
-                    total = sum(t.get('duration', 0) for t in self._playlist)
-                    h, m, s = int(total // 3600), int((total % 3600) // 60), int(total % 60)
-                    dur_str = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
-                    self.header.set_info(self.header._name if hasattr(self.header, '_name') else "Playlist", len(self._playlist), dur_str)
-
     def _on_position(self, pos: int):
-        if not hasattr(self, 'player_bar') or self.player_bar is None:
-            return
-        
         dur = self._player.duration()
         # Correctly check the dragging state of the timeline slider from the player bar
         is_dragging = getattr(self.player_bar, '_is_dragging_timeline', False)
         self.player_bar.set_position(pos / 1000.0, dur / 1000.0, skip_throttle=is_dragging)
         
-        # Sync metadata back to playlist dictionary just in case durationChanged didn't fire
-        if dur > 0 and hasattr(self, '_playlist') and 0 <= self._current_index < len(self._playlist):
-            track = self._playlist[self._current_index]
-            if track.get('duration', 0) == 0:
-                track['duration'] = dur / 1000.0
-                self.table._render_tracks()
-        
         # Track position for save state (player.position() returns 0 when stopped)
         self._last_known_position = pos
-
-        # Periodic save (every 5 seconds) to prevent data loss on crash/force close
-        now = time.time()
-        if not hasattr(self, '_last_periodic_save_time'):
-            self._last_periodic_save_time = now
-        elif now - self._last_periodic_save_time >= 1:
-            # Only save if playing or paused (ignore stopped/invalid)
-            if self._player.playbackState() in (QMediaPlayer.PlayingState, QMediaPlayer.PausedState):
-                # Update last known position before saving to ensure it's current
-                self._save_state()
-                self._last_periodic_save_time = now
         
         # Loop-one mode: handle replay directly (EndOfMedia may not work in PyInstaller)
         if hasattr(self, 'player_bar') and self.player_bar._loop_mode == "one":
@@ -5860,9 +5793,6 @@ class MusicPanelWidget(QWidget):
                 self._start_crossfade()
     
     def _on_state(self, state):
-        if not hasattr(self, 'player_bar') or self.player_bar is None:
-            return
-            
         # Ignore StoppedState during track switching to prevent icon flicker
         if state == QMediaPlayer.StoppedState and getattr(self, '_switching_track', False):
             return
@@ -5885,8 +5815,8 @@ class MusicPanelWidget(QWidget):
                 if hasattr(self, '_playerbar_hide_timer'):
                     self._playerbar_hide_timer.start(2000)
         
-        # Save state when playback stops or pauses
-        if state in (QMediaPlayer.StoppedState, QMediaPlayer.PausedState):
+        # Save state when playback stops
+        if state == QMediaPlayer.StoppedState:
             self._save_state()
     
     def _load_last_state(self):
@@ -5957,23 +5887,6 @@ class MusicPanelWidget(QWidget):
                     aspect_ratio = state.get('video_aspect_ratio', 'fit')
                     self._set_aspect_ratio(aspect_ratio)
                     
-                    # Restore shuffle and loop mode
-                    shuffle = state.get('shuffle', False)
-                    self.player_bar.set_shuffle(shuffle)
-                    
-                    if 'loop_mode' in state:
-                        self.player_bar.set_loop_mode(state['loop_mode'])
-                    
-                    # Restore shuffle sequence and pointer
-                    self._shuffled_sequence = state.get('shuffled_sequence', [])
-                    self._shuffled_pointer = state.get('shuffled_pointer', -1)
-                    
-                    # Verify consistency of restored shuffle data
-                    if self._shuffled_sequence and (len(self._shuffled_sequence) != len(self._playlist)):
-                        # Playlist size changed since last run, invalidate sequence
-                        self._shuffled_sequence = []
-                        self._shuffled_pointer = -1
-                    
                     # Restore subtitle preferences
                     self._subtitle_style_preset = state.get('subtitle_style_preset', 'outline')
                     self._subtitle_font_size = state.get('subtitle_font_size', 16)
@@ -5989,9 +5902,6 @@ class MusicPanelWidget(QWidget):
         """Save current state to config."""
         import json
         try:
-            if not hasattr(self, 'player_bar') or self.player_bar is None:
-                return
-                
             current_track_path = ''
             if 0 <= self._current_index < len(self._playlist):
                 current_track_path = self._playlist[self._current_index].get('path', '')
@@ -6004,10 +5914,6 @@ class MusicPanelWidget(QWidget):
                 'last_track_path': current_track_path,
                 'last_position': position,
                 'volume': self.player_bar.volume_slider.value(),
-                'shuffle': getattr(self.player_bar, '_is_shuffled', False),
-                'loop_mode': getattr(self.player_bar, '_loop_mode', 'off'),
-                'shuffled_sequence': self._shuffled_sequence,
-                'shuffled_pointer': self._shuffled_pointer,
                 'video_aspect_ratio': getattr(self, '_current_aspect_ratio', 'fit'),
                 'subtitle_style_preset': getattr(self, '_subtitle_style_preset', 'outline'),
                 'subtitle_font_size': getattr(self, '_subtitle_font_size', 16)
@@ -6033,54 +5939,6 @@ class MusicPanelWidget(QWidget):
             self._music_folder = folder
             self._load_tracks_from_folder(folder)
             # Save immediately so folder is remembered after restart
-            QTimer.singleShot(500, self._save_state)
-
-    def _open_file_direct(self):
-        """Pick a single media file and play it."""
-        from PySide6.QtWidgets import QFileDialog
-        import datetime
-        
-        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
-        video_exts = {'.mp4', '.mkv', '.avi', '.webm', '.mov'}
-        
-        filters = "Media Files (" + " ".join(["*" + e for e in (audio_exts | video_exts)]) + ");;All Files (*.*)"
-        path, _ = QFileDialog.getOpenFileName(self, "Open Media File", "", filters)
-        
-        if path:
-            ext = os.path.splitext(path)[1].lower()
-            title = os.path.splitext(os.path.basename(path))[0]
-            
-            # Create a track dictionary
-            try:
-                mtime = os.path.getmtime(path)
-                dt = datetime.datetime.fromtimestamp(mtime)
-                date_str = dt.strftime("%b %d, %Y")
-            except Exception:
-                date_str = ""
-            
-            track = {
-                'path': path,
-                'title': title,
-                'artist': 'Single Track',
-                'duration': 0,
-                'has_video': ext in video_exts,
-                'date_added': date_str
-            }
-            
-            # Append to currently loaded tracks and play index
-            if not hasattr(self, '_tracks'):
-                self._tracks = []
-                
-            self._tracks.append(track)
-            
-            # Refresh the list widget to show the new item
-            if hasattr(self, 'track_list_widget'):
-                self.track_list_widget.set_tracks(self._tracks)
-            
-            # Start playing the new track
-            self._play_track(len(self._tracks) - 1)
-            
-            # Save state so the track is remembered in session
             QTimer.singleShot(500, self._save_state)
     def _open_settings(self):
         """Open settings dialog for folder selection."""
@@ -6216,157 +6074,123 @@ class MusicPanelWidget(QWidget):
         self.set_playlist(playlist_name, tracks)
         print(f"Loaded {len(tracks)} tracks from {folder} (fallback)")
         
-        # Async metadata loading to prevent UI freeze
-        def _fetch_metadata(target_tracks, target_name):
-            import subprocess
-            import shutil
-            
-            print(f"[Duration] Starting metadata fetch for {len(target_tracks)} tracks")
-            
-            # Try to import mutagen for fast metadata reading (works for audio files)
-            try:
-                import mutagen
-                has_mutagen = True
-                print(f"[Duration] mutagen available")
-            except ImportError:
-                has_mutagen = False
-                print("[Duration] mutagen NOT available")
-            
-            # Find ffprobe path for fallback (handles MKV, MP4 without tags, etc.)
-            ffprobe_path = shutil.which("ffprobe")
-            if not ffprobe_path:
-                # Check HELXAID's bundled FFmpeg tools specifically in the bin directory
-                appdata_tools = os.path.join(
-                    os.environ.get("APPDATA", ""), "HELXAID", "tools"
-                )
-                if os.path.exists(appdata_tools):
-                    # We look for ffprobe.exe in all subdirectories, but prioritize common bin paths
-                    possible_paths = [
-                        os.path.join(appdata_tools, "ffmpeg", "bin", "ffprobe.exe"),
-                        os.path.join(appdata_tools, "ffmpeg", "ffprobe.exe"),
-                        os.path.join(appdata_tools, "ffprobe.exe")
-                    ]
-                    for p in possible_paths:
-                        if os.path.exists(p):
-                            ffprobe_path = p
+        # Initialize durations immediately when music panel loads (synchronous)
+        print(f"[Duration] Initializing durations for {len(tracks)} tracks...")
+        self._initialize_durations(tracks, playlist_name)
+        print(f"[Duration] Duration initialization complete")
+    
+    def _initialize_durations(self, target_tracks: list, target_name: str):
+        """Initialize durations for all tracks synchronously."""
+        import subprocess
+        import shutil
+        
+        # Try to import mutagen for fast metadata reading (works for audio files)
+        try:
+            import mutagen
+            has_mutagen = True
+            print(f"[Duration] mutagen available")
+        except ImportError:
+            has_mutagen = False
+            print("[Duration] mutagen NOT available")
+        
+        # Find ffprobe path for fallback (handles MKV, MP4 without tags, etc.)
+        ffprobe_path = shutil.which("ffprobe")
+        if not ffprobe_path:
+            # Check HELXAID's bundled FFmpeg tools
+            appdata_tools = os.path.join(
+                os.environ.get("APPDATA", ""), "HELXAID", "tools", "ffmpeg"
+            )
+            if os.path.isdir(appdata_tools):
+                for root, dirs, fnames in os.walk(appdata_tools):
+                    for fn in fnames:
+                        if fn.lower() == "ffprobe.exe":
+                            ffprobe_path = os.path.join(root, fn)
                             break
-                    
-                    if not ffprobe_path:
-                        # Deep walk only if common paths fail
-                        for root, dirs, fnames in os.walk(appdata_tools):
-                            for fn in fnames:
-                                if fn.lower() == "ffprobe.exe":
-                                    ffprobe_path = os.path.join(root, fn)
-                                    break
-                            if ffprobe_path: break
-            
-            print(f"[Duration] ffprobe path: {ffprobe_path}")
+                    if ffprobe_path:
+                        break
+        
+        print(f"[Duration] ffprobe path: {ffprobe_path}")
                             
-            from PySide6.QtCore import QTimer
-            changed = False
-            success_count = 0
-            fail_count = 0
+        changed = False
+        success_count = 0
+        fail_count = 0
+        
+        for t in target_tracks:
+            path = t.get('path', '')
+            if not os.path.exists(path):
+                continue
             
-            for t in target_tracks:
-                # Stop parsing if playlist was changed/switched
-                if getattr(self, '_playlist', None) is not target_tracks:
-                    print("[Duration] Playlist changed, aborting")
-                    break
-                    
-                path = t.get('path', '')
-                if not os.path.exists(path):
-                    continue
-                
-                dur = 0
-                artist = ''
-                
-                # Step 1: Try mutagen first (fast, works for MP3/FLAC/OGG/some MP4)
-                if has_mutagen:
-                    try:
-                        m = mutagen.File(path)
-                        if m is not None and hasattr(m, 'info'):
-                            dur = getattr(m.info, 'length', 0)
-                            
-                            # Try to get artist name for better UX
-                            if hasattr(m, 'tags') and m.tags:
-                                if 'artist' in m.tags:
-                                    val = m.tags['artist']
-                                    if isinstance(val, list) and len(val) > 0:
-                                        artist = str(val[0])
-                                    else:
-                                        artist = str(val)
-                    except Exception as e:
-                        pass
-                
-                # Step 2: Fallback to ffprobe if mutagen couldn't get duration.
-                # This handles MKV, MP4 without metadata tags, WebM, etc.
-                # ffprobe is always reliable as it reads container headers directly.
-                if dur <= 0 and ffprobe_path:
-                    try:
-                        result = subprocess.run(
-                            [
-                                ffprobe_path,
-                                "-v", "quiet",
-                                "-show_entries", "format=duration",
-                                "-of", "default=noprint_wrappers=1:nokey=1",
-                                path
-                            ],
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                        )
-                        if result.returncode == 0 and result.stdout.strip():
-                            dur = float(result.stdout.strip())
-                    except (subprocess.TimeoutExpired, ValueError, Exception) as e:
-                        print(f"[Duration] ffprobe error for {os.path.basename(path)}: {e}")
-                
-                # Apply results
-                if dur > 0:
-                    t['duration'] = dur
-                    changed = True
-                    success_count += 1
-                else:
-                    fail_count += 1
-                if artist:
-                    t['artist'] = artist
-                
-                # Incremental UI update every 5 tracks so durations appear
-                # progressively as the scanner runs, not just at the very end.
-                if (success_count + fail_count) % 5 == 0 and changed:
-                    _snap = list(target_tracks)
-                    _n = target_name
-                    def _incr(_s=_snap, _nm=_n):
-                        if getattr(self, '_playlist', None) is not target_tracks:
-                            return
-                        if hasattr(self, 'table') and hasattr(self.table, '_render_tracks'):
-                            self.table._render_tracks()
-                        if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
-                            self.header.set_info(_nm, len(target_tracks), self._format_playlist_duration())
-                    QTimer.singleShot(0, _incr)
+            dur = 0
+            artist = ''
             
-            print(f"[Duration] Fetch complete: {success_count} ok, {fail_count} failed, changed={changed}")
-            
-            # Update UI on main thread only if changes were made and playlist is still active
-            if changed and getattr(self, '_playlist', None) is target_tracks:
-                def update_ui():
-                    if getattr(self, '_playlist', None) is not target_tracks:
-                        return
-                    
-                    if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
-                        self.header.set_info(target_name, len(target_tracks), self._format_playlist_duration())
+            # Step 1: Try mutagen first (fast, works for MP3/FLAC/OGG/some MP4)
+            if has_mutagen:
+                try:
+                    m = mutagen.File(path)
+                    if m is not None and hasattr(m, 'info'):
+                        dur = getattr(m.info, 'length', 0)
                         
-                    # Refresh table to show updated durations
-                    if hasattr(self, 'table') and hasattr(self.table, '_render_tracks'):
-                        self.table._render_tracks()
-                        
-                QTimer.singleShot(0, update_ui)
+                        # Try to get artist name for better UX
+                        if hasattr(m, 'tags') and m.tags:
+                            if 'artist' in m.tags:
+                                val = m.tags['artist']
+                                if isinstance(val, list) and len(val) > 0:
+                                    artist = str(val[0])
+                                else:
+                                    artist = str(val)
+                except Exception as e:
+                    pass
+            
+            # Step 2: Fallback to ffprobe if mutagen couldn't get duration.
+            # This handles MKV, MP4 without metadata tags, WebM, etc.
+            # ffprobe is always reliable as it reads container headers directly.
+            if dur <= 0 and ffprobe_path:
+                try:
+                    result = subprocess.run(
+                        [
+                            ffprobe_path,
+                            "-v", "quiet",
+                            "-show_entries", "format=duration",
+                            "-of", "default=noprint_wrappers=1:nokey=1",
+                            path
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        dur = float(result.stdout.strip())
+                except (subprocess.TimeoutExpired, ValueError, Exception) as e:
+                    print(f"[Duration] ffprobe error for {os.path.basename(path)}: {e}")
+            
+            # Apply results
+            if dur > 0:
+                t['duration'] = dur
+                changed = True
+                success_count += 1
             else:
-                print(f"[Duration] NOT updating UI: changed={changed}, playlist_match={getattr(self, '_playlist', None) is target_tracks}")
+                fail_count += 1
+            if artist:
+                t['artist'] = artist
+        
+        print(f"[Duration] Fetch complete: {success_count} ok, {fail_count} failed, changed={changed}")
+        
+        # Update UI if changes were made
+        if changed:
+            # Update header duration calculation
+            total = sum(tr.get('duration', 0) for tr in target_tracks)
+            h, m, s = int(total // 3600), int((total % 3600) // 60), int(total % 60)
+            duration_str = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
+            
+            print(f"[Duration] Updating UI: total={duration_str}")
+            
+            if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
+                self.header.set_info(target_name, len(target_tracks), duration_str)
                 
-        import threading
-        t = threading.Thread(target=_fetch_metadata, args=(tracks, playlist_name), daemon=True)
-        t.start()
+            # Refresh table to show updated durations
+            if hasattr(self, 'table') and hasattr(self.table, '_render_tracks'):
+                self.table._render_tracks()
 
 
 if __name__ == "__main__":

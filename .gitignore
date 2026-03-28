@@ -14,7 +14,7 @@ python/music_page.json
 
 # Local Data
 python/icons/
-python/UI Taskbar Icons/  # Depends if you want to bundle these or not
+python/UI Taskbar Icons/
 python/web/temp/
 python/*.db
 python/*.db-shm
@@ -27,13 +27,7 @@ python/music_panel_state.json
 # IDEs & Tools
 .vscode/
 .idea/
-.windsurf/
 .vercel/
-.agent/
-.agents/
-.agents/*
-!.agents/rules/
-!.agents/workflows/
 web/
 
 # Native Build files

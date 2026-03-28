@@ -67,9 +67,7 @@ class HardwareMonitor:
         }
         self._temp_thread = None
         self._temp_thread_running = False
-        
-        # Start background temperature thread
-        self._start_temp_thread()
+        self._temp_thread_started = False
         
         # Initialize CPU counter if native available
         if NATIVE_AVAILABLE:
@@ -77,6 +75,33 @@ class HardwareMonitor:
                 _hw.init_cpu_counter()
             except Exception:
                 pass
+
+    def start(self):
+        """Start background monitoring threads.
+
+        This is intentionally NOT called by __init__ to keep baseline memory
+        lower when a HardwareMonitor instance is created but the monitoring
+        UI is not actively used.
+        """
+        if self._temp_thread_started:
+            return
+        self._temp_thread_started = True
+        self._start_temp_thread()
+
+    def stop(self):
+        """Stop background monitoring threads."""
+        self._temp_thread_running = False
+        try:
+            t = self._temp_thread
+        except Exception:
+            t = None
+        if t is not None:
+            try:
+                t.join(timeout=2.0)
+            except Exception:
+                pass
+        self._temp_thread = None
+        self._temp_thread_started = False
     
     def _start_temp_thread(self):
         """Start background thread for temperature monitoring."""

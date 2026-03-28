@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Platform-Windows_10%2B-lightgray?style=for-the-badge&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-v4.12-orange?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v4.14-orange?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
@@ -106,30 +106,36 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 ## ✦ Feature Notes
 
 ### 1. HELXAID (Game Launcher)
+
 - Scan and manage Steam & Google Play Games libraries automatically
 - Manage local custom game folders
 - Track playtime and automatically fetch game icons and background metadata
 
 ### 2. HELXAIC (Media Player)
+
 - Play local audio and video files (MP3, WAV, FLAC, MP4) as background music
 - Modern, animated Spotify-style playlist interface with smooth column sorting
 - Auto-extracts file metadata, playback duration, and album cover art
 - Built-in volume, repeat/shuffle, and video background fit controls
 
 ### 3. HELXAIL (CPU Controller)
+
 - CPU control via RyzenAdj
 - Accessible only when required tools RyzenAdj are available
 - Debug handling when required dependencies are missing
 
 ### 4. HELXAIR (Crosshair Overlay)
+
 - Customizable on-screen crosshair overlay (color, size, opacity)
 - Works without hooking into game memory (safer for anti-cheats)
 
 ### 5. HELXAIRO (Hardware Macro)
+
 - Map hardware keys to custom sequences and mouse inputs (integrated natively with C++)
 - Control DPI, rapid fire, and basic multimedia actions
 
 ### 6. HELXTATS (System Optimization, Hardware Stats, Network Stats)
+
 - Real-time Hardware stats (CPU, RAM, Disk tracking; GPU requires LibreHardwareMonitor)
 - Memory (RAM) cleaning optimization capabilities
 - Network stats tracking (Bytes Sent, Bytes Received, Packets Sent, Packets Received, Errors, Collisions, Speed, Status, Type, Up Time)
@@ -139,46 +145,63 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ## ✦ Changelog
 
+### 4.14
+
+- Fixed some bugs in HELXAIC (I forgot to list them, sorry :<)
+- Migrate from QTMediaPlayer to VLC Media Player (Maybe it can be considered as Major Update?)
+- fixes hover-effect on icon bugs in HELXAID.
+- Add 1-6 Shortcut Key at software so you can switch panel quickly.
+- Remap Open Folder shortcut key from (Ctrl + O) to (Ctrl + K + O).
+- Add Open File shortcut key (Ctrl + O) at HELXAIC.
+- Fixes crashes when paste url at Youtube Downloader.
+- Fix "Current version" function, now it IS updated to 4.14.
+- Shuffle and Loop Mode now saved as last time state.
+- Make the last time duration track more accurate.
+- Fixes some minor issues that I'm lazy to write down :)
+
 ### 4.13
+
 - Add Estimated Size at Youtube Downloader.
 - Add `--no-playlist` flag so that even if the link is a playlist, it will only download the video you copied.
 - Optimized video player performance.
 - Improved Youtube Downloader, include:
--- Preview Image.
--- Youtube Downloader now is a panel instead of floating window.
+  -- Preview Image.
+  -- Youtube Downloader now is a panel instead of floating window.
 - Add "Subtitle" Menu at Header of HELXAIC.
 - Added Subtitle Support, include:
--- Style, each style has it own style:
---- Regular.
---- Bold.
---- Italic.
---- Bold Italic.
--- Size.
+  -- Style, each style has it own style:
+  --- Regular.
+  --- Bold.
+  --- Italic.
+  --- Bold Italic.
+  -- Size.
 - Fixes duration bar bug.
 - Upgraded Internet Data usage Software detection.
 
 ### 4.12
+
 - Improve Universal Scan detection (Add Epic Games, GOG Galaxy, Ubisoft Connect, Riot Games, EA App).
 - "Hardware Health" card turned to "System Vital" card.
 - Improve hardware detection.
 - From "Fan" tab to "Network" tab at HELXTATS.
 - Add "Network" tab... Obviously... That included:
--- Network Interface Name
--- Network Interface IP
--- Network Interface MAC
--- Network Interface Speed
--- Network Interface Status
--- Network Interface Type
--- Network Interface Up Time
--- Network Interface Bytes Sent
--- Network Interface Bytes Received
--- Network Interface Packets Sent
--- Network Interface Packets Received
--- Network Interface Errors
--- Network Interface Collisions
+  -- Network Interface Name
+  -- Network Interface IP
+  -- Network Interface MAC
+  -- Network Interface Speed
+  -- Network Interface Status
+  -- Network Interface Type
+  -- Network Interface Up Time
+  -- Network Interface Bytes Sent
+  -- Network Interface Bytes Received
+  -- Network Interface Packets Sent
+  -- Network Interface Packets Received
+  -- Network Interface Errors
+  -- Network Interface Collisions
 - Fixes "Update Interval" label appeared at all Tab, now it only appears at "Quick Setup", "CPU", "Drive", "System Vital" Tab.
 
 ### V4.11
+
 - Sometimes CMD pop-up when launch at startup windows.
 - Fixes "Start as minimized" setting functionality.
 - Add "Hide Initialize Panel" setting functionality.
@@ -195,6 +218,7 @@ HELXAID is under active development.
 Features, APIs, and internal structures may change as the project evolves.
 
 This project prioritizes:
+
 - Modular architecture
 - Low system overhead
 - Long-term maintainability

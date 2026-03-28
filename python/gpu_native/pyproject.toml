@@ -1,0 +1,55 @@
+[build-system]
+requires = [
+    "setuptools>=61.0",
+    "wheel",
+    "pybind11>=2.10.0",
+    "cmake>=3.15",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpu_native"
+version = "1.0.0"
+description = "Native GPU detection module using DXGI for Windows"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "HELXAID Team"}
+]
+keywords = ["gpu", "dxgi", "hardware", "detection", "windows"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: System :: Hardware",
+    "Topic :: Multimedia :: Video",
+]
+
+[project.urls]
+Homepage = "https://github.com/TDD131/HELXAID"
+
+[tool.setuptools]
+packages = ["gpu_native"]
+
+[tool.setuptools.package-data]
+gpu_native = ["*.pyd", "*.dll"]
+
+[tool.cibuildwheel]
+# Build wheels for Windows only (DXGI is Windows-specific)
+build = "cp38-win_amd64 cp39-win_amd64 cp310-win_amd64 cp311-win_amd64 cp312-win_amd64"
+skip = "*-win32 *-manylinux* *-musllinux* *-macosx*"
+
+[tool.cibuildwheel.windows]
+before-build = "pip install cmake pybind11"
