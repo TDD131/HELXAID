@@ -4542,83 +4542,168 @@ class MusicPanelWidget(QWidget):
         self._update_covers(tracks)
     
     def _update_covers(self, tracks: list):
-        """Extract cover art from 1:1 aspect ratio video thumbnails asynchronously."""
-        import threading
+        """Extract cover art from playlist tracks and display them on coverFront/coverBack.
         
-        def run_update():
-            import subprocess
-            import tempfile
-            import json
-            import os
+        Uses a 3-tier extraction strategy per track:
+        - Tier 1: mutagen embedded album art (reliable for MP3/FLAC/M4A)
+        - Tier 2: ffprobe attached_pic stream (for MP4/MKV files with embedded cover)
+        - Tier 3: ffmpeg video frame grab at 5s (universal fallback, no aspect ratio restriction)
+        
+        Previously this function only looked for 1:1 (square) videos, which caused it to
+        silently bail on all standard 16:9 music videos. It also used bare 'ffprobe'/'ffmpeg'
+        strings without full path resolution, causing silent failures when tools are only
+        available in HELXAID's bundled AppData directory (not system PATH).
+        """
+        import threading
+
+        def _resolve_ff_tools():
+            """Resolve full paths for ffprobe and ffmpeg.
+            Mirrors the same path resolution logic used in _fetch_metadata to ensure
+            HELXAID's bundled tools in AppData are found even if not in system PATH.
+            """
+            import shutil
+            ff = {}
+            for tool in ('ffprobe', 'ffmpeg'):
+                path = shutil.which(tool)
+                if not path:
+                    appdata_tools = os.path.join(
+                        os.environ.get("APPDATA", ""), "HELXAID", "tools"
+                    )
+                    if os.path.exists(appdata_tools):
+                        possible = [
+                            os.path.join(appdata_tools, "ffmpeg", "bin", f"{tool}.exe"),
+                            os.path.join(appdata_tools, "ffmpeg", f"{tool}.exe"),
+                            os.path.join(appdata_tools, f"{tool}.exe"),
+                        ]
+                        for p in possible:
+                            if os.path.exists(p):
+                                path = p
+                                break
+                        if not path:
+                            for root, _, fnames in os.walk(appdata_tools):
+                                for fn in fnames:
+                                    if fn.lower() == f"{tool}.exe":
+                                        path = os.path.join(root, fn)
+                                        break
+                                if path:
+                                    break
+                ff[tool] = path
+            return ff
+
+        def _extract_cover(video_path, thumb_path, ffprobe, ffmpeg):
+            """Try to extract cover art from a media file using 3 strategies in priority order.
+            Returns True if a valid image was written to thumb_path, False otherwise.
+            """
+            ext = os.path.splitext(video_path)[1].lower()
             
-            if len(tracks) < 1:
+            # Tier 1: mutagen embedded art (works for MP3/FLAC/M4A/OGG)
+            try:
+                import mutagen
+                if ext in ('.mp3', '.flac', '.m4a', '.ogg', '.opus'):
+                    from mutagen import File as MutagenFile
+                    audio = MutagenFile(video_path)
+                    if audio and audio.tags:
+                        art_data = None
+                        # ID3 tags (MP3): look for APIC (Attached Picture) frame
+                        if hasattr(audio.tags, 'getall'):
+                            apic = audio.tags.getall('APIC')
+                            if apic:
+                                art_data = apic[0].data
+                        # FLAC: METADATA_BLOCK_PICTURE
+                        elif 'METADATA_BLOCK_PICTURE' in audio.tags:
+                            import base64
+                            from mutagen.flac import Picture
+                            pic = Picture(base64.b64decode(audio.tags['METADATA_BLOCK_PICTURE'][0]))
+                            art_data = pic.data
+                        if art_data:
+                            with open(thumb_path, 'wb') as f:
+                                f.write(art_data)
+                            if os.path.getsize(thumb_path) > 0:
+                                return True
+            except Exception:
+                pass
+            
+            # Tier 2: ffprobe attached_pic stream (for MP4/MKV with embedded cover art)
+            if ffprobe and ffmpeg:
+                try:
+                    r = subprocess.run(
+                        [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', video_path],
+                        capture_output=True, text=True, timeout=5,
+                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                    )
+                    if r.returncode == 0:
+                        data = json.loads(r.stdout)
+                        for stream in data.get('streams', []):
+                            if stream.get('disposition', {}).get('attached_pic', 0) == 1:
+                                subprocess.run(
+                                    [ffmpeg, '-i', video_path,
+                                     '-map', f"0:{stream['index']}",
+                                     '-vframes', '1', '-q:v', '2', '-y', thumb_path],
+                                    capture_output=True, timeout=5,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                                )
+                                if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                                    return True
+                                break
+                except Exception:
+                    pass
+            
+            # Tier 3: ffmpeg frame grab at 5s (universal fallback, no aspect ratio restriction)
+            if ffmpeg:
+                try:
+                    subprocess.run(
+                        [ffmpeg, '-ss', '5', '-i', video_path,
+                         '-vframes', '1', '-q:v', '2', '-y', thumb_path],
+                        capture_output=True, timeout=8,
+                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                    )
+                    if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                        return True
+                except Exception:
+                    pass
+            
+            return False
+
+        def run_update():
+            if not tracks:
                 return
             
-            # Filter for 1:1 aspect ratio videos
-            square_tracks = []
+            ff = _resolve_ff_tools()
+            ffprobe = ff.get('ffprobe')
+            ffmpeg = ff.get('ffmpeg')
+            
+            print(f"[Cover] ffprobe={ffprobe}, ffmpeg={ffmpeg}")
+            
+            cover_paths = []
             for track in tracks:
+                if len(cover_paths) >= 2:
+                    break
                 video_path = track.get('path', '')
                 if not video_path or not os.path.exists(video_path):
                     continue
-                
                 try:
-                    # Use ffprobe to get video dimensions
-                    result = subprocess.run([
-                        'ffprobe', '-v', 'quiet', '-print_format', 'json',
-                        '-show_streams', '-select_streams', 'v:0', video_path
-                    ], capture_output=True, text=True, timeout=3,
-                       creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
-                    
-                    if result.returncode == 0:
-                        data = json.loads(result.stdout)
-                        if data.get('streams'):
-                            stream = data['streams'][0]
-                            width = stream.get('width', 0)
-                            height = stream.get('height', 0)
-                            
-                            # Check if aspect ratio is 1:1 (square)
-                            if width > 0 and height > 0 and abs(width - height) < 10:
-                                square_tracks.append(track)
-                                if len(square_tracks) >= 2:
-                                    break
-                except Exception:
-                    continue
-            
-            if len(square_tracks) < 1:
-                return
-            
-            # Extract thumbnails from square videos
-            cover_paths = []
-            for track in square_tracks[:2]:
-                video_path = track.get('path', '')
-                
-                try:
-                    # Create temp file for thumbnail
                     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
                         thumb_path = tmp.name
-                    
-                    # Extract frame at 5 seconds
-                    subprocess.run([
-                        'ffmpeg', '-ss', '5', '-i', video_path,
-                        '-vframes', '1', '-q:v', '2', '-y', thumb_path
-                    ], capture_output=True, timeout=5,
-                       creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0)
-                    
-                    if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                    if _extract_cover(video_path, thumb_path, ffprobe, ffmpeg):
                         cover_paths.append(thumb_path)
+                        print(f"[Cover] Extracted from: {os.path.basename(video_path)}")
                 except Exception as e:
-                    print(f"[Cover] Failed to extract thumbnail: {e}")
+                    print(f"[Cover] Error on {os.path.basename(track.get('path', ''))}: {e}")
                     continue
             
-            # Set covers if we got any - back to main thread
+            if not cover_paths:
+                print("[Cover] No covers extracted.")
+                return
+            
+            # Marshal UI update back to main thread via QTimer.singleShot(0)
             from PySide6.QtCore import QTimer
-            if len(cover_paths) >= 2:
-                QTimer.singleShot(0, lambda: self.header.set_covers(cover_paths[0], cover_paths[1]) if hasattr(self, 'header') else None)
-            elif len(cover_paths) == 1:
-                QTimer.singleShot(0, lambda: self.header.set_covers(cover_paths[0], cover_paths[0]) if hasattr(self, 'header') else None)
+            c1 = cover_paths[0]
+            c2 = cover_paths[1] if len(cover_paths) >= 2 else cover_paths[0]
+            QTimer.singleShot(0, lambda: self.header.set_covers(c1, c2) if hasattr(self, 'header') else None)
 
         threading.Thread(target=run_update, daemon=True).start()
-    
+
+
     def _play_track(self, index: int):
         # If filter is active, translate display index to original index
         if hasattr(self, '_filtered_indices') and self._filtered_indices is not None:
