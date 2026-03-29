@@ -943,6 +943,928 @@ class YouTubeDownloaderPanel(QFrame):
         self.url_edit.setFocus()
 
 
+class _CropCanvas(QWidget):
+    """
+    Custom canvas widget that draws a loaded image and renders an interactive
+    1:1 (square) crop region on top of it.
+
+    The crop region can be:
+      - Dragged to move it across the image.
+      - Resized by dragging any of the four corner handles while keeping the
+        square aspect ratio intact.
+      - Replaced entirely by click-dragging on an area outside the current
+        crop rectangle (the new drag defines the new square from its diagonal).
+
+    Internal coordinate system
+    --------------------------
+    All positions stored in this widget are in *canvas* coordinates (pixels
+    relative to this widget's top-left corner).  `_image_rect` describes
+    where the image is drawn (centered and letterboxed to fit the canvas).
+    `_crop_rect` is the currently active square crop region.
+
+    Component Name: _CropCanvas
+    """
+
+    # Signal emitted whenever the crop rect changes (for info label updates)
+    cropChanged = Signal(object)  # passes the current QRect
+
+    # Size of the draggable corner handle squares (px)
+    HANDLE_SIZE = 10
+
+    def __init__(self, pixmap: "QPixmap", parent=None):
+        super().__init__(parent)
+        self._source_pixmap = pixmap
+        self._image_rect = None    # QRect: where the image is drawn on canvas
+        self._crop_rect = None     # QRect: current square crop region (canvas coords)
+
+        # Drag state machine
+        # mode: None | 'move' | 'resize' | 'draw'
+        self._drag_mode = None
+        self._drag_start = None    # QPoint: mouse position at drag-start
+        self._drag_orig_rect = None  # QRect: crop_rect at drag-start
+        self._resize_corner = None   # int 0-3: which corner is being resized
+
+        self.setMinimumSize(420, 360)
+        self.setCursor(Qt.CrossCursor)
+
+    # ------------------------------------------------------------------
+    # Geometry helpers
+    # ------------------------------------------------------------------
+
+    def _build_image_rect(self) -> "QRect":
+        """
+        Compute where the source pixmap should be drawn on this canvas so that
+        it fills as much space as possible while preserving aspect ratio
+        (letterboxed / pillarboxed to fit).
+
+        Returns a QRect in canvas coordinates.
+        """
+        from PySide6.QtCore import QRect
+        cw, ch = self.width(), self.height()
+        img_w, img_h = self._source_pixmap.width(), self._source_pixmap.height()
+
+        # Compute scale factor that fits image inside canvas
+        scale = min(cw / img_w, ch / img_h)
+        draw_w = int(img_w * scale)
+        draw_h = int(img_h * scale)
+
+        # Center within canvas
+        x = (cw - draw_w) // 2
+        y = (ch - draw_h) // 2
+        return QRect(x, y, draw_w, draw_h)
+
+    def _default_crop_rect(self, image_rect: "QRect") -> "QRect":
+        """
+        Return a square crop QRect centered on `image_rect`.
+        The side length is the smaller of the image_rect's width and height so
+        the initial crop covers as much of the image as possible.
+        """
+        from PySide6.QtCore import QRect
+        side = min(image_rect.width(), image_rect.height())
+        cx = image_rect.x() + (image_rect.width() - side) // 2
+        cy = image_rect.y() + (image_rect.height() - side) // 2
+        return QRect(cx, cy, side, side)
+
+    def _corner_handle_rects(self) -> list:
+        """
+        Return a list of four QRect objects, one per corner of the current
+        crop rect, for hit-testing and painting.  Order: TL, TR, BL, BR.
+        """
+        from PySide6.QtCore import QRect
+        r = self._crop_rect
+        hs = self.HANDLE_SIZE
+        half = hs // 2
+        return [
+            QRect(r.left() - half,            r.top() - half,            hs, hs),  # 0: TL
+            QRect(r.right() - half,           r.top() - half,            hs, hs),  # 1: TR
+            QRect(r.left() - half,            r.bottom() - half,         hs, hs),  # 2: BL
+            QRect(r.right() - half,           r.bottom() - half,         hs, hs),  # 3: BR
+        ]
+
+    def _clamp_crop_to_image(self, rect: "QRect") -> "QRect":
+        """
+        Clamp `rect` so it stays fully inside `_image_rect`.
+        The rect's size is preserved; only position is adjusted.
+        """
+        from PySide6.QtCore import QRect
+        ir = self._image_rect
+        # 1. First clamp the square size to not exceed image bounds
+        w = min(rect.width(), ir.width())
+        h = min(rect.height(), ir.height())
+        side = min(w, h)
+
+        # 2. Then clamp position based on the adjusted size
+        x = max(ir.left(), min(rect.x(), ir.right() - side))
+        y = max(ir.top(), min(rect.y(), ir.bottom() - side))
+        return QRect(x, y, side, side)
+
+    # ------------------------------------------------------------------
+    # Qt overrides
+    # ------------------------------------------------------------------
+
+    def showEvent(self, event):
+        """Initialize image/crop rects on first show (size is known by now)."""
+        super().showEvent(event)
+        if self._image_rect is None or self._crop_rect is None:
+            self._image_rect = self._build_image_rect()
+            self._crop_rect = self._default_crop_rect(self._image_rect)
+            self.cropChanged.emit(self._crop_rect)
+
+    def resizeEvent(self, event):
+        """
+        Recalculate image rect when canvas is resized.  The crop rect is
+        scaled proportionally so the user's selection feels stable.
+        """
+        super().resizeEvent(event)
+        old_img = self._image_rect
+        new_img = self._build_image_rect()
+
+        if old_img and old_img.width() > 0 and old_img.height() > 0 and self._crop_rect:
+            from PySide6.QtCore import QRect
+            # Scale crop rect from old image space to new image space
+            sx = new_img.width() / old_img.width()
+            sy = new_img.height() / old_img.height()
+            # Use uniform scale (image is square in canvas due to letterbox)
+            scale = min(sx, sy)
+            cx = new_img.x() + int((self._crop_rect.x() - old_img.x()) * sx)
+            cy = new_img.y() + int((self._crop_rect.y() - old_img.y()) * sy)
+            side = int(self._crop_rect.width() * scale)
+            self._crop_rect = QRect(cx, cy, side, side)
+        else:
+            self._crop_rect = self._default_crop_rect(new_img)
+
+        self._image_rect = new_img
+        self.update()
+
+    def paintEvent(self, event):
+        """
+        Render:
+          1. The source image (scaled to fit canvas, letterboxed).
+          2. Dark translucent mask outside the crop square.
+          3. Bright #FF5B06 border around the crop square.
+          4. White corner handles.
+        """
+        from PySide6.QtGui import QPainter, QColor, QPen, QBrush
+        from PySide6.QtCore import QRect
+
+        if self._image_rect is None or self._crop_rect is None:
+            self._image_rect = self._build_image_rect()
+            self._crop_rect = self._default_crop_rect(self._image_rect)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+
+        # 1. Draw background fill
+        painter.fillRect(self.rect(), QColor(20, 20, 30))
+
+        # 2. Draw the source image
+        scaled_img = self._source_pixmap.scaled(
+            self._image_rect.size(),
+            Qt.IgnoreAspectRatio,
+            Qt.SmoothTransformation
+        )
+        painter.drawPixmap(self._image_rect.topLeft(), scaled_img)
+
+        # 3. Dark mask outside crop (4 rectangles around the crop square)
+        mask_color = QColor(0, 0, 0, 160)
+        ir = self._image_rect
+        cr = self._crop_rect
+
+        # Top strip
+        painter.fillRect(QRect(ir.x(), ir.y(), ir.width(), cr.y() - ir.y()), mask_color)
+        # Bottom strip
+        painter.fillRect(QRect(ir.x(), cr.bottom(), ir.width(), ir.bottom() - cr.bottom()), mask_color)
+        # Left strip (between top/bottom strips)
+        painter.fillRect(QRect(ir.x(), cr.y(), cr.x() - ir.x(), cr.height()), mask_color)
+        # Right strip (between top/bottom strips)
+        painter.fillRect(QRect(cr.right(), cr.y(), ir.right() - cr.right(), cr.height()), mask_color)
+
+        # 4. Crop border — brand orange #FF5B06
+        pen = QPen(QColor(0xFF, 0x5B, 0x06), 2)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(cr)
+
+        # 5. Corner handles — white filled squares
+        painter.setPen(QPen(QColor(255, 255, 255), 1))
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        for rect in self._corner_handle_rects():
+            painter.drawRect(rect)
+
+        painter.end()
+
+    # ------------------------------------------------------------------
+    # Mouse interaction
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event):
+        """
+        Determine drag mode based on where the user clicked:
+          - On a corner handle  → resize mode
+          - Inside crop rect     → move mode
+          - Elsewhere            → draw mode (define new square from drag)
+        """
+        from PySide6.QtCore import QRect
+        pos = event.pos()
+
+        if self._crop_rect is None:
+            return
+
+        # Check corner handles first (priority over move)
+        for i, rect in enumerate(self._corner_handle_rects()):
+            if rect.contains(pos):
+                self._drag_mode = 'resize'
+                self._resize_corner = i
+                self._drag_start = pos
+                self._drag_orig_rect = QRect(self._crop_rect)
+                return
+
+        if self._crop_rect.contains(pos):
+            self._drag_mode = 'move'
+            self._drag_start = pos
+            self._drag_orig_rect = QRect(self._crop_rect)
+        else:
+            # Start drawing a new crop rect
+            self._drag_mode = 'draw'
+            self._drag_start = pos
+            self._crop_rect = QRect(pos.x(), pos.y(), 0, 0)
+
+    def mouseMoveEvent(self, event):
+        """
+        Handle in-progress drag based on current mode.
+
+        Move mode: translate the crop rect by the delta since drag-start,
+                   then clamp to image bounds.
+
+        Resize mode: compute new side length from the dragged corner,
+                     keeping the opposite corner fixed and enforcing square.
+
+        Draw mode: expand a new square from the drag origin, clamped to
+                   image bounds.  The square grows in all four directions
+                   from the origin point to keep behaviour intuitive.
+        """
+        from PySide6.QtCore import QRect
+        pos = event.pos()
+
+        if self._drag_mode == 'move':
+            dx = pos.x() - self._drag_start.x()
+            dy = pos.y() - self._drag_start.y()
+            new_rect = QRect(
+                self._drag_orig_rect.x() + dx,
+                self._drag_orig_rect.y() + dy,
+                self._drag_orig_rect.width(),
+                self._drag_orig_rect.height()
+            )
+            self._crop_rect = self._clamp_crop_to_image(new_rect)
+
+        elif self._drag_mode == 'resize':
+            orig = self._drag_orig_rect
+            ir = self._image_rect
+
+            # Compute new side from mouse distance; use max of dx/dy for diagonal drag
+            if self._resize_corner == 0:    # Top-Left: fixed = BR
+                new_x = max(ir.left(), min(pos.x(), orig.right() - 10))
+                new_y = max(ir.top(),  min(pos.y(), orig.bottom() - 10))
+                side = min(orig.right() - new_x, orig.bottom() - new_y)
+                side = max(side, 10)
+                self._crop_rect = QRect(orig.right() - side, orig.bottom() - side, side, side)
+
+            elif self._resize_corner == 1:  # Top-Right: fixed = BL
+                new_r = min(ir.right(), max(pos.x(), orig.left() + 10))
+                new_y = max(ir.top(), min(pos.y(), orig.bottom() - 10))
+                side = min(new_r - orig.left(), orig.bottom() - new_y)
+                side = max(side, 10)
+                self._crop_rect = QRect(orig.left(), orig.bottom() - side, side, side)
+
+            elif self._resize_corner == 2:  # Bottom-Left: fixed = TR
+                new_x = max(ir.left(), min(pos.x(), orig.right() - 10))
+                new_b = min(ir.bottom(), max(pos.y(), orig.top() + 10))
+                side = min(orig.right() - new_x, new_b - orig.top())
+                side = max(side, 10)
+                self._crop_rect = QRect(orig.right() - side, orig.top(), side, side)
+
+            elif self._resize_corner == 3:  # Bottom-Right: fixed = TL
+                new_r = min(ir.right(), max(pos.x(), orig.left() + 10))
+                new_b = min(ir.bottom(), max(pos.y(), orig.top() + 10))
+                side = min(new_r - orig.left(), new_b - orig.top())
+                side = max(side, 10)
+                self._crop_rect = QRect(orig.left(), orig.top(), side, side)
+
+        elif self._drag_mode == 'draw':
+            ir = self._image_rect
+            if ir is None:
+                return
+            # Compute a square from drag_start to current pos, clamped to image
+            x0 = self._drag_start.x()
+            y0 = self._drag_start.y()
+            dx = pos.x() - x0
+            dy = pos.y() - y0
+            
+            # Find max room available in the drag direction
+            room_x = (ir.right() - x0) if dx >= 0 else (x0 - ir.left())
+            room_y = (ir.bottom() - y0) if dy >= 0 else (y0 - ir.top())
+            
+            # Side length = min of drag distance and available room
+            side = min(max(abs(dx), abs(dy)), room_x, room_y)
+            side = max(side, 10)
+            
+            # Determine top-left by direction of drag
+            rx = x0 if dx >= 0 else x0 - side
+            ry = y0 if dy >= 0 else y0 - side
+            rect = QRect(rx, ry, side, side)
+            self._crop_rect = self._clamp_crop_to_image(rect)
+
+        self.cropChanged.emit(self._crop_rect)
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        """Finalize drag — reset mode."""
+        self._drag_mode = None
+        self._drag_start = None
+        self._drag_orig_rect = None
+        self._resize_corner = None
+
+
+class CoverCropDialog(QDialog):
+    """
+    Modal dialog that lets the user interactively select a square (1:1) crop
+    region from an image before saving it as cover art.
+
+    Layout
+    ------
+    - _CropCanvas  : fills most of the dialog; shows the image + drag handles
+    - Info label   : shows current crop size in original image pixels
+    - Instruction  : one-line usage hint
+    - Accept / Cancel buttons
+
+    Usage
+    -----
+    dialog = CoverCropDialog(pixmap, parent)
+    if dialog.exec() == QDialog.Accepted:
+        cropped_pixmap = dialog.get_cropped_pixmap()
+
+    Component Name: CoverCropDialog
+    """
+
+    def __init__(self, pixmap: "QPixmap", parent=None):
+        super().__init__(parent)
+        self._source_pixmap = pixmap
+        self.setWindowTitle("Crop Cover Art")
+        self.setFixedSize(580, 540)
+        self.setModal(True)
+        self._setup_ui()
+        self._apply_style()
+
+    def _setup_ui(self):
+        """Build dialog layout: canvas, info label, instruction, buttons."""
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        # Canvas occupies the bulk of the dialog
+        self._canvas = _CropCanvas(self._source_pixmap, self)
+        self._canvas.cropChanged.connect(self._on_crop_changed)
+        root.addWidget(self._canvas, stretch=1)
+
+        # Info row: crop size in original image pixels
+        info_row = QHBoxLayout()
+        self._info_label = QLabel("Crop: —")
+        self._info_label.setObjectName("cropInfoLabel")
+        info_row.addWidget(self._info_label)
+        info_row.addStretch()
+        root.addLayout(info_row)
+
+        # Instruction hint
+        hint = QLabel("Drag to move  |  Drag corners to resize  |  Click outside crop to draw new")
+        hint.setObjectName("cropHintLabel")
+        root.addWidget(hint)
+
+        # Accept / Cancel
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self._btn_cancel = QPushButton("Cancel")
+        self._btn_cancel.setObjectName("cropCancelBtn")
+        self._btn_cancel.clicked.connect(self.reject)
+
+        self._btn_accept = QPushButton("Apply Crop")
+        self._btn_accept.setObjectName("cropAcceptBtn")
+        self._btn_accept.clicked.connect(self.accept)
+
+        btn_row.addStretch()
+        btn_row.addWidget(self._btn_cancel)
+        btn_row.addWidget(self._btn_accept)
+        root.addLayout(btn_row)
+
+    def _apply_style(self):
+        self.setStyleSheet("""
+            QDialog {
+                background: #1a1a2e;
+            }
+            QLabel {
+                color: #c0c0c0;
+                background: transparent;
+                font-size: 12px;
+            }
+            QLabel#cropInfoLabel {
+                color: #FF5B06;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QLabel#cropHintLabel {
+                color: #666;
+                font-size: 11px;
+            }
+            QPushButton#cropCancelBtn {
+                background: rgba(255,255,255,0.07);
+                border: 1px solid rgba(255,255,255,0.12);
+                border-radius: 5px;
+                color: #aaa;
+                padding: 7px 20px;
+                font-size: 12px;
+            }
+            QPushButton#cropCancelBtn:hover {
+                background: rgba(255,255,255,0.12);
+                color: #fff;
+            }
+            QPushButton#cropAcceptBtn {
+                background: #FF5B06;
+                border: 1px solid rgba(255,91,6,0.6);
+                border-radius: 5px;
+                color: #fff;
+                padding: 7px 20px;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton#cropAcceptBtn:hover {
+                background: #FF7B26;
+            }
+            QPushButton#cropAcceptBtn:pressed {
+                background: #E94F00;
+            }
+        """)
+
+    def _on_crop_changed(self, canvas_rect):
+        """
+        Update the info label to show the crop size in original image pixels
+        whenever the crop rectangle changes.
+
+        Parameters
+        ----------
+        canvas_rect : QRect
+            Current crop rectangle in canvas (widget) coordinates.
+        """
+        canvas = self._canvas
+        ir = canvas._image_rect
+        if ir is None or ir.width() == 0 or ir.height() == 0 or canvas_rect is None:
+            return
+
+        # Convert canvas crop size to original image pixels
+        orig_w = self._source_pixmap.width()
+        scale_x = orig_w / ir.width()
+        pixel_size = int(canvas_rect.width() * scale_x)
+        self._info_label.setText(f"Crop: {pixel_size} x {pixel_size} px")
+
+    def get_cropped_pixmap(self) -> "QPixmap":
+        """
+        Map the current canvas-space crop rectangle back to original image
+        coordinates and return the corresponding square crop as a QPixmap.
+
+        The returned pixmap is cropped from the *full-resolution* source so
+        no quality is lost at this stage.  Callers are responsible for
+        further downscaling before saving.
+
+        Returns
+        -------
+        QPixmap
+            Square crop of the original image.  Never returns a null pixmap
+            because the dialog can only be accepted when a valid crop exists.
+        """
+        canvas = self._canvas
+        img_rect = canvas._image_rect      # QRect: image draw area on canvas
+        crop_rect = canvas._crop_rect      # QRect: crop square in canvas coords
+
+        if img_rect is None or img_rect.width() == 0:
+            return self._source_pixmap
+
+        orig_w = self._source_pixmap.width()
+        orig_h = self._source_pixmap.height()
+
+        # Scale factors: canvas px → original image px
+        scale_x = orig_w / img_rect.width()
+        scale_y = orig_h / img_rect.height()
+
+        # Convert crop rect from canvas to original image coordinates
+        rel_x = int((crop_rect.x() - img_rect.x()) * scale_x)
+        rel_y = int((crop_rect.y() - img_rect.y()) * scale_y)
+        crop_size = int(crop_rect.width() * scale_x)
+
+        # Clamp to valid image bounds to prevent QPixmap.copy() from going OOB
+        rel_x = max(0, min(rel_x, orig_w - 1))
+        rel_y = max(0, min(rel_y, orig_h - 1))
+        crop_size = max(1, min(crop_size, orig_w - rel_x, orig_h - rel_y))
+
+        return self._source_pixmap.copy(rel_x, rel_y, crop_size, crop_size)
+
+
+class FullscreenImageOverlay(QDialog):
+    def __init__(self, pixmap, parent=None):
+        super().__init__(parent)
+        from PySide6.QtCore import Qt
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QFrame
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.bg_frame = QFrame(self)
+        self.bg_frame.setStyleSheet("QFrame { background-color: rgba(0, 0, 0, 230); }")
+        main_layout.addWidget(self.bg_frame)
+        
+        frame_layout = QHBoxLayout(self.bg_frame)
+        frame_layout.setContentsMargins(50, 50, 50, 50)
+        frame_layout.setSpacing(40)
+        
+        frame_layout.addStretch()
+        
+        # Left Close Label
+        self.close_lbl_left = QLabel("Click here to close", self.bg_frame)
+        self.close_lbl_left.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 18px; font-weight: bold; background: transparent;")
+        self.close_lbl_left.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.close_lbl_left.setCursor(Qt.PointingHandCursor)
+        frame_layout.addWidget(self.close_lbl_left)
+        
+        self.img_lbl = QLabel(self.bg_frame)
+        self.img_lbl.setAlignment(Qt.AlignCenter)
+        self.img_lbl.setStyleSheet("background: transparent;")
+        
+        if pixmap and not pixmap.isNull():
+            from PySide6.QtGui import QGuiApplication
+            screen = QGuiApplication.primaryScreen().availableGeometry()
+            w = int(screen.width() * 0.60)
+            h = int(screen.height() * 0.85)
+            self.img_lbl.setPixmap(pixmap.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            
+        frame_layout.addWidget(self.img_lbl)
+        
+        # Right Close Label
+        self.close_lbl_right = QLabel("Click here to close", self.bg_frame)
+        self.close_lbl_right.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 18px; font-weight: bold; background: transparent;")
+        self.close_lbl_right.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.close_lbl_right.setCursor(Qt.PointingHandCursor)
+        frame_layout.addWidget(self.close_lbl_right)
+        
+        frame_layout.addStretch()
+        
+    def mousePressEvent(self, event):
+        child = self.childAt(event.pos())
+        if child == self.img_lbl:
+            return
+        self.accept()
+        
+    def keyPressEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.key() == Qt.Key_Escape:
+            self.accept()
+
+
+class InteractiveCoverLabel(QWidget):
+    from PySide6.QtCore import Signal
+    clicked_signal = Signal()
+    folder_clicked_signal = Signal()
+
+    def __init__(self, title, action_text, parent=None):
+        super().__init__(parent)
+        self.action_text = action_text
+        self._current_pixmap = None
+
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QToolButton
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        title_lbl = QLabel(title)
+        title_lbl.setAlignment(Qt.AlignCenter)
+        title_lbl.setStyleSheet("color: white; font-weight: bold; font-size: 14px; margin-bottom: 5px;")
+        layout.addWidget(title_lbl)
+
+        # Image Container
+        self.img_container = QWidget()
+        self.img_container.setFixedSize(160, 160)
+
+        self.img_lbl = QLabel(self.img_container)
+        self.img_lbl.setGeometry(0, 0, 160, 160)
+        self.img_lbl.setScaledContents(True)
+        self.img_lbl.setStyleSheet("background: #2a2a3a; border-radius: 8px; border: 1px solid #444;")
+
+        self.overlay = QLabel(self.img_container)
+        self.overlay.setGeometry(0, 0, 160, 160)
+        self.overlay.setAlignment(Qt.AlignCenter)
+        self.overlay.setText(self.action_text)
+        self.overlay.hide()
+        self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.overlay.setStyleSheet("background: rgba(0,0,0,0.6); color: white; font-weight: bold; font-size: 14px; border-radius: 8px;")
+
+        if self.action_text:
+            self.img_container.setCursor(Qt.PointingHandCursor)
+            self.img_container.mousePressEvent = self._on_press
+            self.img_container.installEventFilter(self)
+
+        layout.addWidget(self.img_container, alignment=Qt.AlignCenter)
+
+        # Directory row exactly as requested
+        dir_layout = QHBoxLayout()
+        dir_lbl = QLabel("Directory:")
+        dir_lbl.setStyleSheet("color: #aaaaaa; font-size: 10px; font-weight: bold;")
+        
+        self.path_edit = QLineEdit()
+        self.path_edit.setReadOnly(True)
+        self.path_edit.setStyleSheet("background: #1e1e28; color: #888; border: 1px solid #333; font-size: 10px; padding: 2px; border-radius: 3px;")
+        # Hide the line edit cursor so it looks cleaner
+        self.path_edit.setCursor(Qt.ArrowCursor)
+        
+        self.folder_btn = QToolButton()
+        self.folder_btn.setText("📁")
+        self.folder_btn.setToolTip("Pick File" if action_text == "Edit" else "Open Folder")
+        self.folder_btn.setStyleSheet("""
+            QToolButton {
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid #444; border-radius: 4px; padding: 2px; font-size: 12px;
+            }
+            QToolButton:hover {
+                background: rgba(255, 91, 6, 0.5);
+                border: 1px solid rgba(255, 91, 6, 1);
+            }
+        """)
+        self.folder_btn.clicked.connect(self.folder_clicked_signal.emit)
+        self.folder_btn.setEnabled(False)
+
+        dir_layout.addWidget(dir_lbl)
+        dir_layout.addWidget(self.path_edit)
+        dir_layout.addWidget(self.folder_btn)
+
+        layout.addLayout(dir_layout)
+
+    def _on_press(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            self.clicked_signal.emit()
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj == self.img_container and self.action_text:
+            if event.type() == QEvent.Enter:
+                self.overlay.show()
+            elif event.type() == QEvent.Leave:
+                self.overlay.hide()
+        return super().eventFilter(obj, event)
+
+    def set_content(self, pixmap, source_path):
+        self._current_pixmap = pixmap
+        if pixmap and not pixmap.isNull():
+            self.img_lbl.setPixmap(pixmap)
+        else:
+            self.img_lbl.clear()
+            self.img_lbl.setText("No Cover")
+            self.img_lbl.setAlignment(Qt.AlignCenter)
+
+        self.path_edit.setText(source_path)
+        self.path_edit.setCursorPosition(0)  # Reset scroll
+        self.folder_btn.setEnabled(bool(source_path))
+
+    def _open_folder(self):
+        """Review Mode only action (or optional). Opens the file's current containing folder."""
+        import os, subprocess
+        path = self.path_edit.text()
+        if path and os.path.exists(path):
+            try:
+                subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
+            except Exception as e:
+                print(f"[Cover] Error opening explorer: {e}")
+                
+    @property
+    def current_path(self):
+        return self.path_edit.text()
+
+
+class CoverManagerDialog(QDialog):
+    def __init__(self, mode, front_path, back_path, front_source='', back_source='', parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Review Images" if mode == 'review' else "Edit Covers")
+        self.setFixedSize(500, 350)
+        self.mode = mode
+        self.front_path = front_path
+        self.back_path = back_path
+        self.front_source = front_source
+        self.back_source = back_source
+        
+        self.new_front_pixmap = None
+        self.new_back_pixmap = None
+        self.new_front_source = front_source
+        self.new_back_source = back_source
+        self.reset_all = False
+
+        self.setStyleSheet("""
+            QDialog {
+                background-color: rgba(30, 30, 42, 255);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+            QPushButton {
+                background: #3a3a4a;
+                color: #ffffff;
+                border: none;
+                padding: 6px 15px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #4a4a5a;
+            }
+            QPushButton#applyBtn {
+                background: rgba(255, 91, 6, 0.8);
+            }
+            QPushButton#applyBtn:hover {
+                background: rgba(255, 91, 6, 1);
+            }
+        """)
+
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton
+        from PySide6.QtGui import QPixmap
+
+        main_layout = QVBoxLayout(self)
+        
+        # Covers layout
+        covers_layout = QHBoxLayout()
+        is_edit = (self.mode == 'edit')
+        action_text = "Edit" if is_edit else "Show at Fullscreen"
+        
+        self.front_lbl = InteractiveCoverLabel("Front Cover", action_text=action_text)
+        self.front_lbl.clicked_signal.connect(lambda: self._handle_click('front'))
+        self.front_lbl.folder_clicked_signal.connect(lambda: self._handle_folder_click('front'))
+            
+        self.back_lbl = InteractiveCoverLabel("Back Cover", action_text=action_text)
+        self.back_lbl.clicked_signal.connect(lambda: self._handle_click('back'))
+        self.back_lbl.folder_clicked_signal.connect(lambda: self._handle_folder_click('back'))
+
+        covers_layout.addWidget(self.front_lbl)
+        covers_layout.addWidget(self.back_lbl)
+        main_layout.addLayout(covers_layout)
+
+        # Initial content loading
+        self._load_initial_contents()
+
+        # Bottom buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        if self.mode == 'review':
+            close_btn = QPushButton("Close")
+            close_btn.clicked.connect(self.reject)
+            btn_layout.addWidget(close_btn)
+        else:
+            reset_btn = QPushButton("Reset to Defaults")
+            reset_btn.setStyleSheet("background: #5a2a2a;")
+            reset_btn.clicked.connect(self._reset_covers)
+            
+            cancel_btn = QPushButton("Cancel")
+            cancel_btn.clicked.connect(self.reject)
+            
+            apply_btn = QPushButton("Save & Apply")
+            apply_btn.setObjectName("applyBtn")
+            apply_btn.clicked.connect(self.accept)
+            
+            btn_layout.addWidget(reset_btn)
+            btn_layout.addStretch()
+            btn_layout.addWidget(cancel_btn)
+            btn_layout.addWidget(apply_btn)
+            
+        main_layout.addLayout(btn_layout)
+
+    def _load_initial_contents(self):
+        from PySide6.QtGui import QPixmap
+        f_pix = QPixmap(self.front_path) if self.front_path else None
+        b_pix = QPixmap(self.back_path) if self.back_path else None
+        self.front_lbl.set_content(f_pix, self.front_path)
+        self.back_lbl.set_content(b_pix, self.back_path)
+
+    def _reset_covers(self):
+        self.reset_all = True
+        self.new_front_pixmap = None
+        self.new_back_pixmap = None
+        self.front_lbl.set_content(None, "")
+        self.back_lbl.set_content(None, "")
+
+    def _handle_click(self, target):
+        import os
+        if self.mode == 'edit':
+            # CLICK IMAGE (Edit) = CROP current source (Priority: High-Res Source)
+            lbl = self.front_lbl if target == 'front' else self.back_lbl
+            source = self.new_front_source if target == 'front' else self.new_back_source
+            
+            # Use high-res source if available and exists, else fallback to current display path (cropped)
+            path = source if source and os.path.exists(source) else lbl.current_path
+            
+            if path and os.path.exists(path):
+                self._pick_and_crop(target, path)
+            else:
+                # Fallback to picker if no image is present (default cover)
+                self._handle_folder_click(target)
+        else:
+            # Mode review: Show Fullscreen Overlay
+            lbl = self.front_lbl if target == 'front' else self.back_lbl
+            pixmap = lbl._current_pixmap
+            if pixmap and not pixmap.isNull():
+                overlay = FullscreenImageOverlay(pixmap, self)
+                overlay.showFullScreen()
+
+    def _handle_folder_click(self, target):
+        if self.mode == 'edit':
+            # CLICK FOLDER BUTTON (📁) = PICK NEW SOURCE (Edit Direktori)
+            path = self._open_file_picker(target)
+            if path:
+                # Automatically go to crop for the new file
+                self._pick_and_crop(target, path)
+        else:
+            # Mode review: Open explorer location
+            lbl = self.front_lbl if target == 'front' else self.back_lbl
+            lbl._open_folder()
+
+    def _open_file_picker(self, target):
+        import os, json
+        from PySide6.QtWidgets import QFileDialog
+
+        IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.tif *.ico);;All Files (*)"
+        last_dir = ""
+        settings_path = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json')
+        try:
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    last_dir = json.load(f).get('last_cover_dir', '')
+        except Exception:
+            pass
+
+        path, _ = QFileDialog.getOpenFileName(self, f"Select {target.capitalize()} Cover Source", last_dir, IMAGE_FILTER)
+        if not path or not os.path.exists(path):
+            return ""
+            
+        # Save new directory memory
+        try:
+            d = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+            d['last_cover_dir'] = os.path.dirname(path)
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(d, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+            
+        return path
+
+    def _pick_and_crop(self, target, path):
+        from PySide6.QtGui import QPixmap
+        pixmap = QPixmap(path)
+        if pixmap.isNull():
+            return
+            
+        max_size = 2048
+        if pixmap.width() > max_size or pixmap.height() > max_size:
+            from PySide6.QtCore import Qt
+            pixmap = pixmap.scaled(max_size, max_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        # Show Crop Dialog
+        dialog = CoverCropDialog(pixmap, self)
+        from PySide6.QtWidgets import QDialog
+        if dialog.exec() == QDialog.Accepted:
+            cropped = dialog.get_cropped_pixmap()
+            if not cropped or cropped.isNull():
+                return
+            
+            self.reset_all = False
+            if target == 'front':
+                self.new_front_pixmap = cropped
+                self.new_front_source = path
+                self.front_lbl.set_content(cropped, path)
+            else:
+                self.new_back_pixmap = cropped
+                self.new_back_source = path
+                self.back_lbl.set_content(cropped, path)
+
+    def get_changes(self):
+        return {
+            'reset': self.reset_all,
+            'front': self.new_front_pixmap,
+            'back': self.new_back_pixmap,
+            'front_source': self.new_front_source,
+            'back_source': self.new_back_source
+        }
+
+
 class PlaylistHeader(QFrame):
     """
     Playlist header matching HTML5 design.
@@ -953,6 +1875,13 @@ class PlaylistHeader(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("playlistHeader")
+
+        # Per-playlist cover paths (populated by _pick_cover / load_saved_cover)
+        self._cover_front_path = ''
+        self._cover_back_path = ''
+        self._cover_front_source = ''
+        self._cover_back_source = ''
+
         self._setup_ui()
         self._apply_style()
     
@@ -960,48 +1889,87 @@ class PlaylistHeader(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(25, 25, 25, 20)
         layout.setSpacing(20)
-        
-        # Cover art stack
-        cover_container = QWidget()
-        cover_container.setFixedSize(120, 120)
-        
-        # Back cover (offset)
-        self.cover_back = QLabel(cover_container)
-        self.cover_back.setObjectName("coverBack")
-        self.cover_back.setGeometry(15, 10, 90, 90)
-        self.cover_back.setScaledContents(True)
-        
-        # Front cover
-        self.cover_front = QLabel(cover_container)
-        self.cover_front.setObjectName("coverFront")
-        self.cover_front.setGeometry(0, 20, 100, 100)
-        self.cover_front.setScaledContents(True)
-        
+
+        # Build the 120x120 cover container using the dedicated helper
+        cover_container = self._setup_cover_container()
         layout.addWidget(cover_container)
-        
+
         # Playlist info
         info_layout = QVBoxLayout()
         info_layout.setSpacing(8)
-        
+
         self.playlist_label = QLabel("PLAYLIST")
         self.playlist_label.setObjectName("playlistLabel")
-        
+
         self.playlist_title = QLabel("My Playlist")
         self.playlist_title.setObjectName("playlistTitle")
-        
+
         self.playlist_stats = QLabel("0 Media · 0:00:00")
         self.playlist_stats.setObjectName("playlistStats")
-        
+
         info_layout.addStretch()
         info_layout.addWidget(self.playlist_label)
         info_layout.addWidget(self.playlist_title)
         info_layout.addWidget(self.playlist_stats)
         info_layout.addStretch()
-        
+
         layout.addLayout(info_layout, stretch=1)
-        
+
         # No settings button here - moved to menu bar
-    
+
+    def _setup_cover_container(self) -> QWidget:
+        """
+        Build and return the 120x120 cover-art container widget.
+
+        Contains:
+          - cover_back   (QLabel, 90x90, offset to top-right)
+          - cover_front  (QLabel, 100x100, overlaps back)
+          - _cover_edit_overlay  (QLabel, full-size, hidden by default)
+            Shown on mouse-enter; displays a semi-transparent tint with
+            'Edit' text to signal that the covers are clickable/editable.
+
+        Mouse routing:
+          - Left  button  -> _pick_cover('front')  (most common action)
+          - Right button  -> context menu: Change Front / Change Back / Reset
+
+        An event filter is installed on the container so we can detect
+        QEvent.Enter / QEvent.Leave for the hover overlay without
+        subclassing QWidget.
+        """
+        container = QWidget()
+        container.setFixedSize(120, 120)
+        container.setCursor(Qt.PointingHandCursor)
+        container.setToolTip("Right-click: Manage Covers")
+
+        # Back cover (moved right and up to clearly look like a vinyl sleeve/back album)
+        self.cover_back = QLabel(container)
+        self.cover_back.setObjectName("coverBack")
+        self.cover_back.setGeometry(25, 5, 85, 85)
+        self.cover_back.setScaledContents(True)
+
+        # Front cover (slightly smaller so back cover is heavily visible)
+        self.cover_front = QLabel(container)
+        self.cover_front.setObjectName("coverFront")
+        self.cover_front.setGeometry(0, 20, 95, 95)
+        self.cover_front.setScaledContents(True)
+        
+        # Add a subtle drop shadow to ground the front cover and make layers pop
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setOffset(3, 3)
+        shadow.setColor(Qt.black)
+        self.cover_front.setGraphicsEffect(shadow)
+
+        # Route mouse button presses to _on_cover_mousepress
+        container.mousePressEvent = self._on_cover_mousepress
+
+        self._cover_container = container
+        return container
+
+    def eventFilter(self, obj, event):
+        """No longer handles hover overlays internally for the container."""
+        return super().eventFilter(obj, event)
     def _apply_style(self):
         self.setStyleSheet("""
             QFrame#playlistHeader {
@@ -1010,12 +1978,13 @@ class PlaylistHeader(QFrame):
             
             QLabel#coverBack {
                 background: #2a2a3a;
-                border-radius: 10px;
+                border-radius: 8px;
+                border: 1px solid rgba(255, 255, 255, 0.15);
             }
             
             QLabel#coverFront {
                 background: #3a3a4a;
-                border-radius: 10px;
+                border-radius: 8px;
                 border: 2px solid rgba(255, 91, 6, 0.4);
             }
             
@@ -1054,6 +2023,7 @@ class PlaylistHeader(QFrame):
         self.playlist_stats.setText(f"{track_count} Media · {total_duration}")
     
     def set_covers(self, cover1_path: str, cover2_path: str):
+        """Set cover art images. cover1 = back cover, cover2 = front cover."""
         # Guard against identical path updates to prevent heavy pixmap reloads/stutters
         if getattr(self, '_last_cover1', None) == cover1_path and \
            getattr(self, '_last_cover2', None) == cover2_path:
@@ -1069,6 +2039,257 @@ class PlaylistHeader(QFrame):
         if cover2_path and os.path.exists(cover2_path):
             pixmap = QPixmap(cover2_path)
             self.cover_front.setPixmap(pixmap)
+    
+    def _on_cover_mousepress(self, event):
+        """
+        Route mouse button events on the cover container:
+          - Left button  → Ignored (no accidental file picker popping up).
+          - Right button → Show context menu for managing covers.
+        """
+        from PySide6.QtWidgets import QMenu
+        from PySide6.QtGui import QCursor
+        
+        if event.button() == Qt.RightButton:
+            menu = QMenu(self)
+            menu.addAction("Review Images", lambda: self._open_cover_manager('review'))
+            menu.addAction("Edit images", lambda: self._open_cover_manager('edit'))
+            menu.exec(QCursor.pos())
+
+    def _open_cover_manager(self, mode: str):
+        """
+        Instantiate and show the CoverManagerDialog. Handle its result.
+        """
+        dialog = CoverManagerDialog(
+            mode, 
+            self._cover_front_path, self._cover_back_path,
+            self._cover_front_source, self._cover_back_source,
+            self
+        )
+        from PySide6.QtWidgets import QDialog
+        if dialog.exec() == QDialog.Accepted:
+            changes = dialog.get_changes()
+            playlist_name = getattr(self, '_name', '')
+            if not playlist_name:
+                return
+
+            if changes.get('reset'):
+                self._reset_covers()
+                return
+
+            changed = False
+            
+            # Apply Front Cover changes
+            f_pix = changes.get('front')
+            if f_pix is not None:
+                saved_path = self._save_cropped_cover(f_pix, 'front')
+                if saved_path:
+                    self._cover_front_path = saved_path
+                    self._cover_front_source = changes.get('front_source', '')
+                    self.cover_front.setPixmap(
+                        f_pix.scaled(95, 95, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    )
+                    changed = True
+                    
+            # Apply Back Cover changes
+            b_pix = changes.get('back')
+            if b_pix is not None:
+                saved_path = self._save_cropped_cover(b_pix, 'back')
+                if saved_path:
+                    self._cover_back_path = saved_path
+                    self._cover_back_source = changes.get('back_source', '')
+                    self.cover_back.setPixmap(
+                        b_pix.scaled(85, 85, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    )
+                    changed = True
+
+            # If edits were made, perist the UI setting
+            if changed:
+                self._save_cover_setting(
+                    playlist_name,
+                    self._cover_front_path,
+                    self._cover_back_path,
+                    self._cover_front_source,
+                    self._cover_back_source
+                )
+
+    def _save_cropped_cover(self, pixmap: "QPixmap", target: str) -> str:
+        """
+        Save a square QPixmap to APPDATA/HELXAID/covers/{slug}_{target}.png
+        at a fixed 512x512 resolution.
+
+        512x512 provides sufficient quality for the 90-100 px display labels
+        without excessive disk usage.  Re-picking an image overwrites the
+        previous file for the same playlist and target.
+
+        Parameters
+        ----------
+        pixmap : QPixmap
+            Square pixmap as returned by CoverCropDialog.get_cropped_pixmap().
+        target : str
+            'front' or 'back' — used as the filename suffix.
+
+        Returns
+        -------
+        str
+            Absolute path of the saved PNG file, or '' on failure.
+        """
+        import re
+        covers_dir = os.path.join(
+            os.environ.get('APPDATA', ''), 'HELXAID', 'covers'
+        )
+        os.makedirs(covers_dir, exist_ok=True)
+
+        name = getattr(self, '_name', 'playlist')
+        # Sanitize playlist name so it is safe to use as part of a filename.
+        # Replace any character that is not alphanumeric, underscore, or dash.
+        slug = re.sub(r'[^a-zA-Z0-9_\-]', '_', name)[:40] or 'playlist'
+
+        out_path = os.path.join(covers_dir, f"{slug}_{target}.png")
+        scaled = pixmap.scaled(
+            512, 512, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+        )
+        if scaled.save(out_path, "PNG"):
+            return out_path
+
+        print(f"[Cover] Failed to save cropped cover to: {out_path}")
+        return ''
+
+    def _reset_covers(self):
+        """
+        Clear both cover labels back to the default blank placeholder state
+        and remove the persisted paths from settings.json for this playlist.
+        """
+        self._cover_front_path = ''
+        self._cover_back_path = ''
+        self._cover_front_source = ''
+        self._cover_back_source = ''
+        self.cover_front.clear()
+        self.cover_back.clear()
+        playlist_name = getattr(self, '_name', '')
+        if playlist_name:
+            self._save_cover_setting(playlist_name, '', '', '', '')
+
+    def _save_cover_setting(
+        self, playlist_name: str, front_path: str, back_path: str, 
+        front_source: str = '', back_source: str = ''
+    ):
+        """
+        Persist the front and back cover paths to APPDATA/HELXAID/settings.json.
+
+        Storage schema::
+
+            settings['playlist_covers'][playlist_name] = {
+                'front': '/absolute/path/to/front.png',
+                'back':  '/absolute/path/to/back.png',
+                'front_source': '/path/to/original.jpg',
+                'back_source':  '/path/to/original.png'
+            }
+
+        If an old entry exists in the legacy single-string format it will be
+        silently overwritten the first time the user picks a new cover.
+
+        Parameters
+        ----------
+        playlist_name : str
+            Playlist display name used as the dictionary key.
+        front_path : str
+            Absolute path to the front cover PNG, or '' to clear.
+        back_path : str
+            Absolute path to the back cover PNG, or '' to clear.
+        front_source : str
+            Absolute path to original source file for front cover.
+        back_source : str
+            Absolute path to original source file for back cover.
+        """
+        import json
+        settings_path = os.path.join(
+            os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json'
+        )
+        try:
+            settings = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+            covers = settings.setdefault('playlist_covers', {})
+            covers[playlist_name] = {
+                'front': front_path, 
+                'back': back_path,
+                'front_source': front_source,
+                'back_source': back_source
+            }
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[Cover] Failed to save cover setting: {e}")
+
+    def load_saved_cover(self, playlist_name: str):
+        """
+        Restore previously saved cover images for this playlist on load.
+
+        Called by MusicPanelWidget.set_playlist() each time a new playlist
+        is activated.  Handles both the new dict format::
+
+            {'front': path, 'back': path}
+
+        and the legacy single-string format (pre-upgrade) by applying the
+        same path to both covers as a graceful fallback.
+
+        Parameters
+        ----------
+        playlist_name : str
+            Playlist display name used to look up the saved entry.
+        """
+        import json
+        settings_path = os.path.join(
+            os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json'
+        )
+
+        # Reset in-memory paths before loading so a playlist with no saved
+        # covers doesn't accidentally display the previous playlist's art.
+        self._cover_front_path = ''
+        self._cover_back_path = ''
+        self._cover_front_source = ''
+        self._cover_back_source = ''
+
+        try:
+            if not os.path.exists(settings_path):
+                self.cover_front.clear()
+                self.cover_back.clear()
+                return
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+
+            val = settings.get('playlist_covers', {}).get(playlist_name)
+            if not val:
+                self.cover_front.clear()
+                self.cover_back.clear()
+                return
+
+            # Backward-compat: old format stored a raw string path for the
+            # single image that was applied to both covers simultaneously.
+            if isinstance(val, str):
+                front_path = back_path = val
+            else:
+                front_path = val.get('front', '')
+                back_path  = val.get('back', '')
+                self._cover_front_source = val.get('front_source', '')
+                self._cover_back_source = val.get('back_source', '')
+
+            self._cover_front_path = front_path
+            self._cover_back_path  = back_path
+
+            if front_path and os.path.exists(front_path):
+                pix = QPixmap(front_path)
+                self.cover_front.setPixmap(
+                    pix.scaled(100, 100, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                )
+            if back_path and os.path.exists(back_path):
+                pix = QPixmap(back_path)
+                self.cover_back.setPixmap(
+                    pix.scaled(90, 90, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                )
+        except Exception as e:
+            print(f"[Cover] Failed to load saved cover: {e}")
 
 
 class PlaylistTable(QWidget):
@@ -4014,6 +5235,8 @@ class MusicPanelWidget(QWidget):
         
         # Force icon to show pause (playing state) since track is playing
         self.player_bar.set_playing(True)
+        from PySide6.QtMultimedia import QMediaPlayer
+        self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
         
         # Reset state
         self._audio_output.setVolume(self._user_volume)
@@ -4538,173 +5761,12 @@ class MusicPanelWidget(QWidget):
         self.header.set_info(name, len(tracks), self._format_playlist_duration())
         self.table.set_tracks(tracks)
         
-        # Update cover art from video thumbnails
-        self._update_covers(tracks)
+        # Load user-selected cover art for this playlist (if previously saved)
+        self.header.load_saved_cover(name)
     
-    def _update_covers(self, tracks: list):
-        """Extract cover art from playlist tracks and display them on coverFront/coverBack.
-        
-        Uses a 3-tier extraction strategy per track:
-        - Tier 1: mutagen embedded album art (reliable for MP3/FLAC/M4A)
-        - Tier 2: ffprobe attached_pic stream (for MP4/MKV files with embedded cover)
-        - Tier 3: ffmpeg video frame grab at 5s (universal fallback, no aspect ratio restriction)
-        
-        Previously this function only looked for 1:1 (square) videos, which caused it to
-        silently bail on all standard 16:9 music videos. It also used bare 'ffprobe'/'ffmpeg'
-        strings without full path resolution, causing silent failures when tools are only
-        available in HELXAID's bundled AppData directory (not system PATH).
-        """
-        import threading
-
-        def _resolve_ff_tools():
-            """Resolve full paths for ffprobe and ffmpeg.
-            Mirrors the same path resolution logic used in _fetch_metadata to ensure
-            HELXAID's bundled tools in AppData are found even if not in system PATH.
-            """
-            import shutil
-            ff = {}
-            for tool in ('ffprobe', 'ffmpeg'):
-                path = shutil.which(tool)
-                if not path:
-                    appdata_tools = os.path.join(
-                        os.environ.get("APPDATA", ""), "HELXAID", "tools"
-                    )
-                    if os.path.exists(appdata_tools):
-                        possible = [
-                            os.path.join(appdata_tools, "ffmpeg", "bin", f"{tool}.exe"),
-                            os.path.join(appdata_tools, "ffmpeg", f"{tool}.exe"),
-                            os.path.join(appdata_tools, f"{tool}.exe"),
-                        ]
-                        for p in possible:
-                            if os.path.exists(p):
-                                path = p
-                                break
-                        if not path:
-                            for root, _, fnames in os.walk(appdata_tools):
-                                for fn in fnames:
-                                    if fn.lower() == f"{tool}.exe":
-                                        path = os.path.join(root, fn)
-                                        break
-                                if path:
-                                    break
-                ff[tool] = path
-            return ff
-
-        def _extract_cover(video_path, thumb_path, ffprobe, ffmpeg):
-            """Try to extract cover art from a media file using 3 strategies in priority order.
-            Returns True if a valid image was written to thumb_path, False otherwise.
-            """
-            ext = os.path.splitext(video_path)[1].lower()
-            
-            # Tier 1: mutagen embedded art (works for MP3/FLAC/M4A/OGG)
-            try:
-                import mutagen
-                if ext in ('.mp3', '.flac', '.m4a', '.ogg', '.opus'):
-                    from mutagen import File as MutagenFile
-                    audio = MutagenFile(video_path)
-                    if audio and audio.tags:
-                        art_data = None
-                        # ID3 tags (MP3): look for APIC (Attached Picture) frame
-                        if hasattr(audio.tags, 'getall'):
-                            apic = audio.tags.getall('APIC')
-                            if apic:
-                                art_data = apic[0].data
-                        # FLAC: METADATA_BLOCK_PICTURE
-                        elif 'METADATA_BLOCK_PICTURE' in audio.tags:
-                            import base64
-                            from mutagen.flac import Picture
-                            pic = Picture(base64.b64decode(audio.tags['METADATA_BLOCK_PICTURE'][0]))
-                            art_data = pic.data
-                        if art_data:
-                            with open(thumb_path, 'wb') as f:
-                                f.write(art_data)
-                            if os.path.getsize(thumb_path) > 0:
-                                return True
-            except Exception:
-                pass
-            
-            # Tier 2: ffprobe attached_pic stream (for MP4/MKV with embedded cover art)
-            if ffprobe and ffmpeg:
-                try:
-                    r = subprocess.run(
-                        [ffprobe, '-v', 'quiet', '-print_format', 'json', '-show_streams', video_path],
-                        capture_output=True, text=True, timeout=5,
-                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-                    )
-                    if r.returncode == 0:
-                        data = json.loads(r.stdout)
-                        for stream in data.get('streams', []):
-                            if stream.get('disposition', {}).get('attached_pic', 0) == 1:
-                                subprocess.run(
-                                    [ffmpeg, '-i', video_path,
-                                     '-map', f"0:{stream['index']}",
-                                     '-vframes', '1', '-q:v', '2', '-y', thumb_path],
-                                    capture_output=True, timeout=5,
-                                    creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-                                )
-                                if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                                    return True
-                                break
-                except Exception:
-                    pass
-            
-            # Tier 3: ffmpeg frame grab at 5s (universal fallback, no aspect ratio restriction)
-            if ffmpeg:
-                try:
-                    subprocess.run(
-                        [ffmpeg, '-ss', '5', '-i', video_path,
-                         '-vframes', '1', '-q:v', '2', '-y', thumb_path],
-                        capture_output=True, timeout=8,
-                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-                    )
-                    if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                        return True
-                except Exception:
-                    pass
-            
-            return False
-
-        def run_update():
-            if not tracks:
-                return
-            
-            ff = _resolve_ff_tools()
-            ffprobe = ff.get('ffprobe')
-            ffmpeg = ff.get('ffmpeg')
-            
-            print(f"[Cover] ffprobe={ffprobe}, ffmpeg={ffmpeg}")
-            
-            cover_paths = []
-            for track in tracks:
-                if len(cover_paths) >= 2:
-                    break
-                video_path = track.get('path', '')
-                if not video_path or not os.path.exists(video_path):
-                    continue
-                try:
-                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                        thumb_path = tmp.name
-                    if _extract_cover(video_path, thumb_path, ffprobe, ffmpeg):
-                        cover_paths.append(thumb_path)
-                        print(f"[Cover] Extracted from: {os.path.basename(video_path)}")
-                except Exception as e:
-                    print(f"[Cover] Error on {os.path.basename(track.get('path', ''))}: {e}")
-                    continue
-            
-            if not cover_paths:
-                print("[Cover] No covers extracted.")
-                return
-            
-            # Marshal UI update back to main thread via QTimer.singleShot(0)
-            from PySide6.QtCore import QTimer
-            c1 = cover_paths[0]
-            c2 = cover_paths[1] if len(cover_paths) >= 2 else cover_paths[0]
-            QTimer.singleShot(0, lambda: self.header.set_covers(c1, c2) if hasattr(self, 'header') else None)
-
-        threading.Thread(target=run_update, daemon=True).start()
-
 
     def _play_track(self, index: int):
+
         # If filter is active, translate display index to original index
         if hasattr(self, '_filtered_indices') and self._filtered_indices is not None:
             if 0 <= index < len(self._filtered_indices):
@@ -4787,11 +5849,18 @@ class MusicPanelWidget(QWidget):
         # VLC overlay toggle intercept
         if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
             import vlc
+            from PySide6.QtMultimedia import QMediaPlayer
             state = self._vlc_player.get_state()
             if state == vlc.State.Playing:
                 self._vlc_player.pause()
+                if hasattr(self, 'player_bar') and self.player_bar:
+                    self.player_bar.set_playing(False)
+                self.playbackStateChanged.emit(QMediaPlayer.PausedState)
             else:
                 self._vlc_player.play()
+                if hasattr(self, 'player_bar') and self.player_bar:
+                    self.player_bar.set_playing(True)
+                self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
             return
             
         from PySide6.QtMultimedia import QMediaPlayer

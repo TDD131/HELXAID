@@ -7,7 +7,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Status-Active_Development-blue?style=for-the-badge" alt="Status">
   <img src="https://img.shields.io/badge/Platform-Windows_10%2B-lightgray?style=for-the-badge&logo=windows" alt="Platform">
-  <img src="https://img.shields.io/badge/Version-v4.14-orange?style=for-the-badge" alt="Version">
+  <img src="https://img.shields.io/badge/Version-v4.14.1-orange?style=for-the-badge" alt="Version">
 </p>
 
 <p align="center">
@@ -145,6 +145,10 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ## ✦ Changelog
 
+### 4.14.1
+
+- If user launch game from steam, it will launch steam first then the game launch.
+
 ### 4.14
 
 - Fixed some bugs in HELXAIC (I forgot to list them, sorry :<)
@@ -157,6 +161,7 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 - Fix "Current version" function, now it IS updated to 4.14.
 - Shuffle and Loop Mode now saved as last time state.
 - Make the last time duration track more accurate.
+- Now the covers of HELXAIC media can be editable.
 - Fixes some minor issues that I'm lazy to write down :)
 
 ### 4.13

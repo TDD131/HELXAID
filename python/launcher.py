@@ -8358,7 +8358,7 @@ Stylesheet Selector:
 
         # Version label and Update button
         version_layout = QHBoxLayout()
-        version_label = QLabel("Version - 4.14")
+        version_label = QLabel("Version - 4.14.1")
         version_label.setStyleSheet("color: #888888; font-size: 11px;")
         
         check_update_btn = AnimatedButton("Check for Updates")
@@ -8607,7 +8607,7 @@ Stylesheet Selector:
             import json
             import threading
             
-            CURRENT_VERSION = "4.14"
+            CURRENT_VERSION = "4.14.1"
             API_URL = "https://api.github.com/repos/TDD131/HELXAID/releases/latest"
             
             def run_check():
@@ -8665,7 +8665,7 @@ Stylesheet Selector:
             QMessageBox.warning(self, "Update Error", f"Failed to check for updates!\n\nPlease ensure your internet connection is stable.\nError: {release_url}")
             return
             
-        CURRENT_VERSION = "4.14"
+        CURRENT_VERSION = "4.14.1"
         
         if latest_version == "NO_RELEASES":
             QMessageBox.information(self, "Update", f"No releases have been published on GitHub yet.\n\nYour current version: {CURRENT_VERSION}")
@@ -12076,113 +12076,221 @@ First Played: {first_played_formatted}
         QTimer.singleShot(800, finish)
         dialog.exec()
 
+    def _requires_steam(self, exe_path: str) -> bool:
+        """Determines if the game is a Steam game (legit or cracked) by checking path and DLLs."""
+        if "steamapps" in exe_path.lower():
+            return True
+        try:
+            import os
+            game_dir = os.path.dirname(exe_path)
+            search_dirs = [game_dir]
+            
+            parts = game_dir.replace('\\', '/').split('/')
+            # Subdir check: many UE games hide the exe in GameRoot/GameName/Binaries/Win64/
+            if len(parts) >= 2 and parts[-2].lower() == 'binaries':
+                game_content = os.path.dirname(os.path.dirname(game_dir))
+                search_dirs.append(game_content)
+                game_root = os.path.dirname(game_content)
+                if len(game_root) > 3: # E.g., not "D:\\"
+                    search_dirs.append(game_root)
+            
+            # Stress-Test Optimization: Hard cap file scanning to prevent UI hangs (Zero-Latency Req)
+            file_scan_cap = 5000
+            files_scanned = 0
+            
+            for base_dir in sorted(set(search_dirs), key=len, reverse=True):
+                for root, _, files in os.walk(base_dir):
+                    for file in files:
+                        file_lower = file.lower()
+                        if file_lower == "steam_api.dll" or file_lower == "steam_api64.dll":
+                            return True
+                        files_scanned += 1
+                        if files_scanned > file_scan_cap:
+                            print(f"[Pre-Launch] Scan limit reached ({file_scan_cap}). Assuming no Steam dependency.")
+                            return False
+        except Exception:
+            pass
+        return False
+
+    def _is_steam_running(self) -> bool:
+        """Safely determines if steam.exe is running, avoiding PyInstaller console popups."""
+        try:
+            import subprocess
+            CREATE_NO_WINDOW = 0x08000000
+            output = subprocess.check_output(
+                ["tasklist", "/FI", "IMAGENAME eq steam.exe"],
+                creationflags=CREATE_NO_WINDOW,
+                stdin=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).decode(errors="ignore")
+            return "steam.exe" in output.lower()
+        except Exception:
+            return False
+
+    def _find_steam_exe(self) -> str:
+        """Retrieves Steam path from Windows Registry or defaults."""
+        import os
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam") as key:
+                install_path, _ = winreg.QueryValueEx(key, "InstallPath")
+                candidate = os.path.join(install_path, "steam.exe")
+                if os.path.isfile(candidate):
+                    return candidate
+        except Exception:
+            pass
+            
+        for path in [r"C:\Program Files (x86)\Steam\steam.exe", r"C:\Program Files\Steam\steam.exe"]:
+            if os.path.isfile(path): return path
+        return ""
+
     def launch_game(self, path):
         """Launch a game or app via the Windows shell.
-
+        
         Using os.startfile() is closer to how Explorer/shortcuts launch apps,
         and supports both .exe and .lnk targets.
         """
-        if os.name == 'nt' and path:
-            exe_name = os.path.basename(path)
-            try:
-                kwargs = {}
-                if hasattr(subprocess, "CREATE_NO_WINDOW"):
-                    kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-                output = subprocess.check_output(
-                    ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
-                    **kwargs,
-                ).decode(errors="ignore")
-                if exe_name.lower() in output.lower() and "No tasks are running" not in output:
-                    QMessageBox.information(self, "Game already running", "Game already running!")
-                    return
-            except Exception as e:
-                print(f"Failed to check if game is already running: {e}")
-
+        # Guard against double-clicks or parallel launch attempts (Stability Req)
+        if getattr(self, "_is_launching_game", False):
+            print("[Launch Guard] Blocked parallel launch execution.")
+            return
+            
+        self._is_launching_game = True
         try:
-            # Launch from the game's directory (important for cracked games)
-            game_dir = os.path.dirname(path)
-            
-            # Use subprocess.Popen with flags to create a fully independent process
-            # This ensures the game doesn't close when the launcher exits
-            # DETACHED_PROCESS: The process runs independently of the console
-            # CREATE_NEW_PROCESS_GROUP: Creates a new process group (doesn't share console signals)
-            # CREATE_BREAKAWAY_FROM_JOB: Allows the process to break away from any job object
-            DETACHED_PROCESS = 0x00000008
-            CREATE_NEW_PROCESS_GROUP = 0x00000200
-            CREATE_BREAKAWAY_FROM_JOB = 0x01000000
-            CREATE_NO_WINDOW = 0x08000000
-            
-            creation_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
-            
+            if os.name == 'nt' and path:
+                exe_name = os.path.basename(path)
+                
+                # --- Steam Pre-Launch Injection ---
+                if self._requires_steam(path):
+                    if not self._is_steam_running():
+                        print("[Pre-Launch] Steam completely closed. Booting Steam...")
+                        steam_exe = self._find_steam_exe()
+                        if steam_exe:
+                            try:
+                                import subprocess
+                                DETACHED = 0x00000008 | 0x00000200 | 0x01000000
+                                subprocess.Popen(
+                                    [steam_exe], 
+                                    cwd=os.path.dirname(steam_exe),
+                                    creationflags=DETACHED,
+                                    stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL,
+                                    close_fds=True,
+                                )
+                                # Native UI Sync Barrier (Prevents thread freezing while waiting for Steam to initialize fully)
+                                from PySide6.QtWidgets import QMessageBox
+                                msg = QMessageBox(self)
+                                msg.setObjectName("SteamLoginPromptDialog")
+                                msg.setIcon(QMessageBox.Information)
+                                msg.setWindowTitle("Steam Login Tracker")
+                                msg.setText("HELXAID is launching Steam in the background.\n\nPlease complete your profile login if prompted.\nClick OK only when Steam is fully ready.")
+                                msg.exec()
+                            except Exception as e:
+                                print(f"[Pre-Launch] Steam spawn error: {e}")
+                        else:
+                            print("[Pre-Launch] Warning: Steam.exe missing.")
+                
+                try:
+                    kwargs = {}
+                    if hasattr(subprocess, "CREATE_NO_WINDOW"):
+                        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                    output = subprocess.check_output(
+                        ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
+                        **kwargs,
+                    ).decode(errors="ignore")
+                    if exe_name.lower() in output.lower() and "No tasks are running" not in output:
+                        QMessageBox.information(self, "Game already running", "Game already running!")
+                        return
+                except Exception as e:
+                    print(f"Failed to check if game is already running: {e}")
+
             try:
-                # First try subprocess.Popen which gives us the most control over process creation
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
+                # Launch from the game's directory (important for cracked games)
+                game_dir = os.path.dirname(path)
                 
-                # Note: Do NOT use start_new_session=True on Windows, it's a Unix feature
-                # and can actually prevent the process from being properly detached
-                process = subprocess.Popen(
-                    [path],
-                    cwd=game_dir,
-                    creationflags=creation_flags,
-                    startupinfo=startupinfo,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    close_fds=True
-                )
-                # Don't keep a reference to the process - let it run independently
-                del process
-            except (PermissionError, OSError) as popen_error:
-                # If Popen fails (e.g., needs elevation), fall back to ShellExecuteW
-                import ctypes
-                result = ctypes.windll.shell32.ShellExecuteW(
-                    None,           # hwnd
-                    "runas",        # operation - request elevation
-                    path,           # file to execute
-                    None,           # parameters
-                    game_dir,       # working directory
-                    1               # SW_SHOWNORMAL
-                )
+                # Use subprocess.Popen with flags to create a fully independent process
+                # This ensures the game doesn't close when the launcher exits
+                # DETACHED_PROCESS: The process runs independently of the console
+                # CREATE_NEW_PROCESS_GROUP: Creates a new process group (doesn't share console signals)
+                # CREATE_BREAKAWAY_FROM_JOB: Allows the process to break away from any job object
+                DETACHED_PROCESS = 0x00000008
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                CREATE_BREAKAWAY_FROM_JOB = 0x01000000
                 
-                if result <= 32:
-                    raise OSError(f"Failed to launch with admin privileges (error {result})")
-            
-            # Update last_played timestamp for recently played feature
-            for game in self.data:
-                if game.get("exe") == path:
-                    game["last_played"] = datetime.now().isoformat()
-                    # Set first_played only if not already set (first time playing)
-                    if not game.get("first_played"):
-                        game["first_played"] = datetime.now().isoformat()
-                    # Set date_added if not already set
-                    if not game.get("date_added"):
-                        game["date_added"] = datetime.now().isoformat()
-                    save_json(self.data)
+                creation_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
+                
+                try:
+                    # First try subprocess.Popen which gives us the most control over process creation
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
                     
-                    # Track current session for live stats (marked as from launcher)
-                    self.current_session = {"game": game, "start_time": time.time(), "from_launcher": True}
+                    # Note: Do NOT use start_new_session=True on Windows, it's a Unix feature
+                    # and can actually prevent the process from being properly detached
+                    process = subprocess.Popen(
+                        [path],
+                        cwd=game_dir,
+                        creationflags=creation_flags,
+                        startupinfo=startupinfo,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        close_fds=True
+                    )
+                    # Don't keep a reference to the process - let it run independently
+                    del process
+                except (PermissionError, OSError) as popen_error:
+                    # If Popen fails (e.g., needs elevation), fall back to ShellExecuteW
+                    import ctypes
+                    result = ctypes.windll.shell32.ShellExecuteW(
+                        None,           # hwnd
+                        "runas",        # operation - request elevation
+                        path,           # file to execute
+                        None,           # parameters
+                        game_dir,       # working directory
+                        1               # SW_SHOWNORMAL
+                    )
                     
-                    # Show End Game button
-                    self.end_game_btn.show()
-                    
-                    # Update Discord Rich Presence to show playing this game
-                    self.update_discord_playing(game.get("name", "Unknown"))
-                    
-                    # Start play time tracking in background thread
-                    self.start_play_time_tracking(path, game)
-                    
-                    # Apply game booster optimizations if enabled
-                    self._apply_game_booster(exe_name, game)
-                    break
-                    
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"Gagal menjalankan aplikasi.\n\n{e}"
-            )
+                    if result <= 32:
+                        raise OSError(f"Failed to launch with admin privileges (error {result})")
+                
+                # Update last_played timestamp for recently played feature
+                for game in self.data:
+                    if game.get("exe") == path:
+                        game["last_played"] = datetime.now().isoformat()
+                        # Set first_played only if not already set (first time playing)
+                        if not game.get("first_played"):
+                            game["first_played"] = datetime.now().isoformat()
+                        # Set date_added if not already set
+                        if not game.get("date_added"):
+                            game["date_added"] = datetime.now().isoformat()
+                        save_json(self.data)
+                        
+                        # Track current session for live stats (marked as from launcher)
+                        self.current_session = {"game": game, "start_time": time.time(), "from_launcher": True}
+                        
+                        # Show End Game button
+                        self.end_game_btn.show()
+                        
+                        # Update Discord Rich Presence to show playing this game
+                        self.update_discord_playing(game.get("name", "Unknown"))
+                        
+                        # Start play time tracking in background thread
+                        self.start_play_time_tracking(path, game)
+                        
+                        # Apply game booster optimizations if enabled
+                        self._apply_game_booster(exe_name, game)
+                        break
+                        
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Failed to launch Game.\n\n{e}"
+                )
+        finally:
+            self._is_launching_game = False
     
     def _apply_game_booster(self, exe_name: str, game: dict):
         """Apply booster optimizations when a game is launched.
