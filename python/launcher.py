@@ -12167,7 +12167,6 @@ First Played: {first_played_formatted}
                         steam_exe = self._find_steam_exe()
                         if steam_exe:
                             try:
-                                import subprocess
                                 DETACHED = 0x00000008 | 0x00000200 | 0x01000000
                                 subprocess.Popen(
                                     [steam_exe], 
@@ -12179,7 +12178,6 @@ First Played: {first_played_formatted}
                                     close_fds=True,
                                 )
                                 # Native UI Sync Barrier (Prevents thread freezing while waiting for Steam to initialize fully)
-                                from PySide6.QtWidgets import QMessageBox
                                 msg = QMessageBox(self)
                                 msg.setObjectName("SteamLoginPromptDialog")
                                 msg.setIcon(QMessageBox.Information)
