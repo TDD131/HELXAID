@@ -20,7 +20,7 @@ from smooth_scroll import SmoothScrollArea, SmoothTableWidget
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QLinearGradient, 
-    QConicalGradient, QIntValidator
+    QConicalGradient, QIntValidator, QPixmap
 )
 
 import collections
@@ -249,7 +249,7 @@ class NetworkDetailPanel(QWidget):
             self.lbl_low_val.setText(self._fmt_net_bytes(lowest))
             
             y_max = max(10240, peak * 1.15)
-            self.chart.setYRange(0, y_max, padding=0)
+            self.chart.getPlotItem().setYRange(0, y_max, padding=0)
             
         else:
             if not historical_points:
@@ -288,7 +288,7 @@ class NetworkDetailPanel(QWidget):
             self.lbl_low_val.setText(self._fmt_net_bytes(lowest).replace('/s', ''))
             
             y_max = max(10240, peak * 1.15)
-            self.chart.setYRange(0, y_max, padding=0)
+            self.chart.getPlotItem().setYRange(0, y_max, padding=0)
 
 class StatsCard(QFrame):
     """
@@ -4148,7 +4148,7 @@ class HardwarePanelWidget(QWidget):
         self.disk_chart.getAxis('left').setWidth(30)
         self.disk_chart.disableAutoRange(axis='y')  # Keep Y fixed at 0-100
         self.disk_chart.enableAutoRange(axis='x')   # X auto-range
-        self.disk_chart.setXRange(0, 63, padding=0)  # Default to View All (60 data points + 3 padding for text)
+        self.disk_chart.getPlotItem().setXRange(0, 63, padding=0)  # Default to View All (60 data points + 3 padding for text)
         self.disk_usage_curve = self.disk_chart.plot(pen=pg.mkPen('#f97316', width=2), name='Usage')
         # Text label at leading edge showing current value
         self.disk_leading_text = pg.TextItem(text='0%', color='#f97316', anchor=(0, 0.5))
@@ -4349,7 +4349,7 @@ class HardwarePanelWidget(QWidget):
         """Enforce Y-axis range on chart (prevents View All from changing it)."""
         # Block signals to avoid recursion
         chart.blockSignals(True)
-        chart.setYRange(min_val, max_val, padding=0)
+        chart.getPlotItem().setYRange(min_val, max_val, padding=0)
         chart.blockSignals(False)
     
     def _setup_mutual_exclusive_drag(self, chart):
@@ -4474,7 +4474,7 @@ class HardwarePanelWidget(QWidget):
             if self._chart_auto_scroll['ram'] and hasattr(self, 'ram_chart'):
                 x_max = len(self._ram_history)
                 x_min = max(0, x_max - self._chart_display_length)
-                self.ram_chart.setXRange(x_min, x_max + 3, padding=0)
+                self.ram_chart.getPlotItem().setXRange(x_min, x_max + 3, padding=0)
             # Update leading edge text position and value
             if hasattr(self, 'ram_leading_text'):
                 self.ram_leading_text.setText(f'{ram_percent:.0f}%')
@@ -4493,7 +4493,7 @@ class HardwarePanelWidget(QWidget):
             if self._chart_auto_scroll['cpu']:
                 x_max = len(self._cpu_history)
                 x_min = max(0, x_max - self._chart_display_length)
-                self.cpu_chart.setXRange(x_min, x_max + 3, padding=0)
+                self.cpu_chart.getPlotItem().setXRange(x_min, x_max + 3, padding=0)
             # Update leading edge text position and value
             self.cpu_leading_text.setText(f'{cpu_usage:.0f}%')
             self.cpu_leading_text.setPos(len(self._cpu_history) - 1, cpu_usage)
@@ -4513,7 +4513,7 @@ class HardwarePanelWidget(QWidget):
             if self._chart_auto_scroll['disk']:
                 x_max = len(self._disk_usage_history)
                 x_min = max(0, x_max - self._chart_display_length)
-                self.disk_chart.setXRange(x_min, x_max + 3, padding=0)
+                self.disk_chart.getPlotItem().setXRange(x_min, x_max + 3, padding=0)
             # Update leading edge text position and value
             self.disk_leading_text.setText(f'{disk_activity:.1f}%')
             self.disk_leading_text.setPos(len(self._disk_usage_history) - 1, disk_activity)
@@ -5335,3 +5335,4 @@ class HardwarePanelWidget(QWidget):
                 QPushButton:hover { background: #22c55e; }
             """)
             btn.setEnabled(True)
+

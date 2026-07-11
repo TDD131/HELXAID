@@ -32,11 +32,8 @@ from PySide6.QtWidgets import (
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDesktopServices, QLinearGradient, QImage, QFont, QFontMetrics, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread
-from PlaylistWidget import PlaylistWidget
 from integrations.cpu_controller import is_uxtu_installed, is_ryzenadj_available, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
 from AnimatedButton import AnimatedButton, AnimatedCheckBox
-from CrosshairWidget import CrosshairWidget
-from HardwarePanelWidget import HardwarePanelWidget
 from macro_system.integration.hardware_manager import get_hardware_manager
 from DebugConsoleWidget import get_debug_console, toggle_debug_console
 
@@ -3698,11 +3695,26 @@ class GameLauncher(QWidget):
             for key in keys[:len(keys) // 4]:
                 del self._icon_cache[key]
         
-        # Run garbage collection
-        gc.collect()
+        # Run lightweight garbage collection (generation 0 only for minimal pause)
+        gc.collect(0)
+        
+        # Trim the Working Set to reduce RAM usage shown in Task Manager
+        # SetProcessWorkingSetSize with -1, -1 is the standard Win32 API for this
+        import sys
+        if sys.platform == 'win32':
+            try:
+                import ctypes
+                handle = ctypes.windll.kernel32.GetCurrentProcess()
+                ctypes.windll.kernel32.SetProcessWorkingSetSize(handle, -1, -1)
+            except Exception:
+                pass
 
     def _deferred_startup_tasks(self):
         """Run non-critical startup tasks after UI is visible for faster perceived startup."""
+        # NOTE: Heavy modules (pyqtgraph, numpy, MusicPanelWidget, etc.) are NOT
+        # prewarmed here. They are lazy-loaded when the user first switches to
+        # their panel via switch_panel(). This saves ~200MB RAM at startup.
+
         # Auto-fix corrupt icons at startup
         if hasattr(self, 'data') and self.data:
             validate_and_fix_corrupt_icons(self.data)
@@ -4993,8 +5005,8 @@ class GameLauncher(QWidget):
         self.update_grid_size()
         self.refresh()
         
-        # Re-apply theme now that games_container exists (for background image)
-        self.apply_theme()
+        # NOTE: apply_theme() is already called at init + QTimer.singleShot(500ms)
+        # No need for a 3rd call here — the delayed call handles post-layout re-apply
         
         # NOTE: Music panel (HELXAIC) is lazy-loaded in switch_panel to save RAM!
 
@@ -5009,16 +5021,21 @@ class GameLauncher(QWidget):
         
         # NOTE: Crosshair and Macro panels are lazy-loaded in switch_panel to save RAM!
         
-        # Setup background game detection (scans every 5 seconds)
-        self.game_scanner_timer = QTimer(self)
-        self.game_scanner_timer.timeout.connect(self._scan_for_running_games)
-        self.game_scanner_timer.start(5000)  # 5 seconds
+        # NOTE: game_detection_timer (2s) already handles _scan_for_running_games
+        # A duplicate 5s timer was removed here to prevent redundant scanning
         
         # Install event filter for music panel keyboard shortcuts
         QApplication.instance().installEventFilter(self)
         
         # Explicitly switch to the first panel to trigger sidebar animations/gradients
         self.switch_panel(0)
+        
+        # Periodic memory cleanup (runs every 2 minutes to prevent RAM bloat)
+        self._memory_cleanup_timer = QTimer(self)
+        self._memory_cleanup_timer.timeout.connect(self._cleanup_memory)
+        self._memory_cleanup_timer.start(120_000)  # Every 2 minutes
+        # Also run once shortly after startup for initial trim
+        QTimer.singleShot(3000, self._cleanup_memory)
         
         print(f"[TIMING] GameLauncher.__init__ DONE")
 
@@ -7204,6 +7221,8 @@ Stylesheet Selector:
     
     def _setup_hardware_panel(self):
         """Setup the Hardware Monitor panel."""
+        from HardwarePanelWidget import HardwarePanelWidget
+        
         # Check if LibreHardwareMonitor or HWiNFO is available - if not, show download prompt
         try:
             from integrations.tools_downloader import is_librehwmon_available, is_hwinfo_available
@@ -7690,6 +7709,7 @@ Stylesheet Selector:
     
     def _setup_crosshair_panel(self):
         """Setup the Crosshair overlay panel."""
+        from CrosshairWidget import CrosshairWidget
         self.crosshair_panel = CrosshairWidget()
         self.crosshair_panel.setStyleSheet("""
             QWidget#crosshairPanel {
