@@ -1,14 +1,12 @@
 {
-  "id": "default",
-  "name": "Default Profile",
-  "description": "Default macro profile",
+  "id": "f9f2db43",
+  "name": "hmm",
+  "description": "",
   "enabled": true,
   "bound_apps": [],
   "activation_hotkey": null,
   "default_layer": "default",
   "layer_switch_hotkeys": {},
-  "macro_ids": [
-    "autoclicker_0356c5"
-  ],
+  "macro_ids": [],
   "settings": {}
 }

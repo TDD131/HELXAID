@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import (
     Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
-    QSize, QPoint, QUrl, QThread, QSettings, QRect, Property
+    QSize, QPoint, QUrl, QThread, QSettings
 )
 from PySide6.QtGui import (
     QPixmap, QIcon, QFont, QColor, QPalette, QCursor,
@@ -26,7 +26,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
-from MediaLibraryPage import MediaLibraryPage
 
 import os
 import sys
@@ -40,102 +39,7 @@ from typing import Optional
 from functools import partial
 
 
-class FadingHandleSlider(QSlider):
-    """Base slider with a handle that fades out after inactivity and fades in on hover."""
-    
-    def __init__(self, orientation, parent=None):
-        super().__init__(orientation, parent)
-        self._handle_opacity = 0.0
-        self._is_hovered = False
-        self._is_pressed = False
-        self._handle_color = QColor("#FF5B06")
-        self._handle_hover_color = QColor("#FDA903")
-        self._handle_size = 14
-        
-        self._anim = QPropertyAnimation(self, b"handleOpacity")
-        self._anim.setDuration(200)
-        
-        self._hide_timer = QTimer(self)
-        self._hide_timer.setSingleShot(True)
-        self._hide_timer.setInterval(3000)
-        self._hide_timer.timeout.connect(self._fade_out)
-        
-        self.setAttribute(Qt.WA_Hover)
-        self.setMouseTracking(True)
-
-    @Property(float)
-    def handleOpacity(self):
-        return self._handle_opacity
-
-    @handleOpacity.setter
-    def handleOpacity(self, value):
-        self._handle_opacity = value
-        self.update()
-        
-    def _fade_in(self):
-        self._anim.stop()
-        self._anim.setEndValue(1.0)
-        self._anim.start()
-        
-    def _fade_out(self):
-        if not self._is_hovered and not self._is_pressed:
-            self._anim.stop()
-            self._anim.setEndValue(0.0)
-            self._anim.start()
-            
-    def enterEvent(self, event):
-        self._is_hovered = True
-        self._hide_timer.stop()
-        self._fade_in()
-        super().enterEvent(event)
-        
-    def leaveEvent(self, event):
-        self._is_hovered = False
-        if not self._is_pressed:
-            self._hide_timer.start()
-        super().leaveEvent(event)
-        
-    def mousePressEvent(self, event):
-        self._is_pressed = True
-        self._hide_timer.stop()
-        self._fade_in()
-        super().mousePressEvent(event)
-        
-    def mouseReleaseEvent(self, event):
-        self._is_pressed = False
-        if not self._is_hovered:
-            self._hide_timer.start()
-        super().mouseReleaseEvent(event)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self._handle_opacity > 0:
-            from PySide6.QtWidgets import QStyleOptionSlider, QStyle
-            from PySide6.QtGui import QPainter, QBrush
-            import PySide6.QtWidgets
-            from PySide6.QtCore import QPoint
-            from PySide6.QtGui import Qt
-            
-            opt = QStyleOptionSlider()
-            self.initStyleOption(opt)
-            hr = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self)
-            
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setOpacity(self._handle_opacity)
-            
-            color = self._handle_hover_color if self._is_hovered or self._is_pressed else self._handle_color
-            painter.setBrush(QBrush(color))
-            painter.setPen(Qt.NoPen)
-            
-            cx = hr.center().x()
-            cy = hr.center().y()
-            radius = self._handle_size / 2
-            
-            painter.drawEllipse(QPoint(cx, cy), radius, radius)
-            painter.end()
-
-class ClickSlider(FadingHandleSlider):
+class ClickSlider(QSlider):
     """Custom slider that jumps to mouse click position."""
     
     def mousePressEvent(self, event):
@@ -1041,6 +945,35 @@ class YouTubeDownloaderPanel(QFrame):
 class DummyVideoWidget(QWidget):
     def setAspectRatioMode(self, *args, **kwargs): pass
 
+class DummyVideoPlayer(QWidget):
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.video_widget = DummyVideoWidget()
+        self._is_fullscreen = False
+        
+        # PySide6 Signals must be defined at class level, but since this is a dummy,
+        # we can just use dummy objects for the connects.
+        class DummySignal:
+            def connect(self, *args, **kwargs): pass
+            
+        self.backRequested = DummySignal()
+        self.fullscreenToggled = DummySignal()
+        
+    def set_subtitle_style_preset(self, *args, **kwargs): pass
+    def set_subtitle_font_variant(self, *args, **kwargs): pass
+    def set_subtitle_font_size(self, *args, **kwargs): pass
+    def get_subtitle_style_preset(self, *args, **kwargs): return ""
+    def get_subtitle_font_variant(self, *args, **kwargs): return False, False
+    def get_subtitle_font_size(self, *args, **kwargs): return 12
+    def clear_subtitles(self, *args, **kwargs): pass
+    def get_active_subtitle_path(self, *args, **kwargs): return None
+    def set_subtitle_file(self, *args, **kwargs): pass
+    def get_subtitle_cue_count(self, *args, **kwargs): return 0
+    def get_subtitle_last_error(self, *args, **kwargs): return ""
+    def set_render_suspended(self, *args, **kwargs): pass
+    def set_title(self, *args, **kwargs): pass
+    def _toggle_fullscreen(self, *args, **kwargs): pass
+    def setFocus(self, *args, **kwargs): pass
 
 
 class _CropCanvas(QWidget):
@@ -2394,16 +2327,13 @@ class PlaylistHeader(QFrame):
 
 class PlaylistTable(QWidget):
     """
-    Playlist table using QTreeWidget to support folders.
+    Playlist table using QTableWidget like Basic Services tab.
     
     Component Name: PlaylistTable
     """
     
     trackDoubleClicked = Signal(int)
     sortChanged = Signal(str, bool)  # column, ascending
-    deleteSelected = Signal(list)
-    deleteAll = Signal()
-    flattenGroup = Signal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2413,214 +2343,87 @@ class PlaylistTable(QWidget):
         self._sort_column = "title"
         self._sort_ascending = True
         self._sorted_indices = []  # Stores sorted order of original indices
-        self._last_double_click_time = 0
         self._setup_ui()
     
     def _setup_ui(self):
-        from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView, QAbstractItemView
+        from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
         from smooth_scroll import SmoothTableWidget
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Create tree
-        self.tree = QTreeWidget()
-        self.tree.setObjectName("playlistTree")
-        self.tree.setColumnCount(4)
-        self.tree.setHeaderLabels(["#", "Title", "Date Added", "Duration"])
+        # Create table
+        self.table = QTableWidget()
+        self.table.setObjectName("playlistTable")
+        self.table.setColumnCount(4)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setShowGrid(False)
+        self.table.setSortingEnabled(False)  # We handle sorting manually
+        self.table.setFocusPolicy(Qt.NoFocus)
         
-        self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection) # Allow multiple delete
-        self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.tree.setSortingEnabled(False)  # We handle sorting manually
-        self.tree.setFocusPolicy(Qt.NoFocus)
-        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tree.customContextMenuRequested.connect(self._show_context_menu)
-        self.tree.setUniformRowHeights(True)
-        self.tree.setAnimated(True)
-        self.tree.setExpandsOnDoubleClick(False) # Manual handling for triple click
-        self.tree.setRootIsDecorated(False) # Hide expand arrows for cleaner look
+        # Set header labels
+        self.table.setHorizontalHeaderLabels(["#", "Title", "Date Added", "Duration"])
         
-        self.tree.setDragEnabled(True)
-        self.tree.setAcceptDrops(True)
+        # Column widths & resize behavior (adaptive to table size)
+        self.table.setColumnWidth(0, 50)    # Index
+        self.table.setColumnWidth(2, 160)   # Date Added
+        self.table.setColumnWidth(3, 80)    # Duration
         
-        # --- Rubber Band Setup ---
-        from PySide6.QtWidgets import QRubberBand
-        from PySide6.QtCore import QRect
-        self.tree._rubber_band = QRubberBand(QRubberBand.Rectangle, self.tree.viewport())
-        self.tree._rubber_band_origin = None
-        self.tree._rubber_band_active = False
-        
-        orig_mousePressEvent = self.tree.mousePressEvent
-        orig_mouseMoveEvent = self.tree.mouseMoveEvent
-        orig_mouseReleaseEvent = self.tree.mouseReleaseEvent
-        
-        def _tree_mousePressEvent(event):
-            if event.button() == Qt.LeftButton:
-                item = self.tree.itemAt(event.pos())
-                if not item:
-                    self.tree._rubber_band_origin = event.pos()
-                    self.tree._rubber_band.setGeometry(QRect(self.tree._rubber_band_origin, self.tree._rubber_band_origin))
-                    self.tree._rubber_band.show()
-                    self.tree._rubber_band_active = True
-                    if not (event.modifiers() & Qt.ControlModifier):
-                        self.tree.clearSelection()
-                    return
-            orig_mousePressEvent(event)
-            
-        def _tree_mouseMoveEvent(event):
-            if getattr(self.tree, '_rubber_band_active', False) and getattr(self.tree, '_rubber_band_origin', None) is not None:
-                rect = QRect(self.tree._rubber_band_origin, event.pos()).normalized()
-                self.tree._rubber_band.setGeometry(rect)
-                for i in range(self.tree.topLevelItemCount()):
-                    item = self.tree.topLevelItem(i)
-                    if rect.intersects(self.tree.visualItemRect(item)):
-                        item.setSelected(True)
-                    else:
-                        item.setSelected(False)
-                    if item.isExpanded():
-                        for j in range(item.childCount()):
-                            child = item.child(j)
-                            if rect.intersects(self.tree.visualItemRect(child)):
-                                child.setSelected(True)
-                            else:
-                                child.setSelected(False)
-                return
-            orig_mouseMoveEvent(event)
-            
-        def _tree_mouseReleaseEvent(event):
-            if getattr(self.tree, '_rubber_band_active', False):
-                self.tree._rubber_band.hide()
-                self.tree._rubber_band_active = False
-                self.tree._rubber_band_origin = None
-                return
-            orig_mouseReleaseEvent(event)
-            
-        self.tree.mousePressEvent = _tree_mousePressEvent
-        self.tree.mouseMoveEvent = _tree_mouseMoveEvent
-        self.tree.mouseReleaseEvent = _tree_mouseReleaseEvent
-        # ------------------------
-        
-        # Override mimeData to allow dragging items out (to OS or other widgets)
-        def _tree_mimeData(items):
-            from PySide6.QtCore import QMimeData, QUrl
-            import os
-            mime = QMimeData()
-            urls = []
-            for item in items:
-                role_data = item.data(0, Qt.UserRole)
-                if isinstance(role_data, int) and 0 <= role_data < len(self._tracks):
-                    path = self._tracks[role_data].get('path')
-                    if path and os.path.exists(path):
-                        urls.append(QUrl.fromLocalFile(path))
-                elif role_data == "folder":
-                    group_name = item.text(1).replace("📁 ", "")
-                    for track in self._tracks:
-                        if track.get('playlist_group') == group_name:
-                            path = track.get('path')
-                            if path and os.path.exists(path):
-                                urls.append(QUrl.fromLocalFile(path))
-            mime.setUrls(urls)
-            return mime
-        self.tree.mimeData = _tree_mimeData
-        
-        # Override startDrag to show a custom clean pixmap instead of a huge row snapshot
-        def _custom_startDrag(supportedActions):
-            from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont
-            from PySide6.QtCore import Qt, QPoint
-            
-            selected_items = self.tree.selectedItems()
-            if not selected_items:
-                return
-                
-            drag = QDrag(self.tree)
-            drag.setMimeData(self.tree.mimeData(selected_items))
-            
-            count = len(selected_items)
-            text = f"Dragging {count} item{'s' if count > 1 else ''}"
-            if count == 1:
-                text = selected_items[0].text(1)
-                if len(text) > 25: text = text[:22] + "..."
-                
-            pixmap = QPixmap(200, 36)
-            pixmap.fill(Qt.transparent)
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setBrush(QColor(40, 40, 45, 230))
-            painter.setPen(QColor("#FF5B06"))
-            painter.drawRoundedRect(1, 1, 198, 34, 6, 6)
-            
-            painter.setPen(QColor("#ffffff"))
-            font = QFont("Segoe UI", 9, QFont.Bold)
-            painter.setFont(font)
-            painter.drawText(0, 0, 200, 36, Qt.AlignCenter, text)
-            painter.end()
-            
-            drag.setPixmap(pixmap)
-            drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
-            drag.exec_(supportedActions)
-            
-        self.tree.startDrag = _custom_startDrag
-        
-        # Column widths & resize behavior
-        self.tree.setColumnWidth(0, 50)    # Index
-        self.tree.setColumnWidth(2, 160)   # Date Added
-        self.tree.setColumnWidth(3, 80)    # Duration
-        
-        header = self.tree.header()
-        header.setSectionResizeMode(0, QHeaderView.Fixed)           
-        header.setSectionResizeMode(1, QHeaderView.Stretch)         
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)           # Index stays narrow
+        header.setSectionResizeMode(1, QHeaderView.Stretch)         # Title takes remaining space
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)# Date adapts to content
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)# Duration adapts to content
         header.setMinimumSectionSize(50)
-        header.setStretchLastSection(False)
-        
-        header_item = self.tree.headerItem()
-        header_item.setTextAlignment(0, Qt.AlignCenter)
-        header_item.setTextAlignment(1, Qt.AlignLeft | Qt.AlignVCenter)
-        header_item.setTextAlignment(2, Qt.AlignLeft | Qt.AlignVCenter)
-        header_item.setTextAlignment(3, Qt.AlignCenter)
         
         # Header click for sorting
-        header.setSectionsClickable(True)
         header.sectionClicked.connect(self._on_header_click)
         
-        # Click handlers
-        self.tree.itemClicked.connect(self._on_item_clicked)
-        self.tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        # Row height
+        self.table.verticalHeader().setDefaultSectionSize(45)
+        
+        # Single click to play
+        self.table.cellClicked.connect(self._on_double_click)
         
         # Styling
         self._apply_style()
         
-        layout.addWidget(self.tree)
+        layout.addWidget(self.table)
         
         # Enable smooth scrolling
-        self._tree_smoother = SmoothTableWidget(self.tree)
+        self._table_smoother = SmoothTableWidget(self.table)
     
     def _apply_style(self):
-        self.tree.setStyleSheet("""
-            QTreeWidget {
+        self.table.setStyleSheet("""
+            QTableWidget {
                 background: transparent;
                 background-color: transparent;
                 border: none;
                 color: #e0e0e0;
-                outline: none;
+                gridline-color: transparent;
             }
-            QTreeWidget QHeaderView {
+            QTableWidget QTableCornerButton::section {
+                background: transparent;
+                border: none;
+            }
+            QTableWidget QHeaderView {
                 background: transparent;
             }
-            QTreeWidget::viewport {
+            QTableWidget::viewport {
                 background: transparent;
             }
-            QTreeWidget::item {
+            QTableWidget::item {
                 padding: 8px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.1);
             }
-            QTreeWidget::item:hover {
+            QTableWidget::item:hover {
                 background: rgba(255, 255, 255, 0.05);
             }
-            QTreeWidget::item:selected {
+            QTableWidget::item:selected {
                 background: rgba(255, 91, 6, 0.15);
             }
             QHeaderView::section {
@@ -2632,6 +2435,7 @@ class PlaylistTable(QWidget):
                 border-bottom: 1px solid rgba(255, 255, 255, 0.08);
                 border-right: 1px solid rgba(255, 255, 255, 0.1);
                 padding: 10px 8px;
+                text-align: left;
             }
             QHeaderView::section:last {
                 border-right: none;
@@ -2661,11 +2465,12 @@ class PlaylistTable(QWidget):
         """)
     
     def _on_header_click(self, column_idx: int):
+        """Handle header click for sorting."""
         column_map = {0: None, 1: "title", 2: "date", 3: "length"}
         column = column_map.get(column_idx)
         
         if column is None:
-            return  
+            return  # # column not sortable
         
         if self._sort_column == column:
             self._sort_ascending = not self._sort_ascending
@@ -2678,107 +2483,47 @@ class PlaylistTable(QWidget):
         self._render_tracks()
     
     def _update_header_labels(self):
+        """Update header labels with sort indicators."""
         arrow = " ▲" if self._sort_ascending else " ▼"
         
         titles = ["#", "Title", "Date Added", "Duration"]
         for i, title in enumerate(titles):
-            item = self.tree.headerItem()
-            if item:
-                if i == 1 and self._sort_column == "title":
-                    item.setText(i, title + arrow)
-                elif i == 2 and self._sort_column == "date":
-                    item.setText(i, title + arrow)
-                elif i == 3 and self._sort_column == "length":
-                    item.setText(i, title + arrow)
-                else:
-                    item.setText(i, title)
+            if i == 1 and self._sort_column == "title":
+                self.table.setHorizontalHeaderItem(i, QTableWidgetItem(title + arrow))
+            elif i == 2 and self._sort_column == "date":
+                self.table.setHorizontalHeaderItem(i, QTableWidgetItem(title + arrow))
+            elif i == 3 and self._sort_column == "length":
+                self.table.setHorizontalHeaderItem(i, QTableWidgetItem(title + arrow))
+            else:
+                self.table.setHorizontalHeaderItem(i, QTableWidgetItem(title))
     
-    def _on_item_clicked(self, item, column):
-        import time
-        now = time.time()
-        role = item.data(0, Qt.UserRole)
-        
-        if role == "folder":
-            # Detect triple click (within 400ms after double click)
-            if (now - getattr(self, '_last_double_click_time', 0)) < 0.4:
-                folder_name = item.text(1).replace("📁 ", "")
-                self.flattenGroup.emit(folder_name)
-                self._last_double_click_time = 0
-                return
-            
-            # Normal single click toggles expansion
-            item.setExpanded(not item.isExpanded())
-
-    def _on_item_double_clicked(self, item, column):
-        import time
-        self._last_double_click_time = time.time()
-        
-        role = item.data(0, Qt.UserRole)
-        if role != "folder":
-            orig_idx = item.data(0, Qt.UserRole)
-            if orig_idx is not None and isinstance(orig_idx, int):
+    def _on_double_click(self, row: int, column: int):
+        """Handle double click to play track."""
+        # Get original index from row data
+        item = self.table.item(row, 0)
+        if item:
+            orig_idx = item.data(Qt.UserRole)
+            if orig_idx is not None:
                 self.trackDoubleClicked.emit(orig_idx)
-
-    def _show_context_menu(self, pos):
-        from PySide6.QtWidgets import QMenu
-        from PySide6.QtGui import QAction
-        
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; }
-            QMenu::item { padding: 6px 20px; border-radius: 4px; }
-            QMenu::item:selected { background-color: #FF5B06; }
-        """)
-        
-        delete_selected_action = QAction("Delete Selected", self)
-        delete_selected_action.triggered.connect(self._on_delete_selected)
-        
-        delete_all_action = QAction("Delete All", self)
-        delete_all_action.triggered.connect(lambda: self.deleteAll.emit())
-        
-        menu.addAction(delete_selected_action)
-        menu.addAction(delete_all_action)
-        menu.exec_(self.tree.viewport().mapToGlobal(pos))
-        
-    def _on_delete_selected(self):
-        selected_items = self.tree.selectedItems()
-        if not selected_items:
-            return
-            
-        orig_indices = []
-        for item in selected_items:
-            orig_idx = item.data(0, Qt.UserRole)
-            if orig_idx is not None and isinstance(orig_idx, int):
-                orig_indices.append(orig_idx)
-                
-        if orig_indices:
-            # Sort in reverse to delete correctly from list
-            orig_indices.sort(reverse=True)
-            self.deleteSelected.emit(orig_indices)
     
     def set_tracks(self, tracks: list):
         self._tracks = tracks
         self._render_tracks()
     
     def _render_tracks(self):
-        from PySide6.QtWidgets import QTreeWidgetItem
-        from PySide6.QtGui import QColor, QFont
+        """Render tracks to table."""
+        from PySide6.QtWidgets import QTableWidgetItem
+        from PySide6.QtGui import QColor
         
-        # Save expanded states before clearing
-        expanded_states = {}
-        for i in range(self.tree.topLevelItemCount()):
-            item = self.tree.topLevelItem(i)
-            if item.data(0, Qt.UserRole) == "folder":
-                group_name = item.text(1).replace("📁 ", "")
-                expanded_states[group_name] = item.isExpanded()
-                
-        self.tree.setUpdatesEnabled(False)
-        self.tree.clear()
+        self.table.setRowCount(0)
         
+        # Sort tracks
         sorted_tracks = list(enumerate(self._tracks))
         
+        # Natural sort key for titles (handles numbers correctly)
         import re
         def natural_sort_key(text):
+            """Convert text to natural sort key - numbers are sorted numerically."""
             return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', text)]
         
         if self._sort_column == "title":
@@ -2791,50 +2536,39 @@ class PlaylistTable(QWidget):
             sorted_tracks.sort(key=lambda x: x[1].get('duration', 0), 
                              reverse=not self._sort_ascending)
         
+        # Store sorted order for next/prev navigation
         self._sorted_indices = [orig_idx for orig_idx, track in sorted_tracks]
         
-        # Separate grouped items and standalone items to keep folders on top
-        grouped_items = []
-        standalone_items = []
-        for orig_idx, track in sorted_tracks:
-            if track.get('playlist_group'):
-                grouped_items.append((orig_idx, track))
-            else:
-                standalone_items.append((orig_idx, track))
-                
-        # Group items by folder while preserving sorted order
-        folders_dict = {}
-        for orig_idx, track in grouped_items:
-            group = track.get('playlist_group')
-            if group not in folders_dict:
-                folders_dict[group] = []
-            folders_dict[group].append((orig_idx, track))
-            
-        track_counter = 1
-        created_folders = {}
+        self.table.setRowCount(len(sorted_tracks))
         
-        def _create_track_item(parent, orig_idx, track, num_str):
+        for display_idx, (orig_idx, track) in enumerate(sorted_tracks):
             is_playing = orig_idx == self._current_index
-            track_item = QTreeWidgetItem(parent)
-            track_item.setData(0, Qt.UserRole, orig_idx)
-            num_text = ">" if is_playing else num_str
-            track_item.setText(0, num_text)
-            track_item.setTextAlignment(0, Qt.AlignCenter)
+            
+            # Column 0: # (or ▶ if playing)
+            num_text = ">" if is_playing else str(display_idx + 1)
+            num_item = QTableWidgetItem(num_text)
+            num_item.setTextAlignment(Qt.AlignCenter)
+            num_item.setData(Qt.UserRole, orig_idx)  # Store original index
             if is_playing:
-                track_item.setForeground(0, QColor("#FF5B06"))
+                num_item.setForeground(QColor("#FF5B06"))
             else:
-                track_item.setForeground(0, QColor("#888888"))
-                
+                num_item.setForeground(QColor("#888888"))
+            self.table.setItem(display_idx, 0, num_item)
+            
+            # Column 1: Title
             title = track.get('title', 'Unknown')
-            track_item.setText(1, title)
-            track_item.setForeground(1, QColor("#e0e0e0"))
-            track_item.setToolTip(1, title)
+            title_item = QTableWidgetItem(title)
+            title_item.setForeground(QColor("#e0e0e0"))
+            title_item.setToolTip(title)
+            self.table.setItem(display_idx, 1, title_item)
             
-            date_added = track.get('date_added', '')
-            track_item.setText(2, date_added)
-            track_item.setForeground(2, QColor("#888888"))
-            track_item.setTextAlignment(2, Qt.AlignLeft | Qt.AlignVCenter)
+            # Column 2: Date Added
+            date_item = QTableWidgetItem(track.get('date_added', ''))
+            date_item.setForeground(QColor("#888888"))
+            date_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(display_idx, 2, date_item)
             
+            # Column 3: Duration
             dur_val = track.get('duration', 0)
             try:
                 if isinstance(dur_val, str) and ':' in dur_val:
@@ -2852,63 +2586,24 @@ class PlaylistTable(QWidget):
                 
             mins = int(duration // 60)
             secs = int(duration % 60)
-            track_item.setText(3, f"{mins}:{secs:02d}")
-            track_item.setForeground(3, QColor("#888888"))
-            track_item.setTextAlignment(3, Qt.AlignCenter)
+            length_item = QTableWidgetItem(f"{mins}:{secs:02d}")
+            length_item.setForeground(QColor("#888888"))
+            length_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(display_idx, 3, length_item)
             
+            # Highlight playing row
             if is_playing:
                 for col in range(4):
-                    track_item.setBackground(col, QColor(255, 91, 6, 38))
-
-        # Rebuild _sorted_indices to match the actual visual UI order (grouped first, then standalone)
-        new_sorted_indices = []
-        
-        # Process grouped items folder by folder
-        for group, items in folders_dict.items():
-            folder_item = QTreeWidgetItem()
-            folder_item.setData(0, Qt.UserRole, "folder")
-            folder_item.setText(1, f"📁 {group}")
-            for c in range(4):
-                folder_item.setBackground(c, QColor(40, 40, 45, 180))
-                font = folder_item.font(c)
-                font.setBold(True)
-                folder_item.setFont(c, font)
-            self.tree.addTopLevelItem(folder_item)
-            created_folders[group] = folder_item
-            
-            for orig_idx, track in items:
-                new_sorted_indices.append(orig_idx)
-                _create_track_item(folder_item, orig_idx, track, str(track_counter))
-                track_counter += 1
-                
-        # Then process standalone items
-        for orig_idx, track in standalone_items:
-            new_sorted_indices.append(orig_idx)
-            _create_track_item(self.tree, orig_idx, track, str(track_counter))
-            track_counter += 1
-            
-        self._sorted_indices = new_sorted_indices
-                    
-        # Restore expanded states (default to collapsed for new folders)
-        for group, folder_item in created_folders.items():
-            folder_item.setExpanded(expanded_states.get(group, False))
-            
-        self.tree.setUpdatesEnabled(True)
-        
-        # Force expand the currently playing track's group with animation
-        if getattr(self, '_current_index', -1) >= 0 and self._current_index < len(self._tracks):
-            playing_track = self._tracks[self._current_index]
-            playing_group = playing_track.get('playlist_group')
-            if playing_group and playing_group in created_folders:
-                folder_item = created_folders[playing_group]
-                if not folder_item.isExpanded():
-                    folder_item.setExpanded(True)
-            
+                    item = self.table.item(display_idx, col)
+                    if item:
+                        item.setBackground(QColor(255, 91, 6, 38))  # ~15% opacity
+    
     def highlight_playing(self, index: int):
         self._current_index = index
         self._render_tracks()
     
     def get_next_index(self, current_index: int) -> int:
+        """Get the next track index based on sorted order."""
         if not self._sorted_indices:
             return (current_index + 1) % len(self._tracks) if self._tracks else -1
         
@@ -2920,6 +2615,7 @@ class PlaylistTable(QWidget):
             return self._sorted_indices[0] if self._sorted_indices else -1
     
     def get_prev_index(self, current_index: int) -> int:
+        """Get the previous track index based on sorted order."""
         if not self._sorted_indices:
             return (current_index - 1) % len(self._tracks) if self._tracks else -1
         
@@ -2929,6 +2625,7 @@ class PlaylistTable(QWidget):
             return self._sorted_indices[prev_pos]
         except ValueError:
             return self._sorted_indices[-1] if self._sorted_indices else -1
+
 
 class PlayerBar(QFrame):
     """
@@ -2945,6 +2642,7 @@ class PlayerBar(QFrame):
     seekChanged = Signal(float)
     volumeChanged = Signal(int)
     videoToggled = Signal()
+    folderClicked = Signal()  # For music folder selection
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2970,6 +2668,21 @@ class PlayerBar(QFrame):
         track_section = QHBoxLayout()
         track_section.setSpacing(12)
         track_section.setAlignment(Qt.AlignVCenter)
+        
+        # Video toggle button with cover
+        self.video_btn = QPushButton()
+        self.video_btn.setObjectName("playerCoverBtn")
+        self.video_btn.setFixedSize(50, 50)
+        self.video_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.video_btn.clicked.connect(self.videoToggled.emit)
+        self.video_btn.setToolTip("Switch Video/Audio")
+        
+        icon_path = os.path.join(icons_dir, "music-video-switch.png")
+        if os.path.exists(icon_path):
+            self.video_btn.setIcon(QIcon(icon_path))
+            self.video_btn.setIconSize(QSize(30, 30))
+        
+        track_section.addWidget(self.video_btn)
         
         # Track text
         text_layout = QVBoxLayout()
@@ -3060,10 +2773,7 @@ class PlayerBar(QFrame):
         """)
         self.time_current.returnPressed.connect(self._on_time_input)
         
-        from PySide6.QtGui import QColor
         self.timeline = ClickSlider(Qt.Horizontal)
-        self.timeline._handle_color = QColor("#FF5B06")
-        self.timeline._handle_hover_color = QColor("#FDA903")
         self.timeline.setObjectName("timelineSlider")
         self.timeline.setRange(0, 1000)
         self.timeline.setFixedWidth(200)
@@ -3084,6 +2794,30 @@ class PlayerBar(QFrame):
         
         # Spacer
         layout.addSpacerItem(QSpacerItem(20, 0))
+        
+        # === Folder Button (before volume) ===
+        folder_layout = QHBoxLayout()
+        folder_layout.setAlignment(Qt.AlignVCenter)
+        
+        self.folder_btn = QPushButton()
+        self.folder_btn.setObjectName("folderBtn")
+        self.folder_btn.setFixedSize(48, 48)  # Match other buttons
+        self.folder_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.folder_btn.setToolTip("Select Media Folder")
+        self.folder_btn.clicked.connect(self.folderClicked.emit)
+        
+        folder_icon_path = os.path.join(icons_dir, "folder-icon.png")
+        if os.path.exists(folder_icon_path):
+            self.folder_btn.setIcon(QIcon(folder_icon_path))
+            self.folder_btn.setIconSize(QSize(18, 18))
+        else:
+            self.folder_btn.setText("📁")
+        
+        folder_layout.addWidget(self.folder_btn)
+        layout.addLayout(folder_layout)
+        
+        # Small spacer between folder and volume
+        layout.addSpacerItem(QSpacerItem(10, 0))
         
         # === Right: Volume ===
         volume_layout = QHBoxLayout()
@@ -3148,6 +2882,16 @@ class PlayerBar(QFrame):
                 border-top: 1px solid rgba(255, 91, 6, 0.25);
             }
             
+            QPushButton#playerCoverBtn {
+                background: rgba(40, 40, 50, 0.9);
+                border: 2px solid rgba(255, 91, 6, 0.4);
+                border-radius: 8px;
+            }
+            QPushButton#playerCoverBtn:hover {
+                border-color: #FF5B06;
+                background: rgba(255, 91, 6, 0.15);
+            }
+            
             QLabel#playerTitle {
                 color: #ffffff;
                 font-size: 13px;
@@ -3197,11 +2941,11 @@ class PlayerBar(QFrame):
                 border-radius: 2px;
             }
             QSlider#timelineSlider::handle:horizontal {
-                width: 14px;
-                height: 14px;
-                margin: -5px 0;
-                background: transparent;
-                border: none;
+                background: #FF5B06;
+                width: 12px;
+                height: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
             }
             QSlider#timelineSlider::sub-page:horizontal {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
@@ -3216,14 +2960,10 @@ class PlayerBar(QFrame):
             }
             QSlider#volumeSlider::handle:horizontal {
                 background: #e0e0e0;
-                width: 14px;
-                height: 14px;
-                margin: -5px 0;
-                border-radius: 7px;
-                border: none;
-            }
-            QSlider#volumeSlider::handle:horizontal:hover {
-                background: #ffffff;
+                width: 10px;
+                height: 10px;
+                margin: -3px 0;
+                border-radius: 5px;
             }
             QSlider#volumeSlider::sub-page:horizontal {
                 background: #888888;
@@ -3239,6 +2979,15 @@ class PlayerBar(QFrame):
                 padding: 2px 5px;
             }
             
+            QPushButton#folderBtn {
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+            }
+            QPushButton#folderBtn:hover {
+                background: rgba(255, 91, 6, 0.25);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
         """)
     
     def _toggle_shuffle(self):
@@ -3542,10 +3291,12 @@ class MusicPanelWidget(QWidget):
         self._current_index = -1
         self._shuffled_sequence = []
         self._shuffled_pointer = -1
+        self._video_mode = False
         self._music_folder = None
 
         self._helxaic_page_visible = False
         self._render_gate_reason = None
+        self._video_mode_restore_pending = False
         self._video_was_on_when_suspended = False
 
         self._rtss_excluded_once = False
@@ -3612,16 +3363,146 @@ class MusicPanelWidget(QWidget):
 
         return True
 
+    def _disable_video_output_and_subtitles(self, reason: str, switch_to_playlist: bool):
+        try:
+            if hasattr(self, 'video_player') and self.video_player:
+                try:
+                    self.video_player.set_render_suspended(True)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
+        try:
+            if hasattr(self, '_player') and self._player:
+                pass
+        except Exception:
+            pass
+
+        if switch_to_playlist:
+            try:
+                self._video_mode = False
+            except Exception:
+                pass
+            try:
+                if hasattr(self, 'stack') and self.stack:
+                    self.stack.setCurrentIndex(0)
+            except Exception:
+                pass
+
+        try:
+            self._render_gate_reason = reason
+        except Exception:
+            pass
+
+    def _enable_video_output_and_subtitles(self, reason: str):
+        try:
+            if not hasattr(self, '_player') or not self._player:
+                return
+        except Exception:
+            return
+
+        try:
+            self._video_mode = True
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, 'stack') and self.stack:
+                self.stack.setCurrentIndex(1)
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, 'video_player') and self.video_player:
+                pass
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, 'video_player') and self.video_player:
+                self.video_player.set_render_suspended(False)
+        except Exception:
+            pass
+
+        try:
+            self._render_gate_reason = reason
+        except Exception:
+            pass
+
+        try:
+            QTimer.singleShot(0, self._auto_pick_embedded_subtitles_if_available)
+        except Exception:
+            pass
 
     def on_helxaic_page_hidden(self):
-        self._helxaic_page_visible = False
+        try:
+            self._helxaic_page_visible = False
+        except Exception:
+            pass
+
+        try:
+            self._video_mode_restore_pending = bool(getattr(self, '_video_mode', False))
+        except Exception:
+            self._video_mode_restore_pending = False
+
+        self._disable_video_output_and_subtitles('page_hidden', switch_to_playlist=True)
 
     def on_helxaic_page_shown(self):
-        self._helxaic_page_visible = True
+        try:
+            self._helxaic_page_visible = True
+        except Exception:
+            pass
+
+        try:
+            if not getattr(self, '_video_mode_restore_pending', False):
+                return
+        except Exception:
+            return
+
+        if not self._is_app_render_allowed():
+            return
+
+        try:
+            self._video_mode_restore_pending = False
+        except Exception:
+            pass
+        self._enable_video_output_and_subtitles('page_shown_restore')
 
     def _on_app_state_changed_for_render_gate(self, state):
-        pass
+        try:
+            if not getattr(self, '_helxaic_page_visible', False):
+                return
+        except Exception:
+            return
+
+        allowed = self._is_app_render_allowed()
+
+        if not allowed:
+            try:
+                if getattr(self, '_video_mode', False):
+                    self._video_was_on_when_suspended = True
+                    self._disable_video_output_and_subtitles('app_inactive', switch_to_playlist=False)
+                else:
+                    self._video_was_on_when_suspended = False
+            except Exception:
+                pass
+            return
+
+        try:
+            if getattr(self, '_video_mode_restore_pending', False):
+                self._video_mode_restore_pending = False
+                self._enable_video_output_and_subtitles('app_active_restore')
+                return
+        except Exception:
+            pass
+
+        try:
+            if getattr(self, '_video_was_on_when_suspended', False) and getattr(self, '_video_mode', False):
+                self._enable_video_output_and_subtitles('app_active_resume')
+            self._video_was_on_when_suspended = False
+        except Exception:
+            pass
     
     def showEvent(self, event):
         """Force layout update when widget is shown to prevent PlayerBar clipping."""
@@ -3984,15 +3865,6 @@ class MusicPanelWidget(QWidget):
             event.acceptProposedAction()
             
     def dropEvent(self, event):
-        # Only process drops if the Playlist tab is active
-        if hasattr(self, 'stack') and self.stack.currentIndex() != 0:
-            return
-            
-        # Ignore internal drops from the playlist itself to prevent accidental track duplication and playback
-        if hasattr(self, 'table') and event.source() == self.table.tree:
-            event.ignore()
-            return
-            
         urls = event.mimeData().urls()
         if urls:
             paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
@@ -4001,42 +3873,26 @@ class MusicPanelWidget(QWidget):
             
             import os
             import datetime
-            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
             
+            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
+            video_exts = {'.mp4', '.mkv', '.avi', '.webm', '.mov'}
+            
+            # If a directory is dropped, load it as music folder
+            if len(paths) == 1 and os.path.isdir(paths[0]):
+                self._music_folder = paths[0]
+                self._load_tracks_from_folder(paths[0])
+                self._save_state()
+                return
+                
+            # If files are dropped, append them to the playlist
             if not hasattr(self, '_playlist'):
                 self._playlist = []
                 
-            start_idx = len(self._playlist)
-            tracks_to_add = []
-            
+            added = False
             for path in paths:
-                if os.path.isdir(path):
-                    folder_name = os.path.basename(path) or path
-                    folder_tracks = []
-                    try:
-                        for entry in os.scandir(path):
-                            if entry.is_file() and os.path.splitext(entry.name)[1].lower() in audio_exts:
-                                title = os.path.splitext(entry.name)[0]
-                                try:
-                                    mtime = entry.stat().st_mtime
-                                    dt = datetime.datetime.fromtimestamp(mtime)
-                                    date_str = dt.strftime("%b %d, %Y")
-                                except Exception:
-                                    date_str = ""
-                                folder_tracks.append({
-                                    'path': entry.path,
-                                    'title': title,
-                                    'artist': 'Dropped File',
-                                    'duration': 0,
-                                    'date_added': date_str,
-                                    'playlist_group': folder_name
-                                })
-                    except Exception:
-                        pass
-                    tracks_to_add.extend(folder_tracks)
-                elif os.path.isfile(path):
+                if os.path.isfile(path):
                     ext = os.path.splitext(path)[1].lower()
-                    if ext in audio_exts:
+                    if ext in audio_exts or ext in video_exts:
                         title = os.path.splitext(os.path.basename(path))[0]
                         try:
                             mtime = os.path.getmtime(path)
@@ -4045,27 +3901,26 @@ class MusicPanelWidget(QWidget):
                         except Exception:
                             date_str = ""
                             
-                        tracks_to_add.append({
+                        track = {
                             'path': path,
                             'title': title,
                             'artist': 'Dropped File',
                             'duration': 0,
+                            'has_video': ext in video_exts,
                             'date_added': date_str
-                        })
+                        }
+                        self._playlist.append(track)
+                        added = True
                         
-            if tracks_to_add:
-                self._playlist.extend(tracks_to_add)
+            if added:
                 if hasattr(self, 'table'):
                     self.table.set_tracks(self._playlist)
-                self._save_state()
-                self.refresh_playlist_stats()
-                if hasattr(self, '_track_count_label'):
-                    self._track_count_label.setText(f"{len(self._playlist)} tracks")
+                if hasattr(self, 'header'):
+                    self.header.set_info(getattr(self.header, '_name', "Playlist"), len(self._playlist), self._format_playlist_duration())
                 
-                # Fetch metadata asynchronously for the newly added tracks
-                self._fetch_metadata_async(self._playlist, "Playlist")
-                # Removed autoplay on drag & drop per user request
-                # self._play_track(start_idx)
+                # Play the first dropped track if we were empty or just want to start it
+                self._play_track(len(self._playlist) - 1)
+                self._save_state()
     
     def _create_music_sidebar(self, parent_container):
         class SidebarWidget(QWidget):
@@ -4076,51 +3931,6 @@ class MusicPanelWidget(QWidget):
                 self.setMinimumWidth(50)
                 self.setObjectName("musicSidebar")
                 self._transitioning = False
-                self.setAcceptDrops(True)
-                
-                from PySide6.QtCore import QTimer
-                self._drag_hover_timer = QTimer(self)
-                self._drag_hover_timer.setSingleShot(True)
-                self._drag_hover_timer.timeout.connect(self._on_drag_hover_timeout)
-                self._drag_hover_target = None
-                
-            def _on_drag_hover_timeout(self):
-                p = self.parent_panel
-                w = self._drag_hover_target
-                if not w: return
-                if hasattr(p, 'stack') and hasattr(p, 'btn_playlist') and hasattr(p, 'btn_media_lib'):
-                    if w == p.btn_playlist and p.stack.currentIndex() != 0:
-                        p.btn_playlist.click()
-                    elif w == p.btn_media_lib and p.stack.currentIndex() != 1:
-                        p.btn_media_lib.click()
-                
-            def dragEnterEvent(self, event):
-                if event.mimeData().hasUrls():
-                    event.acceptProposedAction()
-                    
-            def dragMoveEvent(self, event):
-                if event.mimeData().hasUrls():
-                    event.acceptProposedAction()
-                    try:
-                        pos = event.position().toPoint()
-                    except AttributeError:
-                        pos = event.pos()
-                        
-                    w = self.childAt(pos)
-                    # If we hover over a different button, restart the timer
-                    if w != self._drag_hover_target:
-                        self._drag_hover_target = w
-                        self._drag_hover_timer.stop()
-                        if w in (getattr(self.parent_panel, 'btn_playlist', None), getattr(self.parent_panel, 'btn_media_lib', None)):
-                            self._drag_hover_timer.start(400) # 400ms delay to switch tab
-                            
-            def dragLeaveEvent(self, event):
-                self._drag_hover_timer.stop()
-                self._drag_hover_target = None
-                            
-            def dropEvent(self, event):
-                # Consume the drop event so it doesn't bubble up to MusicPanelWidget
-                event.acceptProposedAction()
 
             def _set_icon_only(self, icon_only):
                 """Apply icon_only state to all buttons immediately."""
@@ -4291,8 +4101,7 @@ class MusicPanelWidget(QWidget):
         elif target == "media_lib":
             self.btn_playlist.setProperty("active", False)
             self.btn_media_lib.setProperty("active", True)
-            if hasattr(self, 'stack'):
-                self.stack.setCurrentIndex(1)
+            # Media Library view not yet implemented
             
         self.btn_playlist.style().unpolish(self.btn_playlist)
         self.btn_playlist.style().polish(self.btn_playlist)
@@ -4374,13 +4183,16 @@ class MusicPanelWidget(QWidget):
         
         self.stack.addWidget(playlist_page)
         
-        # === Page 1: Media Library ===
-        self.media_lib_page = MediaLibraryPage()
-        self.media_lib_page.folderSelected.connect(self._load_tracks_from_folder)
-        self.media_lib_page.tracksAddedToPlaylist.connect(self._append_tracks_to_playlist)
-        self.stack.addWidget(self.media_lib_page)
+        # === Page 1: Video View (VLC-style player) ===
+        self.video_player = DummyVideoPlayer()
+        self.video_player.backRequested.connect(self._switch_to_playlist)
+        self.video_player.fullscreenToggled.connect(self._toggle_window_fullscreen)
+        self.stack.addWidget(self.video_player)
 
-        
+        try:
+            self._apply_saved_subtitle_appearance()
+        except Exception:
+            pass
         
         # Main view area (Playlist + YouTube Sidebar) with user-resizable splitter
         from PySide6.QtWidgets import QSplitter, QSplitterHandle
@@ -4672,62 +4484,6 @@ class MusicPanelWidget(QWidget):
         
         self.table.set_tracks(filtered)
         self._track_count_label.setText(f"{len(filtered)} of {len(self._playlist)} tracks")
-
-    def _delete_playlist_tracks(self, indices):
-        """Remove tracks by their original indices in self._playlist."""
-        # Sort in reverse order to safely delete by index
-        for idx in sorted(indices, reverse=True):
-            if 0 <= idx < len(self._playlist):
-                # If we are deleting the currently playing track, handle it
-                if idx == self._current_index:
-                    self._player.stop()
-                    self._current_index = -1
-                    self.player_bar.set_playing(False)
-                    self.player_bar.set_track_info("", "")
-                elif idx < self._current_index:
-                    # Adjust current track index if a track before it was deleted
-                    self._current_index -= 1
-                    
-                del self._playlist[idx]
-                
-        self._save_state()
-        if hasattr(self, 'table'):
-            self.table.set_tracks(self._playlist)
-        self.refresh_playlist_stats()
-
-    def _clear_playlist(self):
-        """Clear all tracks from the playlist."""
-        self._playlist = []
-        self._player.stop()
-        self._current_index = -1
-        self.player_bar.set_playing(False)
-        self.player_bar.set_track_info("", "")
-        self._save_state()
-        if hasattr(self, 'table'):
-            self.table.set_tracks(self._playlist)
-        self.refresh_playlist_stats()
-
-    def _append_tracks_to_playlist(self, new_tracks, group_name=None):
-        """Append tracks directly from Media Library to Playlist."""
-        if group_name:
-            for track in new_tracks:
-                track['playlist_group'] = group_name
-        self._playlist.extend(new_tracks)
-        if hasattr(self, 'table'):
-            self.table.set_tracks(self._playlist)
-        self._save_state()
-        self.refresh_playlist_stats()
-        if hasattr(self, '_track_count_label'):
-            self._track_count_label.setText(f"{len(self._playlist)} tracks")
-
-    def _flatten_playlist_group(self, group_name: str):
-        for track in self._playlist:
-            if track.get('playlist_group') == group_name:
-                track['playlist_group'] = None
-        self._save_state()
-        if hasattr(self, 'table'):
-            self.table.set_tracks(self._playlist)
-        self.refresh_playlist_stats()
     
     def _connect_signals(self):
         # Player bar
@@ -4742,7 +4498,9 @@ class MusicPanelWidget(QWidget):
         self.sc_folder.activated.connect(self._browse_folder_direct)
         self.player_bar.seekChanged.connect(self._seek)
         self.player_bar.volumeChanged.connect(self._set_volume)
-                
+        self.player_bar.videoToggled.connect(self._toggle_video)
+        self.player_bar.folderClicked.connect(self._browse_folder_direct)
+        
         # Setup shuffle logic on click
         def on_shuffle_clicked():
             is_shuffled = getattr(self.player_bar, '_is_shuffled', False)
@@ -4759,9 +4517,6 @@ class MusicPanelWidget(QWidget):
         
         # Table
         self.table.trackDoubleClicked.connect(self._play_track)
-        self.table.deleteSelected.connect(self._delete_playlist_tracks)
-        self.table.deleteAll.connect(self._clear_playlist)
-        self.table.flattenGroup.connect(self._flatten_playlist_group)
         
         # Player signals
         self._player.positionChanged.connect(self._on_position)
@@ -4869,10 +4624,9 @@ class MusicPanelWidget(QWidget):
         slider_widget.setStyleSheet("""
             QWidget { background: transparent; padding: 5px 10px; }
             QLabel { color: #e0e0e0; font-size: 12px; min-width: 60px; }
-            QSlider::groove:horizontal { height: 4px; background: rgba(60, 64, 72, 0.8); border-radius: 2px; }
-            QSlider::handle:horizontal { background: #e0e0e0; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px; border: none; }
-            QSlider::handle:horizontal:hover { background: #ffffff; }
-            QSlider::sub-page:horizontal { background: rgba(255, 91, 6, 0.6); border-radius: 2px; }
+            QSlider::groove:horizontal { background: #333; height: 6px; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #1a1a1a; border: 1px solid #FF5B06; width: 12px; height: 12px; margin: -4px 0; border-radius: 7px; }
+            QSlider::sub-page:horizontal { background: #FF5B06; border-radius: 3px; }
         """)
         
         slider_layout = QHBoxLayout(slider_widget)
@@ -4906,7 +4660,169 @@ class MusicPanelWidget(QWidget):
         slider_action.setDefaultWidget(slider_widget)
         crossfade_menu.addAction(slider_action)
         
+        # === Video Menu ===
+        video_menu = menu_bar.addMenu("Video")
+        video_menu.setObjectName("videoMenu")
+        
+        # Toggle Video Mode
+        self.action_toggle_video = QAction("Toggle Video View", self)
+        self.action_toggle_video.setShortcut("V")
+        self.action_toggle_video.triggered.connect(self._toggle_video)
+        video_menu.addAction(self.action_toggle_video)
+        
+        video_menu.addSeparator()
+        
+        # Aspect Ratio submenu (moved above Fullscreen)
+        aspect_menu = video_menu.addMenu("Aspect Ratio")
+        aspect_menu.setObjectName("aspectRatioMenu")
+        
+        self.action_aspect_fill = QAction("Fill", self)
+        self.action_aspect_fill.setCheckable(True)
+        self.action_aspect_fill.triggered.connect(lambda: self._set_aspect_ratio("fill"))
+        aspect_menu.addAction(self.action_aspect_fill)
+        
+        self.action_aspect_fit = QAction("Fit", self)
+        self.action_aspect_fit.setCheckable(True)
+        self.action_aspect_fit.setChecked(True)  # Default
+        self.action_aspect_fit.triggered.connect(lambda: self._set_aspect_ratio("fit"))
+        aspect_menu.addAction(self.action_aspect_fit)
+        
+        self.action_aspect_stretch = QAction("Stretch", self)
+        self.action_aspect_stretch.setCheckable(True)
+        self.action_aspect_stretch.triggered.connect(lambda: self._set_aspect_ratio("stretch"))
+        aspect_menu.addAction(self.action_aspect_stretch)
+        
+        video_menu.addSeparator()
+        
+        # Fullscreen
+        self.action_fullscreen = QAction("Fullscreen", self)
+        self.action_fullscreen.setShortcut("F")
+        self.action_fullscreen.triggered.connect(self._toggle_fullscreen)
+        video_menu.addAction(self.action_fullscreen)
 
+        # === Subtitle Menu ===
+        subtitle_menu = menu_bar.addMenu("Subtitle")
+        subtitle_menu.setObjectName("subtitleMenu")
+
+        self.action_add_subtitle = QAction("Add Subtitle File...", self)
+        self.action_add_subtitle.triggered.connect(self._add_subtitle_file)
+        subtitle_menu.addAction(self.action_add_subtitle)
+
+        subtitle_menu.addSeparator()
+
+        self._subtitle_track_menu = subtitle_menu.addMenu("Sub Track")
+        self._subtitle_track_menu.setObjectName("subtitleTrackMenu")
+        self._subtitle_track_menu.aboutToShow.connect(self._populate_subtitle_tracks_menu)
+
+        subtitle_menu.addSeparator()
+
+        self._subtitle_style_menu = subtitle_menu.addMenu("Style")
+        self._subtitle_style_menu.setObjectName("subtitleStyleMenu")
+        self._subtitle_style_menu.aboutToShow.connect(self._sync_subtitle_style_menu)
+
+        self._subtitle_style_variant_actions = {}
+        self._subtitle_style_variant_groups = {}
+        self._subtitle_style_submenus = {}
+
+        self._subtitle_style_global_group = QActionGroup(self)
+        self._subtitle_style_global_group.setExclusive(True)
+
+        def _add_variant(preset_key: str, label: str, bold: bool, italic: bool):
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.triggered.connect(lambda _c=False, pk=preset_key, b=bold, i=italic: self._set_subtitle_style_variant(pk, b, i))
+            try:
+                self._subtitle_style_global_group.addAction(act)
+            except Exception:
+                pass
+            self._subtitle_style_submenus[preset_key].addAction(act)
+            self._subtitle_style_variant_actions[(preset_key, bool(bold), bool(italic))] = act
+
+        for key, label in [
+            ("outline", "Outline"),
+            ("shadow", "Shadow"),
+            ("box", "Box"),
+        ]:
+            sub = self._subtitle_style_menu.addMenu(label)
+            sub.setObjectName(f"subtitleStyleSubMenu_{key}")
+            self._subtitle_style_submenus[key] = sub
+
+            self._subtitle_style_variant_groups[key] = self._subtitle_style_global_group
+
+            _add_variant(key, "Regular", False, False)
+            _add_variant(key, "Bold", True, False)
+            _add_variant(key, "Italic", False, True)
+            _add_variant(key, "Bold Italic", True, True)
+
+        subtitle_menu.addSeparator()
+
+        self._subtitle_size_menu = subtitle_menu.addMenu("Size")
+        self._subtitle_size_menu.setObjectName("subtitleSizeMenu")
+        self._subtitle_size_menu.aboutToShow.connect(self._sync_subtitle_size_menu)
+
+        from PySide6.QtWidgets import QWidgetAction, QWidget, QHBoxLayout, QSlider, QLabel, QSpinBox
+
+        size_widget = QWidget()
+        size_widget.setStyleSheet("""
+            QWidget { background: transparent; padding: 5px 10px; }
+            QLabel { color: #e0e0e0; font-size: 12px; min-width: 40px; }
+            QSpinBox {
+                background: rgba(50, 54, 62, 0.9);
+                color: #e0e0e0;
+                border: 1px solid rgba(80, 80, 80, 0.4);
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 12px;
+                min-width: 54px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button { width: 0px; height: 0px; border: none; }
+            QSlider::groove:horizontal { background: #333; height: 6px; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #1a1a1a; border: 1px solid #FF5B06; width: 12px; height: 12px; margin: -4px 0; border-radius: 7px; }
+            QSlider::sub-page:horizontal { background: #FF5B06; border-radius: 3px; }
+        """)
+
+        size_layout = QHBoxLayout(size_widget)
+        size_layout.setContentsMargins(10, 5, 10, 5)
+        size_layout.setSpacing(10)
+
+        size_label = QLabel("Text")
+        self._subtitle_size_slider = QSlider(Qt.Horizontal)
+        self._subtitle_size_slider.setRange(8, 48)
+        self._subtitle_size_slider.setValue(16)
+        self._subtitle_size_slider.setFixedWidth(130)
+
+        self._subtitle_size_spin = QSpinBox()
+        self._subtitle_size_spin.setRange(8, 48)
+        self._subtitle_size_spin.setValue(16)
+
+        def _apply_size(val: int):
+            try:
+                self._set_subtitle_font_size(int(val))
+            except Exception:
+                pass
+
+        def _on_slider(val: int):
+            self._subtitle_size_spin.blockSignals(True)
+            self._subtitle_size_spin.setValue(int(val))
+            self._subtitle_size_spin.blockSignals(False)
+            _apply_size(val)
+
+        def _on_spin(val: int):
+            self._subtitle_size_slider.blockSignals(True)
+            self._subtitle_size_slider.setValue(int(val))
+            self._subtitle_size_slider.blockSignals(False)
+            _apply_size(val)
+
+        self._subtitle_size_slider.valueChanged.connect(_on_slider)
+        self._subtitle_size_spin.valueChanged.connect(_on_spin)
+
+        size_layout.addWidget(size_label)
+        size_layout.addWidget(self._subtitle_size_slider)
+        size_layout.addWidget(self._subtitle_size_spin)
+
+        size_action = QWidgetAction(self)
+        size_action.setDefaultWidget(size_widget)
+        self._subtitle_size_menu.addAction(size_action)
         
         # === Tools Menu ===
         tools_menu = menu_bar.addMenu("Tools")
@@ -5007,20 +4923,180 @@ class MusicPanelWidget(QWidget):
         except Exception:
             pass
 
+    def _get_subtitle_style_settings(self):
+        try:
+            return QSettings("TDD131", "HELXAID")
+        except Exception:
+            return QSettings()
 
+    def _apply_saved_subtitle_style_preset(self):
+        if not hasattr(self, 'video_player'):
+            return
+        s = self._get_subtitle_style_settings()
+        preset = s.value("MusicPlayer/SubtitleStylePreset", "outline", type=str)
+        preset = (preset or "outline").strip().lower()
+        if preset not in ("outline", "shadow", "box"):
+            preset = "outline"
+        try:
+            self.video_player.set_subtitle_style_preset(preset)
+        except Exception:
+            pass
 
+        try:
+            bold = bool(int(s.value("MusicPlayer/SubtitleFontBold", 1)))
+        except Exception:
+            bold = True
+        try:
+            italic = bool(int(s.value("MusicPlayer/SubtitleFontItalic", 0)))
+        except Exception:
+            italic = False
+        try:
+            self.video_player.set_subtitle_font_variant(bold, italic)
+        except Exception:
+            pass
 
+    def _apply_saved_subtitle_appearance(self):
+        try:
+            self._apply_saved_subtitle_style_preset()
+        except Exception:
+            pass
+        try:
+            self._apply_saved_subtitle_font_size()
+        except Exception:
+            pass
 
+    def _apply_saved_subtitle_font_size(self):
+        if not hasattr(self, 'video_player'):
+            return
+        s = self._get_subtitle_style_settings()
+        try:
+            pt = int(s.value("MusicPlayer/SubtitleFontSize", 16))
+        except Exception:
+            pt = 16
+        if pt < 8:
+            pt = 8
+        if pt > 48:
+            pt = 48
+        try:
+            self.video_player.set_subtitle_font_size(pt)
+        except Exception:
+            pass
 
+    def _set_subtitle_font_size(self, pt: int):
+        try:
+            v = int(pt)
+        except Exception:
+            v = 16
+        if v < 8:
+            v = 8
+        if v > 48:
+            v = 48
+        self._subtitle_font_size = v
+        try:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_subtitle_font_size(v)
+        except Exception:
+            pass
+        # Save to JSON state
+        try:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(500, self._save_state)
+        except Exception:
+            pass
 
+    def _sync_subtitle_size_menu(self):
+        if not hasattr(self, '_subtitle_size_slider') or not hasattr(self, '_subtitle_size_spin'):
+            return
+        pt = 16
+        try:
+            if hasattr(self, 'video_player'):
+                pt = int(self.video_player.get_subtitle_font_size())
+        except Exception:
+            pt = 16
+        if pt < 8:
+            pt = 8
+        if pt > 48:
+            pt = 48
+        try:
+            self._subtitle_size_slider.blockSignals(True)
+            self._subtitle_size_spin.blockSignals(True)
+            self._subtitle_size_slider.setValue(pt)
+            self._subtitle_size_spin.setValue(pt)
+        finally:
+            self._subtitle_size_slider.blockSignals(False)
+            self._subtitle_size_spin.blockSignals(False)
 
+    def _set_subtitle_style_preset(self, preset: str):
+        preset = (preset or "outline").strip().lower()
+        if preset not in ("outline", "shadow", "box"):
+            preset = "outline"
+        self._subtitle_style_preset = preset
+        try:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_subtitle_style_preset(preset)
+        except Exception:
+            pass
+        # Save to JSON state
+        try:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(500, self._save_state)
+        except Exception:
+            pass
 
+    def _set_subtitle_style_variant(self, preset: str, bold: bool, italic: bool):
+        preset = (preset or "outline").strip().lower()
+        if preset not in ("outline", "shadow", "box"):
+            preset = "outline"
+        try:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_subtitle_style_preset(preset)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'video_player'):
+                self.video_player.set_subtitle_font_variant(bool(bold), bool(italic))
+        except Exception:
+            pass
+        try:
+            s = self._get_subtitle_style_settings()
+            s.setValue("MusicPlayer/SubtitleStylePreset", preset)
+            s.setValue("MusicPlayer/SubtitleFontBold", 1 if bool(bold) else 0)
+            s.setValue("MusicPlayer/SubtitleFontItalic", 1 if bool(italic) else 0)
+            try:
+                s.sync()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
+    def _sync_subtitle_style_menu(self):
+        preset = "outline"
+        try:
+            if hasattr(self, 'video_player'):
+                preset = self.video_player.get_subtitle_style_preset()
+        except Exception:
+            preset = "outline"
+        preset = (preset or "outline").strip().lower()
+        if preset not in ("outline", "shadow", "box"):
+            preset = "outline"
 
+        bold = True
+        italic = False
+        try:
+            if hasattr(self, 'video_player'):
+                b, i = self.video_player.get_subtitle_font_variant()
+                bold = bool(b)
+                italic = bool(i)
+        except Exception:
+            bold = True
+            italic = False
 
-
-
-
+        try:
+            act = self._subtitle_style_variant_actions.get((preset, bool(bold), bool(italic)))
+            if act:
+                act.setChecked(True)
+        except Exception:
+            pass
 
     def _ensure_subtitle_state(self):
         if not hasattr(self, '_current_media_path'):
@@ -5039,21 +5115,108 @@ class MusicPanelWidget(QWidget):
             self._subtitle_prefer_embedded = True
         if not hasattr(self, '_subtitle_pref_loaded'):
             self._subtitle_pref_loaded = False
-            
-    def _maybe_auto_load_sidecar_subtitles(self, media_path: str):
-        pass
+
+        if not self._subtitle_pref_loaded:
+            self._subtitle_pref_loaded = True
+            try:
+                s = self._get_subtitle_style_settings()
+                mode = s.value("MusicPlayer/SubtitleDefaultMode", "embedded", type=str)
+                mode = (mode or "embedded").strip().lower()
+                self._subtitle_prefer_embedded = (mode == "embedded")
+            except Exception:
+                self._subtitle_prefer_embedded = True
+
+    def _set_subtitle_default_mode(self, mode: str):
+        self._ensure_subtitle_state()
+        m = (mode or "embedded").strip().lower()
+        if m not in ("embedded", "external"):
+            m = "embedded"
+        self._subtitle_prefer_embedded = (m == "embedded")
+        try:
+            s = self._get_subtitle_style_settings()
+            s.setValue("MusicPlayer/SubtitleDefaultMode", m)
+            try:
+                s.sync()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _on_subtitles_disabled_by_user(self):
+        self._ensure_subtitle_state()
+        self._subtitle_user_disabled = True
+        try:
+            self._set_subtitle_default_mode("external")
+        except Exception:
+            pass
+        if hasattr(self, 'video_player'):
+            try:
+                self.video_player.clear_subtitles()
+            except Exception:
+                pass
+
+    def _mark_subtitles_enabled_by_user(self):
+        self._ensure_subtitle_state()
+        self._subtitle_user_disabled = False
+
+    def _pick_best_embedded_subtitle_stream(self, streams):
+        try:
+            if not streams:
+                return None
+            def score(s):
+                lang = (s.get('lang') or '').lower().strip()
+                title = (s.get('title') or '').lower()
+                codec = (s.get('codec') or '').lower()
+                sc = 0
+                if lang in ('eng', 'en'):
+                    sc += 100
+                if 'english' in title:
+                    sc += 90
+                if codec in ('ass', 'ssa'):
+                    sc += 10
+                return sc
+            return sorted(streams, key=score, reverse=True)[0]
+        except Exception:
+            return streams[0] if streams else None
 
     def _auto_pick_embedded_subtitles_if_available(self):
-        pass
-        
-    def _apply_saved_subtitle_appearance(self):
-        pass
-        
-    def _apply_saved_subtitle_style_preset(self):
-        pass
-        
-    def _apply_saved_subtitle_font_size(self):
-        pass
+        self._ensure_subtitle_state()
+        if not hasattr(self, 'video_player'):
+            return
+        if not self._current_media_path or not os.path.exists(self._current_media_path):
+            return
+        if getattr(self, '_subtitle_user_disabled', False):
+            return
+        if not getattr(self, '_subtitle_prefer_embedded', True):
+            return
+        try:
+            active_path = self.video_player.get_active_subtitle_path()
+        except Exception:
+            active_path = None
+        if active_path:
+            return
+
+        streams = self._list_embedded_subtitle_streams(self._current_media_path)
+        if not streams:
+            return
+        best = self._pick_best_embedded_subtitle_stream(streams)
+        if not best:
+            return
+
+        try:
+            idx = int(best.get('stream_index'))
+        except Exception:
+            return
+        codec = best.get('codec') or ''
+        out_sub = self._extract_embedded_subtitle(self._current_media_path, idx, codec)
+        if not out_sub:
+            return
+        try:
+            self.video_player.set_subtitle_file(out_sub)
+            self._mark_subtitles_enabled_by_user()
+            self._set_subtitle_default_mode("embedded")
+        except Exception:
+            pass
 
     def _set_current_media_local_path(self, path: Optional[str]):
         self._ensure_subtitle_state()
@@ -5091,10 +5254,328 @@ class MusicPanelWidget(QWidget):
                 return exe
         return 'ffmpeg'
 
+    def _list_embedded_subtitle_streams(self, video_path: str):
+        try:
+            ffprobe = self._get_ffprobe_path()
+            cmd = [
+                ffprobe,
+                '-v', 'error',
+                '-select_streams', 's',
+                '-show_entries', 'stream=index,codec_name:stream_tags=language,title',
+                '-of', 'json',
+                video_path,
+            ]
+            r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=0x08000000)
+            if r.returncode != 0:
+                return []
+            data = json.loads(r.stdout or '{}')
+            streams = data.get('streams', []) or []
+            out = []
+            for s in streams:
+                idx = s.get('index', None)
+                codec = s.get('codec_name', '')
+                tags = s.get('tags', {}) or {}
+                lang = tags.get('language', '')
+                title = tags.get('title', '')
+                if idx is None:
+                    continue
+                out.append({'stream_index': int(idx), 'codec': codec, 'lang': lang, 'title': title})
+            return out
+        except Exception:
+            return []
 
+    def _extract_embedded_subtitle(self, video_path: str, stream_index: int, codec: str = ''):
+        self._ensure_subtitle_state()
+        codec_l = (codec or '').lower().strip()
 
+        image_based = codec_l in (
+            'hdmv_pgs_subtitle', 'pgs', 'dvd_subtitle', 'vobsub', 'dvb_subtitle',
+            'xsub', 'dvbsub',
+        )
+        if image_based:
+            cache_key = (video_path, int(stream_index), '.sup')
+            self._subtitle_extract_last_error[cache_key] = (
+                f"Embedded subtitle codec '{codec_l}' is image-based (PGS/VobSub/DVB). "
+                "HELXAIC current subtitle renderer is text-only, so this codec cannot be extracted into SRT/ASS reliably."
+            )
+            return None
 
+        out_ext = '.ass' if codec_l in ('ass', 'ssa') else '.srt'
 
+        cache_key = (video_path, int(stream_index), out_ext)
+        cached = self._subtitle_extract_cache.get(cache_key)
+        if cached and os.path.exists(cached):
+            self._subtitle_embedded_reverse[cached] = cache_key
+            return cached
+
+        ffmpeg = self._get_ffmpeg_path()
+        out_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_subs')
+        os.makedirs(out_dir, exist_ok=True)
+        h = hashlib.sha1(f"{video_path}|{stream_index}|{out_ext}".encode('utf-8', errors='replace')).hexdigest()[:16]
+        out_path = os.path.join(out_dir, f"sub_{h}_s{stream_index}{out_ext}")
+
+        if out_ext == '.ass':
+            cmd = [
+                ffmpeg,
+                '-y',
+                '-i', video_path,
+                '-map', f'0:{int(stream_index)}',
+                '-c:s', 'copy',
+                out_path,
+            ]
+        else:
+            cmd = [
+                ffmpeg,
+                '-y',
+                '-i', video_path,
+                '-map', f'0:{int(stream_index)}',
+                '-c:s', 'srt',
+                out_path,
+            ]
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=0x08000000)
+        if r.returncode == 0 and os.path.exists(out_path):
+            self._subtitle_extract_cache[cache_key] = out_path
+            self._subtitle_embedded_reverse[out_path] = cache_key
+            self._subtitle_extract_last_error[cache_key] = None
+            return out_path
+        try:
+            err = (r.stderr or '').strip()
+            self._subtitle_extract_last_error[cache_key] = err if err else f"ffmpeg failed with code {r.returncode}"
+        except Exception:
+            pass
+        return None
+
+    def _add_subtitle_file(self):
+        from PySide6.QtWidgets import QFileDialog
+        self._ensure_subtitle_state()
+        start_dir = ''
+        if self._current_media_path and os.path.exists(self._current_media_path):
+            try:
+                start_dir = os.path.dirname(self._current_media_path)
+            except Exception:
+                start_dir = ''
+        f, _ = QFileDialog.getOpenFileName(self, 'Select Subtitle File', start_dir, 'Subtitles (*.srt *.vtt *.ass *.ssa)')
+        if not f:
+            return
+        if hasattr(self, 'video_player'):
+            self._mark_subtitles_enabled_by_user()
+            try:
+                self._set_subtitle_default_mode("external")
+            except Exception:
+                pass
+            self.video_player.set_subtitle_file(f)
+
+    def _populate_subtitle_tracks_menu(self):
+        from PySide6.QtGui import QAction, QActionGroup
+        self._ensure_subtitle_state()
+        menu = self._subtitle_track_menu
+        menu.clear()
+
+        self._subtitle_action_group = QActionGroup(self)
+        self._subtitle_action_group.setExclusive(True)
+
+        active_path = None
+        if hasattr(self, 'video_player'):
+            try:
+                active_path = self.video_player.get_active_subtitle_path()
+            except Exception:
+                active_path = None
+
+        active_embedded = None
+        try:
+            if active_path:
+                active_embedded = self._subtitle_embedded_reverse.get(active_path)
+        except Exception:
+            active_embedded = None
+
+        disable_action = QAction('Disable', self)
+        disable_action.setCheckable(True)
+        disable_action.setChecked(not active_path)
+        disable_action.triggered.connect(lambda _c=False: self._on_subtitles_disabled_by_user())
+        self._subtitle_action_group.addAction(disable_action)
+        menu.addAction(disable_action)
+
+        if not (self._current_media_path and os.path.exists(self._current_media_path)):
+            try:
+                print(f"[Subtitle] No local media path for embedded subtitles. _current_media_path={self._current_media_path}")
+            except Exception:
+                pass
+
+        # Sidecar subtitles (same basename)
+        if self._current_media_path and os.path.exists(self._current_media_path):
+            base, _ext = os.path.splitext(self._current_media_path)
+            sidecars = []
+            for p in [
+                base + '.srt', base + '.vtt', base + '.ass', base + '.ssa',
+                base + '.SRT', base + '.VTT', base + '.ASS', base + '.SSA',
+            ]:
+                if os.path.exists(p) and p not in sidecars:
+                    sidecars.append(p)
+            if sidecars:
+                menu.addSeparator()
+                for p in sidecars:
+                    name = os.path.basename(p)
+                    a = QAction(name, self)
+                    a.setCheckable(True)
+                    if active_path and os.path.normcase(active_path) == os.path.normcase(p):
+                        a.setChecked(True)
+                    def _on_pick_sidecar(_c=False, _p=p):
+                        if not hasattr(self, 'video_player'):
+                            return
+                        self._mark_subtitles_enabled_by_user()
+                        try:
+                            self._set_subtitle_default_mode("external")
+                        except Exception:
+                            pass
+                        self.video_player.set_subtitle_file(_p)
+                    a.triggered.connect(_on_pick_sidecar)
+                    self._subtitle_action_group.addAction(a)
+                    menu.addAction(a)
+            else:
+                try:
+                    print(f"[Subtitle] ffprobe found 0 embedded subtitle streams for: {self._current_media_path}")
+                except Exception:
+                    pass
+
+        # Embedded subtitles
+        if self._current_media_path and os.path.exists(self._current_media_path):
+            streams = self._list_embedded_subtitle_streams(self._current_media_path)
+            if streams:
+                menu.addSeparator()
+                for s in streams:
+                    idx = s.get('stream_index')
+                    lang = s.get('lang') or ''
+                    title = s.get('title') or ''
+                    codec = s.get('codec') or ''
+                    label = f"Embedded: s:{idx}"
+                    if lang:
+                        label += f" [{lang}]"
+                    if title:
+                        label += f" {title}"
+                    if codec:
+                        label += f" ({codec})"
+                    a = QAction(label, self)
+                    a.setCheckable(True)
+
+                    try:
+                        if active_embedded and active_embedded[0] == self._current_media_path and int(active_embedded[1]) == int(idx):
+                            a.setChecked(True)
+                    except Exception:
+                        pass
+
+                    def on_pick_embedded(_c=False, stream_index=int(idx), video_path=self._current_media_path, stream_codec=codec, stream_label=label):
+                        if not hasattr(self, 'video_player'):
+                            return
+                        self._mark_subtitles_enabled_by_user()
+                        try:
+                            self._set_subtitle_default_mode("embedded")
+                        except Exception:
+                            pass
+                        try:
+                            print(f"[Subtitle] Pick embedded: path={video_path} stream={stream_index} codec={stream_codec}")
+                        except Exception:
+                            pass
+                        out_sub = self._extract_embedded_subtitle(video_path, stream_index, stream_codec)
+                        if out_sub:
+                            try:
+                                print(f"[Subtitle] Extracted embedded to: {out_sub}")
+                            except Exception:
+                                pass
+                            self.video_player.set_subtitle_file(out_sub)
+                            try:
+                                cue_count = self.video_player.get_subtitle_cue_count()
+                            except Exception:
+                                cue_count = 0
+                            try:
+                                last_err = None
+                                try:
+                                    last_err = self.video_player.get_subtitle_last_error()
+                                except Exception:
+                                    last_err = None
+                                print(f"[Subtitle] Parsed cues: {cue_count} (last_error={last_err})")
+                            except Exception:
+                                pass
+                            if cue_count > 0:
+                                return
+                            try:
+                                from PySide6.QtWidgets import QMessageBox
+                                msg = 'Embedded subtitle was extracted but no cues could be parsed.'
+                                if stream_codec:
+                                    msg += f"\n\nStream codec: {stream_codec}"
+                                if last_err:
+                                    msg += f"\n\nSubtitle parser: {last_err}"
+                                msg += "\n\nTip: If the embedded subtitle is ASS/SSA/PGS, it may not convert cleanly to SRT. Try an external .srt/.vtt file."
+                                QMessageBox.warning(self, 'No Subtitles Parsed', msg)
+                            except Exception:
+                                pass
+                            return
+                        try:
+                            from PySide6.QtWidgets import QMessageBox
+                            err = None
+                            try:
+                                codec_l = (stream_codec or '').lower().strip()
+                                image_based = codec_l in (
+                                    'hdmv_pgs_subtitle', 'pgs', 'dvd_subtitle', 'vobsub', 'dvb_subtitle',
+                                    'xsub', 'dvbsub',
+                                )
+                                if image_based:
+                                    err = self._subtitle_extract_last_error.get((video_path, int(stream_index), '.sup'))
+                                else:
+                                    err = self._subtitle_extract_last_error.get(
+                                        (video_path, int(stream_index), '.ass' if codec_l in ('ass', 'ssa') else '.srt')
+                                    )
+                            except Exception:
+                                err = None
+                            try:
+                                print(f"[Subtitle] Extraction failed: {err}")
+                            except Exception:
+                                pass
+                            msg = 'Could not extract embedded subtitles.'
+                            if stream_codec:
+                                msg += f"\n\nStream codec: {stream_codec}"
+                            if err:
+                                msg += f"\n\nffmpeg: {err[:900]}"
+                            msg += "\n\nMake sure ffmpeg is available and the subtitle format is supported."
+                            QMessageBox.warning(self, 'Subtitle Extraction Failed', msg)
+                        except Exception:
+                            pass
+
+                    a.triggered.connect(on_pick_embedded)
+                    self._subtitle_action_group.addAction(a)
+                    menu.addAction(a)
+
+    def _maybe_auto_load_sidecar_subtitles(self, media_path: str):
+        if not hasattr(self, 'video_player'):
+            return
+        try:
+            self._ensure_subtitle_state()
+            if getattr(self, '_subtitle_user_disabled', False):
+                return
+            if getattr(self, '_subtitle_prefer_embedded', True):
+                return
+        except Exception:
+            pass
+        try:
+            if self.video_player.get_active_subtitle_path():
+                return
+        except Exception:
+            pass
+        try:
+            base, _ext = os.path.splitext(media_path)
+            cand = [
+                base + '.srt', base + '.vtt', base + '.ass', base + '.ssa',
+                base + '.SRT', base + '.VTT', base + '.ASS', base + '.SSA',
+            ]
+            for p in cand:
+                if os.path.exists(p):
+                    self.video_player.set_subtitle_file(p)
+                    return
+        except Exception:
+            return
+        try:
+            self.video_player.clear_subtitles()
+        except Exception:
+            pass
     
     def _populate_audio_devices(self):
         """Populate the audio device submenu with available devices."""
@@ -5242,7 +5723,7 @@ class MusicPanelWidget(QWidget):
         self._player.mediaStatusChanged.connect(self._on_media_status)
         
         # Reconnect video output if in video mode
-        if getattr(self, '_video_mode', False) and hasattr(self, 'video_player'):
+        if self._video_mode and hasattr(self, 'video_player'):
             pass
         
         # Update current index
@@ -5868,22 +6349,24 @@ class MusicPanelWidget(QWidget):
                 print(f"File not found: {path}")
     
     def _toggle_play(self):
-        from PySide6.QtMultimedia import QMediaPlayer
-        
-        # If no track is currently selected/playing, play the first or a random track
-        if getattr(self, '_current_index', -1) < 0 and hasattr(self, '_playlist') and self._playlist:
-            is_shuffled = getattr(self.player_bar, '_is_shuffled', False) if hasattr(self, 'player_bar') else False
-            if is_shuffled:
-                if not getattr(self, '_shuffled_sequence', []):
-                    self._generate_shuffled_sequence()
-                if hasattr(self, '_shuffled_sequence') and self._shuffled_sequence:
-                    self._shuffled_pointer = 0
-                    self._play_track(self._shuffled_sequence[self._shuffled_pointer])
-                    return
-            
-            self._play_track(0)
+        # VLC overlay toggle intercept
+        if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
+            import vlc
+            from PySide6.QtMultimedia import QMediaPlayer
+            state = self._vlc_player.get_state()
+            if state == vlc.State.Playing:
+                self._vlc_player.pause()
+                if hasattr(self, 'player_bar') and self.player_bar:
+                    self.player_bar.set_playing(False)
+                self.playbackStateChanged.emit(QMediaPlayer.PausedState)
+            else:
+                self._vlc_player.play()
+                if hasattr(self, 'player_bar') and self.player_bar:
+                    self.player_bar.set_playing(True)
+                self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
             return
             
+        from PySide6.QtMultimedia import QMediaPlayer
         if self._player.playbackState() == QMediaPlayer.PlayingState:
             self._player.pause()
         else:
@@ -6060,6 +6543,14 @@ class MusicPanelWidget(QWidget):
         
         self._user_volume = volume  # Store for crossfade
         self._audio_output.setVolume(volume)
+        
+        # VLC overlay volume sync intercept
+        if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
+            # Set VLC volume (0-100+)
+            vlc_vol = max(0, min(200, int(volume * 100)))
+            self._vlc_player.audio_set_volume(vlc_vol)
+            
+        # Save volume change
         self._save_state()
     
 
@@ -6071,6 +6562,8 @@ class MusicPanelWidget(QWidget):
             url = url.strip()
             
             # --- Fast Path ---
+            # Attempt to resolve single URLs instantly via oEmbed 
+            # (under ~200ms) to avoid all "dummy track" visual glitches.
             import urllib.request
             import urllib.parse
             import json
@@ -6081,6 +6574,7 @@ class MusicPanelWidget(QWidget):
             
             try:
                 is_fast_path = False
+                # Narrow down to single-track candidates and bypass playlists
                 if ('youtube.com' in url or 'youtu.be' in url) and 'playlist?list=' not in url:
                     api_url = f"https://www.youtube.com/oembed?url={urllib.parse.quote(url)}&format=json"
                     is_fast_path = True
@@ -6096,27 +6590,31 @@ class MusicPanelWidget(QWidget):
                         initial_title = res.get('title')
                         initial_artist = res.get('author_name')
             except Exception:
-                pass
+                pass # Proceed silently to dummy track
             
             needs_background_fetch = False
             
             if initial_title:
+                # Fast path resolved instantly, we have the full identity
                 track = {
                     'path': url,
                     'original_url': url,
                     'title': initial_title,
                     'artist': initial_artist or 'Unknown',
                     'duration': 0,
+                    'has_video': True,
                     'is_online': True,
                     'mtime': 0,
                 }
             else:
+                # Fallback to the dummy track logic while yt-dlp computes
                 track = {
                     'path': url,
                     'original_url': url,
                     'title': 'Resolving link...',
                     'artist': url,
                     'duration': 0,
+                    'has_video': False,
                     'is_online': True,
                     'mtime': 0,
                     'dummy': True
@@ -6133,6 +6631,7 @@ class MusicPanelWidget(QWidget):
             if self._music_folder and hasattr(self, 'header'):
                 playlist_name = self.header.playlist_title.text()
                 
+            # Render track onto the UI immediately
             self.set_playlist(playlist_name, self._playlist)
             if was_empty:
                 self._play_track(0)
@@ -6179,6 +6678,7 @@ class MusicPanelWidget(QWidget):
                     
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=25, startupinfo=startupinfo)
                 if result.returncode == 0 and result.stdout:
+                    # yt-dlp with extract_flat might print multiple JSON objects for playlists
                     tracks_to_add = []
                     lines = result.stdout.strip().split('\n')
                     for line in lines:
@@ -6186,6 +6686,7 @@ class MusicPanelWidget(QWidget):
                         try:
                             info = json.loads(line)
                             
+                            # Flattening logic depending on if it's a playlist container or entries
                             if 'entries' in info and info['entries']:
                                 for idx, entry in enumerate(info['entries']):
                                     if entry:
@@ -6195,6 +6696,7 @@ class MusicPanelWidget(QWidget):
                                             'title': entry.get('title', f"Stream {idx+1}"),
                                             'artist': entry.get('uploader', info.get('uploader', 'Unknown')),
                                             'duration': entry.get('duration') or 0,
+                                            'has_video': False,
                                             'is_online': True,
                                             'mtime': 0,
                                         })
@@ -6205,11 +6707,13 @@ class MusicPanelWidget(QWidget):
                                     'title': info.get('title', 'Unknown Stream'),
                                     'artist': info.get('uploader', 'Unknown'),
                                     'duration': info.get('duration') or 0,
+                                    'has_video': True,
                                     'is_online': True,
                                     'mtime': 0,
                                 })
                         except json.JSONDecodeError:
                             continue
+                        
                     if tracks_to_add:
                         def update_ui():
                             # Safety check to reliably replace the dummy object
@@ -6338,16 +6842,160 @@ class MusicPanelWidget(QWidget):
         
         self._switching_track = True
         
-        self.player_bar.set_track_info(title, artist)
-        self.table.highlight_playing(self._current_index)
-        self._player.setSource(QUrl(stream_url))
-        self._set_current_media_url(stream_url)
-        self._player.play()
+        try:
+            # We strictly enforce VLC for seamless HTTP livestream processing
+            import vlc
+            if not hasattr(self, '_vlc_instance') or self._vlc_instance is None:
+                self._vlc_instance = vlc.Instance('--no-video', '--network-caching=500', '--http-reconnect', '--http-forward-cookies')
+                self._vlc_player = self._vlc_instance.media_player_new()
+                
+                self._vlc_timer = QTimer(self)
+                def poll_vlc():
+                    if getattr(self, '_playing_vlc', False) and self._vlc_player:
+                        state = self._vlc_player.get_state()
+                        
+                        # Monitor EOF
+                        if state in (vlc.State.Ended, vlc.State.Stopped):
+                            self._playing_vlc = False
+                            self._vlc_timer.stop()
+                            from PySide6.QtMultimedia import QMediaPlayer
+                            self._on_media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
+                            return
+                            
+                        # Monitor and update UI ticks when running flawlessly
+                        if state == vlc.State.Playing:
+                            # Verify volume mirroring matches parent widget
+                            vol = max(0, min(200, int(getattr(self, '_user_volume', 1.0) * 100)))
+                            if self._vlc_player.audio_get_volume() != vol:
+                                self._vlc_player.audio_set_volume(vol)
+                            
+                            pos = self._vlc_player.get_time()
+                            dur = self._vlc_player.get_length()
+                            if pos >= 0 and dur > 0:
+                                is_dragging = getattr(self.player_bar, '_is_dragging_timeline', False)
+                                self.player_bar.set_position(pos / 1000.0, dur / 1000.0, skip_throttle=is_dragging)
+                                
+                                # Sync metadata back to playlist dictionary if it was 0
+                                if hasattr(self, '_playlist') and 0 <= self._current_index < len(self._playlist):
+                                    track = self._playlist[self._current_index]
+                                    if track.get('duration', 0) == 0:
+                                        track['duration'] = dur / 1000.0
+                                        QTimer.singleShot(0, self.table._render_tracks)
+                                        # Also refresh header
+                                        total = sum(t.get('duration', 0) for t in self._playlist)
+                                        h, m, s = int(total // 3600), int((total % 3600) // 60), int(total % 60)
+                                        dur_str = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
+                                        self.header.set_info(self.header._name if hasattr(self.header, '_name') else "Playlist", len(self._playlist), dur_str)
+                                
+                self._vlc_timer.timeout.connect(poll_vlc)
+                
+            self._player.stop() # Abort WMF module entirely
+            self._playing_vlc = True
+            
+            media = self._vlc_instance.media_new(stream_url)
+            self._vlc_player.set_media(media)
+            self._vlc_player.play()
+            self._vlc_timer.start(500)
+            
+            # Update Track UI correctly for VLC
+            self.player_bar.set_track_info(title, artist)
+            self.table.highlight_playing(self._current_index)
+            
+        except Exception as e:
+            print(f"VLC unavailable or failed ({e}), falling back to QMediaPlayer")
+            self.player_bar.set_track_info(title, artist)
+            self.table.highlight_playing(self._current_index)
+            self._player.setSource(QUrl(stream_url))
+            self._set_current_media_url(stream_url)
+            self._player.play()
             
         QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
         self._save_state()
         self._update_discord(title, artist, is_playing=True)
     
+    def _toggle_window_fullscreen(self, is_fullscreen: bool):
+        """Toggle main window fullscreen when video player requests it.
+        
+        Preserves the main window's prior fullscreen state so that exiting
+        video fullscreen does not accidentally exit the software's own
+        fullscreen mode.
+        """
+        self._is_fullscreen = is_fullscreen
+        
+        # Find the top-level window (main launcher window)
+        main_window = self.window()
+        
+        if is_fullscreen:
+            # Remember whether the main window was already fullscreen
+            # before the video requested fullscreen, so we can restore
+            # the correct state on exit
+            self._was_window_fullscreen_before_video = main_window.isFullScreen()
+            
+            # Store original window state for restoration
+            self._original_window_flags = main_window.windowFlags()
+            self._original_geometry = main_window.geometry()
+            
+            # Hide menu bar
+            if hasattr(self, '_menu_bar_widget'):
+                self._menu_bar_widget.hide()
+            
+            # Hide sidebar in launcher if available
+            if hasattr(main_window, 'sidebar'):
+                main_window.sidebar.hide()
+                
+            # Hide launcher top bar if available
+            if hasattr(main_window, 'top_bar_container'):
+                main_window.top_bar_container.hide()
+            
+            # Briefly ignore maximize events so launcher doesn't hijack into F11 software fullscreen
+            main_window._ignore_maximize_event = True
+            QTimer.singleShot(600, lambda: setattr(main_window, '_ignore_maximize_event', False))
+            
+            # Go fullscreen
+            main_window.showFullScreen()
+            
+            try:
+                self._set_playerbar_overlay_enabled(True)
+            except Exception:
+                pass
+
+            # Hide PlayerBar initially in fullscreen (will show on hover)
+            self.player_bar.hide()
+            
+            # Ensure we retain focus to receive 'F' or 'Esc' keys
+            self.setFocus()
+            if hasattr(self, 'video_player') and self.video_player:
+                self.video_player.setFocus()
+        else:
+            # Restore to the correct window state:
+            # If the software was already fullscreen before the video
+            # fullscreen, keep it fullscreen. Otherwise go back to normal.
+            if getattr(self, '_was_window_fullscreen_before_video', False):
+                main_window.showFullScreen()
+            else:
+                main_window.showNormal()
+            
+            # Show menu bar
+            if hasattr(self, '_menu_bar_widget'):
+                self._menu_bar_widget.show()
+            
+            # Show sidebar in launcher if available
+            if hasattr(main_window, 'sidebar'):
+                main_window.sidebar.show()
+                
+            # Show launcher top bar if available
+            if hasattr(main_window, 'top_bar_container'):
+                main_window.top_bar_container.show()
+            
+            # Show PlayerBar
+            try:
+                self._set_playerbar_overlay_enabled(False)
+            except Exception:
+                pass
+            self.player_bar.show()
+            
+            # Restore focus to ensure keyboard shortcuts work
+            self.setFocus()
 
     def _set_playerbar_overlay_enabled(self, enabled: bool):
         try:
@@ -6440,7 +7088,106 @@ class MusicPanelWidget(QWidget):
         except Exception:
             pass
     
+    def _toggle_video(self):
+        """Switch between playlist view and video view."""
+        self._video_mode = not self._video_mode
 
+        if self._video_mode:
+            try:
+                self._video_mode_restore_pending = False
+            except Exception:
+                pass
+
+            if not self._is_app_render_allowed() or not getattr(self, '_helxaic_page_visible', True):
+                self._disable_video_output_and_subtitles('render_gate_block', switch_to_playlist=False)
+                self.stack.setCurrentIndex(1)
+                return
+
+            # Switch UI immediately for responsiveness, then do heavier work async.
+            self.stack.setCurrentIndex(1)
+
+            def _finish_enter_video_view():
+                try:
+                    pass
+                except Exception:
+                    pass
+
+                try:
+                    self.video_player.set_render_suspended(False)
+                except Exception:
+                    pass
+
+                try:
+                    if not getattr(self, '_subtitle_appearance_applied_once', False):
+                        self._apply_saved_subtitle_appearance()
+                        self._subtitle_appearance_applied_once = True
+                except Exception:
+                    pass
+
+                # RTSS exclusion is expensive (file IO). Do it once per run.
+                try:
+                    if not getattr(self, '_rtss_excluded_once', False):
+                        import sys as _sys
+                        _lm = _sys.modules.get('__main__') or _sys.modules.get('launcher')
+                        if _lm and hasattr(_lm, '_exclude_from_rtss'):
+                            _lm._exclude_from_rtss()
+                        self._rtss_excluded_once = True
+                except Exception:
+                    pass
+
+                try:
+                    if 0 <= self._current_index < len(self._playlist):
+                        track = self._playlist[self._current_index]
+                        self.video_player.set_title(track.get('title', 'Now Playing'))
+                except Exception:
+                    pass
+
+                # Embedded subtitle probing can be slow (ffprobe). Only do it if the media changed.
+                try:
+                    cur = None
+                    try:
+                        cur = self._player.source().toString() if self._player.source() else None
+                    except Exception:
+                        cur = None
+
+                    if cur and cur != getattr(self, '_last_media_for_sub_auto_pick', None):
+                        self._last_media_for_sub_auto_pick = cur
+                        QTimer.singleShot(0, self._auto_pick_embedded_subtitles_if_available)
+                except Exception:
+                    pass
+
+            try:
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, _finish_enter_video_view)
+            except Exception:
+                _finish_enter_video_view()
+            return
+
+        # Leaving video view
+        try:
+            pass
+        except Exception:
+            pass
+
+        try:
+            self.video_player.set_render_suspended(True)
+        except Exception:
+            pass
+
+        self.stack.setCurrentIndex(0)
+
+    def _switch_to_playlist(self):
+        """Switch back to playlist view (from video player back button)."""
+        self._video_mode = False
+        try:
+            pass
+        except Exception:
+            pass
+        try:
+            self.video_player.set_render_suspended(True)
+        except Exception:
+            pass
+        self.stack.setCurrentIndex(0)
 
     def _set_aspect_ratio(self, mode: str):
         """Set video aspect ratio mode: fill, fit, or stretch."""
@@ -6467,6 +7214,110 @@ class MusicPanelWidget(QWidget):
             
         print(f"Aspect ratio set to: {mode}")
 
+    def _toggle_fullscreen(self):
+        """Toggle fullscreen mode for video player.
+        
+        Preserves the main window's prior fullscreen state so that
+        exiting video fullscreen does not accidentally exit the
+        software's own fullscreen mode (e.g. when the user pressed
+        F11 before entering video fullscreen).
+        """
+        # Don't allow fullscreen if no track is playing
+        if self._current_index < 0 or not self._playlist:
+            return
+        
+        if not hasattr(self, '_is_fullscreen'):
+            self._is_fullscreen = False
+        
+        self._is_fullscreen = not self._is_fullscreen
+        
+        # Get parent window and sidebar
+        parent_window = self.window()
+        sidebar = parent_window.findChild(QWidget, "sidebarNav") if parent_window else None
+        
+        if self._is_fullscreen:
+            # Remember whether the main window was already fullscreen
+            # BEFORE we enter video fullscreen so we can restore later
+            self._was_window_fullscreen_before_video = (
+                parent_window.isFullScreen() if parent_window else False
+            )
+            
+            # Switch to video view if not already
+            if not self._video_mode:
+                self._toggle_video()
+            
+            # Hide UI elements
+            if sidebar:
+                sidebar.hide()
+            if parent_window and hasattr(parent_window, 'top_bar_container'):
+                parent_window.top_bar_container.hide()
+            if hasattr(self, '_menu_bar_widget'):
+                self._menu_bar_widget.hide()
+            self.player_bar.hide()
+            
+            # Enable mouse tracking for playerbar show on hover
+            self.setMouseTracking(True)
+            self.video_player.setMouseTracking(True)
+            self.video_player.video_widget.setMouseTracking(True)
+            self.stack.setMouseTracking(True)
+            if parent_window:
+                parent_window.setMouseTracking(True)
+            
+            # Create hide timer if not exists
+            if not hasattr(self, '_playerbar_hide_timer'):
+                self._playerbar_hide_timer = QTimer()
+                self._playerbar_hide_timer.timeout.connect(self._hide_playerbar_fullscreen)
+                self._playerbar_hide_timer.setSingleShot(True)
+            
+            # Go fullscreen
+            if parent_window:
+                self._original_geometry = parent_window.geometry()
+                
+                # Briefly ignore maximize events so launcher doesn't hijack into F11 software fullscreen
+                parent_window._ignore_maximize_event = True
+                QTimer.singleShot(600, lambda: setattr(parent_window, '_ignore_maximize_event', False))
+                
+                parent_window.showFullScreen()
+                
+                # Install event filter on parent window and video widget for key/mouse events
+                parent_window.installEventFilter(self)
+                self.video_player.video_widget.installEventFilter(self)
+                
+                # Set focus to self for keyboard input
+                self.setFocus()
+            
+            print("Fullscreen: ON")
+        else:
+            # Show UI elements
+            if sidebar:
+                sidebar.show()
+            if parent_window and hasattr(parent_window, 'top_bar_container'):
+                parent_window.top_bar_container.show()
+            if hasattr(self, '_menu_bar_widget'):
+                self._menu_bar_widget.show()
+            self.player_bar.show()
+            
+            # Stop hide timer
+            if hasattr(self, '_playerbar_hide_timer'):
+                self._playerbar_hide_timer.stop()
+            
+            # Restore window to its previous state
+            if parent_window:
+                # Remove event filters
+                parent_window.removeEventFilter(self)
+                self.video_player.video_widget.removeEventFilter(self)
+                
+                # If the software was already fullscreen before video
+                # fullscreen, keep it fullscreen. Otherwise restore
+                # the original geometry (normal/windowed mode).
+                if getattr(self, '_was_window_fullscreen_before_video', False):
+                    parent_window.showFullScreen()
+                else:
+                    parent_window.showNormal()
+                    if hasattr(self, '_original_geometry'):
+                        parent_window.setGeometry(self._original_geometry)
+            
+            print("Fullscreen: OFF")
     
     def eventFilter(self, obj, event):
         """Event filter for fullscreen key and mouse events."""
@@ -6522,6 +7373,11 @@ class MusicPanelWidget(QWidget):
         
         return super().eventFilter(obj, event)
     
+    def _hide_playerbar_fullscreen(self):
+        """Hide player bar in fullscreen mode with slide-down animation."""
+        if hasattr(self, '_is_fullscreen') and self._is_fullscreen:
+            # Animate slide down
+            self._animate_playerbar(show=False)
     
     def _animate_playerbar(self, show: bool):
         """Animate player bar fade in/out using window opacity."""
@@ -6761,6 +7617,8 @@ class MusicPanelWidget(QWidget):
                     self.player_bar.volume_slider.setValue(volume)
                     
                     # Restore aspect ratio
+                    aspect_ratio = state.get('video_aspect_ratio', 'fit')
+                    self._set_aspect_ratio(aspect_ratio)
                     
                     # Restore shuffle and loop mode
                     shuffle = state.get('shuffle', False)
@@ -6813,6 +7671,7 @@ class MusicPanelWidget(QWidget):
                 'loop_mode': getattr(self.player_bar, '_loop_mode', 'off'),
                 'shuffled_sequence': self._shuffled_sequence,
                 'shuffled_pointer': self._shuffled_pointer,
+                'video_aspect_ratio': getattr(self, '_current_aspect_ratio', 'fit'),
                 'subtitle_style_preset': getattr(self, '_subtitle_style_preset', 'outline'),
                 'subtitle_font_size': getattr(self, '_subtitle_font_size', 16)
             }
@@ -6845,7 +7704,9 @@ class MusicPanelWidget(QWidget):
         import datetime
         
         audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
-        filters = "Media Files (" + " ".join(["*" + e for e in (audio_exts)]) + ");;All Files (*.*)"
+        video_exts = {'.mp4', '.mkv', '.avi', '.webm', '.mov'}
+        
+        filters = "Media Files (" + " ".join(["*" + e for e in (audio_exts | video_exts)]) + ");;All Files (*.*)"
         path, _ = QFileDialog.getOpenFileName(self, "Open Media File", "", filters)
         
         if path:
@@ -6865,7 +7726,8 @@ class MusicPanelWidget(QWidget):
                 'title': title,
                 'artist': 'Single Track',
                 'duration': 0,
-                                'date_added': date_str
+                'has_video': ext in video_exts,
+                'date_added': date_str
             }
             
             # Append to currently loaded tracks and play index
@@ -6972,138 +7834,6 @@ class MusicPanelWidget(QWidget):
             # Save immediately so folder is remembered after restart
             QTimer.singleShot(500, self._save_state)
     
-
-    def _fetch_metadata_async(self, target_tracks, target_name):
-        import subprocess
-        import shutil
-        import threading
-        from PySide6.QtCore import QTimer
-        import os
-        
-        print(f"[Duration] Starting metadata fetch for {len(target_tracks)} tracks")
-        
-        def _fetch_worker():
-            # Try to import mutagen for fast metadata reading (works for audio files)
-            try:
-                import mutagen
-                has_mutagen = True
-            except ImportError:
-                has_mutagen = False
-            
-            # Find ffprobe path for fallback
-            ffprobe_path = shutil.which("ffprobe")
-            if not ffprobe_path:
-                appdata_tools = os.path.join(os.environ.get("APPDATA", ""), "HELXAID", "tools")
-                if os.path.exists(appdata_tools):
-                    possible_paths = [
-                        os.path.join(appdata_tools, "ffmpeg", "bin", "ffprobe.exe"),
-                        os.path.join(appdata_tools, "ffmpeg", "ffprobe.exe"),
-                        os.path.join(appdata_tools, "ffprobe.exe")
-                    ]
-                    for p in possible_paths:
-                        if os.path.exists(p):
-                            ffprobe_path = p
-                            break
-                    if not ffprobe_path:
-                        for root, dirs, fnames in os.walk(appdata_tools):
-                            for fn in fnames:
-                                if fn.lower() == "ffprobe.exe":
-                                    ffprobe_path = os.path.join(root, fn)
-                                    break
-                            if ffprobe_path: break
-            
-            changed = False
-            success_count = 0
-            fail_count = 0
-            
-            for t in target_tracks:
-                # Stop parsing if playlist was changed/switched
-                if getattr(self, '_playlist', None) is not target_tracks:
-                    break
-                    
-                path = t.get('path', '')
-                if not os.path.exists(path):
-                    continue
-                
-                # Only fetch if duration is 0
-                if t.get('duration', 0) > 0:
-                    continue
-                
-                dur = 0
-                artist = ''
-                
-                if has_mutagen:
-                    try:
-                        m = mutagen.File(path)
-                        if m is not None and hasattr(m, 'info'):
-                            dur = getattr(m.info, 'length', 0)
-                            if hasattr(m, 'tags') and m.tags:
-                                if 'artist' in m.tags:
-                                    val = m.tags['artist']
-                                    artist = str(val[0]) if isinstance(val, list) and len(val) > 0 else str(val)
-                    except Exception:
-                        pass
-                
-                if dur <= 0 and ffprobe_path:
-                    try:
-                        result = subprocess.run(
-                            [ffprobe_path, "-v", "quiet", "-show_entries", "format=duration", 
-                             "-of", "default=noprint_wrappers=1:nokey=1", path],
-                            capture_output=True, text=True, timeout=10,
-                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                        )
-                        if result.returncode == 0 and result.stdout.strip():
-                            dur = float(result.stdout.strip())
-                    except Exception:
-                        pass
-                
-                if dur > 0:
-                    t['duration'] = dur
-                    changed = True
-                    success_count += 1
-                else:
-                    fail_count += 1
-                
-                if artist and not t.get('artist') and t.get('artist') != 'Dropped File':
-                    t['artist'] = artist
-                elif artist and t.get('artist') == 'Dropped File':
-                    t['artist'] = artist
-                
-                # Incremental UI update every 5 tracks
-                if (success_count + fail_count) % 5 == 0 and changed:
-                    print(f"[Duration] Incremental UI update triggered for {success_count+fail_count} tracks")
-                    _snap = list(target_tracks)
-                    _n = target_name
-                    def _incr(_s=_snap, _nm=_n):
-                        if getattr(self, '_playlist', None) is not target_tracks:
-                            return
-                        if hasattr(self, 'table') and hasattr(self.table, '_render_tracks'):
-                            self.table._render_tracks()
-                        if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
-                            self.header.set_info(_nm, len(target_tracks), self._format_playlist_duration())
-                    QTimer.singleShot(0, self, _incr)
-            
-            print(f"[Duration] Fetch loop complete. changed={changed}, success={success_count}, fail={fail_count}")
-            # Final update
-            if changed and getattr(self, '_playlist', None) is target_tracks:
-                print(f"[Duration] Scheduling final update_ui")
-                def update_ui():
-                    print(f"[Duration] Running update_ui on main thread")
-                    if getattr(self, '_playlist', None) is not target_tracks:
-                        print(f"[Duration] update_ui aborted: playlist changed")
-                        return
-                    if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
-                        self.header.set_info(target_name, len(target_tracks), self._format_playlist_duration())
-                    if hasattr(self, 'table') and hasattr(self.table, '_render_tracks'):
-                        self.table._render_tracks()
-                        print(f"[Duration] update_ui table._render_tracks() called")
-                QTimer.singleShot(0, self, update_ui)
-            else:
-                print(f"[Duration] Final update_ui NOT scheduled. changed={changed}")
-                
-        t = threading.Thread(target=_fetch_worker, daemon=True)
-        t.start()
-
     def _load_tracks_from_folder(self, folder: str):
         """Scan folder and load tracks."""
         # Use Python fallback scanner - C++ has encoding issues with special characters
@@ -7115,11 +7845,13 @@ class MusicPanelWidget(QWidget):
         import subprocess
         
         audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
+        video_exts = {'.mp4', '.mkv', '.avi', '.webm', '.mov'}
+        
         tracks = []
         for root, dirs, files in os.walk(folder):
             for f in files:
                 ext = os.path.splitext(f)[1].lower()
-                if ext in audio_exts:
+                if ext in audio_exts or ext in video_exts:
                     path = os.path.join(root, f)
                     title = os.path.splitext(f)[0]
                     
@@ -7139,7 +7871,8 @@ class MusicPanelWidget(QWidget):
                         'title': title,
                         'artist': '',
                         'duration': duration,
-                                                'date_added': date_str
+                        'has_video': ext in video_exts,
+                        'date_added': date_str
                     })
         
         playlist_name = os.path.basename(folder) + "'s Playlist"
@@ -7147,7 +7880,156 @@ class MusicPanelWidget(QWidget):
         print(f"Loaded {len(tracks)} tracks from {folder} (fallback)")
         
         # Async metadata loading to prevent UI freeze
-        self._fetch_metadata_async(tracks, playlist_name)
+        def _fetch_metadata(target_tracks, target_name):
+            import subprocess
+            import shutil
+            
+            print(f"[Duration] Starting metadata fetch for {len(target_tracks)} tracks")
+            
+            # Try to import mutagen for fast metadata reading (works for audio files)
+            try:
+                import mutagen
+                has_mutagen = True
+                print(f"[Duration] mutagen available")
+            except ImportError:
+                has_mutagen = False
+                print("[Duration] mutagen NOT available")
+            
+            # Find ffprobe path for fallback (handles MKV, MP4 without tags, etc.)
+            ffprobe_path = shutil.which("ffprobe")
+            if not ffprobe_path:
+                # Check HELXAID's bundled FFmpeg tools specifically in the bin directory
+                appdata_tools = os.path.join(
+                    os.environ.get("APPDATA", ""), "HELXAID", "tools"
+                )
+                if os.path.exists(appdata_tools):
+                    # We look for ffprobe.exe in all subdirectories, but prioritize common bin paths
+                    possible_paths = [
+                        os.path.join(appdata_tools, "ffmpeg", "bin", "ffprobe.exe"),
+                        os.path.join(appdata_tools, "ffmpeg", "ffprobe.exe"),
+                        os.path.join(appdata_tools, "ffprobe.exe")
+                    ]
+                    for p in possible_paths:
+                        if os.path.exists(p):
+                            ffprobe_path = p
+                            break
+                    
+                    if not ffprobe_path:
+                        # Deep walk only if common paths fail
+                        for root, dirs, fnames in os.walk(appdata_tools):
+                            for fn in fnames:
+                                if fn.lower() == "ffprobe.exe":
+                                    ffprobe_path = os.path.join(root, fn)
+                                    break
+                            if ffprobe_path: break
+            
+            print(f"[Duration] ffprobe path: {ffprobe_path}")
+                            
+            from PySide6.QtCore import QTimer
+            changed = False
+            success_count = 0
+            fail_count = 0
+            
+            for t in target_tracks:
+                # Stop parsing if playlist was changed/switched
+                if getattr(self, '_playlist', None) is not target_tracks:
+                    print("[Duration] Playlist changed, aborting")
+                    break
+                    
+                path = t.get('path', '')
+                if not os.path.exists(path):
+                    continue
+                
+                dur = 0
+                artist = ''
+                
+                # Step 1: Try mutagen first (fast, works for MP3/FLAC/OGG/some MP4)
+                if has_mutagen:
+                    try:
+                        m = mutagen.File(path)
+                        if m is not None and hasattr(m, 'info'):
+                            dur = getattr(m.info, 'length', 0)
+                            
+                            # Try to get artist name for better UX
+                            if hasattr(m, 'tags') and m.tags:
+                                if 'artist' in m.tags:
+                                    val = m.tags['artist']
+                                    if isinstance(val, list) and len(val) > 0:
+                                        artist = str(val[0])
+                                    else:
+                                        artist = str(val)
+                    except Exception as e:
+                        pass
+                
+                # Step 2: Fallback to ffprobe if mutagen couldn't get duration.
+                # This handles MKV, MP4 without metadata tags, WebM, etc.
+                # ffprobe is always reliable as it reads container headers directly.
+                if dur <= 0 and ffprobe_path:
+                    try:
+                        result = subprocess.run(
+                            [
+                                ffprobe_path,
+                                "-v", "quiet",
+                                "-show_entries", "format=duration",
+                                "-of", "default=noprint_wrappers=1:nokey=1",
+                                path
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=10,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                        )
+                        if result.returncode == 0 and result.stdout.strip():
+                            dur = float(result.stdout.strip())
+                    except (subprocess.TimeoutExpired, ValueError, Exception) as e:
+                        print(f"[Duration] ffprobe error for {os.path.basename(path)}: {e}")
+                
+                # Apply results
+                if dur > 0:
+                    t['duration'] = dur
+                    changed = True
+                    success_count += 1
+                else:
+                    fail_count += 1
+                if artist:
+                    t['artist'] = artist
+                
+                # Incremental UI update every 5 tracks so durations appear
+                # progressively as the scanner runs, not just at the very end.
+                if (success_count + fail_count) % 5 == 0 and changed:
+                    _snap = list(target_tracks)
+                    _n = target_name
+                    def _incr(_s=_snap, _nm=_n):
+                        if getattr(self, '_playlist', None) is not target_tracks:
+                            return
+                        if hasattr(self, 'table') and hasattr(self.table, '_render_tracks'):
+                            self.table._render_tracks()
+                        if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
+                            self.header.set_info(_nm, len(target_tracks), self._format_playlist_duration())
+                    QTimer.singleShot(0, _incr)
+            
+            print(f"[Duration] Fetch complete: {success_count} ok, {fail_count} failed, changed={changed}")
+            
+            # Update UI on main thread only if changes were made and playlist is still active
+            if changed and getattr(self, '_playlist', None) is target_tracks:
+                def update_ui():
+                    if getattr(self, '_playlist', None) is not target_tracks:
+                        return
+                    
+                    if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
+                        self.header.set_info(target_name, len(target_tracks), self._format_playlist_duration())
+                        
+                    # Refresh table to show updated durations
+                    if hasattr(self, 'table') and hasattr(self.table, '_render_tracks'):
+                        self.table._render_tracks()
+                        
+                QTimer.singleShot(0, update_ui)
+            else:
+                print(f"[Duration] NOT updating UI: changed={changed}, playlist_match={getattr(self, '_playlist', None) is target_tracks}")
+                
+        import threading
+        t = threading.Thread(target=_fetch_metadata, args=(tracks, playlist_name), daemon=True)
+        t.start()
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ class OutputRedirector(QObject):
         self.original_stream = original_stream
     
     def write(self, text):
-        if text.strip():  # Only emit non-empty text
+        if text:  # Emit all text, including newlines
             self.text_written.emit(text)
         # Also write to original stream
         if self.original_stream:
@@ -140,27 +140,6 @@ class DebugConsoleWidget(QWidget):
         """)
         btn_layout.addWidget(self.auto_scroll_btn)
         
-        # Pretty-Print button
-        pretty_btn = QPushButton("Pretty-Print")
-        pretty_btn.setObjectName("debugPrettyBtn")
-        pretty_btn.setCursor(Qt.PointingHandCursor)
-        pretty_btn.clicked.connect(self.pretty_print_json)
-        pretty_btn.setToolTip("Find and format JSON strings in the console for better readability")
-        pretty_btn.setStyleSheet("""
-            QPushButton {
-                background: #333;
-                color: #e0e0e0;
-                border: 1px solid #555;
-                border-radius: 4px;
-                padding: 5px 15px;
-            }
-            QPushButton:hover {
-                background: #444;
-                border-color: #2ecc71;
-            }
-        """)
-        btn_layout.addWidget(pretty_btn)
-        
         btn_layout.addStretch()
         
         # Close button
@@ -246,7 +225,6 @@ class DebugConsoleWidget(QWidget):
             self.hide()
         else:
             super().keyPressEvent(event)
-
     def pretty_print_json(self):
         """Search for JSON blobs in the console and format them with indentation."""
         text = self.console.toPlainText()

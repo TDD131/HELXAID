@@ -42,3 +42,23 @@ helxaid_native/obj/
 # Build output
 dist/
 build/
+
+# Temporary / Agent generated files
+*.patch
+*.txt
+scratch_*.py
+query
+brain/
+.agents/artifacts/
+
+# Additional one-off scripts and plans
+implementation_plan.md
+task_list.md
+*test*.py
+fix_remnants.py
+patch_remove_video.py
+recover_diff.py
+remove_video.py
+HELXAID_Portable.spec
+python/invert_images.py
+python/launch_debug.py

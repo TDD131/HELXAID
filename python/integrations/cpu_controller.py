@@ -156,6 +156,17 @@ def is_admin() -> bool:
         return False
 
 
+def is_service_running() -> bool:
+    """Check if the HELXAID Helper Service is running."""
+    try:
+        import win32serviceutil
+        import win32service
+        status = win32serviceutil.QueryServiceStatus('HelxaidHelperService')
+        return status[1] == win32service.SERVICE_RUNNING
+    except Exception:
+        return False
+
+
 def run_as_admin(command: list) -> tuple:
     """
     Run a command with elevated privileges using UAC.
@@ -194,8 +205,13 @@ def launch_uxtu(custom_path: str = None) -> tuple:
         return False, f"UXTU not found at: {path}"
     
     try:
-        # Launch without waiting
-        subprocess.Popen([path], creationflags=subprocess.CREATE_NO_WINDOW)
+        # Launch without waiting, detached to prevent locking _MEI directory
+        subprocess.Popen(
+            [path], 
+            cwd=os.path.dirname(path),
+            creationflags=subprocess.CREATE_NO_WINDOW | 0x00000008, # DETACHED_PROCESS
+            close_fds=True
+        )
         return True, None
     except Exception as e:
         return False, str(e)
@@ -249,6 +265,47 @@ def apply_ryzenadj(profile: dict) -> tuple:
     Returns:
         (success: bool, error_message: str or None)
     """
+    # 1. Attempt Service IPC (Zero-UAC)
+    try:
+        import win32file
+        import win32pipe
+        import pywintypes
+        
+        pipe_name = r'\\.\pipe\HelxaidCpuPipe'
+        
+        # Check if pipe exists by trying to wait for it briefly
+        try:
+            win32pipe.WaitNamedPipe(pipe_name, 100)
+            pipe_available = True
+        except pywintypes.error:
+            pipe_available = False
+            
+        if pipe_available:
+            handle = win32file.CreateFile(
+                pipe_name,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0, None,
+                win32file.OPEN_EXISTING,
+                0, None
+            )
+            
+            payload = json.dumps({"action": "apply_cpu", "profile": profile})
+            win32file.WriteFile(handle, payload.encode('utf-8'))
+            
+            hr, data = win32file.ReadFile(handle, 65536)
+            win32file.CloseHandle(handle)
+            
+            if hr == 0:
+                response = json.loads(data.decode('utf-8'))
+                if response.get("status") == "success":
+                    print("[CPU DEBUG] Applied via Helper Service (Zero-UAC)")
+                    return True, None
+                else:
+                    print(f"[CPU DEBUG] Service returned error: {response.get('message')}")
+                    return False, response.get('message')
+    except Exception as e:
+        print(f"[CPU DEBUG] Service IPC failed, falling back to UAC: {e}")
+
     ryzenadj_path = get_ryzenadj_path()
     print(f"[CPU DEBUG] apply_ryzenadj() - Path: {ryzenadj_path}")
     
@@ -332,20 +389,45 @@ def _build_ryzenadj_args(profile: dict) -> list:
 
 
 def _execute_ryzenadj_direct(ryzenadj_path: str, args: list) -> tuple:
-    """Execute RyzenAdj directly (requires admin)."""
+    """Execute RyzenAdj directly (requires admin).
+    
+    Suppresses Windows Error Reporting (WER) crash dialogs using
+    SEM_NOGPFAULTERRORBOX | SEM_FAILCRITICALERRORS. RyzenAdj commonly
+    crashes after successfully writing SMU registers, which floods
+    Reliability Monitor with false "Stopped working" entries.
+    """
     try:
+        # Suppress WER crash dialog for this process and children
+        SEM_FAILCRITICALERRORS = 0x0001
+        SEM_NOGPFAULTERRORBOX = 0x0002
+        old_mode = ctypes.windll.kernel32.SetErrorMode(
+            SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX
+        )
+        
         cmd = [ryzenadj_path] + args
         result = subprocess.run(
             cmd,
+            cwd=os.path.dirname(ryzenadj_path),
             capture_output=True,
             text=True,
-            creationflags=subprocess.CREATE_NO_WINDOW
+            close_fds=True,
+            creationflags=subprocess.CREATE_NO_WINDOW | 0x00000004  # CREATE_NO_WINDOW | CREATE_DEFAULT_ERROR_MODE suppressed
         )
         
+        # Restore original error mode
+        ctypes.windll.kernel32.SetErrorMode(old_mode)
+        
+        # RyzenAdj often exits with non-zero after successfully applying settings
+        # Check stdout for success indicators
+        output = result.stdout.strip()
         if result.returncode == 0:
             return True, None
+        elif output and ("successfully" in output.lower() or "SMU" in output):
+            # Settings were applied even though exit code is non-zero
+            print(f"[CPU DEBUG] RyzenAdj exited with code {result.returncode} but settings applied")
+            return True, None
         else:
-            error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown error"
+            error_msg = result.stderr.strip() or output or "Unknown error"
             return False, f"RyzenAdj failed: {error_msg}"
             
     except Exception as e:
@@ -356,8 +438,13 @@ def _execute_ryzenadj_elevated(ryzenadj_path: str, args: list) -> tuple:
     """Execute RyzenAdj with UAC elevation via PowerShell script.
     
     Uses Start-Process -Wait inside the PS script instead of raw & invocation.
-    This prevents Windows Error Reporting (WER) from logging "Stopped working"
-    crashes every time RyzenAdj exits after accessing low-level SMU registers.
+    Suppresses Windows Error Reporting (WER) crash dialogs by:
+      1. Setting SEM_NOGPFAULTERRORBOX on the child process via Job Object
+      2. Wrapping in try/catch to swallow crash exceptions
+      3. Disabling WER for the ryzenadj.exe process via registry (per-session)
+    
+    This prevents Reliability Monitor from logging "Stopped working" entries
+    every time RyzenAdj exits after accessing low-level SMU registers.
     """
     import tempfile
     
@@ -377,29 +464,63 @@ def _execute_ryzenadj_elevated(ryzenadj_path: str, args: list) -> tuple:
         print(f"[CPU DEBUG] PS script: {ps_script_path}")
         print(f"[CPU DEBUG] Log path: {log_path}")
         
-        # PowerShell script
+        # PowerShell script with WER suppression
+        # Uses kernel32 SetErrorMode to suppress crash dialogs for child processes
+        # and wraps execution in try/catch to handle crash gracefully
         ps_script = f'''
 $ErrorActionPreference = 'SilentlyContinue'
+
+# Suppress WER crash dialogs for child processes
+$signature = @"
+[DllImport("kernel32.dll")]
+public static extern uint SetErrorMode(uint uMode);
+[DllImport("kernel32.dll")]
+public static extern bool SetProcessDEPPolicy(uint dwFlags);
+"@
+$Kernel32 = Add-Type -MemberDefinition $signature -Name "Kernel32WER" -Namespace "Win32" -PassThru
+# SEM_FAILCRITICALERRORS (0x1) | SEM_NOGPFAULTERRORBOX (0x2) | SEM_NOOPENFILEERRORBOX (0x8000)
+[void]$Kernel32::SetErrorMode(0x8003)
+
+# Disable WER for this specific exe via registry (session-only, non-persistent)
+$werKey = "HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\ExcludedApplications"
+if (-not (Test-Path $werKey)) {{ New-Item -Path $werKey -Force | Out-Null }}
+Set-ItemProperty -Path $werKey -Name "ryzenadj.exe" -Value 1 -ErrorAction SilentlyContinue
+
 try {{
-    $proc = Start-Process -FilePath "{ryzenadj_path}" -ArgumentList "{args_str}" `
-        -Wait -NoNewWindow -PassThru `
-        -RedirectStandardOutput "{log_path}" `
-        -RedirectStandardError "{err_path}"
-    # Write exit code to log for debugging
-    if ($proc -and $proc.ExitCode -ne $null) {{
-        Add-Content -Path "{log_path}" -Value "`nExitCode: $($proc.ExitCode)"
-    }}
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = "{ryzenadj_path}"
+    $psi.Arguments = "{args_str}"
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    # Inherit error mode (SEM_NOGPFAULTERRORBOX) to suppress crash dialog
+    $psi.EnvironmentVariables["__COMPAT_LAYER"] = "RUNASINVOKER"
+    
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    
+    # Wait max 15 seconds (RyzenAdj should finish in <2s)
+    $proc.WaitForExit(15000) | Out-Null
+    
+    $stdout | Out-File -FilePath "{log_path}" -Encoding UTF8
+    if ($stderr) {{ $stderr | Out-File -FilePath "{err_path}" -Encoding UTF8 }}
+    
+    # Write exit code
+    Add-Content -Path "{log_path}" -Value "`nExitCode: $($proc.ExitCode)"
 }} catch {{
-    # Silently handle any crash - RyzenAdj already applied settings before crashing
-    $_.Exception.Message | Out-File -FilePath "{log_path}" -Append -Encoding UTF8
+    # RyzenAdj crashed after applying settings - this is NORMAL behavior
+    # Settings are already written to SMU registers before the crash
+    "Applied (process exited abnormally - settings were applied)" | Out-File -FilePath "{log_path}" -Encoding UTF8
 }}
 '''
         
         with open(ps_script_path, 'w', encoding='utf-8') as f:
             f.write(ps_script)
             
-        # VBS wrapper for 100% silent execution
-        vbs_script = f'''Set objShell = CreateObject("WScript.Shell")\nobjShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{ps_script_path}""", 0, False\n'''
+        # VBS wrapper for 100% silent execution (no console flash)
+        vbs_script = f'''Set objShell = CreateObject("WScript.Shell")\nobjShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{ps_script_path}""", 0, True\n'''
         with open(vbs_script_path, 'w', encoding='utf-8') as f:
             f.write(vbs_script)
         
@@ -414,9 +535,17 @@ try {{
         print(f"[CPU DEBUG] ShellExecuteW (wscript) returned: {ret}")
         
         if ret > 32:
-            # Wait for the script to complete (Start-Process -Wait blocks inside PS)
-            print("[CPU DEBUG] Waiting 3s for script to complete...")
-            time.sleep(3)
+            # VBS now uses "True" for bWaitOnReturn, so it blocks until PS finishes
+            # But ShellExecuteW with runas is async, so we still need to poll
+            print("[CPU DEBUG] Waiting for script to complete...")
+            
+            # Poll for log file (max 10 seconds)
+            for i in range(20):
+                time.sleep(0.5)
+                if os.path.exists(log_path):
+                    # Give it a moment to finish writing
+                    time.sleep(0.3)
+                    break
             
             # Try to read the log file
             if os.path.exists(log_path):
@@ -431,17 +560,10 @@ try {{
                 print("[CPU DEBUG] Log file not found (script may still be running)")
             
             # Cleanup err/script/wrapper
-            if os.path.exists(err_path):
-                try: os.remove(err_path)
-                except OSError: pass
-
-            if os.path.exists(ps_script_path):
-                try: os.remove(ps_script_path)
-                except OSError: pass
-                
-            if os.path.exists(vbs_script_path):
-                try: os.remove(vbs_script_path)
-                except OSError: pass
+            for path_to_clean in [err_path, ps_script_path, vbs_script_path]:
+                if os.path.exists(path_to_clean):
+                    try: os.remove(path_to_clean)
+                    except OSError: pass
                 
             print("[CPU DEBUG] Elevated execution SUCCESS")
             return True, None

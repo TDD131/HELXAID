@@ -23,12 +23,17 @@ from PySide6.QtGui import (
     QConicalGradient, QIntValidator
 )
 
+import collections
+import threading
 import pyqtgraph as pg
 from datetime import datetime
 from hardware_wrapper import get_monitor, HardwareMonitor
 
 import os
 import io
+
+# Maximum chart history points (10 minutes at 500ms = 1200 points)
+MAX_CHART_HISTORY = 1200
 
 # Try to import icoextract for exe icon extraction
 try:
@@ -442,12 +447,19 @@ class HardwarePanelWidget(QWidget):
         self._update_timer = QTimer()
         self._update_timer.timeout.connect(self._update_stats)
         
-        # History for charts (growing arrays, not fixed length)
-        self._cpu_history = []
-        self._ram_history = []
-        self._disk_usage_history = []
+        # History for charts (bounded deques to prevent memory leaks)
+        self._cpu_history = collections.deque(maxlen=MAX_CHART_HISTORY)
+        self._ram_history = collections.deque(maxlen=MAX_CHART_HISTORY)
+        self._disk_usage_history = collections.deque(maxlen=MAX_CHART_HISTORY)
         self._chart_display_length = 60  # Show last 60 points
         self._hwmon_check_counter = 0  # Counter for throttled hwmon status check
+        
+        # Auto-refresh counters (initialized here to avoid issues if _update_stats errors early)
+        self._processes_refresh_counter = 0
+        self._services_refresh_counter = 0
+        
+        # Boost thread lock to prevent overlapping cycles
+        self._boost_lock = threading.Lock()
         
         # Auto-scroll control per chart - pauses when user manually scrolls, resumes when head is visible
         self._chart_auto_scroll = {
@@ -469,23 +481,6 @@ class HardwarePanelWidget(QWidget):
         self._apply_style()
 
         print("[Hardware] HardwarePanelWidget initialized")
-    
-    def showEvent(self, event):
-        """Initialize NetworkMonitor when widget is first shown."""
-        super().showEvent(event)
-        
-        # Initialize NetworkMonitor on first show to start collecting data immediately
-        if not hasattr(self, '_net_monitor_initialized'):
-            try:
-                from NetworkMonitor import NetworkMonitor
-                self._net_monitor_initialized = True
-                self._net_monitor = NetworkMonitor(parent=None)
-                self._net_monitor.data_updated.connect(self._on_net_data_updated)
-                self._net_monitor.start()
-                print("[Hardware] NetworkMonitor initialized at startup")
-            except Exception as e:
-                print(f"[Hardware] Failed to initialize NetworkMonitor: {e}")
-                self._net_monitor_initialized = False
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -571,6 +566,10 @@ class HardwarePanelWidget(QWidget):
     
     def _switch_page(self, index: int):
         """Switch to a different page in the stack, lazy-loading if needed."""
+        # CRITICAL: Stop timer during page switch to prevent accessing deleted widgets
+        was_active = self._update_timer.isActive()
+        self._update_timer.stop()
+        
         # Lazy load page if not yet created
         if not self._pages_created[index]:
             self._create_page_lazy(index)
@@ -589,6 +588,10 @@ class HardwarePanelWidget(QWidget):
         
         # Reset chart histories when switching pages
         self._reset_chart_histories()
+        
+        # Resume timer after page switch is complete
+        if was_active:
+            self._update_timer.start(self.monitor.update_interval_ms)
     
     def _create_page_lazy(self, index: int):
         """Create a page on-demand (lazy loading)."""
@@ -616,20 +619,20 @@ class HardwarePanelWidget(QWidget):
     
     def _reset_chart_histories(self):
         """Reset all chart histories (called on page change)."""
-        self._cpu_history = []
-        self._ram_history = []
-        self._disk_usage_history = []
+        self._cpu_history.clear()
+        self._ram_history.clear()
+        self._disk_usage_history.clear()
         self._drive_history = {}
         # Reset all chart auto-scroll on page change
         self._chart_auto_scroll = {'cpu': True, 'ram': True, 'disk': True}
     
     def _get_chart_key(self, chart) -> str:
         """Get the key for a specific chart."""
-        if chart == self.ram_chart:
+        if hasattr(self, 'ram_chart') and chart == self.ram_chart:
             return 'ram'
-        elif chart == self.cpu_chart:
+        elif hasattr(self, 'cpu_chart') and chart == self.cpu_chart:
             return 'cpu'
-        elif chart == self.disk_chart:
+        elif hasattr(self, 'disk_chart') and chart == self.disk_chart:
             return 'disk'
         return ''
     
@@ -1063,15 +1066,16 @@ class HardwarePanelWidget(QWidget):
         
         Re-collects current checkbox state from all 4 tabs so that
         any changes the user makes mid-boost are picked up on the
-        next cycle.
+        next cycle. Uses a lock to prevent overlapping boost cycles
+        which can cause state corruption.
         """
         if not getattr(self, '_is_boosting', False):
             return
         if getattr(self, '_boost_cancel_requested', False):
             return
         
-        # Don't start a new cycle if the previous one is still running
-        if hasattr(self, '_boost_thread') and self._boost_thread is not None and self._boost_thread.is_alive():
+        # Use lock to prevent overlapping cycles (race condition fix)
+        if not self._boost_lock.acquire(blocking=False):
             print("[Boost] Previous cycle still running, skipping this reapply")
             return
         
@@ -1511,6 +1515,12 @@ class HardwarePanelWidget(QWidget):
         except Exception as e:
             print(f"[Boost] Error: {e}")
             self.boost_completed_signal.emit({}, "", str(e), 0)
+        finally:
+            # Release boost lock so next reapply cycle can proceed
+            try:
+                self._boost_lock.release()
+            except RuntimeError:
+                pass  # Lock wasn't held (first manual boost, not from reapply)
     
     @Slot(dict, str, str, int)
     def _boost_complete_safe(self, results, summary, error, total_failed):
@@ -3297,6 +3307,8 @@ class HardwarePanelWidget(QWidget):
         Starts a NetworkMonitor QThread that samples psutil every second and
         distributes observed network bytes across processes by their active
         connection count. The tab updates live once data arrives.
+        
+        Component Name: NetworkPage
         """
         from PySide6.QtWidgets import QComboBox, QScrollArea, QFrame, QProgressBar, QFileIconProvider
         from PySide6.QtCore import QFileInfo
@@ -3328,13 +3340,13 @@ class HardwarePanelWidget(QWidget):
 
         # Left: Session total - starts at 0, updated live by the monitor
         total_data_layout = QVBoxLayout()
-        total_data_layout.setSpacing(0)
+        total_data_layout.setSpacing(2)
         self._net_total_lbl = QLabel("0 B")
         self._net_total_lbl.setObjectName("netTotalLabel")
-        self._net_total_lbl.setStyleSheet("color: #ffffff; font-size: 28px; font-weight: 700; background: transparent;")
+        self._net_total_lbl.setStyleSheet("color: #ffffff; font-size: 32px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
         self._net_nic_lbl = QLabel("Loading history...")
         self._net_nic_lbl.setObjectName("netNicLabel")
-        self._net_nic_lbl.setStyleSheet("color: #aaaaaa; font-size: 11px; font-weight: 500; background: transparent;")
+        self._net_nic_lbl.setStyleSheet("color: #FF5B06; font-size: 11px; font-weight: 600; background: transparent;")
         total_data_layout.addWidget(self._net_total_lbl)
         total_data_layout.addWidget(self._net_nic_lbl)
         total_data_layout.addStretch()
@@ -3343,10 +3355,10 @@ class HardwarePanelWidget(QWidget):
         # Middle: Info text
         info_layout = QVBoxLayout()
         info_layout.setSpacing(4)
-        info_title = QLabel("Network usage history")
+        info_title = QLabel("Network usage")
         info_title.setObjectName("netInfoTitle")
-        info_title.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 600; background: transparent;")
-        info_desc = QLabel("Tracks total data used by each app over time. Saved to local history.")
+        info_title.setStyleSheet("color: #e0e0e0; font-size: 14px; font-weight: bold; background: transparent;")
+        info_desc = QLabel("Real-time network consumption by process.")
         info_desc.setObjectName("netInfoDesc")
         info_desc.setWordWrap(True)
         info_desc.setStyleSheet("color: #888888; font-size: 11px; background: transparent;")
@@ -3361,15 +3373,28 @@ class HardwarePanelWidget(QWidget):
 
         common_style = """
             QComboBox, QPushButton {
-                background-color: #202020;
+                background-color: #252528;
                 color: #e0e0e0;
                 border: 1px solid #333333;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-size: 11px;
+                border-radius: 6px;
+                padding: 8px 14px;
+                font-size: 12px;
+                font-weight: 500;
             }
-            QPushButton:hover { background-color: #2a2a2a; border-color: #444444; }
+            QPushButton:hover, QComboBox:hover { 
+                background-color: #2F1A13; 
+                border-color: #8C3A16; 
+                color: #ffffff;
+            }
             QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #1A1A1A;
+                color: #AAAAAA;
+                border: 1px solid #333333;
+                selection-background-color: #FF5B06;
+                selection-color: #FFFFFF;
+                border-radius: 4px;
+            }
         """
 
         adapter_combo = QComboBox()
@@ -3382,7 +3407,7 @@ class HardwarePanelWidget(QWidget):
         else:
             adapter_combo.addItem(" No active adapter")
         adapter_combo.setStyleSheet(common_style)
-        adapter_combo.setFixedWidth(180)
+        adapter_combo.setFixedWidth(200)
 
         ctrl_layout.addWidget(adapter_combo, alignment=Qt.AlignRight)
         ctrl_layout.addStretch()
@@ -3409,7 +3434,7 @@ class HardwarePanelWidget(QWidget):
                 color: #FF5B06;
                 font-size: 11px;
                 font-weight: 600;
-                background: transparent;
+                background: #1a1a1a;
                 border: none;
             }
             QComboBox::drop-down {
@@ -3439,7 +3464,7 @@ class HardwarePanelWidget(QWidget):
         scroll_area.setObjectName("netScrollArea")
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
+            QScrollArea { border: none; background: #1a1a1a; }
             QScrollBar:vertical { background: #1e1e1e; width: 6px; margin: 0px; }
             QScrollBar::handle:vertical { background: #444; min-height: 20px; border-radius: 3px; }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
@@ -3447,7 +3472,7 @@ class HardwarePanelWidget(QWidget):
 
         self._net_list_widget = QWidget()
         self._net_list_widget.setObjectName("netListWidget")
-        self._net_list_widget.setStyleSheet("background: transparent;")
+        self._net_list_widget.setStyleSheet("background: #1a1a1a;")
         self._net_list_layout = QVBoxLayout(self._net_list_widget)
         self._net_list_layout.setObjectName("netListLayout")
         self._net_list_layout.setContentsMargins(0, 0, 10, 0)
@@ -3497,9 +3522,14 @@ class HardwarePanelWidget(QWidget):
         if hasattr(self, '_net_monitor') and self._net_monitor is not None:
             try:
                 self._net_monitor.stop()
-            except Exception:
-                pass
+                if not self._net_monitor.wait(3000):  # Wait up to 3 seconds
+                    print("[Hardware] NetworkMonitor thread did not stop in time, terminating")
+                    self._net_monitor.terminate()
+                    self._net_monitor.wait(1000)
+            except Exception as e:
+                print(f"[Hardware] Error stopping NetworkMonitor: {e}")
             self._net_monitor = None
+            self._net_monitor_initialized = False  # Allow re-creation if panel is shown again
 
     def _on_net_data_updated(self, data):
         """Receive live data from NetworkMonitor and refresh Network tab widgets.
@@ -3626,10 +3656,18 @@ class HardwarePanelWidget(QWidget):
 
         item_frame = QFrame()
         item_frame.setObjectName("netItemFrame")
-        item_frame.setFixedHeight(46)
+        item_frame.setFixedHeight(50)
+        item_frame.setCursor(Qt.PointingHandCursor)
         item_frame.setStyleSheet("""
-            QFrame#netItemFrame { background-color: #222222; border-radius: 4px; }
-            QFrame#netItemFrame:hover { background-color: #282828; }
+            QFrame#netItemFrame { 
+                background: #252528; 
+                border-radius: 6px; 
+                border: 1px solid #2A2A2A;
+            }
+            QFrame#netItemFrame:hover { 
+                background: #2F1A13; 
+                border: 1px solid #552718;
+            }
         """)
 
         item_layout = QHBoxLayout(item_frame)
@@ -3681,11 +3719,11 @@ class HardwarePanelWidget(QWidget):
 
         name_lbl = QLabel(name)
         name_lbl.setObjectName(f"netName_{name}")
-        name_lbl.setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: 500; background: transparent;")
+        name_lbl.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 700; background: transparent;")
 
         size_lbl = QLabel(display_str)
         size_lbl.setObjectName(f"netSize_{name}")
-        size_lbl.setStyleSheet("color: #aaaaaa; font-size: 11px; background: transparent;")
+        size_lbl.setStyleSheet("color: #FDA903; font-size: 11px; font-weight: 600; font-family: 'Orbitron'; background: transparent;")
 
         top_row.addWidget(name_lbl)
         top_row.addStretch()
@@ -3696,9 +3734,9 @@ class HardwarePanelWidget(QWidget):
         prog.setFixedHeight(4)
         prog.setTextVisible(False)
         prog.setValue(pct)
-        prog.setStyleSheet("""
-            QProgressBar { background-color: #333333; border-radius: 2px; border: none; }
-            QProgressBar::chunk { background-color: #FF5B06; border-radius: 2px; }
+        prog.setStyleSheet(f"""
+            QProgressBar {{ background-color: #1A1A1A; border-radius: 2px; border: none; }}
+            QProgressBar::chunk {{ background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {c}, stop:1 #ffffff); border-radius: 2px; }}
         """)
 
         right_layout.addLayout(top_row)
@@ -4481,49 +4519,52 @@ class HardwarePanelWidget(QWidget):
             self.disk_leading_text.setPos(len(self._disk_usage_history) - 1, disk_activity)
             self.disk_percent_label.setText(f"{disk_activity:.1f}%")
             
-            # Disk Usage bars (clickable)
+            # Disk Usage bars (in-place update to avoid widget churn)
             disks = snapshot["disk"]
             
-            # Update drive history for all drives
+            # Update drive history for all drives (using deque for O(1) append)
             for disk in disks[:5]:  # Track up to 5 drives
                 drive = disk["drive"]
                 if drive not in self._drive_history:
-                    self._drive_history[drive] = [0] * 60
+                    self._drive_history[drive] = collections.deque([0] * 60, maxlen=60)
                     self._active_drives[drive] = False
                     # Assign fixed color for this drive
                     if drive not in self._drive_color_map:
                         color_idx = len(self._drive_color_map)
                         self._drive_color_map[drive] = self._drive_colors[color_idx % len(self._drive_colors)]
-                # Update history
-                self._drive_history[drive].pop(0)
+                # Update history (deque auto-evicts oldest)
                 self._drive_history[drive].append(disk["percent"])
             
-            # Clear and rebuild disk bars
-            while self.disk_bars_container.count():
-                item = self.disk_bars_container.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
+            # Update disk bars in-place (no widget recreation)
+            if not hasattr(self, '_disk_bar_widgets'):
+                self._disk_bar_widgets = {}
             
+            current_drives = set()
             for i, disk in enumerate(disks[:5]):  # Show up to 5 drives
                 drive = disk["drive"]
-                color = self._drive_color_map.get(drive, self._drive_colors[i % len(self._drive_colors)])
-                
-                # Create display-only bar (not clickable)
-                bar_label = QLabel()
-                bar_label.setFixedHeight(24)
-                bar_label.setProperty("drive", drive)
-                bar_label.setProperty("color", color)
-                
+                current_drives.add(drive)
                 percent = disk["percent"]
                 used = disk["used"]
                 total = disk["total"]
                 
-                # Style the bar
+                # Clamp gradient stops to valid range [0.0, 1.0] (Bug #12)
+                stop1 = min(percent / 100, 0.99)
+                stop2 = min(stop1 + 0.01, 1.0)
+                
+                if drive not in self._disk_bar_widgets:
+                    # Create new bar only for new drives
+                    bar_label = QLabel()
+                    bar_label.setFixedHeight(24)
+                    self.disk_bars_container.addWidget(bar_label)
+                    self._disk_bar_widgets[drive] = bar_label
+                
+                bar_label = self._disk_bar_widgets[drive]
+                bar_label.setText(f"{drive} {percent:.1f}%        {used:.1f} GB / {total:.1f} GB")
                 bar_label.setStyleSheet(f"""
                     QLabel {{
                         background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 rgba(255,107,53,0.7), stop:{percent/100} rgba(255,107,53,0.7), 
-                            stop:{percent/100 + 0.01} rgba(40,40,40,0.8), stop:1 rgba(40,40,40,0.8));
+                            stop:0 rgba(255,107,53,0.7), stop:{stop1} rgba(255,107,53,0.7), 
+                            stop:{stop2} rgba(40,40,40,0.8), stop:1 rgba(40,40,40,0.8));
                         border: 1px solid rgba(100,100,100,0.4);
                         border-radius: 4px;
                         color: #e0e0e0;
@@ -4532,9 +4573,13 @@ class HardwarePanelWidget(QWidget):
                         padding-left: 8px;
                     }}
                 """)
-                
-                bar_label.setText(f"{drive} {percent:.1f}%        {used:.1f} GB / {total:.1f} GB")
-                self.disk_bars_container.addWidget(bar_label)
+            
+            # Remove bars for drives that disappeared
+            for drive in list(self._disk_bar_widgets.keys()):
+                if drive not in current_drives:
+                    widget = self._disk_bar_widgets.pop(drive)
+                    self.disk_bars_container.removeWidget(widget)
+                    widget.deleteLater()
 
             
             # Network
@@ -4714,8 +4759,6 @@ class HardwarePanelWidget(QWidget):
         
         
             # Auto-refresh Processes list every 3 seconds (6 intervals at 500ms)
-            if not hasattr(self, '_processes_refresh_counter'):
-                self._processes_refresh_counter = 0
             self._processes_refresh_counter += 1
             if self._processes_refresh_counter >= 6:  # Every 3 seconds
                 self._processes_refresh_counter = 0
@@ -4723,8 +4766,6 @@ class HardwarePanelWidget(QWidget):
                     self._populate_processes_tab()
             
             # Auto-refresh Services status every 5 seconds (10 intervals at 500ms)
-            if not hasattr(self, '_services_refresh_counter'):
-                self._services_refresh_counter = 0
             self._services_refresh_counter += 1
             if self._services_refresh_counter >= 10:  # Every 5 seconds
                 self._services_refresh_counter = 0
@@ -4778,10 +4819,27 @@ class HardwarePanelWidget(QWidget):
 
     
     def showEvent(self, event):
-        """Start updates when visible."""
+        """Start updates when visible, init NetworkMonitor on first show."""
         super().showEvent(event)
+        
+        # Ensure background temp monitoring thread is running
+        self.monitor.start()
+        
         if not self._update_timer.isActive():
             self._update_timer.start(self.monitor.update_interval_ms)
+        
+        # Initialize NetworkMonitor on first show to start collecting data immediately
+        if not hasattr(self, '_net_monitor_initialized') or not self._net_monitor_initialized:
+            try:
+                from NetworkMonitor import NetworkMonitor
+                self._net_monitor_initialized = True
+                self._net_monitor = NetworkMonitor(parent=None)
+                self._net_monitor.data_updated.connect(self._on_net_data_updated)
+                self._net_monitor.start()
+                print("[Hardware] NetworkMonitor initialized at startup")
+            except Exception as e:
+                print(f"[Hardware] Failed to initialize NetworkMonitor: {e}")
+                self._net_monitor_initialized = False
             
         # Auto-launch hardware monitor in background if it's not already running
         if hasattr(self, '_is_hwmon_running') and not self._is_hwmon_running():

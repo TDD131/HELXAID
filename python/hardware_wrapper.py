@@ -221,14 +221,23 @@ if ($sensors) {{
     $result | ConvertTo-Json -Compress
 }}
 '''
-                    result = subprocess.run(
+                    # Use Popen + communicate to properly kill on timeout (prevents orphan processes)
+                    proc = subprocess.Popen(
                         ['powershell', '-NoProfile', '-Command', ps_script],
-                        capture_output=True, text=True, timeout=5, creationflags=subprocess.CREATE_NO_WINDOW
+                        cwd='C:\\',
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, close_fds=True, creationflags=subprocess.CREATE_NO_WINDOW
                     )
+                    try:
+                        stdout, _ = proc.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.communicate()  # Reap the process
+                        continue
                     
-                    if result.returncode == 0 and result.stdout.strip():
+                    if proc.returncode == 0 and stdout.strip():
                         try:
-                            data = json.loads(result.stdout.strip())
+                            data = json.loads(stdout.strip())
                             cpu_temp = float(data.get('cpu_temp') or 0)
                             gpu_temp = float(data.get('gpu_temp') or 0)
                             cpu_load = float(data.get('cpu_load') or 0)
@@ -594,6 +603,7 @@ $result | ConvertTo-Json -Compress
 '''
             res = subprocess.run(
                 ['powershell', '-NoProfile', '-Command', ps_script],
+                cwd='C:\\', close_fds=True,
                 capture_output=True, text=True, timeout=8,
                 creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
             )
@@ -652,6 +662,7 @@ $result | ConvertTo-Json -Compress
             
             result = subprocess.run(
                 ['powershell', '-NoProfile', '-Command', ps_script],
+                cwd='C:\\', close_fds=True,
                 capture_output=True, text=True, timeout=8,
                 creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
             )

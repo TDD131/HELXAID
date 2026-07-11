@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="32" height="32">
+  <defs>
+    <linearGradient id="gradSilver" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#B0BEC5;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#78909C;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glowSilver">
+      <feGaussianBlur stdDeviation="1" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Outer Hex -->
+  <polygon points="12,1 21.5,6.5 21.5,17.5 12,23 2.5,17.5 2.5,6.5" fill="#1A1A1A" stroke="url(#gradSilver)" stroke-width="1.5" filter="url(#glowSilver)"/>
+  <!-- Inner Hex -->
+  <polygon points="12,4 18.5,7.5 18.5,16.5 12,20 5.5,16.5 5.5,7.5" fill="none" stroke="url(#gradSilver)" stroke-width="0.5" opacity="0.7"/>
+  <!-- Top Accents -->
+  <polygon points="11,2 13,2 12,4" fill="url(#gradSilver)"/>
+  <!-- Number -->
+  <text x="12" y="16.5" font-family="'Orbitron', Arial, sans-serif" font-size="11" font-weight="900" fill="url(#gradSilver)" text-anchor="middle" filter="url(#glowSilver)">2</text>
+</svg>

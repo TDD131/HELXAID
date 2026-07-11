@@ -9,6 +9,7 @@ import urllib.request
 import zipfile
 import tempfile
 import shutil
+import uuid
 from typing import Optional, Tuple, Callable
 
 # AppData tools directory
@@ -27,7 +28,7 @@ RYZENADJ_URL = "https://github.com/FlyGoat/RyzenAdj/releases/latest/download/ryz
 FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 LIBREHWMON_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/download/v0.9.4/LibreHardwareMonitor-net472.zip"
 # HWiNFO Portable (~5MB, latest stable version)
-HWINFO_URL = "https://www.hwinfo.com/files/hwi_834.zip"  # v8.34 portable
+HWINFO_URL = "https://www.hwinfo.com/files/hwi_848.zip"  # v8.48 portable
 # VLC Portable (from VideoLAN, ~40MB) - Version 3.0.20 (stable)
 VLC_URLS = [
     "https://get.videolan.org/vlc/3.0.20/win64/vlc-3.0.20-win64.zip",
@@ -42,9 +43,7 @@ VLC_URLS = [
 # because it points to the "latest" release URL which changes with every new release.
 CHECKSUMS = {
     "vlc": "75d946b166476191df3d93783f7683b7a1a5176aad105e1cd46d940c049f7cdc",  # VLC 3.0.20 win64
-    "ffmpeg": "e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2",  # FFmpeg - placeholder
-    "librehwmon": "a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4",  # LibreHardwareMonitor - placeholder
-    "hwinfo": "b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",  # HWiNFO - placeholder
+    "librehwmon": "d2e397cc4d33d65c6493dff83b9335bc341a3af31caafceef83f717fdab37448",  # LibreHardwareMonitor v0.9.4
 }
 
 
@@ -372,7 +371,7 @@ def download_ryzenadj(progress_callback: Optional[Callable[[int, int], None]] = 
 
         # --- Download ---
         temp_dir = tempfile.gettempdir()
-        zip_path = os.path.join(temp_dir, "ryzenadj-win64.zip")
+        zip_path = os.path.join(temp_dir, f"ryzenadj-win64-{uuid.uuid4().hex}.zip")
 
         last_error = None
         success = False
@@ -405,7 +404,7 @@ def download_ryzenadj(progress_callback: Optional[Callable[[int, int], None]] = 
         # --- Install ---
         # Clean existing installation before extracting new files
         if os.path.exists(RYZENADJ_DIR):
-            shutil.rmtree(RYZENADJ_DIR)
+            shutil.rmtree(RYZENADJ_DIR, ignore_errors=True)
 
         print(f"[Tools] Extracting to {RYZENADJ_DIR}...")
         success, error = extract_zip(zip_path, RYZENADJ_DIR, flatten=True)
@@ -444,7 +443,7 @@ def download_ffmpeg(progress_callback: Optional[Callable[[int, int], None]] = No
     try:
         # Create temp file for download
         temp_dir = tempfile.gettempdir()
-        zip_path = os.path.join(temp_dir, "ffmpeg-essentials.zip")
+        zip_path = os.path.join(temp_dir, f"ffmpeg-essentials-{uuid.uuid4().hex}.zip")
         
         last_error = None
         success = False
@@ -454,8 +453,7 @@ def download_ffmpeg(progress_callback: Optional[Callable[[int, int], None]] = No
                 FFMPEG_URL,
                 zip_path,
                 progress_callback,
-                expected_checksum=CHECKSUMS["ffmpeg"],
-                checksum_algorithm="sha256"
+                expected_checksum=None
             )
             if success:
                 print(f"[Tools] FFmpeg download validated successfully")
@@ -473,7 +471,7 @@ def download_ffmpeg(progress_callback: Optional[Callable[[int, int], None]] = No
         
         # Clean existing installation
         if os.path.exists(FFMPEG_DIR):
-            shutil.rmtree(FFMPEG_DIR)
+            shutil.rmtree(FFMPEG_DIR, ignore_errors=True)
         
         # Extract to temp first (FFmpeg ZIP has nested folder)
         print(f"[Tools] Extracting FFmpeg...")
@@ -528,7 +526,7 @@ def download_librehwmon(progress_callback: Optional[Callable[[int, int], None]] 
     try:
         # Create temp file for download
         temp_dir = tempfile.gettempdir()
-        zip_path = os.path.join(temp_dir, "LibreHardwareMonitor.zip")
+        zip_path = os.path.join(temp_dir, f"LibreHardwareMonitor-{uuid.uuid4().hex}.zip")
         
         last_error = None
         success = False
@@ -557,7 +555,7 @@ def download_librehwmon(progress_callback: Optional[Callable[[int, int], None]] 
         
         # Clean existing installation
         if os.path.exists(LIBREHWMON_DIR):
-            shutil.rmtree(LIBREHWMON_DIR)
+            shutil.rmtree(LIBREHWMON_DIR, ignore_errors=True)
         
         # Extract (LibreHardwareMonitor ZIP has files directly at root)
         print(f"[Tools] Extracting to {LIBREHWMON_DIR}...")
@@ -595,7 +593,7 @@ def download_hwinfo(progress_callback: Optional[Callable[[int, int], None]] = No
     try:
         # Create temp file for download
         temp_dir = tempfile.gettempdir()
-        zip_path = os.path.join(temp_dir, "hwinfo_portable.zip")
+        zip_path = os.path.join(temp_dir, f"hwinfo_portable-{uuid.uuid4().hex}.zip")
         
         last_error = None
         success = False
@@ -605,8 +603,7 @@ def download_hwinfo(progress_callback: Optional[Callable[[int, int], None]] = No
                 HWINFO_URL,
                 zip_path,
                 progress_callback,
-                expected_checksum=CHECKSUMS["hwinfo"],
-                checksum_algorithm="sha256"
+                expected_checksum=None
             )
             if success:
                 print(f"[Tools] HWiNFO download validated successfully")
@@ -624,7 +621,7 @@ def download_hwinfo(progress_callback: Optional[Callable[[int, int], None]] = No
         
         # Clean existing installation
         if os.path.exists(HWINFO_DIR):
-            shutil.rmtree(HWINFO_DIR)
+            shutil.rmtree(HWINFO_DIR, ignore_errors=True)
         
         # Extract (HWiNFO ZIP has files directly at root)
         print(f"[Tools] Extracting to {HWINFO_DIR}...")
@@ -691,12 +688,18 @@ def show_download_dialog(parent, tool_name: str, download_func: Callable) -> boo
         
         # Download function wrapper
         def do_download():
-            if state["cancelled"]:
-                return
-            success, error = download_func(on_progress)
-            state["success"] = success
-            state["error"] = error or ""
-            state["done"] = True
+            try:
+                if state["cancelled"]:
+                    return
+                success, error = download_func(on_progress)
+                state["success"] = success
+                state["error"] = error or ""
+            except Exception as e:
+                state["success"] = False
+                state["error"] = str(e)
+            finally:
+                # Always mark as done so UI loop can exit
+                state["done"] = True
         
         # Create progress dialog
         progress = QProgressDialog(
@@ -717,29 +720,33 @@ def show_download_dialog(parent, tool_name: str, download_func: Callable) -> boo
         thread = threading.Thread(target=do_download, daemon=True)
         thread.start()
         
-        # Poll for completion with processEvents to keep UI responsive
-        from PySide6.QtWidgets import QApplication
+        # Poll for completion with QEventLoop to keep UI responsive
+        loop = QEventLoop()
+        timer = QTimer()
         
-        while not state["done"]:
-            # Process events to keep UI alive
-            QApplication.processEvents()
-            
-            # Check for cancel
+        def check_status():
             if progress.wasCanceled():
                 state["cancelled"] = True
-                break
+                # Ensure the loop exits even when cancelled
+                state["done"] = True
+                timer.stop()
+                loop.quit()
+                return
             
-            # Update progress display
             if state["total"] > 0:
                 percent = int((state["downloaded"] / state["total"]) * 100)
                 progress.setValue(percent)
                 progress.setLabelText(
                     f"Downloading {tool_name}... {state['downloaded'] // 1024} KB / {state['total'] // 1024} KB"
                 )
-            
-            # Small sleep to avoid CPU spin
-            import time
-            time.sleep(0.05)
+                
+            if state["done"]:
+                timer.stop()
+                loop.quit()
+                
+        timer.timeout.connect(check_status)
+        timer.start(50)  # check every 50ms
+        loop.exec()
         
         # Cleanup
         progress.close()
@@ -908,7 +915,7 @@ def download_vlc(progress_callback: Optional[Callable[[int, int], None]] = None)
     try:
         # Create temp file for download
         temp_dir = tempfile.gettempdir()
-        archive_path = os.path.join(temp_dir, "vlc-portable.zip")
+        archive_path = os.path.join(temp_dir, f"vlc-portable-{uuid.uuid4().hex}.zip")
 
         last_error = None
         success = False
@@ -947,13 +954,13 @@ def download_vlc(progress_callback: Optional[Callable[[int, int], None]] = None)
         
         # Clean existing installation
         if os.path.exists(VLC_DIR):
-            shutil.rmtree(VLC_DIR)
+            shutil.rmtree(VLC_DIR, ignore_errors=True)
         
         # Extract ZIP file
         print(f"[Tools] Extracting VLC...")
         temp_extract = os.path.join(temp_dir, "vlc_extract")
         if os.path.exists(temp_extract):
-            shutil.rmtree(temp_extract)
+            shutil.rmtree(temp_extract, ignore_errors=True)
         
         success, error = extract_zip(archive_path, temp_extract, flatten=False)
         if not success:
@@ -1034,7 +1041,7 @@ def ensure_ffmpeg_and_vlc(parent=None) -> bool:
     """
     try:
         from PySide6.QtWidgets import QMessageBox, QProgressDialog, QApplication
-        from PySide6.QtCore import Qt
+        from PySide6.QtCore import Qt, QTimer, QEventLoop
         import threading
         import time
         
@@ -1118,12 +1125,15 @@ def ensure_ffmpeg_and_vlc(parent=None) -> bool:
             thread.start()
             
             # Poll for completion
-            while not state["done"]:
-                QApplication.processEvents()
-                
+            loop = QEventLoop()
+            timer = QTimer()
+            
+            def check_status():
                 if progress.wasCanceled():
                     state["cancelled"] = True
-                    break
+                    timer.stop()
+                    loop.quit()
+                    return
                 
                 if state["total"] > 0:
                     percent = int((state["downloaded"] / state["total"]) * 100)
@@ -1131,8 +1141,14 @@ def ensure_ffmpeg_and_vlc(parent=None) -> bool:
                     progress.setLabelText(
                         f"Downloading {tool_name}... {state['downloaded'] // 1024} KB / {state['total'] // 1024} KB"
                     )
-                
-                time.sleep(0.05)
+                    
+                if state["done"]:
+                    timer.stop()
+                    loop.quit()
+                    
+            timer.timeout.connect(check_status)
+            timer.start(50)
+            loop.exec()
             
             progress.close()
             

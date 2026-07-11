@@ -437,6 +437,8 @@ class ETWNetworkMonitor:
             def resolve_name(pid: int) -> str:
                 try:
                     import psutil
+                    if pid in (0, 4):
+                        return "System"
                     return psutil.Process(pid).name()
                 except Exception:
                     return f"PID {pid}"

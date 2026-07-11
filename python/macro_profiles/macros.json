@@ -1,9 +1,9 @@
 [
   {
-    "id": "autoclicker_db48e1",
+    "id": "autoclicker_0356c5",
     "name": "Auto-clicker (left)",
     "type": "ToggleMacro",
-    "enabled": true,
+    "enabled": false,
     "description": "",
     "trigger": {
       "type": "keyboard_key",
@@ -19,7 +19,7 @@
       "type": "mouse_click",
       "button": "left"
     },
-    "repeat_interval_ms": 1,
+    "repeat_interval_ms": 100,
     "hold_key": null,
     "hold_button": null,
     "on_activate_actions": [],

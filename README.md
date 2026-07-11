@@ -113,10 +113,10 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ### 2. HELXAIC (Media Player)
 
-- Play local audio and video files (MP3, WAV, FLAC, MP4) as background music
+- Play local audio files (MP3, WAV, FLAC, OGG, M4A) as background music
 - Modern, animated Spotify-style playlist interface with smooth column sorting
 - Auto-extracts file metadata, playback duration, and album cover art
-- Built-in volume, repeat/shuffle, and video background fit controls
+- Built-in volume, repeat/shuffle controls
 
 ### 3. HELXAIL (CPU Controller)
 
@@ -145,6 +145,33 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 ## ✦ Changelog
 
+### 4.15
+
+- HELXAID:
+  -- Nothing new here.
+
+- HELXAIC:
+  -- Completey Reworked the HELXAIC Behaviour and UI, include:
+  --- Playlist and Media Library page.
+  --- Output device to Preffered Output.
+  --- COMPLETELY REMOVED video player and related features.
+  --- Now user can't hold shortcut to spam the action.
+  --- User must double click the track to play it.
+  --- Add Anti-Bot Cookie Bypass Youtube Downloader feature.
+  --- Add Open File, Open Multiple Files, Open Folder, Open Multiple Folders, Open Location from Clipboard and Open Recent Media at Upper menu bar.
+
+- HELXAIL:
+  -- The notification now pop-out when applying the CPU Setting (Bug fixes).
+
+- HELXAIR:
+  -- Nothing new here.
+
+- HELXAIRO:
+  -- Nothing new here.
+
+- HELXTATS:
+  -- Nothing new here.
+
 ### 4.14.1
 
 - If user launch game from steam, it will launch steam first then the game launch.
@@ -152,7 +179,7 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 ### 4.14
 
 - Fixed some bugs in HELXAIC (I forgot to list them, sorry :<)
-- Migrate from QTMediaPlayer to VLC Media Player (Maybe it can be considered as Major Update?)
+- Migrated to QMediaPlayer backend for audio playback
 - fixes hover-effect on icon bugs in HELXAID.
 - Add 1-6 Shortcut Key at software so you can switch panel quickly.
 - Remap Open Folder shortcut key from (Ctrl + O) to (Ctrl + K + O).
@@ -168,18 +195,9 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 
 - Add Estimated Size at Youtube Downloader.
 - Add `--no-playlist` flag so that even if the link is a playlist, it will only download the video you copied.
-- Optimized video player performance.
 - Improved Youtube Downloader, include:
   -- Preview Image.
   -- Youtube Downloader now is a panel instead of floating window.
-- Add "Subtitle" Menu at Header of HELXAIC.
-- Added Subtitle Support, include:
-  -- Style, each style has it own style:
-  --- Regular.
-  --- Bold.
-  --- Italic.
-  --- Bold Italic.
-  -- Size.
 - Fixes duration bar bug.
 - Upgraded Internet Data usage Software detection.
 

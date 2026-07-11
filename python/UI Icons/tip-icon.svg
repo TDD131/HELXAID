@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <linearGradient id="bulbGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FDA903;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF5B06;stop-opacity:1" />
+    </linearGradient>
+    <filter id="bulbGlow">
+      <feGaussianBlur stdDeviation="1" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 2.96 5.71.33.23.54.61.54 1.02V17c0 .55.45 1 1 1h5c.55 0 1-.45 1-1v-1.27c0-.41.2-.79.54-1.02C17.81 13.47 19 11.38 19 9c0-3.86-3.14-7-7-7zm2.85 11.1l-.85.6V16h-4v-2.3l-.85-.6C7.8 12.16 7 10.63 7 9c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.63-.8 3.16-2.15 4.1z" fill="url(#bulbGrad)" filter="url(#bulbGlow)"/>
+</svg>

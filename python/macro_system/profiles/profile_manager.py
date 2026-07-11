@@ -235,6 +235,20 @@ class ProfileManager:
         print(f"[ProfileManager] Activated profile: {profile.name}")
         return True
         
+    def deactivate_profile(self) -> bool:
+        """Deactivate the current profile."""
+        if not self._active_profile:
+            return False
+            
+        old_profile = self._active_profile
+        self._active_profile = None
+        
+        if self._on_profile_change:
+            self._on_profile_change(old_profile, None)
+            
+        print("[ProfileManager] Deactivated active profile")
+        return True
+        
     @property
     def active_profile(self) -> Optional[MacroProfile]:
         """Get the currently active profile."""

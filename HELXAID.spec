@@ -3,7 +3,9 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('python/UI Icons', 'UI Icons'), ('python/UI Taskbar Icons', 'UI Taskbar Icons'), ('python/icons', 'icons'), ('python/Fonts', 'Fonts'), ('python/helxaid_native.cp314-win_amd64.pyd', '.'), ('python/helxairo_native.cp314-win_amd64.pyd', '.')]
 binaries = []
-hiddenimports = ['hid']
+hiddenimports = ['hid', 'yt_dlp', 'win32timezone', 'win32serviceutil', 'servicemanager']
+tmp_ret = collect_all('mutagen')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('hid')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('hidapi')
@@ -19,7 +21,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['torch', 'scipy', 'pandas', 'matplotlib'],
     noarchive=False,
     optimize=0,
 )
@@ -28,13 +30,16 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
     name='HELXAID',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -42,13 +47,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['python\\UI Icons\\launcher-icon.ico'],
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='HELXAID',
 )

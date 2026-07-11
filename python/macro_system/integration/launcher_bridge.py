@@ -185,6 +185,12 @@ class LauncherBridge:
         if self._engine:
             self._engine.set_active_layer(new_layer)
             
+    def _unload_all_macros(self):
+        """Clear all active macros from the engine."""
+        if not self._engine:
+            return
+        self._engine.clear_bindings()
+        
     def _load_profile_macros(self, profile_id: str):
         """Load macros for a profile into the engine."""
         if not self._engine or not self._profile_manager:

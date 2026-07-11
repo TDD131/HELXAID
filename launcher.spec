@@ -10,6 +10,7 @@ python_dir = os.path.dirname(os.path.abspath(SPEC))
 datas = [
     # UI Icons
     (os.path.join(python_dir, 'UI Icons'), 'UI Icons'),
+    (os.path.join(python_dir, 'UI Reguler'), 'UI Reguler'),
     (os.path.join(python_dir, 'UI Taskbar Icons'), 'UI Taskbar Icons'),
     # assets folder NOT bundled - contains WinRing0 driver that triggers virus detection
     # RyzenAdj should be downloaded separately by user if they want CPU control
@@ -46,6 +47,8 @@ hiddenimports = [
     'win32com.client',
     'ctypes',
     'ctypes.wintypes',
+    'mutagen',
+    'yt_dlp',
     'macro_system',
     'macro_system.core',
     'macro_system.core.input_listener',

@@ -15,6 +15,7 @@ class NetworkMonitor(QThread):
 
     TICK_INTERVAL = 1.0
     SAVE_INTERVAL = 60
+    TRAFFIC_STATES = frozenset({'ESTABLISHED', 'SYN_SENT'})
 
     APPDATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID")
     os.makedirs(APPDATA_DIR, exist_ok=True)
@@ -50,10 +51,67 @@ class NetworkMonitor(QThread):
         # Tracks purely the live bytes accumulated in RAM *since* the baseline was queried
         self._live_session_deltas: dict[str, int] = collections.defaultdict(int)
 
+        # NIC-level byte tracking (independent of per-process attribution)
+        self._nic_live_bytes: int = 0
+        self._nic_unsaved_bytes: int = 0
+        self._nic_baseline_total: int = 0
+
         # Load DB
         self._init_db()
+        self._catchup_missed_bytes()
 
         self._init_etw()
+
+    def _catchup_missed_bytes(self):
+        """Account for NIC traffic that occurred while HELXAID was not running."""
+        try:
+            nic_stats = psutil.net_io_counters(pernic=True)
+            display_nic = self._pick_best_nic(nic_stats)
+            if not display_nic or display_nic not in nic_stats:
+                return
+            
+            current = nic_stats[display_nic]
+            current_total = current.bytes_sent + current.bytes_recv
+            
+            with sqlite3.connect(self.DB_FILE) as conn:
+                row = conn.execute(
+                    "SELECT value FROM nic_metadata WHERE key='last_nic_total'"
+                ).fetchone()
+                last_nic_row = conn.execute(
+                    "SELECT value FROM nic_metadata WHERE key='last_nic_name'"
+                ).fetchone()
+                
+                if row and last_nic_row:
+                    last_total = int(row[0])
+                    last_nic = last_nic_row[0]
+                    
+                    if (last_nic == display_nic 
+                            and current_total > last_total
+                            and (current_total - last_total) < 500 * 1024**3):
+                        missed = current_total - last_total
+                        ts = int(time.time() / 60) * 60
+                        conn.execute(
+                            """INSERT INTO nic_total (timestamp, bytes) 
+                               VALUES (?, ?)
+                               ON CONFLICT(timestamp) DO UPDATE 
+                               SET bytes = bytes + excluded.bytes""",
+                            (ts, missed)
+                        )
+                        print(f"[NetworkMonitor] Caught up {missed / (1024**3):.2f} GB of missed traffic")
+                
+                self._save_nic_counter(conn, display_nic, current_total)
+        except Exception as e:
+            print(f"[NetworkMonitor] Catchup error: {e}")
+
+    def _save_nic_counter(self, conn, nic_name: str, total_bytes: int):
+        conn.execute(
+            "INSERT OR REPLACE INTO nic_metadata (key, value) VALUES ('last_nic_total', ?)",
+            (str(total_bytes),)
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO nic_metadata (key, value) VALUES ('last_nic_name', ?)",
+            (nic_name,)
+        )
 
     def _init_etw(self):
         try:
@@ -88,6 +146,41 @@ class NetworkMonitor(QThread):
                 conn.execute('''
                     CREATE INDEX IF NOT EXISTS idx_process_time ON network_usage(process_name, timestamp)
                 ''')
+                # NIC-level byte tracking table
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS nic_total (
+                        timestamp INTEGER PRIMARY KEY,
+                        bytes INTEGER
+                    )
+                ''')
+                # NIC metadata for startup catch-up
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS nic_metadata (
+                        key TEXT PRIMARY KEY,
+                        value TEXT
+                    )
+                ''')
+                
+                # Purge corrupted attribution data ("Unknown" and dead "PID XXXX" rows)
+                try:
+                    removed = conn.execute("DELETE FROM network_usage WHERE process_name = 'Unknown'").rowcount
+                    removed += conn.execute("DELETE FROM network_usage WHERE process_name LIKE 'PID %'").rowcount
+                    if removed:
+                        print(f"[NetworkMonitor] Purged {removed} corrupted network history rows")
+                except Exception:
+                    pass
+
+                # Migrate existing valid data to nic_total securely
+                try:
+                    conn.execute('''
+                        INSERT OR IGNORE INTO nic_total (timestamp, bytes)
+                        SELECT timestamp, SUM(bytes)
+                        FROM network_usage
+                        WHERE timestamp NOT IN (SELECT timestamp FROM nic_total)
+                        GROUP BY timestamp
+                    ''')
+                except Exception:
+                    pass
                 
                 # Check for legacy JSON migration
                 cursor = conn.execute("SELECT COUNT(*) FROM network_usage")
@@ -201,37 +294,60 @@ class NetworkMonitor(QThread):
                 self._etw_monitor.stop()
         except Exception:
             pass
+            
+        # Save NIC counter for next-startup catch-up
+        try:
+            nic_stats = psutil.net_io_counters(pernic=True)
+            display_nic = self._pick_best_nic(nic_stats)
+            if display_nic and display_nic in nic_stats:
+                total = nic_stats[display_nic].bytes_sent + nic_stats[display_nic].bytes_recv
+                with sqlite3.connect(self.DB_FILE) as conn:
+                    self._save_nic_counter(conn, display_nic, total)
+        except Exception:
+            pass
+            
         self._flush_to_db()
 
     def _flush_to_db(self):
-        if not self._unsaved_buffer:
-            return
-
         current_minute = int(time.time() / 60) * 60
-        rows = [(current_minute, name, bytes_val) for name, bytes_val in self._unsaved_buffer.items() if bytes_val > 0]
+        
+        # Flush per-process
+        if self._unsaved_buffer:
+            rows = [(current_minute, name, bytes_val) for name, bytes_val in self._unsaved_buffer.items() if bytes_val > 0]
+            if rows:
+                try:
+                    with sqlite3.connect(self.DB_FILE) as conn:
+                        conn.execute('''
+                            CREATE TABLE IF NOT EXISTS network_usage (
+                                timestamp INTEGER,
+                                process_name TEXT,
+                                bytes INTEGER,
+                                PRIMARY KEY (timestamp, process_name)
+                            )
+                        ''')
+                        conn.execute('CREATE INDEX IF NOT EXISTS idx_process_time ON network_usage(process_name, timestamp)')
+                        conn.executemany('''
+                            INSERT INTO network_usage (timestamp, process_name, bytes)
+                            VALUES (?, ?, ?)
+                            ON CONFLICT(timestamp, process_name) DO UPDATE SET bytes = bytes + excluded.bytes
+                        ''', rows)
+                    self._unsaved_buffer.clear()
+                except Exception as e:
+                    print(f"[NetworkMonitor] DB process flush error: {e}")
 
-        if not rows:
-            return
-
-        try:
-            with sqlite3.connect(self.DB_FILE) as conn:
-                conn.execute('''
-                    CREATE TABLE IF NOT EXISTS network_usage (
-                        timestamp INTEGER,
-                        process_name TEXT,
-                        bytes INTEGER,
-                        PRIMARY KEY (timestamp, process_name)
-                    )
-                ''')
-                conn.execute('CREATE INDEX IF NOT EXISTS idx_process_time ON network_usage(process_name, timestamp)')
-                conn.executemany('''
-                    INSERT INTO network_usage (timestamp, process_name, bytes)
-                    VALUES (?, ?, ?)
-                    ON CONFLICT(timestamp, process_name) DO UPDATE SET bytes = bytes + excluded.bytes
-                ''', rows)
-            self._unsaved_buffer.clear()
-        except Exception as e:
-            print(f"[NetworkMonitor] DB Flush error: {e}")
+        # Flush NIC-level bytes
+        if self._nic_unsaved_bytes > 0:
+            try:
+                with sqlite3.connect(self.DB_FILE) as conn:
+                    conn.execute('''
+                        INSERT INTO nic_total (timestamp, bytes) 
+                        VALUES (?, ?)
+                        ON CONFLICT(timestamp) DO UPDATE 
+                        SET bytes = bytes + excluded.bytes
+                    ''', (current_minute, self._nic_unsaved_bytes))
+                self._nic_unsaved_bytes = 0
+            except Exception as e:
+                print(f"[NetworkMonitor] DB NIC flush error: {e}")
 
     def _update_baseline(self):
         now = int(time.time())
@@ -259,6 +375,18 @@ class NetworkMonitor(QThread):
                 for name, total in rows:
                     self._baseline_totals[name] = total
                     
+                # Load NIC-level baseline
+                try:
+                    nic_row = conn.execute(
+                        "SELECT SUM(bytes) FROM nic_total WHERE timestamp >= ?",
+                        (target_ts,)
+                    ).fetchone()
+                    self._nic_baseline_total = nic_row[0] if nic_row and nic_row[0] else 0
+                    # Reset live NIC accumulator since it's now part of baseline
+                    self._nic_live_bytes = 0
+                except Exception:
+                    pass
+                    
                 # We just queried the baseline, so live deltas should be reset
                 for name in list(self._live_session_deltas.keys()):
                     # Transfer any existing live deltas into the unsaved buffer to ensure we don't lose data tracking since the last DB flush
@@ -285,8 +413,10 @@ class NetworkMonitor(QThread):
                     except Exception:
                         pass
                     self._etw_enabled = False
+                    self._etw_retry_counter = 0
             except Exception:
                 self._etw_enabled = False
+                self._etw_retry_counter = 0
 
         etw_empty_ticks = 0
 
@@ -310,11 +440,34 @@ class NetworkMonitor(QThread):
                     try:
                         snap_totals: dict[str, int] = collections.defaultdict(int)
                         for s in self._etw_monitor.get_process_stats():
-                            name = (s.get('name') or '').strip() or f"PID {s.get('pid', 0)}"
+                            raw_name = (s.get('name') or '').strip()
+                            pid_val = s.get('pid', 0)
+                            if raw_name:
+                                name = raw_name
+                            elif pid_val in (0, 4):
+                                name = "System"
+                            else:
+                                name = f"PID {pid_val}"
                             snap_totals[name] += int(s.get('bytes_total', 0))
                         self._etw_baseline_snapshot = dict(snap_totals)
                     except Exception:
                         pass
+
+            if not self._etw_enabled and hasattr(self, '_etw_retry_counter'):
+                self._etw_retry_counter += 1
+                if self._etw_retry_counter >= 300:  # 5 minutes
+                    self._etw_retry_counter = 0
+                    self._init_etw()
+                    if self._etw_enabled and self._etw_monitor is not None:
+                        try:
+                            if self._etw_monitor.start():
+                                print("[NetworkMonitor] ETW restarted successfully")
+                                self._etw_baseline_snapshot.clear()
+                                self._etw_last_totals.clear()
+                            else:
+                                self._etw_enabled = False
+                        except Exception:
+                            self._etw_enabled = False
 
             curr_nic = psutil.net_io_counters(pernic=True)
             nic_delta = self._compute_nic_delta(prev_nic, curr_nic)
@@ -322,6 +475,10 @@ class NetworkMonitor(QThread):
 
             display_nic = self._pick_best_nic(curr_nic)
             tick_bytes = nic_delta.get(display_nic, 0)
+            
+            # Track ACTUAL NIC bytes independent of per-process attribution
+            self._nic_live_bytes += tick_bytes
+            self._nic_unsaved_bytes += tick_bytes
 
             if self._etw_enabled and self._etw_monitor is not None:
                 try:
@@ -335,7 +492,14 @@ class NetworkMonitor(QThread):
                     exe_path_now: dict[str, str] = {}
 
                     for s in stats:
-                        name = (s.get('name') or '').strip() or f"PID {s.get('pid', 0)}"
+                        raw_name = (s.get('name') or '').strip()
+                        pid_val = s.get('pid', 0)
+                        if raw_name:
+                            name = raw_name
+                        elif pid_val in (0, 4):
+                            name = "System"
+                        else:
+                            name = f"PID {pid_val}"
                         totals_now[name] += int(s.get('bytes_total', 0))
                         exe_path = (s.get('exe_path') or '').strip()
                         if exe_path:
@@ -367,7 +531,7 @@ class NetworkMonitor(QThread):
                         if name not in totals_now:
                             self._history_buffers[name].append(0)
 
-                    session_bytes = sum(self._baseline_totals.values()) + sum(self._live_session_deltas.values())
+                    session_bytes = self._nic_baseline_total + self._nic_live_bytes
 
                     top_entries = sorted(
                         [
@@ -409,56 +573,47 @@ class NetworkMonitor(QThread):
                         except Exception:
                             pass
                         self._etw_enabled = False
+                        self._etw_retry_counter = 0
 
             pid_conn_count: dict[int, int] = collections.Counter()
-            unknown_conn_count = 0
             try:
-                tcp_states = {
-                    'ESTABLISHED',
-                    'CLOSE_WAIT',
-                    'SYN_SENT',
-                    'SYN_RECEIVED',
-                    'LISTEN',
-                    'FIN_WAIT1',
-                    'FIN_WAIT2',
-                    'TIME_WAIT',
-                    'LAST_ACK',
-                    'CLOSING',
-                }
-
-                # Count both TCP and UDP sockets.
-                # UDP sockets appear with status 'NONE' in psutil; without counting them,
-                # apps that use UDP heavily can be underrepresented.
                 for conn in psutil.net_connections(kind='inet'):
-                    if not conn.pid:
-                        unknown_conn_count += 1
+                    pid = conn.pid
+                    is_udp = conn.type == socket.SOCK_DGRAM
+                    state = (conn.status or '').upper()
+
+                    if not is_udp and state not in self.TRAFFIC_STATES:
                         continue
-                    if conn.type == socket.SOCK_DGRAM:
-                        pid_conn_count[conn.pid] += 1
-                    else:
-                        if (conn.status or '').upper() in tcp_states:
-                            pid_conn_count[conn.pid] += 1
+
+                    if pid is not None and pid > 0:
+                        pid_conn_count[pid] += 1
+                    elif pid == 0:
+                        pid_conn_count[4] += 1
             except Exception:
                 pass
 
-            total_conns = (sum(pid_conn_count.values()) + unknown_conn_count) or 1
+            total_conns = sum(pid_conn_count.values()) or 1
 
             name_conn_count: dict[str, int] = collections.Counter()
             for pid, count in pid_conn_count.items():
                 try:
                     proc = psutil.Process(pid)
                     name = proc.name()
-                    exe = proc.exe()
-                    if name and exe:
-                        self._exe_cache[name.lower()] = exe
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    if not name:
+                        name = f"PID {pid}"
+                    try:
+                        exe = proc.exe()
+                        if exe:
+                            self._exe_cache[name.lower()] = exe
+                    except (psutil.AccessDenied, OSError):
+                        pass
+                except psutil.NoSuchProcess:
+                    continue
+                except psutil.AccessDenied:
                     name = f"PID {pid}"
                 name_conn_count[name] += count
 
-            if unknown_conn_count > 0:
-                name_conn_count['Unknown'] += unknown_conn_count
-            
-            session_bytes = sum(self._baseline_totals.values()) + sum(self._live_session_deltas.values())
+            session_bytes = self._nic_baseline_total + self._nic_live_bytes
 
             for name, conn_count in name_conn_count.items():
                 share = conn_count / total_conns

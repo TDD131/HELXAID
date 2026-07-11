@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <linearGradient id="timeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FDA903;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF5B06;stop-opacity:1" />
+    </linearGradient>
+    <filter id="timeGlow">
+      <feGaussianBlur stdDeviation="1" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <path d="M12,4c-4.97,0-9,4.03-9,9s4.03,9,9,9s9-4.03,9-9S16.97,4,12,4z M12,20c-3.87,0-7-3.13-7-7s3.13-7,7-7s7,3.13,7,7 S15.87,20,12,20z M13,7h-2v6.59l4.29,4.29l1.41-1.41L13,12.76V7z M9,1h6v2H9V1z" fill="url(#timeGrad)" filter="url(#timeGlow)"/>
+</svg>

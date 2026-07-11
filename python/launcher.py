@@ -1,4 +1,13 @@
 import sys
+
+# --- Windows Service Intercept ---
+# Must happen before any GUI or heavy imports to keep the background service lightweight and avoid PyInstaller recursion issues.
+if len(sys.argv) > 1 and sys.argv[1] == "--run-service":
+    import helxaid_service
+    helxaid_service.run_as_service()
+    sys.exit(0)
+# ---------------------------------
+
 import gc  # For memory cleanup
 import json
 import os
@@ -25,7 +34,7 @@ from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDeskt
 from PySide6.QtCore import Qt, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread
 from PlaylistWidget import PlaylistWidget
 from integrations.cpu_controller import is_uxtu_installed, is_ryzenadj_available, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
-from AnimatedButton import AnimatedButton
+from AnimatedButton import AnimatedButton, AnimatedCheckBox
 from CrosshairWidget import CrosshairWidget
 from HardwarePanelWidget import HardwarePanelWidget
 from macro_system.integration.hardware_manager import get_hardware_manager
@@ -56,6 +65,201 @@ win32con = None
 win32ui = None
 win32gui = None
 Image = None
+
+
+def _drop_debug_log(msg: str):
+    """Write a debug message to the drop log file.
+
+    Only active when running as a frozen (PyInstaller) executable so we can
+    diagnose drag-and-drop issues that are impossible to see without a console.
+    The log file lives in the same APPDATA folder used by HELXAID so it is
+    always writable even when the exe is in a protected directory.
+
+    Parameters
+    ----------
+    msg : str
+        Plain-text message to append.  A timestamp is prepended automatically.
+    """
+    if not getattr(sys, 'frozen', False):
+        print(msg)   # In dev mode, just print to console
+        return
+    try:
+        log_path = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "HELXAID", "debug_drop.log"
+        )
+        with open(log_path, "a", encoding="utf-8") as f:
+            import datetime as _dt
+            f.write(f"[{_dt.datetime.now().strftime('%H:%M:%S.%f')}] {msg}\n")
+    except Exception:
+        pass
+
+
+class DropFileNativeFilter:
+    """Application-level native event filter for WM_DROPFILES drag-and-drop.
+
+    Why this exists
+    ---------------
+    When HELXAID runs as a frozen PyInstaller executable it may operate at a
+    higher Windows Integrity Level than the drag source (e.g. Windows Explorer
+    which is always Medium IL).  Windows UIPI (User Interface Privilege
+    Isolation) then silently blocks the OLE/COM drag-and-drop messages that
+    PySide6 normally relies on, so Qt's built-in drop events never fire.
+
+    The workaround is to:
+      1. Register the window with DragAcceptFiles so the OS sends the legacy
+         WM_DROPFILES (0x0233) message on drop.
+      2. Allow that message through UIPI via ChangeWindowMessageFilterEx.
+      3. Intercept the message at the *application* level using
+         QAbstractNativeEventFilter rather than the window-level nativeEvent
+         override, because PyInstaller-frozen builds may alter how Qt's QPA
+         platform plugin labels the eventType string, making the
+         'windows_generic_MSG' check unreliable.
+
+    Coordinate mapping
+    ------------------
+    DragQueryPoint returns CLIENT-AREA coords (relative to the window client
+    origin).  GetCursorPos is used as a reliable fallback for the GLOBAL
+    screen position, which is what QApplication.widgetAt() expects.
+    """
+
+    def __init__(self, main_window):
+        """Store a weak reference to avoid GC cycles with the main window."""
+        import weakref
+        self._win_ref = weakref.ref(main_window)
+        # Track whether we're really installed (QAbstractNativeEventFilter handle)
+        self._filter_obj = None
+
+    def install(self, app):
+        """Install this filter on the given QApplication instance.
+
+        Parameters
+        ----------
+        app : QApplication
+            The running application object.
+        """
+        from PySide6.QtCore import QAbstractNativeEventFilter
+
+        outer = self
+
+        class _Filter(QAbstractNativeEventFilter):
+            def nativeEventFilter(self, eventType, message):  # noqa: N802
+                WM_DROPFILES = 0x0233
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+                    msg_ptr = int(message)
+                    from ctypes.wintypes import MSG
+                    msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
+
+                    if msg.message != WM_DROPFILES:
+                        return False, 0
+
+                    _drop_debug_log(f"WM_DROPFILES caught via QAbstractNativeEventFilter. HDROP={hex(msg.wParam)}")
+
+                    hdrop = wintypes.HANDLE(msg.wParam)
+                    shell32 = ctypes.windll.shell32
+
+                    # Set correct argtypes so ctypes passes 64-bit handles safely
+                    shell32.DragQueryFileW.argtypes = [
+                        wintypes.HANDLE, wintypes.UINT,
+                        ctypes.c_wchar_p, wintypes.UINT
+                    ]
+                    shell32.DragQueryFileW.restype = wintypes.UINT
+
+                    shell32.DragQueryPoint.argtypes = [
+                        wintypes.HANDLE, ctypes.POINTER(wintypes.POINT)
+                    ]
+                    shell32.DragQueryPoint.restype = wintypes.BOOL
+
+                    shell32.DragFinish.argtypes = [wintypes.HANDLE]
+                    shell32.DragFinish.restype = None
+
+                    # Extract dropped file paths
+                    count = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+                    _drop_debug_log(f"DragQueryFileW count={count}")
+                    dropped_files = []
+                    for i in range(count):
+                        length = shell32.DragQueryFileW(hdrop, i, None, 0)
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        shell32.DragQueryFileW(hdrop, i, buf, length + 1)
+                        dropped_files.append(buf.value)
+
+                    # Get the drop position inside the window client area
+                    pt_client = wintypes.POINT()
+                    shell32.DragQueryPoint(hdrop, ctypes.byref(pt_client))
+
+                    shell32.DragFinish(hdrop)
+
+                    _drop_debug_log(f"Files: {dropped_files}  ClientPt=({pt_client.x},{pt_client.y})")
+
+                    if not dropped_files:
+                        return True, 0
+
+                    # Resolve the global cursor position (needed for widgetAt)
+                    user32 = ctypes.windll.user32
+                    user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+                    user32.GetCursorPos.restype = wintypes.BOOL
+                    pt_global = wintypes.POINT()
+                    user32.GetCursorPos(ctypes.byref(pt_global))
+
+                    from PySide6.QtCore import QPoint, QMimeData, QUrl, QPointF, Qt, QEvent
+                    from PySide6.QtGui import QDropEvent
+                    from PySide6.QtWidgets import QApplication
+
+                    global_pos = QPoint(pt_global.x, pt_global.y)
+                    target = QApplication.widgetAt(global_pos)
+                    _drop_debug_log(f"widgetAt global=({global_pos.x()},{global_pos.y()}) -> {target}")
+
+                    # Walk up until we find a widget that accepts drops
+                    while target is not None and not target.acceptDrops():
+                        target = target.parentWidget()
+
+                    _drop_debug_log(f"Final drop target: {target}  ({getattr(target,'objectName',lambda:None)()!r} {type(target).__name__ if target else 'None'})")
+
+                    win = outer._win_ref()
+
+                    if target is not None:
+                        try:
+                            mime = QMimeData()
+                            urls = [QUrl.fromLocalFile(f) for f in dropped_files]
+                            mime.setUrls(urls)
+
+                            # Map global position to target-local position
+                            local_pos = target.mapFromGlobal(global_pos)
+
+                            fake_event = QDropEvent(
+                                QPointF(local_pos),
+                                Qt.CopyAction,
+                                mime,
+                                Qt.LeftButton,
+                                Qt.NoModifier,
+                                QEvent.Drop
+                            )
+                            target.dropEvent(fake_event)
+                            _drop_debug_log(f"QDropEvent injected OK to {type(target).__name__}")
+                        except Exception as ex:
+                            _drop_debug_log(f"QDropEvent injection failed: {ex}")
+                    elif win is not None and hasattr(win, 'music_panel') and win.music_panel:
+                        # Last-resort fallback: send directly to the music panel
+                        try:
+                            win.music_panel._on_tracks_dropped(dropped_files)
+                            _drop_debug_log(f"Fallback: sent {len(dropped_files)} file(s) directly to music_panel")
+                        except Exception as ex:
+                            _drop_debug_log(f"Fallback music_panel dispatch failed: {ex}")
+                    else:
+                        _drop_debug_log("No drop target found and no music_panel fallback available")
+
+                    return True, 0
+
+                except Exception as ex:
+                    _drop_debug_log(f"DropFileNativeFilter FATAL exception: {ex}")
+                    return False, 0
+
+        self._filter_obj = _Filter()
+        app.installNativeEventFilter(self._filter_obj)
+        _drop_debug_log("DropFileNativeFilter installed on QApplication")
+
 
 def _ensure_win32_loaded():
     """Lazy load win32 modules on first use."""
@@ -197,29 +401,30 @@ try:
             if hr != 0 or not pFactory:
                 return None
                 
-            # GetImage method def: HRESULT GetImage(SIZE size, int flags, HBITMAP *phbm)
-            # VTable index 3
-            # We need to access the function pointer
-            
-            # Helper to call VTable method
-            # prototype: HRESULT (STDMETHODCALLTYPE *GetImage)(IShellItemImageFactory *This, SIZE size, SIIGBF flags, HBITMAP *phbm);
-            GetImage_Proto = ctypes.WINFUNCTYPE(HRESULT, POINTER(IShellItemImageFactory), SIZE, c_int, POINTER(c_void_p))
-            
-            # Access VTable
-            vtable = cast(pFactory.contents.lpVtbl, POINTER(c_void_p))
-            GetImage_Func = GetImage_Proto(vtable[3])
-            
-            size = SIZE(600, 600) # Request 600x600 or similar
-            flags = 0x0 # SIIGBF_RESIZETOFIT
-            hbitmap = c_void_p()
-            
-            hr = GetImage_Func(pFactory, size, flags, byref(hbitmap))
-            
-            # Release factory
-            # Release is index 2
-            Release_Proto = ctypes.WINFUNCTYPE(c_ulong, POINTER(IShellItemImageFactory))
-            Release_Func = Release_Proto(vtable[2])
-            Release_Func(pFactory)
+            try:
+                # GetImage method def: HRESULT GetImage(SIZE size, int flags, HBITMAP *phbm)
+                # VTable index 3
+                # We need to access the function pointer
+                
+                # Helper to call VTable method
+                # prototype: HRESULT (STDMETHODCALLTYPE *GetImage)(IShellItemImageFactory *This, SIZE size, SIIGBF flags, HBITMAP *phbm);
+                GetImage_Proto = ctypes.WINFUNCTYPE(HRESULT, POINTER(IShellItemImageFactory), SIZE, c_int, POINTER(c_void_p))
+                
+                # Access VTable
+                vtable = cast(pFactory.contents.lpVtbl, POINTER(c_void_p))
+                GetImage_Func = GetImage_Proto(vtable[3])
+                
+                size = SIZE(600, 600) # Request 600x600 or similar
+                flags = 0x0 # SIIGBF_RESIZETOFIT
+                hbitmap = c_void_p()
+                
+                hr = GetImage_Func(pFactory, size, flags, byref(hbitmap))
+            finally:
+                # Release factory
+                # Release is index 2
+                Release_Proto = ctypes.WINFUNCTYPE(c_ulong, POINTER(IShellItemImageFactory))
+                Release_Func = Release_Proto(cast(pFactory.contents.lpVtbl, POINTER(c_void_p))[2])
+                Release_Func(pFactory)
             
 
                 
@@ -255,30 +460,31 @@ try:
             def hbitmap_to_qpixmap(hbitmap):
                 hdc = GetDC(None)
                 cdc = CreateCompatibleDC(hdc)
-                SelectObject(cdc, hbitmap)
-                
-                bmp = BITMAP()
-                GetObjectW(hbitmap, ctypes.sizeof(bmp), byref(bmp))
-                
-                w, h = bmp.bmWidth, bmp.bmHeight
-                bmi = BITMAPINFO()
-                bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-                bmi.bmiHeader.biWidth = w
-                bmi.bmiHeader.biHeight = -h  # Top-down
-                bmi.bmiHeader.biPlanes = 1
-                bmi.bmiHeader.biBitCount = 32
-                bmi.bmiHeader.biCompression = 0 # BI_RGB
-                
-                buffer_len = w * h * 4
-                buffer = ctypes.create_string_buffer(buffer_len)
-                
-                GetDIBits(cdc, hbitmap, 0, h, buffer, byref(bmi), 0) # DIB_RGB_COLORS
-                
-                DeleteDC(cdc)
-                ReleaseDC(None, hdc)
-                
-                img = QImage(buffer, w, h, QImage.Format_ARGB32)
-                return QPixmap.fromImage(img.copy())
+                try:
+                    SelectObject(cdc, hbitmap)
+                    
+                    bmp = BITMAP()
+                    GetObjectW(hbitmap, ctypes.sizeof(bmp), byref(bmp))
+                    
+                    w, h = bmp.bmWidth, bmp.bmHeight
+                    bmi = BITMAPINFO()
+                    bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+                    bmi.bmiHeader.biWidth = w
+                    bmi.bmiHeader.biHeight = -h  # Top-down
+                    bmi.bmiHeader.biPlanes = 1
+                    bmi.bmiHeader.biBitCount = 32
+                    bmi.bmiHeader.biCompression = 0 # BI_RGB
+                    
+                    buffer_len = w * h * 4
+                    buffer = ctypes.create_string_buffer(buffer_len)
+                    
+                    GetDIBits(cdc, hbitmap, 0, h, buffer, byref(bmi), 0) # DIB_RGB_COLORS
+                    
+                    img = QImage(buffer, w, h, QImage.Format_ARGB32)
+                    return QPixmap.fromImage(img.copy())
+                finally:
+                    DeleteDC(cdc)
+                    ReleaseDC(None, hdc)
 
             if hr == 0 and hbitmap:
                 try:
@@ -381,7 +587,14 @@ try:
                 user32 = windll.user32
                 CreateIconFromResourceEx = user32.CreateIconFromResourceEx
                 
-                script_dir = os.path.dirname(os.path.abspath(__file__))
+                # CRITICAL: Use module-level SCRIPT_DIR, NOT __file__-based resolution.
+                # In a PyInstaller --onefile frozen build, __file__ for the main script
+                # resolves to the .exe path itself (e.g. dist\HELXAID.exe), so
+                # os.path.dirname(__file__) = the 'dist' folder — NOT sys._MEIPASS,
+                # where all bundled assets (UI Taskbar Icons/, etc.) are actually
+                # extracted at runtime. SCRIPT_DIR is already set to sys._MEIPASS
+                # in frozen builds (see module top), so it always resolves correctly.
+                script_dir = SCRIPT_DIR
                 print(f"[Taskbar DEBUG] Loading icons from: {os.path.join(script_dir, 'UI Taskbar Icons')}")
                 def load_icon_from_png(filename):
                     """Load a PNG file and convert to HICON."""
@@ -463,19 +676,21 @@ try:
                 
                 ExtractIconExW(shell32_path, 138, hicons_large, hicons_small, 1)
                 self.icon_next = hicons_small[0] if hicons_small[0] else 0
-            except:
+                print("[Taskbar DEBUG] System fallback icons loaded.")
+            except Exception as e:
+                print(f"[Taskbar DEBUG] Fallback icon error: {e}")
                 self.icon_prev = self.icon_play = self.icon_pause = self.icon_next = 0
         
         def _init_taskbar(self):
             """Initialize the ITaskbarList3 COM interface using pure ctypes."""
             try:
                 # Initialize COM
-                print("[Taskbar DEBUG] Initializing COM CoInitialize...")
+                print("[Taskbar DEBUG] Pre-CoInitialize...", flush=True)
                 windll.ole32.CoInitialize(None)
                 
                 # Create TaskbarList COM object
                 taskbar_ptr = c_void_p()
-                print("[Taskbar DEBUG] Calling CoCreateInstance for ToolBar interface...")
+                print("[Taskbar DEBUG] Engaging CoCreateInstance...", flush=True)
                 hr = CoCreateInstance(
                     byref(CLSID_TaskbarList),
                     None,
@@ -484,37 +699,54 @@ try:
                     byref(taskbar_ptr)
                 )
                 
-                if hr != 0 or not taskbar_ptr:
-                    print(f"[Taskbar ERROR] CoCreateInstance failed: HRESULT {hex(hr & 0xFFFFFFFF)}")
+                if hr != 0 or not taskbar_ptr.value:
+                    print(f"[Taskbar ERROR] CoCreateInstance failed: HRESULT {hex(hr & 0xFFFFFFFF)}", flush=True)
                     self.taskbar = None
                     return
                 
                 self.taskbar = taskbar_ptr.value
-                print(f"[Taskbar DEBUG] Taskbar interface created at address {hex(self.taskbar)}")
+                print(f"[Taskbar DEBUG] Taskbar object address: {hex(self.taskbar)}", flush=True)
                 
-                # Call HrInit (VTable index 3)
-                vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
-                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 20)).contents
+                # Get the VTable address (the value at the object address)
+                # We use [0] to get the value at that address directly from ctypes
+                print("[Taskbar DEBUG] Fetching VTable...", flush=True)
+                vtable_addr = ctypes.cast(self.taskbar, POINTER(c_void_p))[0]
+                if not vtable_addr:
+                    print("[Taskbar ERROR] VTable address is NULL!", flush=True)
+                    self.taskbar = None
+                    return
+                
+                print(f"[Taskbar DEBUG] VTable address: {hex(vtable_addr)}", flush=True)
+                
+                # Get the array of function pointers from the VTable
+                # Using 32 as a safe upper bound for ITaskbarList3 (which has ~21 methods)
+                vtable = ctypes.cast(vtable_addr, POINTER(c_void_p * 32)).contents
+                
+                # VTable index 3: HrInit
+                HrInit_addr = vtable[3]
+                print(f"[Taskbar DEBUG] HrInit function address: {hex(HrInit_addr)}", flush=True)
                 
                 HrInit_proto = WINFUNCTYPE(HRESULT, c_void_p)
-                HrInit = HrInit_proto(vtable_ptr[3])
-                print("[Taskbar DEBUG] Calling taskbar.HrInit()...")
+                HrInit = HrInit_proto(HrInit_addr)
+                
+                print("[Taskbar DEBUG] Executing HrInit...", flush=True)
                 hr = HrInit(self.taskbar)
                 
                 if hr != 0:
-                    print(f"[Taskbar ERROR] HrInit failed: HRESULT {hex(hr & 0xFFFFFFFF)}")
+                    print(f"[Taskbar ERROR] HrInit failed: HRESULT {hex(hr & 0xFFFFFFFF)}", flush=True)
                     self.taskbar = None
                 else:
-                    print("[Taskbar SUCCESS] ITaskbarList3 initialized completely")
+                    print("[Taskbar SUCCESS] ITaskbarList3 interface ready.", flush=True)
                     
             except Exception as e:
-                print(f"[Taskbar FATAL] Explosion during ITaskbarList3 init: {e}")
+                print(f"[Taskbar FATAL] Critical COM crash: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
                 self.taskbar = None
         
         def add_buttons(self, target_hwnd=None):
             """Add the thumbnail toolbar buttons."""
             if not self.taskbar or self.buttons_added:
-                print(f"[Taskbar DEBUG] add_buttons skipped: taskbar={bool(self.taskbar)}, added={self.buttons_added}")
                 return False
             
             try:
@@ -525,7 +757,7 @@ try:
                     root_hwnd = user32.GetAncestor(self.hwnd, GA_ROOT)
                     target_hwnd = root_hwnd if root_hwnd else self.hwnd
                 
-                print(f"[Taskbar DEBUG] Final AddButtons HWND: {hex(target_hwnd)}")
+                print(f"[Taskbar DEBUG] Initializing AddButtons for HWND: {hex(target_hwnd)}", flush=True)
                 
                 buttons = (THUMBBUTTON * 3)()
                 
@@ -550,25 +782,29 @@ try:
                 buttons[2].szTip = "Next"
                 buttons[2].dwFlags = THBF_ENABLED
                 
-                vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
-                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 30)).contents
+                # Get VTable and fetch ThumbBarAddButtons (index 15)
+                vtable_addr = ctypes.cast(self.taskbar, POINTER(c_void_p))[0]
+                vtable = ctypes.cast(vtable_addr, POINTER(c_void_p * 32)).contents
                 
+                ThumbBarAddButtons_addr = vtable[15]
                 ThumbBarAddButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
-                ThumbBarAddButtons = ThumbBarAddButtons_proto(vtable_ptr[15])
+                ThumbBarAddButtons = ThumbBarAddButtons_proto(ThumbBarAddButtons_addr)
                 
-                print(f"[Taskbar DEBUG] Invoking ThumbBarAddButtons on {hex(target_hwnd)}...")
+                print(f"[Taskbar DEBUG] Calling ThumbBarAddButtons(taskbar={hex(self.taskbar)}, hwnd={hex(target_hwnd)})...", flush=True)
                 hr = ThumbBarAddButtons(self.taskbar, target_hwnd, 3, buttons)
                 
                 if hr == 0:
                     self.buttons_added = True
-                    print("[Taskbar SUCCESS] Taskbar buttons added successfully")
+                    print("[Taskbar SUCCESS] Taskbar buttons successfully binded.", flush=True)
                     return True
                 else:
-                    print(f"[Taskbar ERROR] ThumbBarAddButtons failed with HRESULT: {hex(hr & 0xFFFFFFFF)}")
+                    print(f"[Taskbar ERROR] ThumbBarAddButtons failed: {hex(hr & 0xFFFFFFFF)}", flush=True)
                     return False
                     
             except Exception as e:
-                print(f"[Taskbar FATAL] Error in add_buttons: {e}")
+                print(f"[Taskbar FATAL] Error adding taskbar buttons: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
                 return False
                 
         def verify_buttons(self, target_hwnd):
@@ -1700,6 +1936,21 @@ SYSTEM_PROCESS_BLACKLIST = {
     "lsm.exe", "wlanext.exe", "dashost.exe",
     # Kuro launcher helpers (not the game itself)
     "krinstallexternal.exe",
+    # Generic Unity Engine helper processes — shared by ALL Unity games.
+    # These must NEVER be saved as a specific game's exe because they run
+    # as background watchers for any Unity game and cause false-positive
+    # "always running" detection (e.g. TABS detected while not playing).
+    "unitycrashhandler64.exe", "unitycrashhandler32.exe",
+    "unitycrashandler64.exe", "unitycrashandler32.exe",  # alt spelling
+    "unity_crash_handler64.exe", "unity_crash_handler32.exe",
+    # Generic Unreal Engine / cross-engine helpers shared across many games
+    "crashreportclient.exe",  # UE crash reporter (all UE games)
+    "gameoverlayrenderer64.exe", "gameoverlayrenderer.exe",  # Steam overlay
+    "steamservice.exe",  # Steam background service
+    "epicwebhelper.exe",  # Epic Games helper
+    # CEF / WebView helpers used by many game launchers
+    "msedgewebview2.exe",
+    "cef.exe", "cefsharp.browsersubprocess.exe",
 }
 
 DEFAULT_SETTINGS = {
@@ -1746,8 +1997,10 @@ def load_settings():
 def save_settings(settings):
     """Save app settings to settings.json"""
     try:
-        with open(SETTINGS_PATH, "w") as f:
+        tmp_path = SETTINGS_PATH + ".tmp"
+        with open(tmp_path, "w") as f:
             json.dump(settings, f, indent=4)
+        os.replace(tmp_path, SETTINGS_PATH)
     except Exception as e:
         print(f"Error saving settings: {e}")
 
@@ -1862,67 +2115,161 @@ def _exclude_from_rtss():
         # Non-critical: RTSS exclusion failing should not affect app startup
         print(f"[RTSS] Could not write exclusion profile: {e}")
 
-
-
-
-# Windows Startup helpers - uses Registry for proper Task Manager display
+# Windows Startup helpers - uses Scheduled Tasks for elevated silent boot
+STARTUP_TASK_NAME = "HELXAID_Startup"
 STARTUP_APP_NAME = "HELXAID"
-STARTUP_REGISTRY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 def is_startup_enabled():
-    """Check if the launcher is set to run on Windows startup via Registry."""
+    """Check if the launcher is set to run on Windows startup via Scheduled Tasks."""
+    import subprocess
     try:
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_READ)
-        try:
-            winreg.QueryValueEx(key, STARTUP_APP_NAME)
-            winreg.CloseKey(key)
-            return True
-        except FileNotFoundError:
-            winreg.CloseKey(key)
-            return False
+        # Suppress the command window popping up
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        
+        result = subprocess.run(
+            ["schtasks.exe", "/Query", "/TN", STARTUP_TASK_NAME],
+            capture_output=True,
+            startupinfo=startupinfo,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        return result.returncode == 0
     except Exception as e:
-        print(f"Error checking startup registry: {e}")
+        print(f"Error checking startup task: {e}")
         return False
 
 def set_startup_enabled(enabled):
-    """Enable or disable the launcher running on Windows startup via Registry."""
+    """Enable or disable the launcher running on Windows startup via Scheduled Tasks."""
+    import subprocess
+    import sys
+    import os
+    import ctypes
+    
     try:
-        import winreg
+        # Suppress the command window popping up
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         
         if enabled:
             # Get the executable path
             if getattr(sys, 'frozen', False):
                 # Running as compiled .exe
-                exe_path = f'"{sys.executable}" --minimized'
+                exe_path = sys.executable
+                args = "--minimized"
             else:
-                # Running as script
+                # Running as python script
                 python_exe = sys.executable.replace("python.exe", "pythonw.exe")
                 script_path = os.path.abspath(__file__)
-                exe_path = f'"{python_exe}" "{script_path}" --minimized'
+                exe_path = python_exe
+                args = f'"{script_path}" --minimized'
             
-            # Open registry key for writing
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, STARTUP_APP_NAME, 0, winreg.REG_SZ, exe_path)
-            winreg.CloseKey(key)
-            print(f"[Startup] Registry entry created: {STARTUP_APP_NAME} -> {exe_path}")
+            # The XML configuration for the scheduled task allows it to run on batteries
+            xml_config = f'''<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>HELXAID</Author>
+    <Description>Auto-start HELXAID with Administrator privileges</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>true</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>"{exe_path}"</Command>
+      <Arguments>{args}</Arguments>
+    </Exec>
+  </Actions>
+</Task>'''
             
-            # Also remove old shortcut if exists
+            import tempfile
+            xml_path = os.path.join(tempfile.gettempdir(), "helxaid_task.xml")
+            with open(xml_path, 'w', encoding='utf-16') as f:
+                f.write(xml_config)
+                
+            cmd = ["schtasks.exe", "/Create", "/TN", STARTUP_TASK_NAME, "/XML", xml_path, "/F"]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            
+            # If we got Access Denied (not running as admin), we must elevate to create the task
+            if result.returncode != 0 and b"Access is denied" in result.stderr:
+                print("[Startup] Need elevation to create Scheduled Task, prompting UAC...")
+                # We use a powershell trick to hide the elevation prompt window if possible, but UAC will show
+                ps_cmd = f'schtasks.exe /Create /TN "{STARTUP_TASK_NAME}" /XML "{xml_path}" /F'
+                ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", f'-WindowStyle Hidden -Command "{ps_cmd}"', None, 0)
+                if ret <= 32:
+                    print(f"[Startup] Elevated task creation failed with code: {ret}")
+            else:
+                print(f"[Startup] Scheduled Task created: {STARTUP_TASK_NAME}")
+                
+            # Cleanup old shortcuts and registry just in case
             _cleanup_old_shortcut()
+            _cleanup_old_registry()
+            
         else:
-            # Remove registry entry
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, STARTUP_REGISTRY_KEY, 0, winreg.KEY_SET_VALUE)
-            try:
-                winreg.DeleteValue(key, STARTUP_APP_NAME)
-                print(f"[Startup] Registry entry removed: {STARTUP_APP_NAME}")
-            except FileNotFoundError:
-                pass  # Already doesn't exist
-            winreg.CloseKey(key)
+            # Remove Scheduled Task
+            cmd = ["schtasks.exe", "/Delete", "/TN", STARTUP_TASK_NAME, "/F"]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
             
-            # Also remove old shortcut if exists
-            _cleanup_old_shortcut()
+            if result.returncode != 0 and b"Access is denied" in result.stderr:
+                print("[Startup] Need elevation to delete Scheduled Task, prompting UAC...")
+                ps_cmd = f'schtasks.exe /Delete /TN "{STARTUP_TASK_NAME}" /F'
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", f'-WindowStyle Hidden -Command "{ps_cmd}"', None, 0)
+            else:
+                print(f"[Startup] Scheduled Task removed: {STARTUP_TASK_NAME}")
+                
+            _cleanup_old_registry()
+            
     except Exception as e:
-        print(f"Error setting startup registry: {e}")
+        print(f"Error setting startup task: {e}")
+
+def _cleanup_old_registry():
+    """Remove old startup registry entry if it exists (migration to scheduled task)."""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+        try:
+            winreg.DeleteValue(key, STARTUP_APP_NAME)
+        except FileNotFoundError:
+            pass
+        winreg.CloseKey(key)
+    except Exception:
+        pass
 
 def _cleanup_old_shortcut():
     """Remove old startup shortcut if it exists (migration from shortcut to registry)."""
@@ -2085,9 +2432,32 @@ def save_json(data, force_save=False):
     if force_save and len(data) == 0:
         print(f"[Config] Force saving 0 games (user deleted all games)")
     
-    with open(JSON_PATH, "w") as f:
-        json.dump(data, f, indent=4)
-    print(f"[Config] Saved {len(data)} games")
+    import time
+    tmp_path = JSON_PATH + f".tmp_{os.getpid()}"
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with open(tmp_path, "w") as f:
+                json.dump(data, f, indent=4)
+            os.replace(tmp_path, JSON_PATH)
+            print(f"[Config] Saved {len(data)} games")
+            break
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                print(f"[Config] PermissionError during save. Retrying in 100ms... (Attempt {attempt+1}/{max_retries})")
+                time.sleep(0.1)
+            else:
+                print(f"[Config] Failed to save after {max_retries} attempts: {e}")
+                # Clean up temp file if possible
+                try:
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except:
+                    pass
+        except Exception as e:
+            print(f"[Config] Error saving JSON: {e}")
+            break
 
 
 # ----------------------------------------------------------
@@ -2667,7 +3037,10 @@ class AudioPlayerSidebar(QWidget):
             return file_path
         
         try:
-            from pydub import AudioSegment
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                from pydub import AudioSegment
             import tempfile
             
             # Load audio file
@@ -2705,8 +3078,13 @@ class AudioPlayerSidebar(QWidget):
                 print(f"[Audio] Processed audio saved to temp file")
                 return temp_path
             
+        except ModuleNotFoundError:
+            print("[Audio] Stereo processing requires 'pydub' library. Please run 'pip install pydub' to enable this feature.")
         except Exception as e:
-            print(f"[Audio] Stereo processing error: {e}")
+            if "system cannot find the file specified" in str(e) or "ffmpeg" in str(e).lower():
+                print("[Audio] Stereo processing requires FFmpeg. Please install FFmpeg and add it to your system PATH.")
+            else:
+                print(f"[Audio] Stereo processing error: {e}")
         
         return file_path
     
@@ -3213,6 +3591,97 @@ class AudioPlayerSidebar(QWidget):
         painter.end()
 
 # ----------------------------------------------------------
+# Background Image Processing Worker
+# ----------------------------------------------------------
+class BackgroundProcessor(QThread):
+    """
+    Background worker for processing large background images asynchronously.
+    Handles smooth scaling and pixel brightness calculation without blocking the UI.
+    """
+    from PySide6.QtCore import Signal
+    finished = Signal(str, float, str, str)  # bg_image, avg_brightness, scaled_path, current_hash
+
+    def __init__(self, bg_image, mode, width, height, current_hash):
+        super().__init__()
+        self.bg_image = bg_image
+        self.mode = mode
+        self.container_width = max(width, 100) # prevent 0 division
+        self.container_height = max(height, 100)
+        self.current_hash = current_hash
+        self.needs_scaled = True # ALWAYS scale to save RAM
+
+    def run(self):
+        from PySide6.QtGui import QImage
+        from PySide6.QtCore import Qt
+        import os
+        
+        try:
+            img = QImage(self.bg_image)
+            if img.isNull():
+                return
+                
+            temp_dir = os.path.join(os.environ.get('TEMP', '/tmp'), 'helxaid_bg')
+            os.makedirs(temp_dir, exist_ok=True)
+            # Create a unique filename for the cached background to avoid sharing issues
+            import hashlib
+            name_hash = hashlib.md5(self.bg_image.encode('utf-8')).hexdigest()[:8]
+            scaled_path = os.path.join(temp_dir, f'bg_scaled_{name_hash}.jpg')
+            
+            # Scale it down to screen resolution max (e.g. 1920x1080) to save RAM
+            screen_w, screen_h = 1920, 1080
+            if self.container_width > 0:
+                screen_w, screen_h = self.container_width, self.container_height
+                
+            orig_width, orig_height = img.width(), img.height()
+            
+            # Always scale if it's larger than container, OR if we need specific aspect ratio
+            if self.mode == "fit":
+                scaled = img.scaled(screen_w, screen_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            elif self.mode == "fill" or self.mode == "stretch":
+                scaled = img.scaled(screen_w, screen_h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            else:
+                if orig_width > screen_w or orig_height > screen_h:
+                    scaled = img.scaled(screen_w, screen_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                else:
+                    scaled = img
+                    
+            scaled.save(scaled_path, 'JPG', 80) # 80 quality is enough for background, saves memory
+            # Calculate average brightness from the SCALED image (faster and saves RAM!)
+            avg_brightness = -1.0
+            calc_scaled = scaled.scaled(50, 50, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+            
+            # Free up original huge QImage immediately now that we don't need it
+            img = QImage()
+            scaled = QImage()
+            
+            if not calc_scaled.isNull():
+                import time
+                brightness_values = []
+                w, h = calc_scaled.width(), calc_scaled.height()
+                
+                for y in range(h):
+                    for x in range(w):
+                        rgb = calc_scaled.pixel(x, y)
+                        r = (rgb >> 16) & 0xFF
+                        g = (rgb >> 8) & 0xFF
+                        b = rgb & 0xFF
+                        lum = 0.299 * r + 0.587 * g + 0.114 * b
+                        
+                        brightness_values.append(lum)
+                        if y < h * 0.4:
+                            brightness_values.append(lum)  # Double weight for upper area
+                            
+                    # Yield the Python GIL after every row to prevent stuttering
+                    time.sleep(0.001)
+                
+                if brightness_values:
+                    avg_brightness = sum(brightness_values) / len(brightness_values)
+            
+            self.finished.emit(self.bg_image, avg_brightness, scaled_path, self.current_hash)
+        except Exception as e:
+            print(f"[BackgroundProcessor] Error: {e}")
+
+# ----------------------------------------------------------
 # Main Launcher UI
 # ----------------------------------------------------------
 class GameLauncher(QWidget):
@@ -3232,6 +3701,154 @@ class GameLauncher(QWidget):
         # Run garbage collection
         gc.collect()
 
+    def _deferred_startup_tasks(self):
+        """Run non-critical startup tasks after UI is visible for faster perceived startup."""
+        # Auto-fix corrupt icons at startup
+        if hasattr(self, 'data') and self.data:
+            validate_and_fix_corrupt_icons(self.data)
+        
+        # Clean corrupted game_exe fields (remove system processes, etc.)
+        self._sanitize_game_exes()
+        
+        # Check Version Daily logic
+        if self.settings.get("check_version_daily", True):
+            last_check = self.settings.get("last_update_check", 0)
+            import time
+            if time.time() - last_check > 86400: # 24 hours
+                self._check_for_updates_silent()
+        
+        # Setup deferred button animations (improves startup time)
+        self._setup_deferred_button_animations()
+
+    def _setup_deferred_button_animations(self):
+        """Setup rotation animations for settings buttons after UI is visible."""
+        from PySide6.QtGui import QTransform, QPainter
+        
+        # Sidebar settings button animation
+        if hasattr(self, '_settings_nav_pixmap') and not self._settings_nav_anim_setup:
+            _s_pix = self._settings_nav_pixmap
+            _anim_size = 80
+            _anim_pix = _s_pix.scaled(_anim_size, _anim_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            _frames = []
+            for _i in range(60):
+                _angle = -6 * _i
+                _rot = _anim_pix.transformed(QTransform().rotate(_angle), Qt.SmoothTransformation)
+                _canvas = QPixmap(_anim_size, _anim_size)
+                _canvas.fill(Qt.transparent)
+                _p = QPainter(_canvas)
+                _p.drawPixmap((_anim_size - _rot.width()) // 2, (_anim_size - _rot.height()) // 2, _rot)
+                _p.end()
+                _frames.append(QIcon(_canvas))
+            
+            self.settings_nav_btn._rot_frames = _frames
+            self.settings_nav_btn._rot_index = 0
+            self.settings_nav_btn._rot_timer = QTimer()
+            self.settings_nav_btn._rot_current_interval = 80
+            self.settings_nav_btn._rot_timer.setInterval(80)
+            self.settings_nav_btn._rot_hovering = False
+            
+            def _nav_settings_tick():
+                self.settings_nav_btn._rot_index = (self.settings_nav_btn._rot_index + 1) % len(_frames)
+                self.settings_nav_btn.setIcon(_frames[self.settings_nav_btn._rot_index])
+                
+                if self.settings_nav_btn._rot_hovering:
+                    self.settings_nav_btn._rot_current_interval = max(1, self.settings_nav_btn._rot_current_interval * 0.995)
+                    self.settings_nav_btn._rot_timer.setInterval(int(self.settings_nav_btn._rot_current_interval))
+                else:
+                    self.settings_nav_btn._rot_current_interval *= 1.05
+                    if self.settings_nav_btn._rot_current_interval > 200:
+                        self.settings_nav_btn._rot_timer.stop()
+                        self.settings_nav_btn._rot_current_interval = 80
+                    else:
+                        self.settings_nav_btn._rot_timer.setInterval(int(self.settings_nav_btn._rot_current_interval))
+            
+            self.settings_nav_btn._rot_timer.timeout.connect(_nav_settings_tick)
+            
+            _orig_enter = self.settings_nav_btn.enterEvent
+            _orig_leave = self.settings_nav_btn.leaveEvent
+            
+            def _nav_settings_enter(ev):
+                self.settings_nav_btn._rot_hovering = True
+                if not self.settings_nav_btn._rot_timer.isActive():
+                    self.settings_nav_btn._rot_current_interval = 80
+                    self.settings_nav_btn._rot_timer.setInterval(80)
+                    self.settings_nav_btn._rot_timer.start()
+                _orig_enter(ev)
+            
+            def _nav_settings_leave(ev):
+                self.settings_nav_btn._rot_hovering = False
+                _orig_leave(ev)
+            
+            self.settings_nav_btn.enterEvent = _nav_settings_enter
+            self.settings_nav_btn.leaveEvent = _nav_settings_leave
+            self._settings_nav_anim_setup = True
+        
+        # Top-bar settings button animation
+        if hasattr(self, '_settings_btn_icon_path') and not self._settings_btn_anim_setup:
+            settings_icon_path = self._settings_btn_icon_path
+            anim_size = 96
+            settings_anim_pixmap = QPixmap(settings_icon_path).scaled(anim_size, anim_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            
+            num_frames = 60
+            settings_frames = []
+            for i in range(num_frames):
+                angle = -6 * i
+                transform = QTransform().rotate(angle)
+                rotated = settings_anim_pixmap.transformed(transform, Qt.SmoothTransformation)
+                
+                canvas = QPixmap(anim_size, anim_size)
+                canvas.fill(Qt.transparent)
+                painter = QPainter(canvas)
+                x = (anim_size - rotated.width()) // 2
+                y = (anim_size - rotated.height()) // 2
+                painter.drawPixmap(x, y, rotated)
+                painter.end()
+                
+                settings_frames.append(QIcon(canvas))
+            
+            self.settings_btn._rot_frames = settings_frames
+            self.settings_btn._rot_index = 0
+            self.settings_btn._rot_timer = QTimer()
+            self.settings_btn._rot_current_interval = 80
+            self.settings_btn._rot_timer.setInterval(80)
+            self.settings_btn._rot_hovering = False
+            
+            def _animate_settings_continuous():
+                self.settings_btn._rot_index = (self.settings_btn._rot_index + 1) % len(settings_frames)
+                self.settings_btn.setIcon(settings_frames[self.settings_btn._rot_index])
+                
+                if self.settings_btn._rot_hovering:
+                    self.settings_btn._rot_current_interval = max(1, self.settings_btn._rot_current_interval * 0.995)
+                    self.settings_btn._rot_timer.setInterval(int(self.settings_btn._rot_current_interval))
+                else:
+                    self.settings_btn._rot_current_interval *= 1.05
+                    if self.settings_btn._rot_current_interval > 200:
+                        self.settings_btn._rot_timer.stop()
+                        self.settings_btn._rot_current_interval = 80
+                    else:
+                        self.settings_btn._rot_timer.setInterval(int(self.settings_btn._rot_current_interval))
+            
+            self.settings_btn._rot_timer.timeout.connect(_animate_settings_continuous)
+            
+            original_enter = self.settings_btn.enterEvent
+            original_leave = self.settings_btn.leaveEvent
+            
+            def new_enter(event):
+                self.settings_btn._rot_hovering = True
+                if not self.settings_btn._rot_timer.isActive():
+                    self.settings_btn._rot_current_interval = 80
+                    self.settings_btn._rot_timer.setInterval(80)
+                    self.settings_btn._rot_timer.start()
+                original_enter(event)
+            
+            def new_leave(event):
+                self.settings_btn._rot_hovering = False
+                original_leave(event)
+            
+            self.settings_btn.enterEvent = new_enter
+            self.settings_btn.leaveEvent = new_leave
+            self._settings_btn_anim_setup = True
+
     def _toggle_debug_from_shortcut(self):
         """Toggle debug console from F9 shortcut."""
         # Key must be present in settings and True.
@@ -3250,7 +3867,8 @@ class GameLauncher(QWidget):
         """Global shortcut handler for numerical panel switching (Focus-Aware)."""
         # If user is typing in any text input, ignore the navigation shortcut
         focus_widget = QApplication.focusWidget()
-        if focus_widget and isinstance(focus_widget, (QLineEdit, QTextEdit)):
+        from PySide6.QtWidgets import QLineEdit, QTextEdit, QSpinBox, QComboBox, QPushButton
+        if focus_widget and isinstance(focus_widget, (QLineEdit, QTextEdit, QSpinBox, QComboBox, QPushButton)):
             return
             
         # Specific handling for CPU panel (panel 2) which needs state reset
@@ -3260,19 +3878,27 @@ class GameLauncher(QWidget):
             self.switch_panel(index)
     
     def _apply_initial_size(self):
-        """Apply window size after layout is complete."""
-        # Don't apply default centering if user has saved geometry
-        if hasattr(self, 'settings') and self.settings.get("window_geometry"):
-            return
-            
+        """Apply window size and strictly center it on the current screen."""
         if hasattr(self, '_target_size'):
             target_w, target_h, screen_w, screen_h = self._target_size
             self.resize(target_w, target_h)
-            # Center on screen
-            x = (screen_w - target_w) // 2
-            y = (screen_h - target_h) // 2
-            self.move(x, y)
-            print(f"[Window] Applied default size: {target_w}x{target_h} at ({x}, {y})")
+        else:
+            target_w, target_h = self.width(), self.height()
+            
+        # Get screen based on cursor position to handle multi-monitor properly
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QApplication
+        current_screen = QApplication.primaryScreen()
+        for s in QApplication.screens():
+            if s.geometry().contains(QCursor.pos()):
+                current_screen = s
+                break
+                
+        center_point = current_screen.availableGeometry().center()
+        geo = self.frameGeometry()
+        geo.moveCenter(center_point)
+        self.move(geo.topLeft())
+        print(f"[Window] Force centered on screen '{current_screen.name()}' at {geo.topLeft()}")
     
     def __init__(self):
         super().__init__()
@@ -3291,10 +3917,14 @@ class GameLauncher(QWidget):
         self.f9_shortcut = QShortcut(QKeySequence(Qt.Key_F9), self)
         self.f9_shortcut.activated.connect(self._toggle_debug_from_shortcut)
         
-        # Numerical shortcuts for sidebar navigation (1-6)
-        # Maps keys 1-6 to panels 0-5. Focus-aware to ignore while typing in inputs.
+        # Component Inspector (Global Shortcut)
+        self.f12_shortcut = QShortcut(QKeySequence(Qt.Key_F12), self)
+        self.f12_shortcut.activated.connect(self._trigger_inspector)
+        
+        # Numerical shortcuts for sidebar navigation (1-7)
+        # Maps keys 1-7 to panels 0-6. Focus-aware to ignore while typing in inputs.
         self._nav_shortcuts = []
-        for i in range(1, 7):
+        for i in range(1, 8):
             key_const = getattr(Qt, f"Key_{i}")
             shortcut = QShortcut(QKeySequence(key_const), self)
             # Use lambda with default arg to capture current i-1 value (early binding)
@@ -3374,17 +4004,12 @@ class GameLauncher(QWidget):
                 except:
                     pass
         
-        # Apply resizable window setting from settings
-        is_resizable = self.settings.get("resizable_window", True)
-        if not is_resizable:
-            # Lock window size to a default if not resizable
-            self.setFixedSize(1360, 720)
-        else:
-            # Set minimum size if resizable
-            self.setMinimumSize(1380, 790)
-            
+        # Set base minimum size first
+        self.setMinimumSize(1380, 790)
+        
         # Load saved window geometry and state
-        self.setWindowTitle("HELXAID")
+        is_frozen = getattr(sys, 'frozen', False)
+        self.setWindowTitle("HELXAID" if is_frozen else "HELXAID (Run with VSCode)")
         if self.settings.get("window_fullscreen", False):
             self.showFullScreen()
         else:
@@ -3394,6 +4019,20 @@ class GameLauncher(QWidget):
                 # geometry is a list [x, y, w, h]
                 self.move(geometry[0], geometry[1])
                 self.resize(geometry[2], geometry[3])
+                
+        # Apply resizable window setting from settings AFTER restoring geometry
+        is_resizable = self.settings.get("resizable_window", True)
+        if not is_resizable:
+            # Lock window size to its restored size
+            # Ensure it is at least the minimum size before locking
+            if self.width() < 1380 or self.height() < 790:
+                self.resize(1380, 790)
+            self.setFixedSize(self.size())
+        else:
+            # Ensure maximize button is available
+            flags = self.windowFlags()
+            if not (flags & Qt.WindowMaximizeButtonHint):
+                self.setWindowFlags(flags | Qt.WindowMaximizeButtonHint)
                 
         # Window opacity
         self.setWindowOpacity(self.settings.get("window_opacity", 1.0))
@@ -3409,11 +4048,8 @@ class GameLauncher(QWidget):
 
         self.data = load_json()
         
-        # Auto-fix corrupt icons at startup
-        validate_and_fix_corrupt_icons(self.data)
-        
-        # Clean corrupted game_exe fields (remove system processes, etc.)
-        self._sanitize_game_exes()
+        # Defer icon validation and sanitization to after UI is visible (improves startup time)
+        QTimer.singleShot(100, self._deferred_startup_tasks)
         
         self.icon_scale = self.settings.get("icon_scale", 1)
         self.confirm_on_exit = self.settings.get("confirm_on_exit", True)
@@ -3629,6 +4265,35 @@ class GameLauncher(QWidget):
         self.hardware_nav_btn.setClickAnimation(False)
         sidebar_layout.addWidget(self.hardware_nav_btn, 0, Qt.AlignHCenter)
 
+        # Windows Customization button (HELRCUS)
+        self.wincustom_nav_btn = AnimatedButton()
+        self.wincustom_nav_btn.setObjectName("NavWinCustomButton")
+        self.wincustom_nav_btn.setFixedSize(64, 64)
+        self.wincustom_nav_btn.setToolTip("HELRCUS - Windows Customization")
+        self.wincustom_nav_btn.setCursor(Qt.PointingHandCursor)
+        
+        # Load windows custom icon or use fallback
+        wincustom_icon_path = os.path.join(script_dir, "UI Reguler", "windowsIcon.png")
+        if os.path.exists(wincustom_icon_path):
+            wincustom_pixmap = QPixmap(wincustom_icon_path)
+            wincustom_scaled = wincustom_pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.wincustom_nav_btn.setIcon(QIcon(wincustom_scaled))
+            self.wincustom_nav_btn.setIconSize(QSize(40, 40))
+        else:
+            self.wincustom_nav_btn.setText("")
+        
+        self.wincustom_nav_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 10px;
+                font-size: 28px;
+            }
+        """)
+        self.wincustom_nav_btn.clicked.connect(lambda: self.switch_panel(6))
+        self.wincustom_nav_btn.setClickAnimation(False)
+        sidebar_layout.addWidget(self.wincustom_nav_btn, 0, Qt.AlignHCenter)
+
         # Bottom stretch pushes nav icons toward center; settings pin stays at very bottom
         sidebar_layout.addStretch()
         
@@ -3650,65 +4315,13 @@ class GameLauncher(QWidget):
         settings_nav_icon_path = os.path.join(script_dir, "UI Icons", "setting-icon.png")
         if os.path.exists(settings_nav_icon_path):
             _s_pix = QPixmap(settings_nav_icon_path)
-            _s_scaled = _s_pix.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            _s_scaled = _s_pix.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.settings_nav_btn.setIcon(QIcon(_s_scaled))
             self.settings_nav_btn.setIconSize(QSize(40, 40))
             
-            # Spin-on-hover animation — same logic as top-bar settings button
-            from PySide6.QtGui import QTransform, QPainter
-            _anim_size = 80
-            _anim_pix = _s_pix.scaled(_anim_size, _anim_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            _frames = []
-            for _i in range(60):
-                _angle = -6 * _i
-                _rot = _anim_pix.transformed(QTransform().rotate(_angle), Qt.SmoothTransformation)
-                _canvas = QPixmap(_anim_size, _anim_size)
-                _canvas.fill(Qt.transparent)
-                _p = QPainter(_canvas)
-                _p.drawPixmap((_anim_size - _rot.width()) // 2, (_anim_size - _rot.height()) // 2, _rot)
-                _p.end()
-                _frames.append(QIcon(_canvas))
-            
-            self.settings_nav_btn._rot_frames = _frames
-            self.settings_nav_btn._rot_index = 0
-            self.settings_nav_btn._rot_timer = QTimer()
-            self.settings_nav_btn._rot_timer.setInterval(80)
-            self.settings_nav_btn._rot_current_interval = 80
-            self.settings_nav_btn._rot_hovering = False
-            
-            def _nav_settings_tick():
-                self.settings_nav_btn._rot_index = (self.settings_nav_btn._rot_index + 1) % len(_frames)
-                self.settings_nav_btn.setIcon(_frames[self.settings_nav_btn._rot_index])
-                if self.settings_nav_btn._rot_hovering:
-                    self.settings_nav_btn._rot_current_interval = max(1, self.settings_nav_btn._rot_current_interval * 0.995)
-                    self.settings_nav_btn._rot_timer.setInterval(int(self.settings_nav_btn._rot_current_interval))
-                else:
-                    self.settings_nav_btn._rot_current_interval *= 1.05
-                    if self.settings_nav_btn._rot_current_interval > 200:
-                        self.settings_nav_btn._rot_timer.stop()
-                        self.settings_nav_btn._rot_current_interval = 80
-                    else:
-                        self.settings_nav_btn._rot_timer.setInterval(int(self.settings_nav_btn._rot_current_interval))
-            
-            self.settings_nav_btn._rot_timer.timeout.connect(_nav_settings_tick)
-            
-            _orig_enter = self.settings_nav_btn.enterEvent
-            _orig_leave = self.settings_nav_btn.leaveEvent
-            
-            def _nav_settings_enter(ev):
-                self.settings_nav_btn._rot_hovering = True
-                if not self.settings_nav_btn._rot_timer.isActive():
-                    self.settings_nav_btn._rot_current_interval = 80
-                    self.settings_nav_btn._rot_timer.setInterval(80)
-                    self.settings_nav_btn._rot_timer.start()
-                _orig_enter(ev)
-            
-            def _nav_settings_leave(ev):
-                self.settings_nav_btn._rot_hovering = False
-                _orig_leave(ev)
-            
-            self.settings_nav_btn.enterEvent = _nav_settings_enter
-            self.settings_nav_btn.leaveEvent = _nav_settings_leave
+            # Store pixmap for deferred animation setup (improves startup time)
+            self._settings_nav_pixmap = _s_pix
+            self._settings_nav_anim_setup = False
         else:
             self.settings_nav_btn.setText("")
         
@@ -3897,7 +4510,7 @@ class GameLauncher(QWidget):
         settings_icon_path = os.path.join(script_dir, "UI Icons", "setting-icon.png")
         if os.path.exists(settings_icon_path):
             settings_pixmap = QPixmap(settings_icon_path)
-            settings_scaled = settings_pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            settings_scaled = settings_pixmap.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.settings_btn.setIcon(QIcon(settings_scaled))
             self.settings_btn.setIconSize(QSize(48, 48))
         else:
@@ -3912,85 +4525,24 @@ class GameLauncher(QWidget):
             }
             QPushButton:hover {
             }
+            QPushButton:pressed {
+                background: transparent;
+            }
         """)
+        self.settings_btn.setClickAnimation(False)
         
-        # Setup continuous rotation animation while hovering
+        # Setup continuous rotation animation while hovering (deferred for faster startup)
         if os.path.exists(settings_icon_path):
-            from PySide6.QtGui import QTransform, QPainter
-            
-            # Pre-scale pixmap for smooth animation
-            anim_size = 96
-            settings_anim_pixmap = QPixmap(settings_icon_path).scaled(anim_size, anim_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            
-            # Create 360 degree frames for continuous rotation
-            num_frames = 60  # 60 frames = 6° per frame
-            settings_frames = []
-            for i in range(num_frames):
-                angle = -6 * i  # Rotate left (counter-clockwise)
-                transform = QTransform().rotate(angle)
-                rotated = settings_anim_pixmap.transformed(transform, Qt.SmoothTransformation)
-                
-                canvas = QPixmap(anim_size, anim_size)
-                canvas.fill(Qt.transparent)
-                painter = QPainter(canvas)
-                x = (anim_size - rotated.width()) // 2
-                y = (anim_size - rotated.height()) // 2
-                painter.drawPixmap(x, y, rotated)
-                painter.end()
-                
-                settings_frames.append(QIcon(canvas))
-            
-            self.settings_btn._rot_frames = settings_frames
-            self.settings_btn._rot_index = 0
-            self.settings_btn._rot_timer = QTimer()
-            self.settings_btn._rot_current_interval = 80  # Start slow
-            self.settings_btn._rot_timer.setInterval(80)
-            self.settings_btn._rot_hovering = False
-            
-            def _animate_settings_continuous():
-                # Loop continuously through frames
-                self.settings_btn._rot_index = (self.settings_btn._rot_index + 1) % len(settings_frames)
-                self.settings_btn.setIcon(settings_frames[self.settings_btn._rot_index])
-                
-                if self.settings_btn._rot_hovering:
-                    # Speed up gradually while hovering (decrease interval slowly, no limit)
-                    self.settings_btn._rot_current_interval = max(1, self.settings_btn._rot_current_interval * 0.995)
-                    self.settings_btn._rot_timer.setInterval(int(self.settings_btn._rot_current_interval))
-                else:
-                    # Slow down when not hovering
-                    self.settings_btn._rot_current_interval *= 1.05
-                    if self.settings_btn._rot_current_interval > 200:
-                        self.settings_btn._rot_timer.stop()
-                        self.settings_btn._rot_current_interval = 80  # Reset for next hover
-                    else:
-                        self.settings_btn._rot_timer.setInterval(int(self.settings_btn._rot_current_interval))
-            
-            self.settings_btn._rot_timer.timeout.connect(_animate_settings_continuous)
-            
-            original_enter = self.settings_btn.enterEvent
-            original_leave = self.settings_btn.leaveEvent
-            
-            def new_enter(event):
-                self.settings_btn._rot_hovering = True
-                if not self.settings_btn._rot_timer.isActive():
-                    self.settings_btn._rot_current_interval = 80  # Start slow
-                    self.settings_btn._rot_timer.setInterval(80)
-                    self.settings_btn._rot_timer.start()
-                original_enter(event)
-            
-            def new_leave(event):
-                self.settings_btn._rot_hovering = False
-                # Don't stop timer - let it slow down gradually
-                original_leave(event)
-            
-            self.settings_btn.enterEvent = new_enter
-            self.settings_btn.leaveEvent = new_leave
+            # Store for deferred animation setup
+            self._settings_btn_icon_path = settings_icon_path
+            self._settings_btn_anim_setup = False
+        else:
+            self._settings_btn_anim_setup = False
 
         self.settings_btn.clicked.connect(self.open_settings)
         
-        # Add Game menu with two options: manual add and automatic Universal Scan
+        # Add Game menu with options for scanning and managing libraries
         self.add_menu = QMenu(self)
-        manual_action = self.add_menu.addAction("Add Game Manually")
         universal_scan_action = self.add_menu.addAction("Universal Scan")
         
         self.add_menu.addSeparator()
@@ -3998,7 +4550,6 @@ class GameLauncher(QWidget):
         folders_action = self.add_menu.addAction("Manage Game Folders")
         scan_local_action = self.add_menu.addAction("Scan Local Folders")
         
-        manual_action.triggered.connect(self.add_game_manual)
         universal_scan_action.triggered.connect(self.universal_scan)
         folders_action.triggered.connect(self.manage_game_folders)
         scan_local_action.triggered.connect(self.scan_local_folders)
@@ -4034,7 +4585,11 @@ class GameLauncher(QWidget):
             QPushButton:hover {
                 background-color: rgba(255, 255, 255, 0.08);
             }
+            QPushButton:pressed {
+                background-color: rgba(255, 255, 255, 0.08);
+            }
         """)
+        self.add_btn.setClickAnimation(False)
         self.add_btn.setMenu(self.add_menu)
 
         # Refresh button with circular arrow symbol
@@ -4060,12 +4615,13 @@ class GameLauncher(QWidget):
             QPushButton:hover {
             }
             QPushButton:pressed {
-                background-color: rgba(255, 255, 255, 0.15);
+                background: transparent;
             }
             QPushButton:disabled {
                 color: #888888;
             }
         """)
+        self.refresh_btn.setClickAnimation(False)
         self.refresh_btn.setToolTip("Refresh Library")
         self.refresh_btn.clicked.connect(self.refresh)
         
@@ -4143,7 +4699,8 @@ class GameLauncher(QWidget):
                 border-radius: 5px;
             }
             QPushButton:pressed {
-                background-color: rgba(255, 255, 255, 0.15);
+                background-color: rgba(255, 255, 255, 0.1);
+                border-radius: 5px;
             }
         """)
 
@@ -4181,7 +4738,8 @@ class GameLauncher(QWidget):
                     border-radius: 5px;
                 }
                 QPushButton:pressed {
-                    background-color: rgba(255, 255, 255, 0.15);
+                    background-color: rgba(255, 255, 255, 0.1);
+                    border-radius: 5px;
                 }
             """)
 
@@ -4339,24 +4897,6 @@ class GameLauncher(QWidget):
             # Auto-connect to Discord IMMEDIATELY if enabled (top priority)
             if self.discord_enabled:
                 QTimer.singleShot(100, self.connect_and_check_running_games)  # Faster connection
-            self.discord_btn.setStyleSheet("""
-                QPushButton {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #5865F2, stop:1 #7289DA);
-                    border: 2px solid #5865F2;
-                    border-radius: 6px;
-                    padding: 3px 12px 1px 12px;
-                    color: white;
-                    font-size: 12px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7289DA, stop:1 #99AAF2);
-                    border: 2px solid #7289DA;
-                }
-                QPushButton:pressed {
-                    background: #4752C4;
-                }
-            """)
         else:
             # Discord not installed - disable button
             self.discord_btn.setText("Discord: N/A")
@@ -4491,6 +5031,35 @@ class GameLauncher(QWidget):
 
     def open_launcher_youtube(self):
         QDesktopServices.openUrl(QUrl("https://rickrolled.com/"))
+
+    def _on_bg_processed(self, bg_image, avg_brightness, scaled_path, current_hash):
+        import os
+        text_color = "#FFFFFF"
+        if avg_brightness > 140:
+            opacity = 0.25
+        else:
+            opacity = 0.50
+            
+        print(f"[Background] Async processing finished for {os.path.basename(bg_image)}. Brightness: {avg_brightness:.0f}")
+        
+        # Save to cache
+        self._bg_brightness_cache[bg_image] = (avg_brightness, text_color, opacity, True)
+        self._last_bg_hash = current_hash
+        
+        # We don't need to hold the thread reference anymore
+        if hasattr(self, '_bg_processor'):
+            self._bg_processor.deleteLater()
+            del self._bg_processor
+            
+        # Re-apply theme to lock in the colors and scaled image
+        self.apply_theme()
+        
+        # If UI has already been rendered, we should force a visual refresh of the grid texts
+        if hasattr(self, 'refresh'):
+            # Only refresh if it won't cause a massive stutter, maybe just update grid items directly?
+            # A full refresh() might be too heavy if done async during init. We'll use a timer to defer it slightly.
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(50, self.refresh)
 
     def apply_theme(self):
         """Apply theme colors and background image"""
@@ -4649,6 +5218,28 @@ class GameLauncher(QWidget):
             QLineEdit:focus {{
                 border: 2px solid {primary};
             }}
+            QWidget#windowsCustomPanel QLineEdit {{
+                background: #2a2d35;
+                border: none;
+                border-radius: 5px;
+                padding: 6px 8px;
+                color: #e0e0e0;
+            }}
+            QWidget#windowsCustomPanel QLineEdit:focus {{
+                background: #32353e;
+                border: 1px solid rgba(255, 91, 6, 0.6);
+            }}
+            QWidget#windowsCustomPanel QComboBox {{
+                background: #2a2d35;
+                border: none;
+                border-radius: 5px;
+                padding: 5px 10px;
+                color: #e0e0e0;
+            }}
+            QWidget#windowsCustomPanel QComboBox:focus {{
+                background: #32353e;
+                border: 1px solid rgba(255, 91, 6, 0.6);
+            }}
         """
         
         self.setStyleSheet(stylesheet)
@@ -4675,181 +5266,134 @@ class GameLauncher(QWidget):
                 
                 print(f"[Background] Container size: {container_width}x{container_height}")
                 
-                # Load and scale the image
-                pixmap = QPixmap(bg_image)
-                if not pixmap.isNull():
-                    orig_width = pixmap.width()
-                    orig_height = pixmap.height()
+                # Check if we can skip heavy image processing entirely
+                if not hasattr(self, '_bg_brightness_cache'):
+                    self._bg_brightness_cache = {}
+                
+                temp_dir = os.path.join(os.environ.get('TEMP', '/tmp'), 'helxaid_bg')
+                os.makedirs(temp_dir, exist_ok=True)
+                
+                import hashlib
+                name_hash = hashlib.md5(bg_image.encode('utf-8')).hexdigest()[:8]
+                scaled_path = os.path.join(temp_dir, f'bg_scaled_{name_hash}.jpg')
+                bg_image_css = bg_image.replace("\\", "/")
+                scaled_image_css = scaled_path.replace("\\", "/")
+                
+                # We ALWAYS use scaled images now to save RAM!
+                needs_scaled = True
+                last_hash = getattr(self, '_last_bg_hash', "")
+                current_hash = f"{bg_image}_{mode}_{container_width}_{container_height}"
+                
+                # Check if scaled image exists on disk
+                scaled_exists = os.path.exists(scaled_path)
+                
+                if bg_image in self._bg_brightness_cache and last_hash == current_hash and scaled_exists:
+                    # Fast path! We have brightness cached, and the scaled image is ready.
+                    avg_brightness, self._game_text_color, self._title_bg_opacity, self._has_bg_image = self._bg_brightness_cache[bg_image]
+                    print(f"[Background] Fast path cache hit for: {os.path.basename(bg_image)}")
+                else:
+                    # Async path! Cache miss or window resized
+                    if not hasattr(self, '_bg_processor'):
+                        print(f"[Background] Starting async processor for: {os.path.basename(bg_image)}")
+                        
+                        # Apply default placeholders while we calculate
+                        self._game_text_color = "#e0e0e0"
+                        self._title_bg_opacity = 0.50
+                        self._has_bg_image = True
+                        
+                        self._bg_processor = BackgroundProcessor(bg_image, mode, container_width, container_height, current_hash)
+                        self._bg_processor.finished.connect(self._on_bg_processed)
+                        from PySide6.QtCore import QThread
+                        self._bg_processor.start(QThread.LowestPriority)
+                    else:
+                        # Processing is already running, use defaults for now
+                        self._game_text_color = "#e0e0e0"
+                        self._title_bg_opacity = 0.50
+                        self._has_bg_image = True
+                        
+                    # If scaled is not ready, temporarily use the unscaled image to avoid blank background
+                    if not scaled_exists:
+                        scaled_image_css = bg_image_css
                     
-                    if mode == "fill":
-                        # Cover: scale to fill, may crop
-                        scaled = pixmap.scaled(
-                            container_width, container_height,
-                            Qt.KeepAspectRatioByExpanding,
-                            Qt.SmoothTransformation
-                        )
-                    elif mode == "fit":
-                        # Contain: scale to fit, may have letterbox
-                        scaled = pixmap.scaled(
-                            container_width, container_height,
-                            Qt.KeepAspectRatio,
-                            Qt.SmoothTransformation
-                        )
-                    elif mode == "stretch":
-                        # Stretch: ignore aspect ratio
-                        scaled = pixmap.scaled(
-                            container_width, container_height,
-                            Qt.IgnoreAspectRatio,
-                            Qt.SmoothTransformation
-                        )
-                    elif mode == "tile":
-                        # Tile: use original size
-                        scaled = pixmap
-                    elif mode == "center":
-                        # Center: use original but limit to reasonable size
-                        if orig_width > container_width * 1.5 or orig_height > container_height * 1.5:
-                            scaled = pixmap.scaled(
-                                container_width, container_height,
-                                Qt.KeepAspectRatio,
-                                Qt.SmoothTransformation
-                            )
-                        else:
-                            scaled = pixmap
-                    else:  # span
-                        scaled = pixmap.scaled(
-                            container_width, container_height,
-                            Qt.KeepAspectRatioByExpanding,
-                            Qt.SmoothTransformation
-                        )
-                    
-                    # Save scaled image to temp file
-                    temp_dir = os.path.join(os.environ.get('TEMP', '/tmp'), 'helxaid_bg')
-                    os.makedirs(temp_dir, exist_ok=True)
-                    scaled_path = os.path.join(temp_dir, 'background_scaled.png')
-                    scaled.save(scaled_path, 'PNG')
-                    
-                    # Calculate average brightness for adaptive text color
-                    try:
-                        img = scaled.toImage()
-                        if not img.isNull():
-                            # More sophisticated brightness detection
-                            # Focus on upper portion where game names appear
-                            brightness_values = []
-                            step = max(1, min(img.width(), img.height()) // 30)  # More samples
-                            
-                            # Sample upper half more heavily (weight 2x)
-                            for x in range(0, img.width(), step):
-                                # Upper 40% (where text typically is)
-                                for y in range(0, int(img.height() * 0.4), step):
-                                    color = img.pixelColor(x, y)
-                                    lum = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
-                                    brightness_values.append(lum)
-                                    brightness_values.append(lum)  # Double weight for upper area
-                                
-                                # Lower 60% (less important)
-                                for y in range(int(img.height() * 0.4), img.height(), step):
-                                    color = img.pixelColor(x, y)
-                                    lum = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
-                                    brightness_values.append(lum)
-                            
-                            if brightness_values:
-                                avg_brightness = sum(brightness_values) / len(brightness_values)
-                                # Always use white text — adjust the dark shadow behind title instead
-                                self._game_text_color = "#FFFFFF"
-                                if avg_brightness > 140:
-                                    # Bright wallpaper: use more opaque dark bg so white text stays readable
-                                    self._title_bg_opacity = 0.25
-                                else:
-                                    # Dark wallpaper: lighter shadow is enough
-                                    self._title_bg_opacity = 0.50
-                                self._has_bg_image = True  # Flag for bold text
-                                print(f"[Background] Brightness: {avg_brightness:.0f} (samples: {len(brightness_values)}), text color: {self._game_text_color}")
-                    except Exception as e:
-                        self._game_text_color = "#e0e0e0"  # Default light
-                        print(f"[Background] Brightness calc error: {e}")
-                    
-                    bg_image_css = bg_image.replace("\\", "/")
-                    scaled_image_css = scaled_path.replace("\\", "/")
-                    
-                    # Different CSS for different modes
-                    if mode == "fill" or mode == "stretch":
-                        # Fill/Stretch: use border-image to fill container completely
-                        # border-image stretches to fill the entire container
-                        container_style = f"""
-                            QWidget#gamesContainer {{
-                                border-image: url("{bg_image_css}") 0 0 0 0 stretch stretch;
-                                border-radius: 10px;
-                            }}
-                        """
-                    elif mode == "tile":
-                        # Use scaled image with repeat
-                        container_style = f"""
-                            QWidget#gamesContainer {{
-                                background-image: url("{bg_image_css}");
-                                background-repeat: repeat;
-                                border-radius: 10px;
-                            }}
-                        """
-                    elif mode == "center":
-                        # Use scaled image centered, no repeat
-                        container_style = f"""
-                            QWidget#gamesContainer {{
-                                background-image: url("{scaled_image_css}");
-                                background-position: center;
-                                background-repeat: no-repeat;
-                                border-radius: 10px;
-                            }}
-                        """
-                    else:  # fit - use pre-scaled image
-                        container_style = f"""
-                            QWidget#gamesContainer {{
-                                background-image: url("{scaled_image_css}");
-                                background-position: center;
-                                background-repeat: no-repeat;
-                                border-radius: 10px;
-                            }}
-                        """
-                    
-                    # Style for recently played section - semi-transparent, no border
-                    recently_played_style = """
-                        QWidget#recentlyPlayedWidget {
-                            background: rgba(0, 0, 0, 0.5);
-                            border: none;
-                            border-radius: 12px;
-                            padding: 8px;
-                        }
+                # Different CSS for different modes (ALWAYS use scaled_image_css to save RAM)
+                if mode == "fill" or mode == "stretch":
+                    # Fill/Stretch: use border-image to fill container completely
+                    # border-image stretches to fill the entire container
+                    container_style = f"""
+                        QWidget#gamesContainer {{
+                            border-image: url("{scaled_image_css}") 0 0 0 0 stretch stretch;
+                            border-radius: 10px;
+                        }}
+                    """
+                elif mode == "tile":
+                    # Use scaled image with repeat
+                    container_style = f"""
+                        QWidget#gamesContainer {{
+                            background-image: url("{scaled_image_css}");
+                            background-repeat: repeat;
+                            border-radius: 10px;
+                        }}
+                    """
+                elif mode == "center":
+                    # Use scaled image centered, no repeat
+                    container_style = f"""
+                        QWidget#gamesContainer {{
+                            background-image: url("{scaled_image_css}");
+                            background-position: center;
+                            background-repeat: no-repeat;
+                            border-radius: 10px;
+                        }}
+                    """
+                else:  # fit - use pre-scaled image
+                    container_style = f"""
+                        QWidget#gamesContainer {{
+                            background-image: url("{scaled_image_css}");
+                            background-position: center;
+                            background-repeat: no-repeat;
+                            border-radius: 10px;
+                        }}
                     """
                     
-                    # Style for sort bar - semi-transparent, no border
-                    sort_bar_style = """
-                        QWidget#sortBar {
-                            background: rgba(0, 0, 0, 0.5);
-                            border: none;
-                            border-radius: 12px;
-                            padding: 0 8px;
-                        }
-                    """
-                    
-                    # Apply to games container
-                    if hasattr(self, 'games_container'):
-                        self.games_container.setStyleSheet(container_style)
-                    
-                    # Apply to recently played
-                    if hasattr(self, 'recently_played_widget'):
-                        self.recently_played_widget.setStyleSheet(recently_played_style)
-                    
-                    # Apply to sort bar
-                    if hasattr(self, 'sort_bar'):
-                        self.sort_bar.setStyleSheet(sort_bar_style)
-                    
-                    # Apply adaptive text color to sort bar labels
-                    label_style = f"font-size: 13px; color: {self._game_text_color}; background: transparent;"
-                    if hasattr(self, 'sort_label'):
-                        self.sort_label.setStyleSheet(label_style)
-                    if hasattr(self, 'filter_label'):
-                        self.filter_label.setStyleSheet(label_style)
-                    if hasattr(self, 'game_counter'):
-                        self.game_counter.setStyleSheet(f"font-size: 13px; color: {self._game_text_color}; padding: 0 10px; background: transparent;")
+                # Style for recently played section - semi-transparent, no border
+                recently_played_style = """
+                    QWidget#recentlyPlayedWidget {
+                        background: rgba(0, 0, 0, 0.5);
+                        border: none;
+                        border-radius: 12px;
+                        padding: 8px;
+                    }
+                """
+                
+                # Style for sort bar - semi-transparent, no border
+                sort_bar_style = """
+                    QWidget#sortBar {
+                        background: rgba(0, 0, 0, 0.5);
+                        border: none;
+                        border-radius: 12px;
+                        padding: 0 8px;
+                    }
+                """
+                
+                # Apply to games container
+                if hasattr(self, 'games_container'):
+                    self.games_container.setStyleSheet(container_style)
+                
+                # Apply to recently played
+                if hasattr(self, 'recently_played_widget'):
+                    self.recently_played_widget.setStyleSheet(recently_played_style)
+                
+                # Apply to sort bar
+                if hasattr(self, 'sort_bar'):
+                    self.sort_bar.setStyleSheet(sort_bar_style)
+                
+                # Apply adaptive text color to sort bar labels
+                label_style = f"font-size: 13px; color: {self._game_text_color}; background: transparent;"
+                if hasattr(self, 'sort_label'):
+                    self.sort_label.setStyleSheet(label_style)
+                if hasattr(self, 'filter_label'):
+                    self.filter_label.setStyleSheet(label_style)
+                if hasattr(self, 'game_counter'):
+                    self.game_counter.setStyleSheet(f"font-size: 13px; color: {self._game_text_color}; padding: 0 10px; background: transparent;")
                         
             except Exception as e:
                 print(f"[Background] Error scaling image: {e}")
@@ -4913,6 +5457,10 @@ class GameLauncher(QWidget):
         if index == 5 and not hasattr(self, 'hardware_panel'):
             self._setup_hardware_panel()
         
+        # Lazy-load Windows Customization panel at index 6
+        if index == 6 and not hasattr(self, 'wincustom_panel'):
+            self._setup_wincustom_panel()
+        
         self.content_stack.setCurrentIndex(index)
         
         # Clear focus from sidebar buttons so keyboard shortcuts work
@@ -4946,7 +5494,7 @@ class GameLauncher(QWidget):
                 pass
         
         # Update sidebar button styles to show active state
-        buttons = [self.home_btn, self.music_nav_btn, self.cpu_nav_btn, self.crosshair_nav_btn, self.macro_nav_btn, self.hardware_nav_btn]
+        buttons = [self.home_btn, self.music_nav_btn, self.cpu_nav_btn, self.crosshair_nav_btn, self.macro_nav_btn, self.hardware_nav_btn, self.wincustom_nav_btn]
         
         # Stop existing gradient animation timer if any
         if hasattr(self, '_nav_gradient_timer') and self._nav_gradient_timer:
@@ -4973,21 +5521,6 @@ class GameLauncher(QWidget):
         """Handle global keyboard shortcuts."""
         from PySide6.QtCore import Qt
         
-        # F11 or Alt+Return: Toggle Fullscreen
-        if (event.key() == Qt.Key_F11 and event.modifiers() == Qt.NoModifier) or \
-           (event.key() == Qt.Key_Return and event.modifiers() == Qt.AltModifier):
-            self.toggle_fullscreen()
-            return
-        
-        # Ctrl+F11: Toggle Debug Console (prevent conflict with Fullscreen)
-        if event.key() == Qt.Key_F11 and event.modifiers() == Qt.ControlModifier:
-            try:
-                from DebugConsoleWidget import toggle_debug_console
-                toggle_debug_console()
-            except Exception as e:
-                print(f"[Debug] Error toggling console: {e}")
-            return
-        
         # NOTE: Hardware media keys (Play/Pause, Next, Previous, Stop)
         # are handled exclusively by MediaKeyService's global keyboard
         # hook. Do NOT handle them here to avoid double-fire since the
@@ -5001,6 +5534,16 @@ class GameLauncher(QWidget):
                 focus_widget = QApplication.focusWidget()
                 is_interactive = isinstance(focus_widget, (QPushButton, QLineEdit, QComboBox, QSpinBox))
                 
+                # Cooldown guard (matches eventFilter's 300ms protection)
+                import time
+                if not hasattr(self, '_shortcut_last_fired'):
+                    self._shortcut_last_fired = {}
+                now = time.monotonic()
+                last = self._shortcut_last_fired.get(event.key(), 0.0)
+                if now - last < 0.30:
+                    return
+                self._shortcut_last_fired[event.key()] = now
+                
                 # Space: Toggle play/pause (only if no button focused)
                 if event.key() == Qt.Key_Space and not is_interactive:
                     self.audio_player.toggle_play()
@@ -5013,6 +5556,7 @@ class GameLauncher(QWidget):
                 elif event.key() == Qt.Key_N and not isinstance(focus_widget, (QLineEdit,)):
                     self.audio_player.next_track()
                     return
+
         
         # Ctrl+F: Focus search
         if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_F:
@@ -5060,66 +5604,69 @@ class GameLauncher(QWidget):
             elif 0 <= self.selected_game_index < len(self.game_buttons):
                 btn, game = self.game_buttons[self.selected_game_index]
                 self.delete_game(game)
-        elif event.key() == Qt.Key_F12:
-            # Component Inspector - show info about widget under cursor
-            pos = self.mapFromGlobal(self.cursor().pos())
-            widget = self.childAt(pos)
-            if widget:
-                # Build parent hierarchy
-                hierarchy = []
-                w = widget
-                while w:
-                    name = w.objectName() or "(no name)"
-                    hierarchy.append(f"{w.__class__.__name__}#{name}")
-                    w = w.parent()
-                
-                # Detect component type
-                component_name = "Unknown"
-                code_ref = ""
-                widget_type = widget.__class__.__name__
-                
-                # Check for game buttons
-                if widget_type == "AnimatedGameButton":
-                    for idx, (btn, game) in enumerate(self.game_buttons):
-                        if btn == widget:
-                            component_name = f"🎮 Game Button: \"{game.get('name', 'Unknown')}\""
-                            code_ref = f"self.game_buttons[{idx}]"
-                            break
-                elif widget_type == "QPushButton":
-                    btn_text = widget.text() if hasattr(widget, 'text') else ""
-                    if btn_text:
-                        component_name = f"Button: \"{btn_text}\""
-                    if widget == getattr(self, 'settings_btn', None):
-                        code_ref = "self.settings_btn"
-                    elif widget == getattr(self, 'add_btn', None):
-                        code_ref = "self.add_btn"
-                    elif widget == getattr(self, 'refresh_btn', None):
-                        code_ref = "self.refresh_btn"
-                    elif widget == getattr(self, 'discord_btn', None):
-                        code_ref = "self.discord_btn"
-                elif widget_type == "QLineEdit":
-                    if widget == getattr(self, 'search_input', None):
-                        component_name = "Search Input"
-                        code_ref = "self.search_input"
-                elif widget_type == "QComboBox":
-                    if widget == getattr(self, 'sort_combo', None):
-                        component_name = "Sort Dropdown"
-                        code_ref = "self.sort_combo"
-                    elif widget == getattr(self, 'filter_combo', None):
-                        component_name = "Filter Dropdown"
-                        code_ref = "self.filter_combo"
-                elif widget_type == "QLabel":
-                    label_text = widget.text() if hasattr(widget, 'text') else ""
-                    if label_text:
-                        component_name = f"Label: \"{label_text[:30]}...\""
-                elif widget.objectName() == "gamesContainer":
-                    component_name = "Games Container (Grid Background)"
-                    code_ref = "self.games_container"
-                elif widget.objectName() == "gamesScrollArea":
-                    component_name = "Games Scroll Area"
-                    code_ref = "self.games_scroll"
-                
-                info = f"""Component Inspector
+        else:
+            super().keyPressEvent(event)
+
+    def _trigger_inspector(self):
+        """Component Inspector - show info about widget under cursor."""
+        pos = self.mapFromGlobal(self.cursor().pos())
+        widget = self.childAt(pos)
+        if widget:
+            # Build parent hierarchy
+            hierarchy = []
+            w = widget
+            while w:
+                name = w.objectName() or "(no name)"
+                hierarchy.append(f"{w.__class__.__name__}#{name}")
+                w = w.parent()
+            
+            # Detect component type
+            component_name = "Unknown"
+            code_ref = ""
+            widget_type = widget.__class__.__name__
+            
+            # Check for game buttons
+            if widget_type == "AnimatedGameButton":
+                for idx, (btn, game) in enumerate(self.game_buttons):
+                    if btn == widget:
+                        component_name = f"🎮 Game Button: \"{game.get('name', 'Unknown')}\""
+                        code_ref = f"self.game_buttons[{idx}]"
+                        break
+            elif widget_type == "QPushButton":
+                btn_text = widget.text() if hasattr(widget, 'text') else ""
+                if btn_text:
+                    component_name = f"Button: \"{btn_text}\""
+                if widget == getattr(self, 'settings_btn', None):
+                    code_ref = "self.settings_btn"
+                elif widget == getattr(self, 'add_btn', None):
+                    code_ref = "self.add_btn"
+                elif widget == getattr(self, 'refresh_btn', None):
+                    code_ref = "self.refresh_btn"
+                elif widget == getattr(self, 'discord_btn', None):
+                    code_ref = "self.discord_btn"
+            elif widget_type == "QLineEdit":
+                if widget == getattr(self, 'search_input', None):
+                    component_name = "Search Input"
+                    code_ref = "self.search_input"
+            elif widget_type == "QComboBox":
+                if widget == getattr(self, 'sort_combo', None):
+                    component_name = "Sort Dropdown"
+                    code_ref = "self.sort_combo"
+                elif widget == getattr(self, 'filter_combo', None):
+                    component_name = "Filter Dropdown"
+                    code_ref = "self.filter_combo"
+            elif widget_type == "QLabel":
+                label_text = widget.text() if hasattr(widget, 'text') else ""
+                if label_text:
+                    component_name = f"Label: \"{label_text[:30]}...\""
+            elif widget.objectName() == "gamesContainer":
+                component_name = "Games Container (Grid Background)"
+                code_ref = "self.games_container"
+            elif widget.objectName() == "gamesScrollArea":
+                component_name = "Games Scroll Area"
+                code_ref = "self.games_scroll"
+            
+            info = f"""Component Inspector
 
 Component: {component_name}
 Widget Type: {widget_type}
@@ -5133,11 +5680,9 @@ Hierarchy (child → parent):
 Stylesheet Selector:
   {widget_type}#{widget.objectName() if widget.objectName() else '<set objectName first>'}
 """
-                QMessageBox.information(self, "Component Inspector (F12)", info)
-            else:
-                QMessageBox.information(self, "Component Inspector", "No widget under cursor")
+            QMessageBox.information(self, "Component Inspector (F12)", info)
         else:
-            super().keyPressEvent(event)
+            QMessageBox.information(self, "Component Inspector", "No widget under cursor")
 
     def toggle_fullscreen(self):
         """Toggle fullscreen mode."""
@@ -5201,17 +5746,148 @@ Stylesheet Selector:
             }}
         """)
     
-    def _start_pending_video(self):
-        """Start the pending video background after panel switch animation."""
-        if hasattr(self, '_pending_video_path') and self._pending_video_path:
-            if hasattr(self, 'music_panel') and hasattr(self, 'content_stack'):
-                # Only start if still on music panel
-                if self.content_stack.currentWidget() == self.music_panel:
-                    self.music_panel.set_video(self._pending_video_path)
-                    print(f"[Music] Started queued VIDEO: {os.path.basename(self._pending_video_path)}")
-    
     def _setup_music_panel(self):
         """Setup the music player panel using native Qt MusicPanelWidget."""
+        from integrations.tools_downloader import is_ffmpeg_available
+        
+        if not is_ffmpeg_available():
+            self.music_panel = QWidget()
+            self.music_panel.setObjectName("musicPanel")
+            layout = QVBoxLayout(self.music_panel)
+            layout.setContentsMargins(40, 30, 40, 30)
+            layout.setSpacing(24)
+            
+            container = QWidget()
+            container.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a);
+                }
+            """)
+            container_layout = QVBoxLayout(container)
+            container_layout.setAlignment(Qt.AlignCenter)
+            container_layout.setSpacing(20)
+            
+            icon_label = QLabel("")
+            icon_label.setStyleSheet("font-size: 64px; background: transparent;")
+            icon_label.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(icon_label)
+            
+            title = QLabel("FFmpeg Required")
+            title.setStyleSheet("color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
+            title.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(title)
+            
+            desc = QLabel("HELXAIC Music Player requires FFmpeg (FFprobe) to read audio track durations.\nClick below to download and install it automatically.")
+            desc.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
+            desc.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(desc)
+            
+            def do_download():
+                from PySide6.QtWidgets import QProgressDialog, QMessageBox
+                from PySide6.QtCore import QThread, Signal as QSignal
+                
+                class _FFmpegDownloadWorker(QThread):
+                    progress_update = QSignal(int, int)
+                    finished = QSignal(bool, str)
+                    
+                    def run(self):
+                        from integrations.tools_downloader import download_ffmpeg
+                        def on_progress(downloaded: int, total: int):
+                            self.progress_update.emit(downloaded, total)
+                        success, error = download_ffmpeg(on_progress)
+                        self.finished.emit(success, error or "")
+                        
+                progress = QProgressDialog("Downloading FFmpeg...", "Cancel", 0, 100, self)
+                progress.setWindowTitle("Installing FFmpeg")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.setAutoClose(False)
+                progress.setAutoReset(False)
+                progress.show()
+                
+                worker = _FFmpegDownloadWorker()
+                self._ffmpeg_download_worker = worker
+                
+                def on_progress(downloaded: int, total: int):
+                    if progress.wasCanceled():
+                        worker.terminate()
+                        return
+                    if total > 0:
+                        pct = int((downloaded / total) * 100)
+                        progress.setValue(pct)
+                        progress.setLabelText(f"Downloading... {downloaded // 1024} KB / {total // 1024} KB")
+                        
+                def on_finished(success: bool, error: str):
+                    progress.close()
+                    if success:
+                        QMessageBox.information(
+                            self, "Download Complete",
+                            "FFmpeg installed successfully!\n\nReloading HELXAIC..."
+                        )
+                        self._reload_music_panel()
+                    else:
+                        QMessageBox.critical(
+                            self, "Download Failed",
+                            f"Failed to install FFmpeg:\n{error}"
+                        )
+                        
+                worker.progress_update.connect(on_progress)
+                worker.finished.connect(on_finished)
+                worker.start()
+                
+            download_btn = QPushButton("Setup HELXAIC")
+            download_btn.setFixedSize(220, 50)
+            download_btn.setCursor(Qt.PointingHandCursor)
+            download_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                    color: #1a1a1a;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 16px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:1 #FFD700);
+                }
+            """)
+            download_btn.clicked.connect(do_download)
+            container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
+            
+            try:
+                from integrations.tools_downloader import FFMPEG_DIR
+                install_path = FFMPEG_DIR
+            except ImportError:
+                install_path = "%APPDATA%\\HELXAID\\tools\\ffmpeg"
+            instructions = QLabel(f"Will be installed to:\n{install_path}")
+            instructions.setStyleSheet("font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions.setAlignment(Qt.AlignCenter)
+            instructions.setWordWrap(True)
+            container_layout.addWidget(instructions)
+            
+            layout.addWidget(container)
+            
+            # Dummy player object for taskbar controls to silently fail
+            class DummyPlayer:
+                def position(self): return 0
+                def duration(self): return 0
+                def play(self): pass
+                def pause(self): pass
+                def stop(self): pass
+                def setSource(self, src): pass
+                def source(self): return None
+                
+            self._music_player = DummyPlayer()
+            self._audio_output = DummyPlayer()
+            
+            if not hasattr(self, '_music_panel_insert_index'):
+                self.content_stack.addWidget(self.music_panel)
+            else:
+                self.content_stack.insertWidget(self._music_panel_insert_index, self.music_panel)
+                delattr(self, '_music_panel_insert_index')
+            return
+
         from MusicPanelWidget import MusicPanelWidget
         
         # Create native Qt music panel
@@ -5224,7 +5900,8 @@ Stylesheet Selector:
         
         # Connect player signals for taskbar integration
         # Use music_panel's signal instead of internal player (handles crossfade correctly)
-        self.music_panel.playbackStateChanged.connect(self._update_taskbar_play_state)
+        if hasattr(self.music_panel, 'playbackStateChanged'):
+            self.music_panel.playbackStateChanged.connect(self._update_taskbar_play_state)
         
         # Add to content stack (index 1 = music panel)
         self.content_stack.addWidget(self.music_panel)
@@ -5234,6 +5911,16 @@ Stylesheet Selector:
         
         # For backward compatibility with existing code that references audio_player
         self.audio_player = None  # Deprecated - use music_panel directly
+        
+        # Apply UIPI (User Interface Privilege Isolation) bypass to the music panel's
+        # drag-and-drop target widgets. When running as a built elevated exe, Windows
+        # blocks OLE drag-drop messages from lower-privilege processes (e.g. Explorer)
+        # unless ChangeWindowMessageFilterEx is explicitly called for each specific
+        # child HWND that will receive them. The PlaylistTable's QTreeWidget and its
+        # viewport are the actual drop targets, so both need to be registered.
+        # We defer by 1000ms to ensure all child widgets are realized with real HWNDs
+        # before we call winId() on them.
+        QTimer.singleShot(1000, self._enable_music_panel_drag_drop)
         
         print("[Music] Native Qt MusicPanelWidget initialized")
 
@@ -5247,31 +5934,31 @@ Stylesheet Selector:
 
         try:
             if old_index == 1 and new_index != 1:
-                if hasattr(self, 'music_panel') and self.music_panel:
+                if hasattr(self, 'music_panel') and hasattr(self.music_panel, 'on_helxaic_page_hidden'):
                     self.music_panel.on_helxaic_page_hidden()
         except Exception:
             pass
 
         try:
             if new_index == 1 and old_index != 1:
-                if hasattr(self, 'music_panel') and self.music_panel:
+                if hasattr(self, 'music_panel') and hasattr(self.music_panel, 'on_helxaic_page_shown'):
                     self.music_panel.on_helxaic_page_shown()
         except Exception:
             pass
 
     def _taskbar_prev(self):
         """Taskbar button: Previous track."""
-        if hasattr(self, 'music_panel'):
+        if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_prev_track'):
             self.music_panel._prev_track()
     
     def _taskbar_playpause(self):
         """Taskbar button: Play/Pause."""
-        if hasattr(self, 'music_panel'):
+        if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_toggle_play'):
             self.music_panel._toggle_play()
     
     def _taskbar_next(self):
         """Taskbar button: Next track."""
-        if hasattr(self, 'music_panel'):
+        if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_next_track'):
             self.music_panel._next_track()
     
     def _update_taskbar_play_state(self, state):
@@ -5317,6 +6004,22 @@ Stylesheet Selector:
                 self.music_bridge.requestPlaylist()
     
 
+    def _reload_music_panel(self):
+        """Reload the Music panel after FFmpeg installation."""
+        if not hasattr(self, 'music_panel'):
+            return
+            
+        panel_index = self.content_stack.indexOf(self.music_panel)
+        if panel_index < 0:
+            panel_index = 1  # Default Music panel index
+            
+        self.content_stack.removeWidget(self.music_panel)
+        self.music_panel.deleteLater()
+        
+        self._music_panel_insert_index = panel_index
+        self._setup_music_panel()
+        self.switch_panel(panel_index)
+
     def _setup_cpu_panel(self):
         """Setup the CPU control panel with modern card-based design."""
         self.cpu_panel = QWidget()
@@ -5324,6 +6027,9 @@ Stylesheet Selector:
         layout = QVBoxLayout(self.cpu_panel)
         layout.setContentsMargins(40, 30, 40, 30)
         layout.setSpacing(24)
+        
+        # Always clear tracking dict on setup to avoid dangling C++ object references
+        self._cpu_collapsible_groups = {}
         
         # Check if RyzenAdj is available - if not, show download prompt
         if not is_ryzenadj_available():
@@ -5502,7 +6208,7 @@ Stylesheet Selector:
         header_layout.addStretch()
         
         # Status badge
-        if self.uxtu_installed:
+        if self.uxtu_installed or is_ryzenadj_available():
             status_text, status_style = "● CONNECTED", "background: rgba(76, 175, 80, 0.15); color: #4CAF50; border: 1px solid rgba(76, 175, 80, 0.3); border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
         else:
             status_text, status_style = "● OFFLINE", "background: rgba(244, 67, 54, 0.15); color: #f44336; border: 1px solid rgba(244, 67, 54, 0.3); border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
@@ -5855,7 +6561,7 @@ Stylesheet Selector:
         power_mode_layout.setSpacing(12)
         
         # Power icon
-        power_mode_icon = QLabel("⏻")
+        power_mode_icon = QLabel("")
         power_mode_icon.setStyleSheet("font-size: 20px; background: transparent;")
         power_mode_layout.addWidget(power_mode_icon)
         
@@ -5950,8 +6656,7 @@ Stylesheet Selector:
                 ("igpu_clock", "iGPU Clock (MHz)", "MHz"),  # NEW
             ]),
         ]
-        
-        self._cpu_collapsible_groups = {}
+        # (Tracking dict is initialized at the top of the function)
         
         for idx, (icon, title, desc, group_id, sliders) in enumerate(slider_groups):
             # Main container with border
@@ -6315,7 +7020,7 @@ Stylesheet Selector:
         
         btn_layout.addStretch()
         
-        apply_btn = AnimatedButton("Apply with RyzenAdj")
+        apply_btn = AnimatedButton("Apply")
         apply_btn.setObjectName("cpuApplyButton")
         apply_btn.setFixedHeight(44)
         apply_btn.setCursor(Qt.PointingHandCursor)
@@ -6470,6 +7175,28 @@ Stylesheet Selector:
         # Switch to CPU panel
         self.switch_panel(2)
     
+    def _setup_wincustom_panel(self):
+        """Setup the Windows Customization (HELRCUS) panel."""
+        # Ensure hardware panel placeholder exists at index 5 first
+        if not hasattr(self, 'hardware_panel'):
+            self._setup_hardware_panel()
+        
+        try:
+            import WindowsCustomPanel as wcp
+            print(f"[HELRCUS] Loaded WindowsCustomPanel from: {wcp.__file__}")
+            from WindowsCustomPanel import WindowsCustomPanel
+            self.wincustom_panel = WindowsCustomPanel(self)
+            self.content_stack.insertWidget(6, self.wincustom_panel)
+        except ImportError as e:
+            # Fallback: create empty placeholder panel
+            self.wincustom_panel = QWidget()
+            self.wincustom_panel.setObjectName("wincustomPanel")
+            layout = QVBoxLayout(self.wincustom_panel)
+            error_label = QLabel(f"Windows Customization unavailable:\n{e}")
+            error_label.setStyleSheet("color: #e74c3c; font-size: 16px;")
+            layout.addWidget(error_label)
+            self.content_stack.insertWidget(6, self.wincustom_panel)
+    
     def _setup_hardware_panel(self):
         """Setup the Hardware Monitor panel."""
         # Check if LibreHardwareMonitor or HWiNFO is available - if not, show download prompt
@@ -6609,6 +7336,9 @@ Stylesheet Selector:
 
     def _reload_hardware_panel(self):
         """Reload the Hardware panel after LHM installation."""
+        if not hasattr(self, 'hardware_panel'):
+            return
+            
         hw_panel_index = self.content_stack.indexOf(self.hardware_panel)
         if hw_panel_index < 0:
             hw_panel_index = 5  # Default Hardware panel index
@@ -6750,7 +7480,7 @@ Stylesheet Selector:
         layout.addWidget(separator)
         
         # Apply current preset at startup checkbox
-        auto_apply_cb = QCheckBox("Apply current preset at startup")
+        auto_apply_cb = AnimatedCheckBox("Apply current preset at startup")
         auto_apply_cb.setObjectName("cpuAutoApplyCheckbox")
         
         # Get current value from settings
@@ -6773,7 +7503,7 @@ Stylesheet Selector:
             layout.addWidget(preset_label)
         
         # Keep settings applied (auto re-apply timer)
-        keep_applied_cb = QCheckBox("Keep settings applied")
+        keep_applied_cb = AnimatedCheckBox("Keep settings applied")
         keep_applied_cb.setObjectName("cpuKeepAppliedCheckbox")
         keep_applied_cb.setToolTip("Re-applies CPU settings periodically to prevent Windows/BIOS from resetting them")
         
@@ -6867,6 +7597,13 @@ Stylesheet Selector:
         # Stop existing timer if any
         self._stop_cpu_reapply_timer()
         
+        # Initialize reapply lock if not exists
+        if not hasattr(self, '_cpu_reapply_lock'):
+            import threading
+            self._cpu_reapply_lock = threading.Lock()
+            self._cpu_reapply_running = False
+            self._cpu_consecutive_failures = 0
+        
         # Create and start new timer
         self._cpu_reapply_timer = QTimer(self)
         self._cpu_reapply_timer.timeout.connect(self._reapply_cpu_settings)
@@ -6884,11 +7621,40 @@ Stylesheet Selector:
         """Re-apply current CPU settings (called by timer).
         
         Runs in background thread to prevent UI lag.
+        Uses a lock to prevent overlapping RyzenAdj calls which can
+        deadlock the AMD SMU driver and freeze the system.
         """
         import threading
         
+        # Initialize lock if not exists (safety for edge cases)
+        if not hasattr(self, '_cpu_reapply_lock'):
+            self._cpu_reapply_lock = threading.Lock()
+            self._cpu_reapply_running = False
+            self._cpu_consecutive_failures = 0
+        
+        # CRITICAL: Skip if previous reapply is still running
+        # Overlapping RyzenAdj calls can deadlock the SMU driver → system freeze
+        if self._cpu_reapply_running:
+            print("[CPU] Skipping reapply - previous call still running")
+            return
+        
+        # Safety: Stop timer after 3 consecutive failures (driver may be unstable)
+        if self._cpu_consecutive_failures >= 3:
+            print("[CPU] WARNING: 3 consecutive failures - stopping reapply timer for safety")
+            self._stop_cpu_reapply_timer()
+            self._cpu_consecutive_failures = 0
+            return
+            
+        from integrations.cpu_controller import is_admin, is_service_running
+        if not is_admin() and not is_service_running():
+            print("[CPU] Stopping background auto-reapply: Not running as Administrator and Helper Service not found (prevents UAC prompts)")
+            self._stop_cpu_reapply_timer()
+            return
+            
         def apply_in_background():
             try:
+                self._cpu_reapply_running = True
+                
                 # Get current profile from sliders if available, otherwise from saved settings
                 profile = {}
                 if hasattr(self, 'cpu_sliders') and self.cpu_sliders:
@@ -6903,10 +7669,15 @@ Stylesheet Selector:
                 success, error = apply_settings_direct(profile)
                 if success:
                     print("[CPU] Settings re-applied successfully")
+                    self._cpu_consecutive_failures = 0
                 else:
                     print(f"[CPU] Re-apply failed: {error}")
+                    self._cpu_consecutive_failures += 1
             except Exception as e:
                 print(f"[CPU] Re-apply error: {e}")
+                self._cpu_consecutive_failures += 1
+            finally:
+                self._cpu_reapply_running = False
         
         # Run in background thread to avoid blocking UI
         thread = threading.Thread(target=apply_in_background, daemon=True)
@@ -6967,6 +7738,65 @@ Stylesheet Selector:
         self.cpu_settings.profile = profile
         print(f"[CPU] Setting {key} {'enabled' if checked else 'disabled'}")
     
+    def _update_service_ui_status(self):
+        from integrations.cpu_controller import is_service_running
+        if is_service_running():
+            self.service_status_label.setText("Status: Running (Zero-UAC Enabled)")
+            self.service_status_label.setStyleSheet("color: #4CAF50; font-size: 13px; font-weight: bold;")
+            self.install_service_btn.setVisible(False)
+            self.uninstall_service_btn.setVisible(True)
+        else:
+            self.service_status_label.setText("Status: Not Installed")
+            self.service_status_label.setStyleSheet("color: #aaaaaa; font-size: 13px;")
+            self.install_service_btn.setVisible(True)
+            self.uninstall_service_btn.setVisible(False)
+
+    def _install_helper_service(self):
+        import ctypes
+        import sys
+        import os
+        
+        reply = QMessageBox.question(
+            self, "Enable Zero-UAC Mode", 
+            "This will enable Zero-UAC Mode by registering a background helper service.\n\nWindows will ask for Administrator permissions once.\nContinue?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            if getattr(sys, 'frozen', False):
+                exe_path = sys.executable
+                setup_args = "--run-service --setup"
+            else:
+                exe_path = sys.executable
+                script_path = os.path.abspath(sys.argv[0])
+                setup_args = f'"{script_path}" --run-service --setup'
+                
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
+            if ret > 32:
+                QTimer.singleShot(3000, self._update_service_ui_status)
+
+    def _uninstall_helper_service(self):
+        import ctypes
+        import sys
+        import os
+        
+        reply = QMessageBox.question(
+            self, "Disable Zero-UAC Mode", 
+            "Disable Zero-UAC Mode and remove the background helper service?\nCPU changes will require UAC prompts again.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            if getattr(sys, 'frozen', False):
+                exe_path = sys.executable
+                remove_args = "--run-service --teardown"
+            else:
+                exe_path = sys.executable
+                script_path = os.path.abspath(sys.argv[0])
+                remove_args = f'"{script_path}" --run-service --teardown'
+                
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, remove_args, None, 0)
+            if ret > 32:
+                QTimer.singleShot(2000, self._update_service_ui_status)
+
     def _reset_cpu_sliders(self):
         """Reset all CPU sliders to default values."""
         defaults = get_default_profile()
@@ -7001,32 +7831,45 @@ Stylesheet Selector:
         for key, (slider, label, unit) in self.cpu_sliders.items():
             profile[key] = slider.value()
         
+        # Define a single-use QObject with a custom Signal for thread-safe UI updates
+        from PySide6.QtCore import QObject, Signal
+        class WorkerSignals(QObject):
+            # Emits (success format boolean, error message string)
+            finished = Signal(bool, str)
+            
+        # Bind the QObject to `self` to ensure the Python GC does not reap it
+        # before the background thread can emit its Qt QueuedConnection signal!
+        self._cpu_apply_signals = WorkerSignals(self)
+        
+        # This slot will execute on the main thread
+        def show_result(success, error):
+            if success:
+                method = "RyzenAdj" if ryzenadj_ok else "UXTU"
+                QMessageBox.information(
+                    self,
+                    "Settings Applied",
+                    f"CPU settings applied successfully."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Application Failed",
+                    f"Failed to apply settings:\n\n{error}\n\n"
+                    "Try running the launcher as administrator."
+                )
+                
+        # Connect the signal to the handler callback
+        self._cpu_apply_signals.finished.connect(show_result)
+
         # Define the background worker
         def run_apply_background():
-            import threading
             print(f"[CPU] Applying settings in background thread...")
             # Apply settings (RyzenAdj is primary, UXTU fallback)
             success, error = apply_settings_direct(profile)
             
-            # Show result in main thread
-            def show_result():
-                if success:
-                    method = "RyzenAdj" if ryzenadj_ok else "UXTU"
-                    QMessageBox.information(
-                        self,
-                        "Settings Applied",
-                        f"CPU settings applied successfully via {method}!"
-                    )
-                else:
-                    QMessageBox.warning(
-                        self,
-                        "Application Failed",
-                        f"Failed to apply settings:\n\n{error}\n\n"
-                        "Try running the launcher as administrator."
-                    )
-            
-            # Schedule UI update on main thread
-            QTimer.singleShot(0, show_result)
+            # Safely trigger UI update (PySide will automatically route this through the main event loop)
+            # The signal remains alive because _cpu_apply_signals is bound to GameLauncher!
+            self._cpu_apply_signals.finished.emit(success, str(error) if error else "")
             
         # Run in background to prevent UI freeze (especially during 2s sleep in elevated path)
         import threading
@@ -7759,16 +8602,15 @@ Stylesheet Selector:
                         btn.setIconSize(QSize(icon_thumb_size - 16, icon_thumb_size - 16))
                         btn._disable_hover = not is_complex  # Restore from cache
                     else:
-                        # Load and cache the icon
-                        pixmap = QPixmap()
-                        if pixmap.load(icon_path):
-                            # Use SmoothTransformation for bilinear filtering (better quality)
-                            scaled_pixmap = pixmap.scaled(
-                                icon_thumb_size - 16,
-                                icon_thumb_size - 16,
-                                Qt.KeepAspectRatio,
-                                Qt.SmoothTransformation
-                            )
+                        # Load and cache the icon with QImageReader to save RAM!
+                        from PySide6.QtGui import QImageReader, QPixmap
+                        reader = QImageReader(icon_path)
+                        # Pre-scale the image during decoding so it never allocates full 4K memory
+                        reader.setScaledSize(QSize(icon_thumb_size - 16, icon_thumb_size - 16))
+                        img = reader.read()
+                        
+                        if not img.isNull():
+                            scaled_pixmap = QPixmap.fromImage(img)
                             # Add shape-matching background color.
                             # _create_shaped_bg_icon returns (pixmap, is_complex):
                             #   is_complex = True  → irregular/character icon → hover ENABLED
@@ -7792,24 +8634,57 @@ Stylesheet Selector:
             if game.get("notes"):
                 tooltip_parts.append(game["notes"])
             # Show play time
+
             play_time_secs = game.get("play_time_seconds", 0)
+
+            
+
+            time_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "time-icon.svg").replace("\\", "/")
+
+            time_img_tag = f"<img src='{time_icon_path}' width='14' height='14'>"
+
+            
+
             if play_time_secs > 0:
+
                 hours = play_time_secs // 3600
+
                 minutes = (play_time_secs % 3600) // 60
+
                 if hours > 0:
-                    tooltip_parts.append(f"⏱ {hours}h {minutes}m played")
+
+                    tooltip_parts.append(f"{time_img_tag} &nbsp;{hours}h {minutes}m played")
+
                 else:
-                    tooltip_parts.append(f"⏱ {minutes}m played")
+
+                    tooltip_parts.append(f"{time_img_tag} &nbsp;{minutes}m played")
+
             if game.get("last_played"):
+
                 try:
+
                     last = datetime.fromisoformat(game["last_played"])
+
                     tooltip_parts.append(f"Last played: {last.strftime('%Y-%m-%d %H:%M')}")
+
                 except:
+
                     pass
+
             if game.get("favorite"):
-                tooltip_parts.insert(1, "★ Favorite")
-            tooltip_text = "\n".join(tooltip_parts)
-            btn.setToolTip(tooltip_text + "\n\n💡 Double-click to launch")
+                star_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "star-filled.svg").replace("\\", "/")
+                star_img_tag = f"<img src='{star_icon_path}' width='14' height='14'>"
+                tooltip_parts.insert(1, f"{star_img_tag} &nbsp;Favorite")
+
+            tooltip_text = "<br>".join(tooltip_parts)
+
+            
+
+            tip_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "tip-icon.svg").replace("\\", "/")
+
+            tip_img_tag = f"<img src='{tip_icon_path}' width='14' height='14'>"
+
+            btn.setToolTip(tooltip_text + f"<br><br>{tip_img_tag} &nbsp;Double-click to launch")
 
             # Connect double-click to launch game (single-click shows info)
             btn.doubleClicked.connect(lambda p=game["exe"]: self.launch_game(p))
@@ -7848,7 +8723,7 @@ Stylesheet Selector:
             """)
             text_label.setWordWrap(True)
             text_label.setAlignment(Qt.AlignCenter)
-            text_label.setFixedWidth(tile_size)
+            text_label.setMaximumWidth(tile_size)
             text_label.setMaximumHeight(max_label_height)  # Match tile_height calculation
 
             # Add button and label to container
@@ -7857,20 +8732,24 @@ Stylesheet Selector:
             
             # Add star icon for favorite games (positioned at top-left of tile)
             if game.get("favorite", False):
-                star_label = QLabel("★", btn)  # Parent to button for overlay
+
+                star_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "star-filled.svg").replace("\\", "/")
+
+                star_label = QLabel(f"<img src='{star_icon_path}' width='15' height='15'>", btn)  # Parent to button for overlay
                 star_label.setObjectName("favoriteStarLabel")
+                star_label.setFixedSize(25, 25)
+                star_label.setAlignment(Qt.AlignCenter)
                 star_label.setStyleSheet("""
                     QLabel#favoriteStarLabel {
-                        color: #FFD700;
-                        font-size: 18px;
-                        font-weight: bold;
                         background: rgba(0, 0, 0, 0.6);
-                        border-radius: 4px;
-                        padding: 2px 4px;
+                        border-radius: 6px;
                     }
                 """)
+
                 star_label.adjustSize()
+
                 star_label.move(5, 5)  # Position at top-left with small margin
+
                 star_label.show()
 
             # Add the container to the grid
@@ -8103,7 +8982,18 @@ Stylesheet Selector:
         self.refresh()
     
     def eventFilter(self, obj, event):
-        """Global event filter for keyboard shortcuts."""
+        """Global event filter for keyboard shortcuts.
+
+        This filter is installed on QApplication (see __init__) and intercepts
+        ALL KeyPress events before they reach any widget's keyPressEvent.
+        Because of this, any spam-prevention logic MUST live here — not in
+        MusicPanelWidget.keyPressEvent, which never fires for these keys.
+
+        Discrete shortcuts (Space, P, N, L, R) use a 300ms timestamp-based
+        cooldown stored in self._shortcut_last_fired to prevent rapid-fire
+        when a key is held down.  Arrow seek keys are exempt so holding
+        Left/Right seeks continuously as expected.
+        """
         # Guard against recursion
         if hasattr(self, '_in_event_filter') and self._in_event_filter:
             return False
@@ -8113,17 +9003,65 @@ Stylesheet Selector:
             
             from PySide6.QtCore import QEvent, Qt
             from PySide6.QtWidgets import QLineEdit
+            import time
             
-            # Only handle key press events on music panel (index 1)
+            # Minimum gap (seconds) between two accepted fires of the same
+            # discrete shortcut. 300ms blocks all OS-level autorepeat
+            # (typically 30-50ms) while feeling instant for deliberate presses.
+            COOLDOWN = 0.30
+            
             if event.type() == QEvent.KeyPress:
+                key = event.key()
+                modifiers = event.modifiers()
+                
+                # F11 or Alt+Return: Toggle Fullscreen (Global)
+                if (key == Qt.Key_F11 and modifiers == Qt.NoModifier) or \
+                   (key == Qt.Key_Return and modifiers == Qt.AltModifier):
+                    # Always allow F11 to toggle fullscreen. For Alt+Return, skip if in a text input
+                    focus_widget = QApplication.focusWidget()
+                    if key == Qt.Key_F11 or not isinstance(focus_widget, QLineEdit):
+                        self.toggle_fullscreen()
+                        return True
+                        
+
+
+                # Only handle key press events on music panel (index 1)
                 if hasattr(self, 'content_stack') and self.content_stack.currentIndex() == 1:
                     if hasattr(self, 'music_panel') and self.music_panel:
-                        key = event.key()
                         focus_widget = QApplication.focusWidget()
                         
                         # Skip if typing in input
                         if isinstance(focus_widget, QLineEdit):
                             return False
+                        
+                        # === Arrow Seek Keys (no cooldown — hold to seek continuously) ===
+                        # Left Arrow: Rewind 5 seconds
+                        if key == Qt.Key_Left:
+                            current_pos = self.music_panel._player.position()
+                            new_pos = max(0, current_pos - 5000)
+                            self.music_panel._player.setPosition(new_pos)
+                            return True
+                        # Right Arrow: Forward 5 seconds
+                        elif key == Qt.Key_Right:
+                            current_pos = self.music_panel._player.position()
+                            duration = self.music_panel._player.duration()
+                            new_pos = min(duration, current_pos + 5000)
+                            self.music_panel._player.setPosition(new_pos)
+                            return True
+                        
+                        # === Cooldown guard for discrete shortcuts ===
+                        # Reject the event if the same key was fired within
+                        # COOLDOWN seconds. Uses time.monotonic() which is
+                        # immune to wall-clock adjustments and works regardless
+                        # of keyboard driver autorepeat behavior.
+                        if not hasattr(self, '_shortcut_last_fired'):
+                            self._shortcut_last_fired = {}
+                        now = time.monotonic()
+                        last = self._shortcut_last_fired.get(key, 0.0)
+                        if now - last < COOLDOWN:
+                            # Still in cooldown window — silently absorb the event
+                            return True
+                        self._shortcut_last_fired[key] = now
                         
                         # Space: Toggle play/pause
                         if key == Qt.Key_Space:
@@ -8136,19 +9074,6 @@ Stylesheet Selector:
                         # N: Next track
                         elif key == Qt.Key_N:
                             self.music_panel._next_track()
-                            return True
-                        # Left Arrow: Rewind 5 seconds
-                        elif key == Qt.Key_Left:
-                            current_pos = self.music_panel._player.position()
-                            new_pos = max(0, current_pos - 5000)
-                            self.music_panel._player.setPosition(new_pos)
-                            return True
-                        # Right Arrow: Forward 5 seconds
-                        elif key == Qt.Key_Right:
-                            current_pos = self.music_panel._player.position()
-                            duration = self.music_panel._player.duration()
-                            new_pos = min(duration, current_pos + 5000)
-                            self.music_panel._player.setPosition(new_pos)
                             return True
                         # L: Loop toggle
                         elif key == Qt.Key_L:
@@ -8164,6 +9089,7 @@ Stylesheet Selector:
             return False
         finally:
             self._in_event_filter = False
+
     
     def select_game(self, index):
         """Select a game by index and update visual feedback."""
@@ -8185,6 +9111,53 @@ Stylesheet Selector:
         # Ensure button is visible
         new_btn.setFocus()
     
+    def _create_card(self, title, icon_name=""):
+        """Creates a styled card group widget with an SVG icon + title header. Returns (group, content_layout)."""
+        import os
+        group = QGroupBox()
+        group.setTitle("")
+        group.setStyleSheet("""
+            QGroupBox {
+                background-color: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                margin-top: 6px;
+                padding: 4px;
+            }
+        """)
+        outer = QVBoxLayout(group)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
+
+        # Header row: icon + title
+        header_row = QHBoxLayout()
+        header_row.setSpacing(8)
+        if icon_name:
+            icon_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_path = os.path.join(icon_dir, "UI Icons", icon_name)
+            if os.path.exists(icon_path):
+                icon_label = QLabel()
+                pix = QPixmap(icon_path).scaled(16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                icon_label.setPixmap(pix)
+                header_row.addWidget(icon_label)
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 13px; font-weight: bold; color: #FF5B06; padding: 0;")
+        header_row.addWidget(title_label)
+        header_row.addStretch()
+        outer.addLayout(header_row)
+
+        # Separator line
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border: none; max-height: 1px;")
+        outer.addWidget(sep)
+
+        # Content layout
+        card_layout = QVBoxLayout()
+        card_layout.setSpacing(8)
+        outer.addLayout(card_layout)
+        return group, card_layout
+
     def open_settings(self):
         """Full settings dialog opened from the top-bar HELXAID settings button.
         Includes Display and Library sections only.
@@ -8195,11 +9168,10 @@ Stylesheet Selector:
         dialog.setMinimumWidth(500)
 
         layout = QVBoxLayout(dialog)
-
+        create_card = self._create_card
 
         # === Display Settings Group ===
-        display_group = QGroupBox("Display")
-        display_layout = QVBoxLayout(display_group)
+        display_group, display_layout = create_card("Display", icon_name="display-icon.svg")
         
         # Icon Size
         icon_layout = QHBoxLayout()
@@ -8213,15 +9185,14 @@ Stylesheet Selector:
         display_layout.addLayout(icon_layout)
         
         # Show hidden games
-        show_hidden_cb = QCheckBox("Show hidden games")
+        show_hidden_cb = AnimatedCheckBox("Show hidden games")
         show_hidden_cb.setChecked(self.settings.get("show_hidden_games", False))
         display_layout.addWidget(show_hidden_cb)
         
         layout.addWidget(display_group)
 
         # === Library Settings Group ===
-        lib_group = QGroupBox("Library")
-        lib_layout = QVBoxLayout(lib_group)
+        lib_group, lib_layout = create_card("Library", icon_name="library-icon.svg")
         
         # Multi Delete shortcut
         multi_layout = QHBoxLayout()
@@ -8272,10 +9243,10 @@ Stylesheet Selector:
         dialog.setMinimumWidth(500)
 
         layout = QVBoxLayout(dialog)
+        create_card = self._create_card
 
         # === Background Settings Group ===
-        bg_group = QGroupBox("Background & Theme")
-        bg_layout = QVBoxLayout(bg_group)
+        bg_group, bg_layout = create_card("Background & Theme", icon_name="bg-theme-icon.svg")
         
         # Background image
         bg_image_layout = QHBoxLayout()
@@ -8309,16 +9280,15 @@ Stylesheet Selector:
         layout.addWidget(bg_group)
 
         # === Display Settings Group ===
-        display_group = QGroupBox("Display")
-        display_layout = QVBoxLayout(display_group)
+        display_group, display_layout = create_card("Display", icon_name="display-icon.svg")
         
         # Resizable window
-        resizable_cb = QCheckBox("Allow window resizing")
+        resizable_cb = AnimatedCheckBox("Allow window resizing")
         resizable_cb.setChecked(self.settings.get("resizable_window", True))
         display_layout.addWidget(resizable_cb)
         
         # Fullscreen mode
-        fullscreen_cb = QCheckBox("Fullscreen mode (F11)")
+        fullscreen_cb = AnimatedCheckBox("Fullscreen mode (F11)")
         fullscreen_cb.setChecked(self.isFullScreen())
         display_layout.addWidget(fullscreen_cb)
         
@@ -8336,23 +9306,23 @@ Stylesheet Selector:
         layout.addWidget(display_group)
 
         # === System Settings ===
-        confirm_exit_cb = QCheckBox("Ask for confirmation before exiting")
+        confirm_exit_cb = AnimatedCheckBox("Ask for confirmation before exiting")
         confirm_exit_cb.setChecked(self.confirm_on_exit)
         layout.addWidget(confirm_exit_cb)
 
-        startup_cb = QCheckBox("Start on system boot")
+        startup_cb = AnimatedCheckBox("Start on system boot")
         startup_cb.setChecked(is_startup_enabled())
         layout.addWidget(startup_cb)
         
-        start_minimised_cb = QCheckBox("Start minimised to tray")
+        start_minimised_cb = AnimatedCheckBox("Start minimised to tray")
         start_minimised_cb.setChecked(self.settings.get("start_minimised", False))
         layout.addWidget(start_minimised_cb)
         
-        minimize_to_tray_cb = QCheckBox("Minimize to tray on minimize")
+        minimize_to_tray_cb = AnimatedCheckBox("Minimize to tray on minimize")
         minimize_to_tray_cb.setChecked(self.settings.get("minimize_to_tray", True))
         layout.addWidget(minimize_to_tray_cb)
         
-        init_overlay_cb = QCheckBox("Hide Initialize Panel")
+        init_overlay_cb = AnimatedCheckBox("Hide Initialize Panel")
         init_overlay_cb.setChecked(self.settings.get("hide_initialize_panel", True))
         layout.addWidget(init_overlay_cb)
 
@@ -8360,6 +9330,11 @@ Stylesheet Selector:
         version_layout = QHBoxLayout()
         version_label = QLabel("Version - 4.14.1")
         version_label.setStyleSheet("color: #888888; font-size: 11px;")
+        version_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        version_label.setContentsMargins(0, 6, 0, 0)
+        
+        update_vbox = QVBoxLayout()
+        update_vbox.setSpacing(4)
         
         check_update_btn = AnimatedButton("Check for Updates")
         check_update_btn.setStyleSheet("""
@@ -8377,36 +9352,60 @@ Stylesheet Selector:
         """)
         check_update_btn.clicked.connect(self.check_for_updates)
         
+        check_daily_cb = AnimatedCheckBox("Check Version Daily")
+        check_daily_cb.setStyleSheet("color: #888888; font-size: 10px;")
+        check_daily_cb.setChecked(self.settings.get("check_version_daily", True))
+        
+        update_vbox.addWidget(check_update_btn)
+        update_vbox.addWidget(check_daily_cb)
+        
         version_layout.addWidget(version_label)
-        version_layout.addWidget(check_update_btn)
+        version_layout.addLayout(update_vbox)
         version_layout.addStretch()
         layout.addLayout(version_layout)
+
+        # === Service Settings Group ===
+        from integrations.cpu_controller import is_service_running
+        service_group, service_layout = create_card("Zero-UAC Mode (CPU)", icon_name="sparkle-icon.svg")
+        service_layout.setSpacing(6)
+        
+        service_inner_layout = QHBoxLayout()
+        self.service_status_label = QLabel("Status: Unknown")
+        self.service_status_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        service_inner_layout.addWidget(self.service_status_label)
+        service_inner_layout.addStretch()
+        
+        self.install_service_btn = AnimatedButton("Enable")
+        self.install_service_btn.setStyleSheet("""
+            QPushButton { background: rgba(255, 255, 255, 0.1); color: white; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold; }
+            QPushButton:hover { background: rgba(255, 255, 255, 0.2); }
+        """)
+        self.install_service_btn.clicked.connect(self._install_helper_service)
+        service_inner_layout.addWidget(self.install_service_btn)
+        
+        self.uninstall_service_btn = AnimatedButton("Disable")
+        self.uninstall_service_btn.setStyleSheet("""
+            QPushButton { background: rgba(255, 91, 6, 0.2); color: #FDA903; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold; }
+            QPushButton:hover { background: rgba(255, 91, 6, 0.4); }
+        """)
+        self.uninstall_service_btn.clicked.connect(self._uninstall_helper_service)
+        service_inner_layout.addWidget(self.uninstall_service_btn)
+        
+        service_layout.addLayout(service_inner_layout)
+        layout.addWidget(service_group)
+        
+        # Initial status update
+        self._update_service_ui_status()
 
         # === Developer Mode Section ===
         # Placed at the very bottom before Ok/Cancel.
         # The Uninstall External Tools button is hidden behind this toggle
         # to prevent accidental removal of critical runtime dependencies.
-        dev_group = QGroupBox("Developer")
-        dev_group.setStyleSheet("""
-            QGroupBox {
-                color: #888888;
-                border: 1px solid rgba(255,100,0,0.3);
-                border-radius: 4px;
-                margin-top: 8px;
-                padding-top: 8px;
-                font-size: 11px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 8px;
-                color: #FF5B06;
-            }
-        """)
-        dev_layout = QVBoxLayout(dev_group)
+        dev_group, dev_layout = create_card("Developer", icon_name="developer-icon.svg")
         dev_layout.setSpacing(6)
 
         # Toggle for enabling developer-only controls
-        dev_mode_cb = QCheckBox("Developer Mode")
+        dev_mode_cb = AnimatedCheckBox("Developer Mode")
         dev_mode_cb.setChecked(self.settings.get("developer_mode", False))
         dev_mode_cb.setStyleSheet("color: #b3b3b3; font-size: 11px;")
         dev_layout.addWidget(dev_mode_cb)
@@ -8440,21 +9439,58 @@ Stylesheet Selector:
         button_box.rejected.connect(dialog.reject)
         layout.addWidget(button_box)
 
+        orig_startup = is_startup_enabled()
+        
         result = dialog.exec()
         if result == QDialog.Accepted:
-            self.confirm_on_exit = confirm_exit_cb.isChecked()
-            set_startup_enabled(startup_cb.isChecked())
+            # Check if any settings actually changed
+            new_bg_image = self._qs_bg_path.text()
+            new_bg_mode = self._qs_bg_mode.currentText()
+            new_start_min = start_minimised_cb.isChecked()
+            new_min_tray = minimize_to_tray_cb.isChecked()
+            new_hide_init = init_overlay_cb.isChecked()
+            new_confirm = confirm_exit_cb.isChecked()
+            new_resize = resizable_cb.isChecked()
+            new_full = fullscreen_cb.isChecked()
+            new_opacity = opacity_slider.value() / 100.0
+            new_dev = dev_mode_cb.isChecked()
+            new_check = check_daily_cb.isChecked()
+            new_startup = startup_cb.isChecked()
             
-            self.settings["background_image"] = self._qs_bg_path.text()
-            self.settings["background_mode"] = self._qs_bg_mode.currentText()
-            self.settings["start_minimised"] = start_minimised_cb.isChecked()
-            self.settings["minimize_to_tray"] = minimize_to_tray_cb.isChecked()
-            self.settings["hide_initialize_panel"] = init_overlay_cb.isChecked()
-            self.settings["confirm_on_exit"] = confirm_exit_cb.isChecked()
-            self.settings["resizable_window"] = resizable_cb.isChecked()
-            self.settings["window_fullscreen"] = fullscreen_cb.isChecked()
-            self.settings["window_opacity"] = opacity_slider.value() / 100.0
-            self.settings["developer_mode"] = dev_mode_cb.isChecked()
+            # If absolutely nothing changed, skip all processing
+            if (new_bg_image == self.settings.get("background_image", "") and
+                new_bg_mode == self.settings.get("background_mode", "fill") and
+                new_start_min == self.settings.get("start_minimised", False) and
+                new_min_tray == self.settings.get("minimize_to_tray", True) and
+                new_hide_init == self.settings.get("hide_initialize_panel", True) and
+                new_confirm == self.confirm_on_exit and
+                new_resize == self.settings.get("resizable_window", True) and
+                new_full == self.isFullScreen() and
+                abs(new_opacity - self.settings.get("window_opacity", 1.0)) < 0.01 and
+                new_dev == self.settings.get("developer_mode", False) and
+                new_check == self.settings.get("check_version_daily", True) and
+                new_startup == orig_startup):
+                del dialog
+                return
+            
+            self.confirm_on_exit = new_confirm
+            
+            # Setting the scheduled task involves subprocess calls that block the UI for ~1s
+            if new_startup != orig_startup:
+                import threading
+                threading.Thread(target=set_startup_enabled, args=(new_startup,), daemon=True).start()
+            
+            self.settings["background_image"] = new_bg_image
+            self.settings["background_mode"] = new_bg_mode
+            self.settings["start_minimised"] = new_start_min
+            self.settings["minimize_to_tray"] = new_min_tray
+            self.settings["hide_initialize_panel"] = new_hide_init
+            self.settings["confirm_on_exit"] = new_confirm
+            self.settings["resizable_window"] = new_resize
+            self.settings["window_fullscreen"] = new_full
+            self.settings["window_opacity"] = new_opacity
+            self.settings["developer_mode"] = new_dev
+            self.settings["check_version_daily"] = new_check
             save_settings(self.settings)
             
             # Apply display settings immediately
@@ -8469,14 +9505,22 @@ Stylesheet Selector:
                 self.showNormal()
                 
             # Apply resizable window setting
-            if resizable_cb.isChecked():
+            if new_resize:
                 self.setMinimumSize(1380, 790)
                 self.setMaximumSize(16777215, 16777215)  # Qt default max
+                # Explicitly re-enable the maximize button which gets stripped by setFixedSize
+                flags = self.windowFlags()
+                if not (flags & Qt.WindowMaximizeButtonHint):
+                    self.setWindowFlags(flags | Qt.WindowMaximizeButtonHint)
+                    self.show()
             else:
                 self.setFixedSize(self.size())
             
             self.apply_theme()
-            self.refresh()
+            # self.refresh() is deliberately omitted here. None of the Quick Settings 
+            # affect the game library grid, so completely rebuilding the UI grid from 
+            # scratch and parsing the config JSON again is a massive waste of time 
+            # and causes extreme UI freezing.
             
         del dialog
 
@@ -8595,9 +9639,9 @@ Stylesheet Selector:
         # Trigger live panel reload for HELXTATS if LHM or HWiNFO was removed.
         if any("LibreHardwareMonitor" in n or "HWiNFO" in n for n in removed):
             self._reload_hardware_panel()
-        # Note: FFprobe is NOT a core dependency — HELXAIC music playback works
-        # without it (FFprobe is only a fallback for reading audio duration metadata).
-        # Therefore we do NOT disable the Music Player panel when FFprobe is removed.
+        # Trigger live panel reload for HELXAIC if FFprobe/FFmpeg was removed.
+        if any("FFprobe" in n or "FFmpeg" in n for n in removed):
+            self._reload_music_panel()
 
     def check_for_updates(self):
         """Check for application updates."""
@@ -8630,6 +9674,29 @@ Stylesheet Selector:
                         QMetaObject.invokeMethod(self, "_on_update_result", Qt.QueuedConnection,
                                                  Q_ARG(str, "NO_RELEASES"),
                                                  Q_ARG(str, ""))
+                    elif e.code == 403:
+                        print("[UpdateCheck] API Rate limit exceeded. Falling back to HTML redirect check...")
+                        try:
+                            redirect_url = "https://github.com/TDD131/HELXAID/releases/latest"
+                            req = urllib.request.Request(redirect_url, headers={'User-Agent': 'Mozilla/5.0'})
+                            with urllib.request.urlopen(req, timeout=5) as response:
+                                final_url = response.geturl()
+                                latest_version = final_url.split('/')[-1].lower().replace("v", "")
+                                # Ensure we got something resembling a version tag
+                                if latest_version and latest_version != "latest":
+                                    from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                                    QMetaObject.invokeMethod(self, "_on_update_result", Qt.QueuedConnection,
+                                                             Q_ARG(str, latest_version),
+                                                             Q_ARG(str, final_url))
+                                    return
+                        except Exception as fallback_err:
+                            print(f"[UpdateCheck] Fallback failed: {fallback_err}")
+                        
+                        # If fallback also fails, propagate original rate limit error
+                        from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                        QMetaObject.invokeMethod(self, "_on_update_result", Qt.QueuedConnection,
+                                                 Q_ARG(str, "ERROR"),
+                                                 Q_ARG(str, "API Rate limit exceeded (403)."))
                     else:
                         print(f"[UpdateCheck] HTTP Error: {e}")
                         from PySide6.QtCore import QMetaObject, Qt, Q_ARG
@@ -8694,7 +9761,69 @@ Stylesheet Selector:
         else:
             QMessageBox.information(self, "Update", f"You are already using the latest version ({CURRENT_VERSION})!")
     
-    
+    def _check_for_updates_silent(self):
+        """Silently check for updates in background."""
+        import time
+        self.settings["last_update_check"] = time.time()
+        save_settings(self.settings)
+        
+        try:
+            import urllib.request
+            import urllib.error
+            import json
+            import threading
+            
+            API_URL = "https://api.github.com/repos/TDD131/HELXAID/releases/latest"
+            
+            def run_silent_check():
+                try:
+                    req = urllib.request.Request(API_URL, headers={'User-Agent': 'HELXAID-Launcher'})
+                    with urllib.request.urlopen(req, timeout=5) as response:
+                        data = json.loads(response.read().decode())
+                        latest_version = data.get("tag_name", "").lower().replace("v", "")
+                        release_url = data.get("html_url", "")
+                        
+                        from PySide6.QtCore import QMetaObject, Qt, Q_ARG
+                        QMetaObject.invokeMethod(self, "_on_silent_update_result", Qt.QueuedConnection,
+                                                 Q_ARG(str, latest_version),
+                                                 Q_ARG(str, release_url))
+                except Exception:
+                    pass  # Fail silently
+                    
+            threading.Thread(target=run_silent_check, daemon=True).start()
+        except Exception:
+            pass
+
+    @Slot(str, str)
+    def _on_silent_update_result(self, latest_version: str, release_url: str):
+        if latest_version in ["ERROR", "NO_RELEASES", ""]:
+            return
+            
+        CURRENT_VERSION = "4.14.1"
+        def parse_version(v_str):
+            parts = []
+            for p in v_str.replace('v', '').strip().split('.'):
+                try: 
+                    parts.append(int(p))
+                except ValueError:
+                    parts.append(0)
+            return tuple(parts)
+            
+        try:
+            if parse_version(latest_version) > parse_version(CURRENT_VERSION):
+                # Prompt user
+                from PySide6.QtWidgets import QMessageBox
+                import webbrowser
+                msg = QMessageBox(self)
+                msg.setIcon(QMessageBox.Information)
+                msg.setWindowTitle("Update Available")
+                msg.setText(f"A new version of HELXAID is available!\n\nCurrent: {CURRENT_VERSION}\nLatest: {latest_version}\n\nWould you like to download it now?")
+                msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                if msg.exec() == QMessageBox.Yes:
+                    webbrowser.open(release_url)
+        except Exception:
+            pass
+
     def _browse_qs_bg(self):
         """Browse background image for quick settings dialog.
         
@@ -8784,6 +9913,7 @@ Stylesheet Selector:
         dialog.setMinimumSize(500, 400)
         
         layout = QVBoxLayout(dialog)
+        create_card = self._create_card
         
         # Calculate statistics
         total_games = len(self.data)
@@ -8818,8 +9948,7 @@ Stylesheet Selector:
         total_hours = total_play_time_with_session // 3600
         total_minutes = (total_play_time_with_session % 3600) // 60
         
-        summary_group = QGroupBox("Summary")
-        summary_layout = QVBoxLayout(summary_group)
+        summary_group, summary_layout = create_card("Summary", icon_name="chart-icon.svg")
         
         stats_text = f"""
         <b>Total Games:</b> {total_games}
@@ -8834,23 +9963,7 @@ Stylesheet Selector:
         layout.addWidget(summary_group)
         
 
-        most_played_group = QGroupBox("Most Played Games")
-        most_played_group.setStyleSheet("""
-            QGroupBox {
-                font-size: 16px;
-                font-weight: bold;
-                border: 2px solid #FF5B06;
-                border-radius: 10px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px;
-            }
-        """)
-        most_played_layout = QVBoxLayout(most_played_group)
+        most_played_group, most_played_layout = create_card("Most Played Games", icon_name="trophy-icon.svg")
         
         # Get max play time for scaling bars
         max_play_time = max((g.get("play_time_seconds", 0) for g in games_by_playtime[:10]), default=1)
@@ -8958,11 +10071,23 @@ First Played: {first_played_formatted}
                 """)
                 col_layout.addWidget(bar, alignment=Qt.AlignHCenter)
                 
-                # Medal - BIGGER!
-                medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"#{i+1}"
-                medal_label = QLabel(medal)
+                # Medal
+                medal_label = QLabel()
                 medal_label.setAlignment(Qt.AlignCenter)
-                medal_label.setStyleSheet("font-size: 24px;")  # BIGGER medals!
+                
+                if i == 0:
+                    icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "medal-gold.svg")
+                    medal_label.setPixmap(QPixmap(icon_path).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                elif i == 1:
+                    icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "medal-silver.svg")
+                    medal_label.setPixmap(QPixmap(icon_path).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                elif i == 2:
+                    icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "medal-bronze.svg")
+                    medal_label.setPixmap(QPixmap(icon_path).scaled(32, 32, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                else:
+                    medal_label.setText(f"#{i+1}")
+                    medal_label.setStyleSheet("font-size: 24px; font-weight: bold; color: #FFF;")
+                    
                 col_layout.addWidget(medal_label)
                 
                 # Game name with style
@@ -9053,6 +10178,7 @@ First Played: {first_played_formatted}
         
         layout = QVBoxLayout(dialog)
         layout.setSpacing(15)
+        create_card = self._create_card
         
         # Game title header
         header = QLabel(f"{game.get('name', 'Unknown')}")
@@ -9060,9 +10186,7 @@ First Played: {first_played_formatted}
         layout.addWidget(header)
         
         # === Playtime Stats Section ===
-        playtime_group = QGroupBox("Playtime Stats")
-        playtime_group.setStyleSheet("QGroupBox { font-weight: bold; color: #FFD700; }")
-        playtime_layout = QVBoxLayout(playtime_group)
+        playtime_group, playtime_layout = create_card("Playtime Stats", icon_name="time-icon.svg")
         
         total_secs = game.get("play_time_seconds", 0)
         hours = total_secs // 3600
@@ -9115,9 +10239,9 @@ First Played: {first_played_formatted}
         layout.addWidget(playtime_group)
         
         # === Metadata Section ===
-        metadata_group = QGroupBox("Metadata")
-        metadata_group.setStyleSheet("QGroupBox { font-weight: bold; color: #7289DA; }")
-        metadata_layout = QGridLayout(metadata_group)
+        metadata_group, _card_layout_metadata = create_card("Metadata", icon_name="tag-icon.svg")
+        metadata_layout = QGridLayout()
+        _card_layout_metadata.addLayout(metadata_layout)
         
         exe_path = game.get("exe", "")
         
@@ -9185,9 +10309,9 @@ First Played: {first_played_formatted}
         layout.addWidget(metadata_group)
         
         # === Extra Section ===
-        extra_group = QGroupBox("Extra")
-        extra_group.setStyleSheet("QGroupBox { font-weight: bold; color: #43B581; }")
-        extra_layout = QHBoxLayout(extra_group)
+        extra_group, _card_layout_extra = create_card("Extra", icon_name="sparkle-icon.svg")
+        extra_layout = QHBoxLayout()
+        _card_layout_extra.addLayout(extra_layout)
         
         # Open folder button
         open_folder_btn = AnimatedButton("Open Folder")
@@ -9206,9 +10330,7 @@ First Played: {first_played_formatted}
         layout.addWidget(extra_group)
         
         # === User Notes Section ===
-        notes_group = QGroupBox("Notes")
-        notes_group.setStyleSheet("QGroupBox { font-weight: bold; color: #FAA61A; }")
-        notes_layout = QVBoxLayout(notes_group)
+        notes_group, notes_layout = create_card("Notes", icon_name="notes-icon.svg")
         
         notes_edit = QTextEdit()
         notes_edit.setPlaceholderText("Add your notes about this game...")
@@ -9760,6 +10882,19 @@ First Played: {first_played_formatted}
                 self._macro_bridge.shutdown()
             except Exception as e:
                 print(f"Error shutting down macro bridge: {e}")
+                
+        # Forcefully terminate any orphaned hardware polling processes to prevent PyInstaller _MEI locking
+        try:
+            print("[HELXAID] Cleaning up background hardware tools...")
+            import subprocess
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/IM", "hwinfo.exe", "/IM", "librehwmon.exe", "/IM", "ryzenadj.exe"],
+                cwd='C:\\', close_fds=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            print(f"Error cleaning up hardware tools: {e}")
             
         # Save window geometry before closing
         if not self.isFullScreen():
@@ -9770,6 +10905,7 @@ First Played: {first_played_formatted}
     
     def showEvent(self, event):
         """Initialize taskbar thumbnail toolbar when window is shown."""
+        print(f"[Taskbar DEBUG] showEvent triggered for {self.__class__.__name__}", flush=True)
         super().showEvent(event)
         
         # Setup taskbar toolbar after window is visible (needs valid HWND)
@@ -9800,51 +10936,77 @@ First Played: {first_played_formatted}
                     user32.ChangeWindowMessageFilterEx(int(self.winId()), 0x0111, MSGFLT_ALLOW, None)
                 except Exception as ex:
                     print(f"[Taskbar DEBUG] ChangeWindowMessageFilterEx error: {ex}")
-                    
-                # Setup a fallback timer (3s) just in case the msg is missed
-                QTimer.singleShot(3000, self._init_taskbar_buttons)
+                # Setup robust bound timer to survive PySide6 Garbage Collection
+                self._taskbar_init_attempts = 0
+                self._trigger_taskbar_init()
             except Exception as e:
-                print(f"Could not setup taskbar toolbar: {e}")
+                print(f"[Taskbar FATAL] Could not setup taskbar toolbar: {e}")
+                
+    def _trigger_taskbar_init(self):
+        """Bound helper to safely jump from C++ timer signal into python without signature mismatches."""
+        self._init_taskbar_buttons()
     
     def _init_taskbar_buttons(self, proxy_hwnd=None):
         """Initialize taskbar thumbnail buttons with a verified proxy HWND."""
-        if getattr(self, '_taskbar_fully_verified', False):
-            return
-            
         if not hasattr(self, 'taskbar_toolbar') or not self.taskbar_toolbar:
-            print("[Taskbar ERROR] _init_taskbar_buttons called but toolbar object is missing!")
             return
             
+        # We must explicitly fallback to int(self.winId())! 
+        # Qt directly owns the DWM connection, allowing GetAncestor to fetch a higher root 
+        # causes PySide6 DWM rejection.
         target_hwnd = proxy_hwnd if proxy_hwnd else getattr(self, '_verified_taskbar_hwnd', None)
+        if not target_hwnd:
+            target_hwnd = int(self.winId())
+        
+        if proxy_hwnd: 
+            self._verified_taskbar_hwnd = proxy_hwnd
         
         if self.taskbar_toolbar.buttons_added:
-            print("[Taskbar VERIFY] Checking if buttons ACTUALLY exist...")
-            if self.taskbar_toolbar.verify_buttons(target_hwnd):
-                print("[Taskbar VERIFY SUCCESS] Buttons are robustly confirmed on the taskbar.")
-                self._taskbar_fully_verified = True
-                return
-            else:
-                print("[Taskbar VERIFY FAILED] Windows claims successful addition but buttons are dead. Resetting COM.")
-                self.taskbar_toolbar.buttons_added = False
-                self.taskbar_toolbar._init_taskbar()  # Full COM Interface reset!
+            return
 
-        print(f"[Taskbar DEBUG] Attempting to add buttons (retry {getattr(self, '_taskbar_retry_count', 0)})...")
+        print(f"[Taskbar DEBUG] Attempting to map thumbnail buttons (Attempt {getattr(self, '_taskbar_init_attempts', 0) + 1})...")
         success = self.taskbar_toolbar.add_buttons(target_hwnd)
         
-        # Validation Loop (runs continuously with increasing delays if verification fails)
-        if hasattr(self, '_taskbar_retry_count'):
-            self._taskbar_retry_count += 1
-            if self._taskbar_retry_count < 5:
-                delay = 1000 * self._taskbar_retry_count
-                print(f"[Taskbar DEBUG] Queuing next verification pass in {delay}ms...")
-                QTimer.singleShot(delay, lambda: self._init_taskbar_buttons(target_hwnd))
+        if success:
+            print("[Taskbar SUCCESS] Native Windows Taskbar Buttons engaged.")
+            return
+            
+        # Robust escalating retry mechanism if DWM hasn't generated the thumbnail frame yet
+        if hasattr(self, '_taskbar_init_attempts'):
+            self._taskbar_init_attempts += 1
+            if self._taskbar_init_attempts <= 5:
+                delay = 1000 * self._taskbar_init_attempts
+                print(f"[Taskbar DEBUG] DWM rejected mapping. Next retry queued in {delay}ms...")
+                # Maintain strong reference to prevent PySide6 GC of callbacks
+                self._retry_taskbar_hwnd = target_hwnd
+                self._retry_taskbar_timer = QTimer(self)
+                self._retry_taskbar_timer.setSingleShot(True)
+                self._retry_taskbar_timer.timeout.connect(self._exec_taskbar_retry)
+                self._retry_taskbar_timer.start(delay)
             else:
-                print("[Taskbar FATAL] Taskbar buttons completely failed after 5 massive resets.")
+                print("[Taskbar FATAL] Exhausted all bounds waiting for DWM thumbnail generation.")
+                
+    def _exec_taskbar_retry(self):
+        """Executes taskbar init retry using strongly referenced target."""
+        self._init_taskbar_buttons(getattr(self, '_retry_taskbar_hwnd', None))
+        
+    def _exec_os_taskbar_init(self):
+        """Executes taskbar init specifically triggered by Explorer OS message."""
+        self._init_taskbar_buttons(getattr(self, '_os_taskbar_proxy_hwnd', None))
     
     def nativeEvent(self, eventType, message):
         """Handle Windows native events for taskbar button clicks."""
         try:
-            if eventType == b"windows_generic_MSG":
+            # Safely fetch PySide6 QByteArray or primitive bytes content
+            event_type_str = ""
+            if isinstance(eventType, bytes):
+                event_type_str = eventType.decode('utf-8', 'ignore')
+            elif hasattr(eventType, 'data'):
+                event_type_str = eventType.data().decode('utf-8', 'ignore')
+            else:
+                event_type_str = str(eventType)
+                
+            if "windows_generic_MSG" in event_type_str:
                 import ctypes
                 from ctypes.wintypes import MSG
                 
@@ -9857,8 +11019,12 @@ First Played: {first_played_formatted}
                     proxy_hwnd = msg.hwnd
                     print(f"[Taskbar ENFORCER] Caught TaskbarButtonCreated msg! Explorer assigned HWND: {hex(proxy_hwnd)}")
                     self._verified_taskbar_hwnd = proxy_hwnd
-                    # Delay exactly 500ms to let Explorer fully instantiate the DWM frame
-                    QTimer.singleShot(500, lambda: self._init_taskbar_buttons(proxy_hwnd))
+                    # Guarantee execution using strong timer
+                    self._os_taskbar_proxy_hwnd = proxy_hwnd
+                    self._os_taskbar_timer = QTimer(self)
+                    self._os_taskbar_timer.setSingleShot(True)
+                    self._os_taskbar_timer.timeout.connect(self._exec_os_taskbar_init)
+                    self._os_taskbar_timer.start(500)
                     return True, 0
 
                 # 2. Listen for WM_COMMAND when buttons are clicked
@@ -9870,6 +11036,13 @@ First Played: {first_played_formatted}
                         if button_id in (BUTTON_PREV, BUTTON_PLAYPAUSE, BUTTON_NEXT):
                             self.taskbar_toolbar.handle_button_click(button_id)
                             return True, 0
+
+                # 3. WM_DROPFILES is now handled by DropFileNativeFilter
+                # (installed via QApplication.installNativeEventFilter in _enable_drag_drop_for_elevated)
+                # That filter is more reliable in frozen PyInstaller builds because it does not
+                # depend on the eventType string format, which can differ between python.exe and
+                # the PyInstaller bootloader runtime.
+
         except Exception as e:
             # Silently ignore errors to not spam console
             pass
@@ -9878,7 +11051,9 @@ First Played: {first_played_formatted}
     
     def _taskbar_prev(self):
         """Handle taskbar Previous button."""
-        if hasattr(self, 'audio_player') and self.audio_player:
+        if hasattr(self, 'music_panel'):
+            self.music_panel._prev_track()
+        elif hasattr(self, 'audio_player') and self.audio_player:
             self.audio_player.prev_track()
     
     def _taskbar_playpause(self):
@@ -9934,7 +11109,17 @@ First Played: {first_played_formatted}
             socket.disconnectFromServer()
     
     def _enable_drag_drop_for_elevated(self):
-        """Enable drag-drop from non-elevated Explorer to elevated app (UAC bypass for drag-drop)."""
+        """Enable drag-drop from non-elevated Explorer to elevated app (UAC bypass for drag-drop).
+
+        Strategy
+        --------
+        1. Allow WM_DROPFILES through the UIPI message filter on the main HWND.
+        2. Register the window with shell32.DragAcceptFiles so Windows sends
+           WM_DROPFILES when files are dropped on the window.
+        3. Install a QAbstractNativeEventFilter on the QApplication to intercept
+           WM_DROPFILES at the application level - this is more reliable than the
+           window-level nativeEvent override in PyInstaller-frozen builds.
+        """
         if os.name != 'nt':
             return
         
@@ -9962,14 +11147,33 @@ First Played: {first_played_formatted}
             # Get window handle
             hwnd = int(self.winId())
             
-            # Allow drag-drop messages
+            # Allow drag-drop messages through UIPI
             ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, None)
             ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, None)
             ChangeWindowMessageFilterEx(hwnd, WM_COPYGLOBALDATA, MSGFLT_ALLOW, None)
             
-            print("[DragDrop] Enabled drag-drop for elevated process (main window)")
+            # Register window as accepting native WM_DROPFILES drops
+            shell32 = ctypes.windll.shell32
+            shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
+            shell32.DragAcceptFiles.restype = None
+            shell32.DragAcceptFiles(hwnd, True)
+
+            # Install the application-level native event filter to intercept WM_DROPFILES.
+            # This approach is used instead of the window-level nativeEvent override because
+            # the PyInstaller bootloader may use a different eventType label string, causing
+            # the 'windows_generic_MSG' check to silently fail.
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                self._drop_filter = DropFileNativeFilter(self)
+                self._drop_filter.install(app)
+
+            _drop_debug_log(f"[DragDrop] UIPI bypass applied. hwnd={hex(hwnd)}  admin={bool(ctypes.windll.shell32.IsUserAnAdmin())}")
+            print(f"[DragDrop] Enabled drag-drop for elevated process (main window hwnd={hex(hwnd)})")
         except Exception as e:
             print(f"[DragDrop] Failed to enable drag-drop for elevated: {e}")
+            _drop_debug_log(f"[DragDrop] _enable_drag_drop_for_elevated exception: {e}")
+
     
     def _enable_drag_drop_for_widget(self, widget):
         """Enable drag-drop for a specific widget in elevated app."""
@@ -10013,6 +11217,67 @@ First Played: {first_played_formatted}
         except Exception as e:
             print(f"[DragDrop] Failed to enable drag-drop for widget: {e}")
     
+    def _enable_music_panel_drag_drop(self):
+        """Apply the UIPI (User Interface Privilege Isolation) message filter bypass to
+        all drop-target child windows inside the MusicPanelWidget (HELXAIC).
+
+        Background:
+            Windows blocks OLE drag-and-drop messages (WM_DROPFILES, WM_COPYDATA,
+            WM_COPYGLOBALDATA) from reaching any window that runs at a LOWER integrity
+            level than the drag source. When this app runs as the built elevated .exe,
+            drag sources like Windows Explorer (which runs at Medium IL) are blocked
+            from delivering drops to any HWND in this process unless
+            ChangeWindowMessageFilterEx is explicitly called on that specific HWND with
+            MSGFLT_ALLOW.
+
+        What we register:
+            - PlaylistTable widget (the outer QFrame container)
+            - PlaylistTable.tree (the QTreeWidget itself)
+            - PlaylistTable.tree.viewport() (the actual drawing surface - the real drop target)
+            - MediaLibraryPage._tree (drag source, but also receives external drops)
+            - MediaLibraryPage._tree.viewport()
+
+        This method is called via QTimer.singleShot(1000) to ensure all child widgets
+        have been realized by Qt and have valid HWNDs before we call winId() on them.
+        """
+        if os.name != 'nt':
+            return
+        
+        if not hasattr(self, 'music_panel'):
+            return
+        
+        mp = self.music_panel
+        
+        # Collect all the relevant widgets that act as drop targets or drag sources
+        # inside HELXAIC. Each one has its own HWND that must be registered separately.
+        targets = []
+        
+        # PlaylistTable and its tree
+        if hasattr(mp, 'table'):
+            pt = mp.table
+            targets.append(pt)
+            if hasattr(pt, 'tree'):
+                targets.append(pt.tree)
+                targets.append(pt.tree.viewport())
+        
+        # MediaLibrary tree (receives external OS drops)
+        if hasattr(mp, 'media_lib_page'):
+            lp = mp.media_lib_page    
+            targets.append(lp)
+            if hasattr(lp, 'tree'):
+                targets.append(lp.tree)
+                targets.append(lp.tree.viewport())
+        
+        # The MusicPanelWidget itself
+        targets.append(mp)
+        
+        for w in targets:
+            try:
+                self._enable_drag_drop_for_widget(w)
+            except Exception as e:
+                print(f"[DragDrop] Music panel widget registration failed: {e}")
+
+
     def setup_system_tray(self):
         """Setup system tray icon with menu."""
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -10188,10 +11453,11 @@ First Played: {first_played_formatted}
                 self.settings["discord_rpc"] = False
                 save_settings(self.settings)
                 self.update_discord_button_text()
+                tip_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "tip-icon.svg").replace("\\", "/")
                 QMessageBox.information(self, "Discord Not Running", 
-                    "Discord is not running!\n\n"
-                    "Please start Discord first, then try again.\n\n"
-                    "💡 Tip: Make sure Discord is fully loaded before connecting.")
+                    "Discord is not running!<br><br>"
+                    "Please start Discord first, then try again.<br><br>"
+                    f"<img src='{tip_icon_path}' width='16' height='16'> &nbsp;Tip: Make sure Discord is fully loaded before connecting.")
                 return
             threading.Thread(target=self._connect_discord_threaded, daemon=True).start()
         else:
@@ -10259,7 +11525,7 @@ First Played: {first_played_formatted}
                     stop:1 #3d4270);
                 border: 2px solid #5865F2;
                 border-radius: 6px;
-                padding: 5px 12px;
+                padding: 3px 12px 2px 12px;
                 color: white;
                 font-size: 12px;
                 font-weight: bold;
@@ -10268,9 +11534,11 @@ First Played: {first_played_formatted}
         
         # Update button text to show loading
         if self.discord_enabled:
-            self.discord_btn.setText("🔄 Connecting...")
+            dots = "." * ((self._discord_loading_progress // 10) % 4)
+            self.discord_btn.setText(f"Connecting{dots}")
         else:
-            self.discord_btn.setText("🔄 Disconnecting...")
+            dots = "." * ((self._discord_loading_progress // 10) % 4)
+            self.discord_btn.setText(f"Disconnecting{dots}")
     
     def _reset_discord_cooldown(self):
         """Reset the Discord toggle cooldown and stop animation."""
@@ -10316,7 +11584,7 @@ First Played: {first_played_formatted}
             save_settings(self.settings)
             # Use QTimer.singleShot to update UI from main thread (safe from background thread)
             error_msg = str(e)
-            QTimer.singleShot(0, lambda: self._show_discord_error(error_msg))
+            QTimer.singleShot(0, self, lambda: self._show_discord_error(error_msg))
     
     def _show_discord_error(self, error_msg):
         """Show Discord error message from main thread."""
@@ -10441,49 +11709,18 @@ First Played: {first_played_formatted}
             print(f"Discord music update error: {e}")
     
     def _on_music_track_changed(self, track_path):
-        """Called when track changes - detect video vs audio and update display."""
-        VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.webm', '.avi', '.mov', '.wmv', '.flv', '.m4v'}
-        
+        """Called when track changes - update display."""
         if not track_path:
-            self._is_playing_video = False
             return
         
-        ext = os.path.splitext(track_path)[1].lower()
-        
-        if ext in VIDEO_EXTENSIONS:
-            # Playing video - show video background, make content semi-transparent
-            self._is_playing_video = True
-            
-            # Resize video item and content proxy to fill view
-            if hasattr(self, 'music_graphics_view') and hasattr(self, 'music_video_item'):
-                view_size = self.music_graphics_view.size()
-                self.music_video_item.setSize(QSizeF(view_size.width(), view_size.height()))
-                
-                if hasattr(self, 'music_content_proxy') and hasattr(self, 'music_content'):
-                    self.music_content.setFixedSize(view_size.width(), view_size.height())
-                    self.music_scene.setSceneRect(0, 0, view_size.width(), view_size.height())
-            
-            # Apply semi-transparent overlay to content
-            if hasattr(self, 'music_content'):
-                self.music_content.setStyleSheet("""
-                    QWidget#musicContentOverlay {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                            stop:0 rgba(18, 18, 18, 0.7),
-                            stop:0.5 rgba(18, 18, 18, 0.8),
-                            stop:1 rgba(18, 18, 18, 0.95));
-                    }
-                """)
-            print(f"[Music] Playing VIDEO: {os.path.basename(track_path)}")
-        else:
-            # Playing audio - opaque dark background
-            self._is_playing_video = False
-            if hasattr(self, 'music_content'):
-                self.music_content.setStyleSheet("""
-                    QWidget#musicContentOverlay {
-                        background: #121212;
-                    }
-                """)
-            print(f"[Music] Playing AUDIO: {os.path.basename(track_path)}")
+        # Apply opaque dark background for audio
+        if hasattr(self, 'music_content'):
+            self.music_content.setStyleSheet("""
+                QWidget#musicContentOverlay {
+                    background: #121212;
+                }
+            """)
+        print(f"[Music] Playing: {os.path.basename(track_path)}")
     
     def _on_track_changed_for_discord(self, track_path):
         """Called when a new track starts playing - update Discord."""
@@ -11308,38 +12545,6 @@ First Played: {first_played_formatted}
         # Make sure the button is visible after animation
         button.show()
 
-    def add_game_manual(self):
-        exe_path, _ = QFileDialog.getOpenFileName(self, "Pilih Game/Software", "", "Executable (*.exe)")
-        if not exe_path:
-            return
-
-        # Try to extract icon but don't block if it fails
-        icon_path = None
-        if WINDOWS_API_AVAILABLE:
-            icon_path = extract_icon_from_exe(exe_path)
-            if not icon_path:
-                print(f"Could not extract icon from {exe_path}")
-        else:
-            print("Windows API not available - skipping icon extraction")
-
-        # Get the filename and remove .exe extension if present
-        name = os.path.basename(exe_path)
-        if name.lower().endswith('.exe'):
-            name = name[:-4]  # Remove .exe extension
-        # Capitalize first letter of the name
-        name = name[0].upper() + name[1:]
-
-        # Add to data
-        self.data.append({
-            "name": name,
-            "exe": exe_path,
-            "icon": icon_path if icon_path else "",
-            "description": ""
-        })
-        # Persist to config.json; the user can click Refresh to reload the library UI
-        save_json(self.data)
-        self.show_loading_and_refresh()
-
     def universal_scan(self):
         """Universal scan combining Steam and Google Play Games."""
         steam_found = self.scan_steam_libraries(silent=True)
@@ -11508,7 +12713,10 @@ First Played: {first_played_formatted}
         scan_btn.setStyleSheet("background: #43B581; padding: 10px; border-radius: 5px;")
         
         def add_folder():
-            folder = QFileDialog.getExistingDirectory(dialog, "Select Game Folder")
+            folder = QFileDialog.getExistingDirectory(
+                dialog, "Select Game Folder", "", 
+                QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+            )
             if folder:
                 watch_folders = self.settings.get("watch_folders", [])
                 if folder not in watch_folders:
@@ -11554,6 +12762,77 @@ First Played: {first_played_formatted}
     
     def scan_local_folders(self):
         """Scan user-added folders for games."""
+        def get_pretty_game_name(exe_path, folder_name):
+            import re
+            
+            # --- 1. Try fetching official Windows PE Metadata ---
+            try:
+                import win32api
+                translations = win32api.GetFileVersionInfo(exe_path, '\\VarFileInfo\\Translation')
+                if translations:
+                    lang, codepage = translations[0]
+                    
+                    generic_exact = ["application", "launcher", "game client", "client", "game"]
+                    generic_partial = ["unity player", "unreal engine", "unrealengine", "bootstrap", "packaged game", "electron", "nwjs"]
+                    
+                    def is_bad_pe_name(n):
+                        nl = n.lower().strip()
+                        if nl in generic_exact: return True
+                        if any(bad in nl for bad in generic_partial): return True
+                        return False
+
+                    # Check ProductName first
+                    prod_info = f'\\StringFileInfo\\{lang:04X}{codepage:04X}\\ProductName'
+                    try:
+                        product = win32api.GetFileVersionInfo(exe_path, prod_info)
+                        if product and len(product.strip()) > 2 and not is_bad_pe_name(product):
+                            return product.strip()
+                    except Exception:
+                        pass
+                        
+                    # Check FileDescription as fallback
+                    desc_info = f'\\StringFileInfo\\{lang:04X}{codepage:04X}\\FileDescription'
+                    try:
+                        desc = win32api.GetFileVersionInfo(exe_path, desc_info)
+                        if desc and len(desc.strip()) > 2 and not is_bad_pe_name(desc):
+                            return desc.strip()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # --- 2. Fallback to formatting logic ---
+            exe_n = os.path.basename(exe_path)
+            if exe_n.lower().endswith(".exe"):
+                exe_n = exe_n[:-4]
+            lower_exe = exe_n.lower()
+            
+            generics = ["game", "launcher", "play", "start", "client", "app", "application", "main", "run"]
+            is_generic = False
+            for gen in generics:
+                if lower_exe == gen or lower_exe == f"{gen}64" or lower_exe == f"{gen}32":
+                    is_generic = True
+                    break
+                    
+            has_digits = any(char.isdigit() for char in lower_exe)
+            
+            raw_name = folder_name if (is_generic or has_digits) else exe_n
+            
+            # Clean up formatting
+            clean_name = raw_name.replace("_", " ").replace("-", " ")
+            clean_name = re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', clean_name).strip()
+            if not clean_name: clean_name = folder_name
+                
+            # Final Title Case
+            words = clean_name.split()
+            capitalized = [w.capitalize() if w.islower() else w for w in words]
+            clean_name = " ".join(capitalized)
+            
+            if "roblox" in lower_exe or "roblox" in folder_name.lower():
+                return "Roblox"
+                
+            return clean_name
+
         watch_folders = self.settings.get("watch_folders", [])
         if not watch_folders:
             QMessageBox.information(self, "Scan Local", 
@@ -11568,11 +12847,33 @@ First Played: {first_played_formatted}
             if not os.path.exists(folder):
                 continue
             
-            # Scan folder for game directories
+            # --- 1. Process the folder ROOT exactly for executables ---
+            # If the user targets a game folder directly, its main game .exe is often here.
             try:
+                # Quick check if root has exes
+                root_exes = [f for f in os.listdir(folder) if f.lower().endswith('.exe')]
+                if root_exes:
+                    best_root = self._find_main_exe_in_dir(folder)
+                    # Ensure the chosen exe is ACTUALLY in the root, so it's a direct game.
+                    if best_root and os.path.normpath(os.path.dirname(best_root)) == os.path.normpath(folder):
+                        norm_exe = os.path.normcase(os.path.abspath(best_root))
+                        if norm_exe not in existing_exes:
+                            name = get_pretty_game_name(best_root, os.path.basename(folder))
+                            games.append({"name": name, "exe": best_root})
+                            existing_exes.add(norm_exe)
+            except Exception as e:
+                print(f"Error scanning root folder {folder}: {e}")
+
+            # --- 2. Process immediate subdirectories (standard library folder mapping) ---
+            try:
+                # We skip folders that are obviously system/utility from the _find exclude list
+                exclude_dirs = ["engine", "binaries", "content", "dotnet", "plugins"]
                 for entry in os.listdir(folder):
                     game_dir = os.path.join(folder, entry)
                     if not os.path.isdir(game_dir):
+                        continue
+                        
+                    if any(ex in entry.lower() for ex in exclude_dirs):
                         continue
                     
                     exe_path = self._find_main_exe_in_dir(game_dir)
@@ -11583,13 +12884,11 @@ First Played: {first_played_formatted}
                     if norm_exe in existing_exes:
                         continue
                     
-                    # Format name from folder
-                    name = entry.replace("_", " ").replace("-", " ").strip()
-                    if name:
-                        name = name[0].upper() + name[1:]
+                    name = get_pretty_game_name(exe_path, entry)
                     games.append({"name": name, "exe": exe_path})
+                    existing_exes.add(norm_exe)
             except Exception as e:
-                print(f"Error scanning folder {folder}: {e}")
+                print(f"Error scanning folder {folder} subdirectories: {e}")
         
         if not games:
             QMessageBox.information(self, "Scan Local", "No new games found in watched folders.")
@@ -11789,6 +13088,7 @@ First Played: {first_played_formatted}
                 # Method 1: Extract from shortcut target
                 try:
                     if WINDOWS_API_AVAILABLE and shortcut_path.lower().endswith(".lnk"):
+                        import win32com.client
                         shell = win32com.client.Dispatch("WScript.Shell")
                         shortcut = shell.CreateShortCut(shortcut_path)
                         target = shortcut.Targetpath
@@ -11947,7 +13247,10 @@ First Played: {first_played_formatted}
             # Common system/tool executables
             "createdump", "certutil", "appdata", "patcher",
             # Modding tool executables
-            "cpp2il", "dumper", "injector", "doorstop", "proxy"
+            "cpp2il", "dumper", "injector", "doorstop", "proxy",
+            # Utility executables
+            "repair", "tool", "config", "test", "doctor", "crash",
+            "setting", "update", "client"
         ]
         
         # Folder patterns to completely skip scanning
@@ -12157,11 +13460,19 @@ First Played: {first_played_formatted}
             
         self._is_launching_game = True
         try:
-            if os.name == 'nt' and path:
-                exe_name = os.path.basename(path)
+            clean_path = path.strip('"\'')
+            
+            game_obj = None
+            for g in self.data:
+                if g.get("exe") in (path, clean_path):
+                    game_obj = g
+                    break
+                    
+            if os.name == 'nt' and clean_path:
+                exe_name = os.path.basename(clean_path)
                 
                 # --- Steam Pre-Launch Injection ---
-                if self._requires_steam(path):
+                if self._requires_steam(clean_path):
                     if not self._is_steam_running():
                         print("[Pre-Launch] Steam completely closed. Booting Steam...")
                         steam_exe = self._find_steam_exe()
@@ -12205,57 +13516,50 @@ First Played: {first_played_formatted}
 
             try:
                 # Launch from the game's directory (important for cracked games)
-                game_dir = os.path.dirname(path)
+                game_dir = os.path.dirname(clean_path)
+                launch_options = game_obj.get("launch_options", "") if game_obj else ""
                 
-                # Use subprocess.Popen with flags to create a fully independent process
-                # This ensures the game doesn't close when the launcher exits
-                # DETACHED_PROCESS: The process runs independently of the console
-                # CREATE_NEW_PROCESS_GROUP: Creates a new process group (doesn't share console signals)
-                # CREATE_BREAKAWAY_FROM_JOB: Allows the process to break away from any job object
-                DETACHED_PROCESS = 0x00000008
-                CREATE_NEW_PROCESS_GROUP = 0x00000200
-                CREATE_BREAKAWAY_FROM_JOB = 0x01000000
+                # Launch natively using Windows Shell - This guarantees the game process
+                # is completely detached from the HELXAID process tree and won't die
+                # when HELXAID exits.
+                import ctypes
                 
-                creation_flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
+                # Pre-load argtypes for safety in Python 3 ctypes
+                ctypes.windll.shell32.ShellExecuteW.argtypes = [
+                    ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, 
+                    ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_int
+                ]
                 
-                try:
-                    # First try subprocess.Popen which gives us the most control over process creation
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = 1  # SW_SHOWNORMAL
-                    
-                    # Note: Do NOT use start_new_session=True on Windows, it's a Unix feature
-                    # and can actually prevent the process from being properly detached
-                    process = subprocess.Popen(
-                        [path],
-                        cwd=game_dir,
-                        creationflags=creation_flags,
-                        startupinfo=startupinfo,
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        close_fds=True
-                    )
-                    # Don't keep a reference to the process - let it run independently
-                    del process
-                except (PermissionError, OSError) as popen_error:
-                    # If Popen fails (e.g., needs elevation), fall back to ShellExecuteW
-                    import ctypes
-                    result = ctypes.windll.shell32.ShellExecuteW(
-                        None,           # hwnd
-                        "runas",        # operation - request elevation
-                        path,           # file to execute
-                        None,           # parameters
-                        game_dir,       # working directory
-                        1               # SW_SHOWNORMAL
-                    )
-                    
-                    if result <= 32:
-                        raise OSError(f"Failed to launch with admin privileges (error {result})")
+                # 1 = SW_SHOWNORMAL
+                result = ctypes.windll.shell32.ShellExecuteW(
+                    None,           # hwnd
+                    "open",         # operation
+                    clean_path,     # file to execute
+                    launch_options if launch_options else None, # parameters
+                    game_dir,       # working directory
+                    1               # SW_SHOWNORMAL
+                )
+                
+                if result <= 32:
+                    # 5 = SE_ERR_ACCESSDENIED
+                    if result == 5:
+                        print("[Launch] Administrator rights required. Triggering UAC prompt...")
+                        result2 = ctypes.windll.shell32.ShellExecuteW(
+                            None,           # hwnd
+                            "runas",        # operation - request elevation
+                            clean_path,     # file to execute
+                            launch_options if launch_options else None, # parameters
+                            game_dir,       # working directory
+                            1               # SW_SHOWNORMAL
+                        )
+                        if result2 <= 32:
+                            raise OSError(f"Failed to launch (runas error {result2})")
+                    else:
+                        raise OSError(f"Failed to launch (error {result})")
                 
                 # Update last_played timestamp for recently played feature
                 for game in self.data:
-                    if game.get("exe") == path:
+                    if game.get("exe") in (path, clean_path):
                         game["last_played"] = datetime.now().isoformat()
                         # Set first_played only if not already set (first time playing)
                         if not game.get("first_played"):
@@ -12275,7 +13579,7 @@ First Played: {first_played_formatted}
                         self.update_discord_playing(game.get("name", "Unknown"))
                         
                         # Start play time tracking in background thread
-                        self.start_play_time_tracking(path, game)
+                        self.start_play_time_tracking(clean_path, game)
                         
                         # Apply game booster optimizations if enabled
                         self._apply_game_booster(exe_name, game)
@@ -12475,7 +13779,9 @@ First Played: {first_played_formatted}
 
         # Favorite toggle
         is_favorite = game.get("favorite", False)
-        favorite_action = menu.addAction("★ Remove from Favorites" if is_favorite else "☆ Add to Favorites")
+        star_icon_name = "star-filled.svg" if is_favorite else "star-outline.svg"
+        star_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", star_icon_name).replace("\\", "/")
+        favorite_action = menu.addAction(QIcon(star_icon_path), "Remove from Favorites" if is_favorite else "Add to Favorites")
         
         # Hide toggle
         is_hidden = game.get("hidden", False)
@@ -12940,6 +14246,40 @@ if __name__ == "__main__":
         sys.exit(0)
     
     app = QApplication(sys.argv)
+    
+    # ---------------------------------------------------------
+    # MEMORY OPTIMIZATION: Limit PySide6/Qt Image Cache
+    # Qt caches all background/border-images heavily (uncompressed).
+    # We restrict it to 30 MB to prevent the app from ballooning to 1GB+.
+    # ---------------------------------------------------------
+    from PySide6.QtGui import QPixmapCache
+    QPixmapCache.setCacheLimit(30720) # 30 MB max
+    
+    from PySide6.QtCore import QObject, QEvent, QTimer
+    
+    # Run garbage collector occasionally to free up C++ wrappings
+    import gc
+    gc_timer = QTimer()
+    gc_timer.timeout.connect(lambda: gc.collect())
+    gc_timer.start(30000) # Every 30 seconds
+    
+    class ComboBoxScrollFilter(QObject):
+        """Globally prevents QComboBox from capturing mouse wheel scrolling
+        unless the drop-down menu is currently open/focused."""
+        def eventFilter(self, obj, event):
+            if event.type() == QEvent.Wheel:
+                from PySide6.QtWidgets import QComboBox
+                if isinstance(obj, QComboBox):
+                    if not obj.view().isVisible():
+                        event.ignore()
+                        return True
+            return False
+
+    # Install the global filter to prevent accidental combobox scrolling
+    combo_filter = ComboBoxScrollFilter(app)
+    app.installEventFilter(combo_filter)
+    
+
 
     # Ensure QSettings has a stable key across normal run vs Run & Debug (debugpy)
     # so user preferences persist (e.g., YouTubeDownloader last output folder).
@@ -12947,6 +14287,10 @@ if __name__ == "__main__":
         from PySide6.QtCore import QCoreApplication
         QCoreApplication.setOrganizationName("TDD131")
         QCoreApplication.setApplicationName("HELXAID")
+        from PySide6.QtGui import QGuiApplication
+        QGuiApplication.setApplicationDisplayName("HELXAID")
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW("HELXAID")
     except Exception:
         pass
     

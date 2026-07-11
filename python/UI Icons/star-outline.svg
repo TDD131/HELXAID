@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <linearGradient id="starOutGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFD700;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF8C00;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <path d="M12 2.5l2.94 5.95 6.56.95-4.75 4.63 1.12 6.54L12 17.47l-5.87 3.1 1.12-6.54-4.75-4.63 6.56-.95L12 2.5zM12 5.5l-2.06 4.17-4.6.67 3.33 3.25-.79 4.58L12 15.9l4.12 2.17-.79-4.58 3.33-3.25-4.6-.67L12 5.5z" fill="url(#starOutGrad)" />
+</svg>
