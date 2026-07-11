@@ -4845,11 +4845,18 @@ class HardwarePanelWidget(QWidget):
         if hasattr(self, '_is_hwmon_running') and not self._is_hwmon_running():
             print("[Hardware] Auto-launching monitor silently in backend...")
             self._start_librehwmon(silent_launch=True)
+            
+        if hasattr(self, '_boost_gradient_timer') and not self._boost_gradient_timer.isActive():
+            self._boost_gradient_timer.start(17)
     
     def hideEvent(self, event):
         """Stop updates when hidden."""
         super().hideEvent(event)
         self._update_timer.stop()
+        if hasattr(self, '_boost_gradient_timer'):
+            self._boost_gradient_timer.stop()
+        import gc
+        gc.collect()
     
     def _install_librehwmon(self):
         """Download and install hardware monitoring tool (LHM or HWiNFO)."""

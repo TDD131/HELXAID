@@ -4996,8 +4996,7 @@ class GameLauncher(QWidget):
         # Re-apply theme now that games_container exists (for background image)
         self.apply_theme()
         
-        # Setup music panel after all other UI is initialized
-        self._setup_music_panel()
+        # NOTE: Music panel (HELXAIC) is lazy-loaded in switch_panel to save RAM!
 
         try:
             self._last_panel_index = self.content_stack.currentIndex()
@@ -5008,13 +5007,7 @@ class GameLauncher(QWidget):
         # Setup CPU control panel (panel 2)
         self._setup_cpu_panel()
         
-        # Setup Crosshair panel (panel 3)
-        self._setup_crosshair_panel()
-        
-        # Setup Macro panel (panel 4)
-        import time as _t; _macro_t = _t.perf_counter()
-        self._setup_macro_panel()
-        print(f"[TIMING] _setup_macro_panel TOTAL: {(_t.perf_counter()-_macro_t)*1000:.0f}ms")
+        # NOTE: Crosshair and Macro panels are lazy-loaded in switch_panel to save RAM!
         
         # Setup background game detection (scans every 5 seconds)
         self.game_scanner_timer = QTimer(self)
@@ -5453,6 +5446,18 @@ class GameLauncher(QWidget):
     # =============================================
     def switch_panel(self, index: int):
         """Switch content panel based on sidebar selection with iOS-style animation."""
+        # Lazy-load Music panel at index 1
+        if index == 1 and not hasattr(self, 'music_panel'):
+            self._setup_music_panel()
+            
+        # Lazy-load Crosshair panel at index 3
+        if index == 3 and not hasattr(self, 'crosshair_panel'):
+            self._setup_crosshair_panel()
+            
+        # Lazy-load Macro panel at index 4
+        if index == 4 and not hasattr(self, 'macro_panel'):
+            self._setup_macro_panel()
+            
         # Lazy-load Hardware panel at index 5
         if index == 5 and not hasattr(self, 'hardware_panel'):
             self._setup_hardware_panel()
