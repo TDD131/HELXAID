@@ -1,3 +1,14 @@
+# DEBUG MEMORY FLAGS
+# Ganti True ke False untuk mematikan komponen dan tes RAM
+ENABLE_BACKGROUND = True
+ENABLE_SIDEBAR = True
+ENABLE_DISCORD = True
+ENABLE_DEFERRED_TASKS = True
+ENABLE_TASKBAR = True
+ENABLE_DEBUG_DELAYS = True
+DEBUG_DELAY_MS = 3000
+# ==========================================
+
 import sys
 
 # --- Windows Service Intercept ---
@@ -149,7 +160,30 @@ class DropFileNativeFilter:
                     from ctypes.wintypes import MSG
                     msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
 
-                    if msg.message != WM_DROPFILES:
+                    if msg.message == WM_DROPFILES:
+                        pass # Continue processing drop files below
+                    else:
+                        # --- TASKBAR EVENT ROUTING ---
+                        parent = outer._win_ref()
+                        if parent is not None:
+                            if hasattr(parent, '_WM_TASKBARBUTTONCREATED') and msg.message == parent._WM_TASKBARBUTTONCREATED:
+                                print(f"[Taskbar ENFORCER] Caught TaskbarButtonCreated msg in QAbstractNativeEventFilter! Explorer assigned HWND: {hex(msg.hWnd)}")
+                                parent._verified_taskbar_hwnd = msg.hWnd
+                                parent._os_taskbar_proxy_hwnd = msg.hWnd
+                                from PySide6.QtCore import QTimer
+                                parent._os_taskbar_timer = QTimer(parent)
+                                parent._os_taskbar_timer.setSingleShot(True)
+                                parent._os_taskbar_timer.timeout.connect(parent._exec_os_taskbar_init)
+                                parent._os_taskbar_timer.start(500)
+                                return True, 0
+
+                            if hasattr(parent, 'taskbar_toolbar') and parent.taskbar_toolbar:
+                                WM_COMMAND = 0x0111
+                                if msg.message == WM_COMMAND:
+                                    button_id = msg.wParam & 0xFFFF
+                                    if button_id in (0x101, 0x102, 0x103):
+                                        parent.taskbar_toolbar.handle_button_click(button_id)
+                                        return True, 0
                         return False, 0
 
                     _drop_debug_log(f"WM_DROPFILES caught via QAbstractNativeEventFilter. HDROP={hex(msg.wParam)}")
@@ -594,7 +628,7 @@ try:
                 script_dir = SCRIPT_DIR
                 print(f"[Taskbar DEBUG] Loading icons from: {os.path.join(script_dir, 'UI Taskbar Icons')}")
                 def load_icon_from_png(filename):
-                    """Load a PNG file and convert to HICON."""
+                    """Load a PNG file and convert to HICON using win32gui."""
                     path = os.path.join(script_dir, filename)
                     if not os.path.exists(path):
                         print(f"[Taskbar DEBUG] Icon NOT found on disk: {path}")
@@ -606,32 +640,28 @@ try:
                         img = img.convert("RGBA")
                         img = img.resize((16, 16), Image.Resampling.LANCZOS)
                         
-                        # Convert to ICO format bytes in memory
-                        import io
-                        ico_buffer = io.BytesIO()
-                        img.save(ico_buffer, format='ICO', sizes=[(16, 16)])
-                        ico_buffer.seek(0)
-                        ico_data = ico_buffer.read()
+                        # Save to temporary ICO file
+                        import tempfile, win32gui, win32con
+                        fd, temp_ico_path = tempfile.mkstemp(suffix=".ico")
+                        os.close(fd)
+                        img.save(temp_ico_path, format='ICO', sizes=[(16, 16)])
                         
-                        # Skip ICO header (22 bytes for single-image ICO)
-                        header_size = 22
-                        image_data = ico_data[header_size:]
+                        # Load icon using native Windows API
+                        icon_flags = win32con.LR_LOADFROMFILE | win32con.LR_DEFAULTSIZE
+                        hicon = win32gui.LoadImage(0, temp_ico_path, win32con.IMAGE_ICON, 16, 16, icon_flags)
                         
-                        # Create icon using CreateIconFromResourceEx
-                        LR_DEFAULTCOLOR = 0x0000
-                        icon = CreateIconFromResourceEx(
-                            image_data,
-                            len(image_data),
-                            True,  # fIcon
-                            0x00030000,  # Version
-                            16, 16,
-                            LR_DEFAULTCOLOR
-                        )
-                        if not icon:
-                            print(f"[Taskbar DEBUG] CreateIconFromResourceEx returned NULL for {filename}")
-                        return icon if icon else 0
+                        try:
+                            os.remove(temp_ico_path)
+                        except:
+                            pass
+                            
+                        if not hicon:
+                            print(f"[Taskbar DEBUG] LoadImage returned NULL for {filename}")
+                            return 0
+                            
+                        return hicon
                     except Exception as e:
-                        print(f"[Taskbar DEBUG] Failed to load icon {filename} via Pillow: {e}")
+                        print(f"[Taskbar DEBUG] Error loading icon {filename}: {e}")
                         return 0
                 
                 self.icon_prev = load_icon_from_png("UI Taskbar Icons/taskbar-previous-icon.png")
@@ -680,6 +710,9 @@ try:
         
         def _init_taskbar(self):
             """Initialize the ITaskbarList3 COM interface using pure ctypes."""
+            if not globals().get('ENABLE_TASKBAR', True):
+                print("[Taskbar DEBUG] Taskbar initialization skipped due to ENABLE_TASKBAR flag.")
+                return
             try:
                 # Initialize COM
                 print("[Taskbar DEBUG] Pre-CoInitialize...", flush=True)
@@ -3860,6 +3893,9 @@ class GameLauncher(QWidget):
             self.settings_btn.enterEvent = new_enter
             self.settings_btn.leaveEvent = new_leave
             self._settings_btn_anim_setup = True
+            
+        # Final debug delay before __init__ finishes
+        self._debug_delay()
 
     def _toggle_debug_from_shortcut(self):
         """Toggle debug console from F9 shortcut."""
@@ -3912,6 +3948,23 @@ class GameLauncher(QWidget):
         self.move(geo.topLeft())
         print(f"[Window] Force centered on screen '{current_screen.name()}' at {geo.topLeft()}")
     
+    def _debug_delay(self, ms=None):
+        """Artificially delay execution while keeping the GUI responsive."""
+        if not globals().get('ENABLE_DEBUG_DELAYS', False):
+            return
+            
+        # Prioritize the slider setting (startup_delay) if self.settings is loaded
+        slider_delay = 0
+        if hasattr(self, 'settings') and self.settings:
+            slider_delay = int(self.settings.get("startup_delay", 0)) * 1000
+            
+        delay = ms if ms else (slider_delay if slider_delay > 0 else globals().get('DEBUG_DELAY_MS', 1000))
+        
+        end_time = time.time() + (delay / 1000.0)
+        while time.time() < end_time:
+            QApplication.processEvents()
+            time.sleep(0.01)
+
     def __init__(self):
         super().__init__()
         self.current_edit_game = None  # Store the game being edited
@@ -3920,6 +3973,24 @@ class GameLauncher(QWidget):
         
         # Load settings
         self.settings = load_settings()
+        
+        # Initialize core variables early so processEvents in _debug_delay doesn't crash on resize/paint
+        self.data = []
+        self.icon_scale = self.settings.get("icon_scale", 1)
+        self.confirm_on_exit = self.settings.get("confirm_on_exit", True)
+        self.grid_size = 100
+        self.search_query = ""
+        self.selected_game_index = -1
+        self.game_buttons = []
+        self.current_session = None
+        
+        # Register the TaskbarButtonCreated message early so we don't miss it when window shows
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            self._WM_TASKBARBUTTONCREATED = user32.RegisterWindowMessageW("TaskbarButtonCreated")
+        except:
+            self._WM_TASKBARBUTTONCREATED = None
         
         # Initialize Debug Console (only redirects; doesn't show window)
         self.debug_console = get_debug_console(self)
@@ -3986,6 +4057,7 @@ class GameLauncher(QWidget):
         try:
             self.hw_manager = get_hardware_manager()
             self.hw_manager.start_manager()
+            self._debug_delay()
         except Exception as e:
             print(f"[Launcher] Failed to start HardwareManager: {e}")
             
@@ -4051,6 +4123,7 @@ class GameLauncher(QWidget):
         
         # Enable drag-drop from non-elevated Explorer to elevated app (UAC bypass for drag-drop)
         self._enable_drag_drop_for_elevated()
+        self._debug_delay()
         
         # Apply theme (will use background image and auto-palette if set)
         self.apply_theme()
@@ -4061,15 +4134,11 @@ class GameLauncher(QWidget):
         self.data = load_json()
         
         # Defer icon validation and sanitization to after UI is visible (improves startup time)
-        QTimer.singleShot(100, self._deferred_startup_tasks)
-        
-        self.icon_scale = self.settings.get("icon_scale", 1)
-        self.confirm_on_exit = self.settings.get("confirm_on_exit", True)
-        self.grid_size = 100
-        self.search_query = ""
-        self.selected_game_index = -1  # For keyboard navigation
-        self.game_buttons = []  # Store game buttons for keyboard nav
-        self.current_session = None  # Track currently playing game: {"game": game, "start_time": time, "from_launcher": bool}
+        if globals().get('ENABLE_DEFERRED_TASKS', True):
+            base_delay_ms = 100
+            user_delay_ms = int(self.settings.get("startup_delay", 0)) * 1000
+            total_delay = base_delay_ms + user_delay_ms
+            QTimer.singleShot(total_delay, self._deferred_startup_tasks)
         
         # Background game detection timer (checks every 2 seconds for real-time detection)
         # IMPORTANT: The actual psutil scanning runs in a background thread (_process_scan_thread)
@@ -4086,9 +4155,11 @@ class GameLauncher(QWidget):
         
         # Setup local server to listen for restore signals from second instance
         self._setup_single_instance_server()
+        self._debug_delay()
         
         # Setup system tray icon
         self.setup_system_tray()
+        self._debug_delay()
 
         # =============================================
         # MAIN LAYOUT: Sidebar + Content Panel
@@ -4376,6 +4447,8 @@ class GameLauncher(QWidget):
         """)
         
         root_layout.addWidget(self.sidebar)
+        if not globals().get('ENABLE_SIDEBAR', True):
+            self.sidebar.hide()
         
         # ---- CONTENT STACK ----
         self.content_stack = QStackedWidget()
@@ -4900,7 +4973,7 @@ class GameLauncher(QWidget):
         self.discord_btn.setFixedSize(130, 30)  # Match other button heights
         
         # Check if Discord is installed on the system
-        self._discord_installed = self._check_discord_installed()
+        self._discord_installed = False if not ENABLE_DISCORD else self._check_discord_installed()
         
         if self._discord_installed:
             self.update_discord_button_text()
@@ -5011,7 +5084,7 @@ class GameLauncher(QWidget):
         # NOTE: Music panel (HELXAIC) is lazy-loaded in switch_panel to save RAM!
 
         try:
-            self._last_panel_index = self.content_stack.currentIndex()
+            self._last_panel_widget = self.content_stack.currentWidget()
             self.content_stack.currentChanged.connect(self._on_content_stack_changed)
         except Exception:
             pass
@@ -5065,7 +5138,7 @@ class GameLauncher(QWidget):
         self.apply_theme()
         
         # If UI has already been rendered, we should force a visual refresh of the grid texts
-        if hasattr(self, 'refresh'):
+        if hasattr(self, 'grid'):
             # Only refresh if it won't cause a massive stutter, maybe just update grid items directly?
             # A full refresh() might be too heavy if done async during init. We'll use a timer to defer it slightly.
             from PySide6.QtCore import QTimer
@@ -5077,6 +5150,8 @@ class GameLauncher(QWidget):
         colors = DEFAULT_SETTINGS["theme_colors"]
         
         bg_image = self.settings.get("background_image", "")
+        if not globals().get('ENABLE_BACKGROUND', True):
+            bg_image = ""
         
         primary = colors.get("primary", "#FF5B06")
         secondary = colors.get("secondary", "#FDA903")
@@ -5256,6 +5331,8 @@ class GameLauncher(QWidget):
         
         # Apply background image to games container only
         bg_image = self.settings.get("background_image", "")
+        if not globals().get('ENABLE_BACKGROUND', True):
+            bg_image = ""
         if bg_image and os.path.exists(bg_image):
             # Get the background mode
             mode = self.settings.get("background_mode", "fill")
@@ -5483,7 +5560,26 @@ class GameLauncher(QWidget):
         if index == 6 and not hasattr(self, 'wincustom_panel'):
             self._setup_wincustom_panel()
         
-        self.content_stack.setCurrentIndex(index)
+        target_widget = None
+        if index == 0 and hasattr(self, 'home_panel'):
+            target_widget = self.home_panel
+        elif index == 1 and hasattr(self, 'music_panel'):
+            target_widget = self.music_panel
+        elif index == 2 and hasattr(self, 'cpu_panel'):
+            target_widget = self.cpu_panel
+        elif index == 3 and hasattr(self, 'crosshair_panel'):
+            target_widget = self.crosshair_panel
+        elif index == 4 and hasattr(self, 'macro_panel'):
+            target_widget = self.macro_panel
+        elif index == 5 and hasattr(self, 'hardware_panel'):
+            target_widget = self.hardware_panel
+        elif index == 6 and hasattr(self, 'wincustom_panel'):
+            target_widget = self.wincustom_panel
+            
+        if target_widget:
+            self.content_stack.setCurrentWidget(target_widget)
+        else:
+            self.content_stack.setCurrentIndex(index)
         
         # Clear focus from sidebar buttons so keyboard shortcuts work
         if index == 1:  # Music panel (index 1)
@@ -5538,6 +5634,10 @@ class GameLauncher(QWidget):
                 self._update_nav_gradient()
             else:
                 btn.setStyleSheet("")
+                
+        # Aggressively trim memory 1.5 seconds after panel switch to maintain low RAM illusion
+        # This forces Windows to page out inactive UI components created by lazy-loaded panels
+        QTimer.singleShot(1500, self._cleanup_memory)
 
     def keyPressEvent(self, event):
         """Handle global keyboard shortcuts."""
@@ -5549,7 +5649,8 @@ class GameLauncher(QWidget):
         # non-exclusive hook forwards events to Qt as well.
         
         # Music panel shortcuts (when on music page - panel index 2)
-        if hasattr(self, 'content_stack') and self.content_stack.currentIndex() == 2:
+        is_music_panel_active = hasattr(self, 'content_stack') and hasattr(self, 'music_panel') and self.content_stack.currentWidget() == self.music_panel
+        if is_music_panel_active:
             if hasattr(self, 'audio_player') and self.audio_player:
                 # Check if a button/input has focus (don't override their behavior)
                 from PySide6.QtWidgets import QApplication, QPushButton, QLineEdit, QComboBox, QSpinBox
@@ -5948,23 +6049,25 @@ Stylesheet Selector:
 
     def _on_content_stack_changed(self, new_index: int):
         try:
-            old_index = getattr(self, '_last_panel_index', None)
-            self._last_panel_index = int(new_index)
+            old_widget = getattr(self, '_last_panel_widget', None)
+            new_widget = self.content_stack.widget(new_index) if hasattr(self, 'content_stack') else None
+            self._last_panel_widget = new_widget
         except Exception:
-            old_index = getattr(self, '_last_panel_index', None)
-            self._last_panel_index = new_index
+            return
 
         try:
-            if old_index == 1 and new_index != 1:
-                if hasattr(self, 'music_panel') and hasattr(self.music_panel, 'on_helxaic_page_hidden'):
-                    self.music_panel.on_helxaic_page_hidden()
+            if hasattr(self, 'music_panel'):
+                if old_widget == self.music_panel and new_widget != self.music_panel:
+                    if hasattr(self.music_panel, 'on_helxaic_page_hidden'):
+                        self.music_panel.on_helxaic_page_hidden()
         except Exception:
             pass
 
         try:
-            if new_index == 1 and old_index != 1:
-                if hasattr(self, 'music_panel') and hasattr(self.music_panel, 'on_helxaic_page_shown'):
-                    self.music_panel.on_helxaic_page_shown()
+            if hasattr(self, 'music_panel'):
+                if new_widget == self.music_panel and old_widget != self.music_panel:
+                    if hasattr(self.music_panel, 'on_helxaic_page_shown'):
+                        self.music_panel.on_helxaic_page_shown()
         except Exception:
             pass
 
@@ -5989,31 +6092,6 @@ Stylesheet Selector:
             from PySide6.QtMultimedia import QMediaPlayer
             is_playing = (state == QMediaPlayer.PlayingState)
             self.taskbar_toolbar.update_play_state(is_playing)
-    
-    def nativeEvent(self, eventType, message):
-        """Handle Windows native events for taskbar button clicks."""
-        if eventType == b"windows_generic_MSG" or eventType == "windows_generic_MSG":
-            try:
-                import struct
-                # Parse Windows message
-                msg = int.from_bytes(message, byteorder='little')
-                # WM_COMMAND = 0x0111
-                # Extract message ID from first 4 bytes
-                msgstruct = struct.unpack('IHHllll', message[:24])
-                msg_id = msgstruct[0]
-                wparam = msgstruct[1]
-                
-                if msg_id == 0x0111:  # WM_COMMAND
-                    # Extract LOWORD(wParam) which contains button ID
-                    button_id = wparam & 0xFFFF
-                    if self.taskbar_toolbar and button_id in [BUTTON_PREV, BUTTON_PLAYPAUSE, BUTTON_NEXT]:
-                        self.taskbar_toolbar.handle_button_click(button_id)
-                        return True, 0
-            except:
-                pass
-        
-        return super().nativeEvent(eventType, message)
-    
     def _on_music_panel_loaded(self, success):
         """Called when HTML music panel finishes loading."""
         if success and hasattr(self, 'music_bridge'):
@@ -9051,7 +9129,7 @@ Stylesheet Selector:
 
 
                 # Only handle key press events on music panel (index 1)
-                if hasattr(self, 'content_stack') and self.content_stack.currentIndex() == 1:
+                if hasattr(self, 'content_stack') and hasattr(self, 'music_panel') and self.content_stack.currentWidget() == self.music_panel:
                     if hasattr(self, 'music_panel') and self.music_panel:
                         focus_widget = QApplication.focusWidget()
                         
@@ -9339,6 +9417,23 @@ Stylesheet Selector:
         startup_cb.setChecked(is_startup_enabled())
         layout.addWidget(startup_cb)
         
+        # Startup Delay Slider
+        delay_layout = QHBoxLayout()
+        delay_label = QLabel("Startup Delay (seconds):")
+        delay_label.setStyleSheet("color: #b3b3b3; font-size: 11px;")
+        delay_slider = QSlider(Qt.Horizontal)
+        delay_slider.setRange(0, 60)  # 0 to 60 seconds
+        delay_slider.setValue(int(self.settings.get("startup_delay", 0)))
+        
+        delay_val_label = QLabel(f"{delay_slider.value()}s")
+        delay_val_label.setStyleSheet("color: white; font-weight: bold; font-size: 11px;")
+        delay_slider.valueChanged.connect(lambda v: delay_val_label.setText(f"{v}s"))
+        
+        delay_layout.addWidget(delay_label)
+        delay_layout.addWidget(delay_slider)
+        delay_layout.addWidget(delay_val_label)
+        layout.addLayout(delay_layout)
+        
         start_minimised_cb = AnimatedCheckBox("Start minimised to tray")
         start_minimised_cb.setChecked(self.settings.get("start_minimised", False))
         layout.addWidget(start_minimised_cb)
@@ -9481,6 +9576,7 @@ Stylesheet Selector:
             new_dev = dev_mode_cb.isChecked()
             new_check = check_daily_cb.isChecked()
             new_startup = startup_cb.isChecked()
+            new_delay = delay_slider.value()
             
             # If absolutely nothing changed, skip all processing
             if (new_bg_image == self.settings.get("background_image", "") and
@@ -9494,7 +9590,8 @@ Stylesheet Selector:
                 abs(new_opacity - self.settings.get("window_opacity", 1.0)) < 0.01 and
                 new_dev == self.settings.get("developer_mode", False) and
                 new_check == self.settings.get("check_version_daily", True) and
-                new_startup == orig_startup):
+                new_startup == orig_startup and
+                new_delay == self.settings.get("startup_delay", 0)):
                 del dialog
                 return
             
@@ -9516,6 +9613,7 @@ Stylesheet Selector:
             self.settings["window_opacity"] = new_opacity
             self.settings["developer_mode"] = new_dev
             self.settings["check_version_daily"] = new_check
+            self.settings["startup_delay"] = new_delay
             save_settings(self.settings)
             
             # Apply display settings immediately
@@ -10944,26 +11042,21 @@ First Played: {first_played_formatted}
                     on_next=self._taskbar_next
                 )
                 
-                # Register the TaskbarButtonCreated message so we know EXACTLY when the taskbar is ready
-                import ctypes
-                user32 = ctypes.windll.user32
-                self._WM_TASKBARBUTTONCREATED = user32.RegisterWindowMessageW("TaskbarButtonCreated")
-                print(f"[Taskbar DEBUG] _WM_TASKBARBUTTONCREATED mapped to {self._WM_TASKBARBUTTONCREATED}")
                 # Delay button addition to ensure window is fully initialized
                 # Use longer delay and retry mechanism for reliability
                 self._taskbar_retry_count = 0
                 
                 # If running as Admin, we must allow the Taskbar messages through UIPI
                 try:
+                    import ctypes
+                    user32 = ctypes.windll.user32
                     MSGFLT_ALLOW = 1
-                    user32.ChangeWindowMessageFilterEx(int(self.winId()), self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
+                    if hasattr(self, '_WM_TASKBARBUTTONCREATED') and self._WM_TASKBARBUTTONCREATED:
+                        user32.ChangeWindowMessageFilterEx(int(self.winId()), self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
                     # Also allow WM_COMMAND for the buttons themselves
                     user32.ChangeWindowMessageFilterEx(int(self.winId()), 0x0111, MSGFLT_ALLOW, None)
                 except Exception as ex:
                     print(f"[Taskbar DEBUG] ChangeWindowMessageFilterEx error: {ex}")
-                # Setup robust bound timer to survive PySide6 Garbage Collection
-                self._taskbar_init_attempts = 0
-                self._trigger_taskbar_init()
             except Exception as e:
                 print(f"[Taskbar FATAL] Could not setup taskbar toolbar: {e}")
                 
@@ -11018,62 +11111,40 @@ First Played: {first_played_formatted}
     def _exec_os_taskbar_init(self):
         """Executes taskbar init specifically triggered by Explorer OS message."""
         self._init_taskbar_buttons(getattr(self, '_os_taskbar_proxy_hwnd', None))
-    
+        
     def nativeEvent(self, eventType, message):
         """Handle Windows native events for taskbar button clicks."""
         try:
-            # Safely fetch PySide6 QByteArray or primitive bytes content
-            event_type_str = ""
-            if isinstance(eventType, bytes):
-                event_type_str = eventType.decode('utf-8', 'ignore')
-            elif hasattr(eventType, 'data'):
-                event_type_str = eventType.data().decode('utf-8', 'ignore')
-            else:
-                event_type_str = str(eventType)
+            import ctypes
+            from ctypes.wintypes import MSG
+            msg_ptr = int(message)
+            msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
+            
+            # 1. Listen for TaskbarButtonCreated
+            if hasattr(self, '_WM_TASKBARBUTTONCREATED') and msg.message == self._WM_TASKBARBUTTONCREATED:
+                print(f"[Taskbar ENFORCER] Caught TaskbarButtonCreated msg! Explorer assigned HWND: {hex(msg.hWnd)}")
+                self._verified_taskbar_hwnd = msg.hWnd
+                self._os_taskbar_proxy_hwnd = msg.hWnd
+                from PySide6.QtCore import QTimer
+                self._os_taskbar_timer = QTimer(self)
+                self._os_taskbar_timer.setSingleShot(True)
+                self._os_taskbar_timer.timeout.connect(self._exec_os_taskbar_init)
+                self._os_taskbar_timer.start(100)
+                return True, 0
                 
-            if "windows_generic_MSG" in event_type_str:
-                import ctypes
-                from ctypes.wintypes import MSG
-                
-                # Convert shiboken.VoidPtr to int then to ctypes pointer
-                msg_ptr = int(message)
-                msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
-                
-                # 1. Listen for TaskbarButtonCreated message (EXPLORER TELLS US IT IS READY)
-                if hasattr(self, '_WM_TASKBARBUTTONCREATED') and msg.message == self._WM_TASKBARBUTTONCREATED:
-                    proxy_hwnd = msg.hwnd
-                    print(f"[Taskbar ENFORCER] Caught TaskbarButtonCreated msg! Explorer assigned HWND: {hex(proxy_hwnd)}")
-                    self._verified_taskbar_hwnd = proxy_hwnd
-                    # Guarantee execution using strong timer
-                    self._os_taskbar_proxy_hwnd = proxy_hwnd
-                    self._os_taskbar_timer = QTimer(self)
-                    self._os_taskbar_timer.setSingleShot(True)
-                    self._os_taskbar_timer.timeout.connect(self._exec_os_taskbar_init)
-                    self._os_taskbar_timer.start(500)
-                    return True, 0
-
-                # 2. Listen for WM_COMMAND when buttons are clicked
-                if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
-                    WM_COMMAND = 0x0111
-                    if msg.message == WM_COMMAND:
-                        # LOWORD of wParam is the button ID
-                        button_id = msg.wParam & 0xFFFF
-                        if button_id in (BUTTON_PREV, BUTTON_PLAYPAUSE, BUTTON_NEXT):
-                            self.taskbar_toolbar.handle_button_click(button_id)
-                            return True, 0
-
-                # 3. WM_DROPFILES is now handled by DropFileNativeFilter
-                # (installed via QApplication.installNativeEventFilter in _enable_drag_drop_for_elevated)
-                # That filter is more reliable in frozen PyInstaller builds because it does not
-                # depend on the eventType string format, which can differ between python.exe and
-                # the PyInstaller bootloader runtime.
-
-        except Exception as e:
-            # Silently ignore errors to not spam console
+            # 2. Listen for WM_COMMAND when buttons are clicked
+            if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
+                WM_COMMAND = 0x0111
+                if msg.message == WM_COMMAND:
+                    button_id = msg.wParam & 0xFFFF
+                    if button_id in (0x101, 0x102, 0x103): # PREV, PLAYPAUSE, NEXT
+                        self.taskbar_toolbar.handle_button_click(button_id)
+                        return True, 0
+        except Exception:
             pass
-        
+            
         return super().nativeEvent(eventType, message)
-    
+
     def _taskbar_prev(self):
         """Handle taskbar Previous button."""
         if hasattr(self, 'music_panel'):
@@ -11192,6 +11263,7 @@ First Played: {first_played_formatted}
             if app is not None:
                 self._drop_filter = DropFileNativeFilter(self)
                 self._drop_filter.install(app)
+                self._debug_delay()
 
             _drop_debug_log(f"[DragDrop] UIPI bypass applied. hwnd={hex(hwnd)}  admin={bool(ctypes.windll.shell32.IsUserAnAdmin())}")
             print(f"[DragDrop] Enabled drag-drop for elevated process (main window hwnd={hex(hwnd)})")
@@ -11891,8 +11963,11 @@ First Played: {first_played_formatted}
                     # Game launched from launcher has stopped
                     self._handle_game_stopped()
                 else:
-                    # Game still running - refresh UI to update launcher vs playing status
-                    self.populate_recently_played()
+                    # Game still running - refresh UI ONLY if status changed
+                    current_status = self._is_in_game_by_window_title(game)
+                    if self.current_session.get("last_status") != current_status:
+                        self.current_session["last_status"] = current_status
+                        self.populate_recently_played()
             return
         
         # Get set of running process names
@@ -11939,8 +12014,11 @@ First Played: {first_played_formatted}
             current_name = current_game.get("name", "")
             for game, _ in candidates:
                 if game.get("name") == current_name:
-                    # Already tracking this game - just refresh UI
-                    self.populate_recently_played()
+                    # Already tracking this game - refresh UI ONLY if status changed
+                    current_status = self._is_in_game_by_window_title(game)
+                    if self.current_session.get("last_status") != current_status:
+                        self.current_session["last_status"] = current_status
+                        self.populate_recently_played()
                     return
         
         # Single candidate - detect immediately (no ambiguity)

@@ -62,3 +62,13 @@ remove_video.py
 HELXAID_Portable.spec
 python/invert_images.py
 python/launch_debug.py
+
+# Temp scripts from debugging sessions
+dump_widgets.py
+patch_musicpanel.py
+python/MusicPanelWidget.py.bak
+python/apply_*.py
+python/defer_*.py
+python/find_home_panel.py
+python/fix_*.py
+python/tBPR_temp.py
