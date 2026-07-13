@@ -3452,34 +3452,61 @@ class ResumeNotificationWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("resumeNotification")
-        self.setFixedHeight(40)
+        self.setFixedHeight(44)
         
-        # We need a layout with margins to prevent button clipping
+        self.setStyleSheet("""
+            QFrame#resumeNotification {
+                background-color: #131317;
+                border: 1px solid #FF5B06;
+                border-radius: 8px;
+            }
+            QLabel {
+                color: #FFFFFF;
+                font-family: 'Orbitron', 'Rajdhani', sans-serif;
+                font-size: 11px;
+                background: transparent;
+                border: none;
+            }
+            QPushButton {
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.4);
+                border-radius: 6px;
+                padding: 4px 14px;
+                background: transparent;
+                font-family: 'Orbitron', 'Rajdhani', sans-serif;
+                font-weight: bold;
+                font-size: 10px;
+            }
+            QPushButton:hover {
+                border-color: #FFFFFF;
+                background: rgba(255, 255, 255, 0.1);
+            }
+            QPushButton:pressed {
+                background: rgba(255, 255, 255, 0.2);
+            }
+        """)
+        
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(15, 0, 15, 0)
+        layout.setSpacing(12)
+        
+        # Icon (Reload/Restart)
+        self.icon_lbl = QLabel("⟳", self)
+        self.icon_lbl.setStyleSheet("color: #FF5B06; font-size: 14px; font-weight: bold; margin-bottom: 2px;")
+        layout.addWidget(self.icon_lbl)
         
         # Label
-        self.lbl_msg = QLabel("Unfinished playlist found.", self)
+        self.lbl_msg = QLabel("Resume: Unknown?", self)
         self.lbl_msg.setObjectName("resumeLabel")
-        font = self.lbl_msg.font()
-        font.setPointSize(10)
-        self.lbl_msg.setFont(font)
         layout.addWidget(self.lbl_msg)
         
         layout.addStretch()
         
-        # Buttons using AnimatedButton with Orbitron font
-        from AnimatedButton import AnimatedButton
-        self.btn_resume = AnimatedButton("RESUME", self)
+        # Buttons
+        self.btn_resume = QPushButton("Resume", self)
         self.btn_resume.setCursor(Qt.PointingHandCursor)
-        self.btn_dismiss = AnimatedButton("DISMISS", self)
+        self.btn_dismiss = QPushButton("Dismiss", self)
         self.btn_dismiss.setCursor(Qt.PointingHandCursor)
-        
-        # Set Orbitron font
-        btn_font = QFont("Orbitron", 9, QFont.Bold)
-        self.btn_resume.setFont(btn_font)
-        self.btn_dismiss.setFont(btn_font)
         
         layout.addWidget(self.btn_resume)
         layout.addWidget(self.btn_dismiss)
@@ -3487,6 +3514,17 @@ class ResumeNotificationWidget(QFrame):
         # Connections
         self.btn_resume.clicked.connect(self.resume_clicked.emit)
         self.btn_dismiss.clicked.connect(self.dismiss_clicked.emit)
+
+    def set_track_title(self, title):
+        self.lbl_msg.setText(f"Resume: {title}?")
+        self.adjustSize()
+        if self.parent():
+            self.move(self.parent().width() - self.width() - 20, 20)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.parent():
+            self.move(self.parent().width() - self.width() - 20, 20)
 
 
 class MusicPanelWidget(QWidget):
@@ -4343,13 +4381,12 @@ class MusicPanelWidget(QWidget):
         # === Menu Bar ===
         self._create_menu_bar(layout)
         
-        # Resume Notification Banner (Hidden by default)
+        # Resume Notification Banner (Floating, hidden by default)
         self.resume_banner = ResumeNotificationWidget(self)
         self.resume_banner.hide()
-        layout.addWidget(self.resume_banner)
         
         # Connect signals
-        self.resume_banner.dismiss_clicked.connect(self.resume_banner.hide)
+        self.resume_banner.dismiss_clicked.connect(self._dismiss_banner)
         self.resume_banner.resume_clicked.connect(self._resume_playback_from_banner)
         
         # Main content stack
@@ -4557,6 +4594,10 @@ class MusicPanelWidget(QWidget):
         super().resizeEvent(event)
         # Enforce max sidebar width (<= 50% of panel)
         self._update_yt_panel_constraints()
+        
+        if hasattr(self, 'resume_banner') and not self.resume_banner.isHidden():
+            self.resume_banner.move(self.width() - self.resume_banner.width() - 20, 20)
+            
         try:
             if getattr(self, '_is_fullscreen', False) and getattr(self, '_playerbar_overlay_enabled', False):
                 self._update_playerbar_overlay_geometry()
@@ -6691,9 +6732,59 @@ class MusicPanelWidget(QWidget):
             self._save_state()
     
 
+    def _dismiss_banner(self):
+        self.resume_banner.hide()
+        if hasattr(self, '_pending_single_track_resume'):
+            self._pending_single_track_resume = None
+
     def _resume_playback_from_banner(self):
         self.resume_banner.hide()
-        self._toggle_play_pause()
+        
+        if hasattr(self, '_pending_single_track_resume') and self._pending_single_track_resume:
+            track_info = self._pending_single_track_resume
+            import datetime
+            try:
+                mtime = os.path.getmtime(track_info['path'])
+                dt = datetime.datetime.fromtimestamp(mtime)
+                date_str = dt.strftime("%b %d, %Y")
+            except Exception:
+                date_str = ""
+                
+            track = {
+                'path': track_info['path'],
+                'title': track_info['title'],
+                'artist': 'Single Track',
+                'duration': 0,
+                'date_added': date_str
+            }
+            # Add to playlist
+            self.set_playlist("Previous Session", [track])
+            self._current_index = 0
+            self.table.highlight_playing(0)
+            self.player_bar.set_track_info(track_info['title'], 'Single Track')
+            self._player.setSource(QUrl.fromLocalFile(track_info['path']))
+            
+            try:
+                self._set_current_media_local_path(track_info['path'])
+            except Exception:
+                pass
+            
+            if track_info['position'] > 0:
+                self._pending_seek_position = track_info['position']
+                def on_media_loaded(status):
+                    if status == QMediaPlayer.LoadedMedia:
+                        if hasattr(self, '_pending_seek_position') and self._pending_seek_position > 0:
+                            self._player.setPosition(self._pending_seek_position)
+                            self._pending_seek_position = 0
+                        try:
+                            self._player.mediaStatusChanged.disconnect(on_media_loaded)
+                        except:
+                            pass
+                self._player.mediaStatusChanged.connect(on_media_loaded)
+            
+            self._pending_single_track_resume = None
+            
+        self._toggle_play()
 
     def _load_last_state(self):
         """Load last music folder and track from config."""
@@ -6709,84 +6800,102 @@ class MusicPanelWidget(QWidget):
                     self._music_folder = folder
                     self._load_tracks_from_folder(folder)
                     
-                    # Restore last track
-                    last_path = state.get('last_track_path', '')
-                    if last_path:
-                        # Normalize path for comparison (handle both / and \)
-                        last_path_norm = last_path.replace('\\', '/')
-                        # Find track index by path
-                        for i, track in enumerate(self._playlist):
-                            track_path_norm = track.get('path', '').replace('\\', '/')
-                            if track_path_norm == last_path_norm:
-                                self._current_index = i
-                                self.table.highlight_playing(i)
-                                self.player_bar.set_track_info(
-                                    track.get('title', ''), 
-                                    track.get('artist', '')
-                                )
+                # Restore last track
+                last_path = state.get('last_track_path', '')
+                if last_path:
+                    last_path_norm = last_path.replace('\\', '/')
+                    track_found = False
+                    
+                    # Find track index by path
+                    for i, track in enumerate(self._playlist):
+                        track_path_norm = track.get('path', '').replace('\\', '/')
+                        if track_path_norm == last_path_norm:
+                            self._current_index = i
+                            self.table.highlight_playing(i)
+                            self.player_bar.set_track_info(
+                                track.get('title', ''), 
+                                track.get('artist', '')
+                            )
+                            
+                            # Set source so play button works
+                            path = track.get('path', '')
+                            if path and os.path.exists(path):
+                                self._player.setSource(QUrl.fromLocalFile(path))
+                                try:
+                                    self._set_current_media_local_path(path)
+                                except Exception:
+                                    pass
                                 
-                                # Set source so play button works
-                                path = track.get('path', '')
-                                if path and os.path.exists(path):
-                                    self._player.setSource(QUrl.fromLocalFile(path))
-                                    try:
-                                        self._set_current_media_local_path(path)
-                                    except Exception:
-                                        pass
-                                    
-                                    # Restore last position after media loads
-                                    last_pos = state.get('last_position', 0)
-                                    if last_pos > 0:
-                                        self.resume_banner.show()
-                                        self._pending_seek_position = last_pos
-                                        # Connect once to restore position when media loads
-                                        def on_media_loaded(status):
-                                            if status == QMediaPlayer.LoadedMedia:
-                                                if hasattr(self, '_pending_seek_position') and self._pending_seek_position > 0:
-                                                    self._player.setPosition(self._pending_seek_position)
-                                                    print(f"Restored position: {self._pending_seek_position / 1000:.1f}s")
-                                                    self._pending_seek_position = 0
-                                                try:
-                                                    self._player.mediaStatusChanged.disconnect(on_media_loaded)
-                                                except:
-                                                    pass
-                                        self._player.mediaStatusChanged.connect(on_media_loaded)
-                                
-                                print(f"Restored last track: {track.get('title')}")
-                                break
+                                # Restore last position after media loads
+                                last_pos = state.get('last_position', 0)
+                                if last_pos > 0:
+                                    self.resume_banner.set_track_title(track.get('title', 'Unknown'))
+                                    self.resume_banner.show()
+                                    self.resume_banner.raise_()
+                                    self._pending_seek_position = last_pos
+                                    # Connect once to restore position when media loads
+                                    def on_media_loaded(status):
+                                        if status == QMediaPlayer.LoadedMedia:
+                                            if hasattr(self, '_pending_seek_position') and self._pending_seek_position > 0:
+                                                self._player.setPosition(self._pending_seek_position)
+                                                print(f"Restored position: {self._pending_seek_position / 1000:.1f}s")
+                                                self._pending_seek_position = 0
+                                            try:
+                                                self._player.mediaStatusChanged.disconnect(on_media_loaded)
+                                            except:
+                                                pass
+                                    self._player.mediaStatusChanged.connect(on_media_loaded)
+                            
+                            print(f"Restored last track: {track.get('title')}")
+                            track_found = True
+                            break
                     
-                    # Restore volume
-                    volume = state.get('volume', 100)
-                    self._audio_output.setVolume(volume / 100.0)
-                    self.player_bar.volume_slider.setValue(volume)
-                    
-                    # Restore aspect ratio
-                    
-                    # Restore shuffle and loop mode
-                    shuffle = state.get('shuffle', False)
-                    self.player_bar.set_shuffle(shuffle)
-                    
-                    if 'loop_mode' in state:
-                        self.player_bar.set_loop_mode(state['loop_mode'])
-                    
-                    # Restore shuffle sequence and pointer
-                    self._shuffled_sequence = state.get('shuffled_sequence', [])
-                    self._shuffled_pointer = state.get('shuffled_pointer', -1)
-                    
-                    # Verify consistency of restored shuffle data
-                    if self._shuffled_sequence and (len(self._shuffled_sequence) != len(self._playlist)):
-                        # Playlist size changed since last run, invalidate sequence
-                        self._shuffled_sequence = []
-                        self._shuffled_pointer = -1
-                    
-                    # Restore subtitle preferences
-                    self._subtitle_style_preset = state.get('subtitle_style_preset', 'outline')
-                    self._subtitle_font_size = state.get('subtitle_font_size', 16)
-                    # Apply after video player is available
-                    from PySide6.QtCore import QTimer
-                    QTimer.singleShot(0, self._apply_saved_subtitle_appearance)
-                    
-                    print(f"Loaded state: {folder}")
+                    if not track_found and os.path.exists(last_path):
+                        # Track not found in playlist, but file exists.
+                        last_pos = state.get('last_position', 0)
+                        title = os.path.splitext(os.path.basename(last_path))[0]
+                        self._pending_single_track_resume = {
+                            'path': last_path,
+                            'title': title,
+                            'position': last_pos
+                        }
+                        if last_pos > 0:
+                            self.resume_banner.set_track_title(title)
+                            self.resume_banner.show()
+                            self.resume_banner.raise_()
+                
+                # Restore volume
+                volume = state.get('volume', 100)
+                self._audio_output.setVolume(volume / 100.0)
+                self.player_bar.volume_slider.setValue(volume)
+                
+                # Restore aspect ratio
+                
+                # Restore shuffle and loop mode
+                shuffle = state.get('shuffle', False)
+                self.player_bar.set_shuffle(shuffle)
+                
+                if 'loop_mode' in state:
+                    self.player_bar.set_loop_mode(state['loop_mode'])
+                
+                # Restore shuffle sequence and pointer
+                self._shuffled_sequence = state.get('shuffled_sequence', [])
+                self._shuffled_pointer = state.get('shuffled_pointer', -1)
+                
+                # Verify consistency of restored shuffle data
+                if self._shuffled_sequence and (len(self._shuffled_sequence) != len(self._playlist)):
+                    # Playlist size changed since last run, invalidate sequence
+                    self._shuffled_sequence = []
+                    self._shuffled_pointer = -1
+                
+                # Restore subtitle preferences
+                self._subtitle_style_preset = state.get('subtitle_style_preset', 'outline')
+                self._subtitle_font_size = state.get('subtitle_font_size', 16)
+                # Apply after video player is available
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, self._apply_saved_subtitle_appearance)
+                
+                print(f"Loaded state: {folder}")
         except Exception as e:
             print(f"Failed to load state: {e}")
     

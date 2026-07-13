@@ -103,6 +103,38 @@ def _drop_debug_log(msg: str):
         pass
 
 
+from PySide6.QtCore import QAbstractNativeEventFilter
+
+class TaskbarEventFilter(QAbstractNativeEventFilter):
+    """Layer 1 of multi-layer taskbar message interception system."""
+    def __init__(self, main_window):
+        super().__init__()
+        import weakref
+        self._win_ref = weakref.ref(main_window)
+        
+    def nativeEventFilter(self, eventType, message):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            msg_ptr = int(message)
+            from ctypes.wintypes import MSG
+            msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
+            
+            WM_COMMAND = 0x0111
+            if msg.message == WM_COMMAND:
+                hi_word = (msg.wParam >> 16) & 0xFFFF
+                if hi_word == 0x1800: # THBN_CLICKED
+                    button_id = msg.wParam & 0xFFFF
+                    print(f"[Taskbar DEBUG] Layer 1 (Filter) caught THBN_CLICKED: {button_id}", flush=True)
+                    parent = self._win_ref()
+                    if parent and hasattr(parent, 'taskbar_button_clicked'):
+                        print(f"[Taskbar DEBUG] Layer 1 emitting signal for button {button_id}", flush=True)
+                        parent.taskbar_button_clicked.emit(button_id)
+                        return True, 0
+        except Exception as e:
+            print(f"[Taskbar ERROR] Layer 1 Filter Error: {e}")
+        return False, 0
+
 class DropFileNativeFilter:
     """Application-level native event filter for WM_DROPFILES drag-and-drop.
 
@@ -177,16 +209,6 @@ class DropFileNativeFilter:
                                 parent._os_taskbar_timer.start(500)
                                 return True, 0
 
-                            if hasattr(parent, 'taskbar_toolbar') and parent.taskbar_toolbar:
-                                WM_COMMAND = 0x0111
-                                if msg.message == WM_COMMAND:
-                                    button_id = msg.wParam & 0xFFFF
-                                    hi_word = (msg.wParam >> 16) & 0xFFFF
-                                    if hi_word == 0x1800: # THBN_CLICKED
-                                        print(f"[Taskbar DEBUG] Filter caught THBN_CLICKED for button: {button_id}", flush=True)
-                                    if button_id in (100, 101, 102):
-                                        parent.taskbar_toolbar.handle_button_click(button_id)
-                                        return True, 0
                         return False, 0
 
                     _drop_debug_log(f"WM_DROPFILES caught via QAbstractNativeEventFilter. HDROP={hex(msg.wParam)}")
@@ -3723,6 +3745,8 @@ class GameLauncher(QWidget):
     _icon_cache = {}
     _icon_cache_max_size = 67 # Limit cache to prevent RAM growth
     
+    taskbar_button_clicked = Signal(int)
+    
     def _cleanup_memory(self):
         """Periodic memory cleanup to prevent RAM growth."""
         # Limit icon cache size
@@ -3969,8 +3993,9 @@ class GameLauncher(QWidget):
             QApplication.processEvents()
             time.sleep(0.01)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None, config_manager=None, start_minimised=False, has_tray_icon=False):
+        super().__init__(parent)
+        self.taskbar_button_clicked.connect(self._on_taskbar_button_clicked)
         self.current_edit_game = None  # Store the game being edited
         self._game_text_color = "#e0e0e0"  # Default light text, updated by apply_theme
         self._has_bg_image = False  # Track if custom background is set
@@ -11045,7 +11070,7 @@ First Played: {first_played_formatted}
     
     def showEvent(self, event):
         """Initialize taskbar thumbnail toolbar when window is shown."""
-        print(f"[Taskbar DEBUG] showEvent triggered for {self.__class__.__name__}", flush=True)
+        print(f"[Taskbar DEBUG] showEvent triggered for {self.__class__.__name__} [id={id(self)}]", flush=True)
         super().showEvent(event)
         
         # Setup taskbar toolbar after window is visible (needs valid HWND)
@@ -11066,24 +11091,51 @@ First Played: {first_played_formatted}
                 # If running as Admin, we must allow the Taskbar messages through UIPI
                 try:
                     import ctypes
+                    from ctypes import wintypes
                     user32 = ctypes.windll.user32
                     MSGFLT_ALLOW = 1
+                    
+                    ChangeWindowMessageFilterEx = user32.ChangeWindowMessageFilterEx
+                    ChangeWindowMessageFilterEx.argtypes = [
+                        wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p
+                    ]
+                    ChangeWindowMessageFilterEx.restype = wintypes.BOOL
+                    
+                    hwnd = int(self.winId())
                     if hasattr(self, '_WM_TASKBARBUTTONCREATED') and self._WM_TASKBARBUTTONCREATED:
-                        user32.ChangeWindowMessageFilterEx(int(self.winId()), self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
+                        ChangeWindowMessageFilterEx(hwnd, self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
                     # Also allow WM_COMMAND for the buttons themselves
-                    user32.ChangeWindowMessageFilterEx(int(self.winId()), 0x0111, MSGFLT_ALLOW, None)
+                    ChangeWindowMessageFilterEx(hwnd, 0x0111, MSGFLT_ALLOW, None)
+                    
+                    proxy_hwnd = getattr(self, '_os_taskbar_proxy_hwnd', None)
+                    if proxy_hwnd and proxy_hwnd != hwnd:
+                        ChangeWindowMessageFilterEx(proxy_hwnd, 0x0111, MSGFLT_ALLOW, None)
                 except Exception as ex:
                     print(f"[Taskbar DEBUG] ChangeWindowMessageFilterEx error: {ex}")
             except Exception as e:
                 print(f"[Taskbar FATAL] Could not setup taskbar toolbar: {e}")
                 
+    def _on_taskbar_button_clicked(self, button_id):
+        """Safely route taskbar button clicks directly to handler methods."""
+        print(f"[Taskbar DEBUG] _on_taskbar_button_clicked handling button_id={button_id} natively", flush=True)
+        
+        # Hardcoded IDs based on TaskbarThumbnailToolbar constants
+        if button_id == 100:  # BUTTON_PREV
+            self._taskbar_prev()
+        elif button_id == 101:  # BUTTON_PLAYPAUSE
+            self._taskbar_playpause()
+        elif button_id == 102:  # BUTTON_NEXT
+            self._taskbar_next()
+
     def _trigger_taskbar_init(self):
         """Bound helper to safely jump from C++ timer signal into python without signature mismatches."""
         self._init_taskbar_buttons()
     
     def _init_taskbar_buttons(self, proxy_hwnd=None):
         """Initialize taskbar thumbnail buttons using the main window HWND."""
+        print(f"[Taskbar DEBUG] _init_taskbar_buttons running for [id={id(self)}]", flush=True)
         if not hasattr(self, 'taskbar_toolbar') or not self.taskbar_toolbar:
+            print(f"[Taskbar DEBUG] _init_taskbar_buttons ABORT: taskbar_toolbar is None for [id={id(self)}]", flush=True)
             return
             
         # FORCE using the main window HWND instead of the explorer proxy HWND.
@@ -11126,29 +11178,77 @@ First Played: {first_played_formatted}
         
     def _exec_os_taskbar_init(self):
         """Executes taskbar init specifically triggered by Explorer OS message."""
-        self._init_taskbar_buttons(getattr(self, '_os_taskbar_proxy_hwnd', None))
+        hwnd = getattr(self, '_os_taskbar_proxy_hwnd', None)
+        self._init_taskbar_buttons(hwnd)
+        if not hasattr(self, '_wndproc_hooked_for_taskbar') and hwnd:
+            self._install_wndproc_hook(hwnd)
+            self._wndproc_hooked_for_taskbar = True
+
+    def _install_wndproc_hook(self, hwnd):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            
+            GWLP_WNDPROC = -4
+            WM_COMMAND = 0x0111
+            
+            # Setup correct types for 64-bit pointers
+            LRESULT = ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long
+            WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+            
+            try:
+                GetWindowLongPtr = user32.GetWindowLongPtrW
+                SetWindowLongPtr = user32.SetWindowLongPtrW
+            except AttributeError:
+                GetWindowLongPtr = user32.GetWindowLongW
+                SetWindowLongPtr = user32.SetWindowLongW
+                
+            GetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int]
+            GetWindowLongPtr.restype = ctypes.c_void_p
+            
+            SetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+            SetWindowLongPtr.restype = ctypes.c_void_p
+            
+            CallWindowProc = user32.CallWindowProcW
+            CallWindowProc.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+            CallWindowProc.restype = LRESULT
+            
+            self._orig_wndproc_ptr = GetWindowLongPtr(int(hwnd), GWLP_WNDPROC)
+            
+            def wndproc_hook(h, m, w, l):
+                try:
+                    if m == WM_COMMAND:
+                        hi = (w >> 16) & 0xFFFF
+                        if hi == 0x1800: # THBN_CLICKED
+                            button_id = w & 0xFFFF
+                            print(f"[Taskbar DEBUG] ctypes hook caught THBN_CLICKED: {button_id}", flush=True)
+                            if hasattr(self, 'taskbar_button_clicked'):
+                                print(f"[Taskbar DEBUG] ctypes hook emitting signal for button {button_id}", flush=True)
+                                self.taskbar_button_clicked.emit(button_id)
+                            else:
+                                print(f"[Taskbar ERROR] ctypes hook: taskbar_button_clicked signal NOT FOUND!", flush=True)
+                            return 0
+                except Exception as e:
+                    print(f"[Taskbar ERROR] Error in WndProc hook: {e}")
+                
+                return CallWindowProc(self._orig_wndproc_ptr, h, m, w, l)
+                
+            self._wndproc_hook_cb = WNDPROC(wndproc_hook)
+            cb_ptr = ctypes.cast(self._wndproc_hook_cb, ctypes.c_void_p)
+            
+            SetWindowLongPtr(int(hwnd), GWLP_WNDPROC, cb_ptr)
+            print(f"[Taskbar DEBUG] ctypes WndProc hooked for HWND {hex(hwnd)}", flush=True)
+        except Exception as e:
+            print(f"[Taskbar ERROR] Failed to hook WndProc: {e}")
 
     def nativeEvent(self, eventType, message):
-        """Handle Windows native events for taskbar button clicks."""
+        """Handle Windows native events."""
         try:
             import ctypes
             from ctypes import wintypes
             msg_ptr = int(message)
             msg = ctypes.cast(msg_ptr, ctypes.POINTER(wintypes.MSG)).contents
-            
-            # Intercept Taskbar Thumbnail Button Clicks natively
-            # By bypassing the proxy HWND and registering directly to the main window,
-            # Explorer sends WM_COMMAND directly here, completely removing the need for ctypes hooks.
-            WM_COMMAND = 0x0111
-            if msg.message == WM_COMMAND:
-                hi_word = (msg.wParam >> 16) & 0xFFFF
-                if hi_word == 0x1800:  # THBN_CLICKED
-                    lo_word = msg.wParam & 0xFFFF
-                    print(f"[Taskbar DEBUG] nativeEvent caught THBN_CLICKED! button_id={lo_word}", flush=True)
-                    if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
-                        from PySide6.QtCore import QTimer
-                        QTimer.singleShot(0, lambda: self.taskbar_toolbar.handle_button_click(lo_word))
-                    return True, 0
             
             # System sleep/resume events
             if msg.message == 0x0218:
@@ -11208,12 +11308,27 @@ First Played: {first_played_formatted}
     
     def _update_taskbar_play_state(self, state):
         """Update taskbar button based on playback state."""
+        from PySide6.QtMultimedia import QMediaPlayer
+        # Handle both string enum (PySide6) and integer fallback just in case
+        is_playing = (state == QMediaPlayer.PlaybackState.PlayingState) if hasattr(QMediaPlayer, 'PlaybackState') else (state == QMediaPlayer.PlayingState)
+        print(f"[Taskbar DEBUG] Play state updated. Raw state: {state}, is_playing: {is_playing}", flush=True)
+        
+        target_hwnd = getattr(self, '_verified_taskbar_hwnd', None) or int(self.winId())
+        
+        # If taskbar_toolbar was lost/GC'd, recreate the COM interface on the fly to send the update
+        if not hasattr(self, 'taskbar_toolbar') or not self.taskbar_toolbar:
+            if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar:
+                try:
+                    print("[Taskbar WARNING] taskbar_toolbar missing during icon update. Recreating...", flush=True)
+                    self.taskbar_toolbar = TaskbarThumbnailToolbar(target_hwnd)
+                    # Spoof buttons_added because DWM already added them earlier
+                    self.taskbar_toolbar.buttons_added = True
+                except Exception as e:
+                    print(f"[Taskbar ERROR] Failed to recreate toolbar for icon update: {e}", flush=True)
+                    
         if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
-            from PySide6.QtMultimedia import QMediaPlayer
-            # Handle both string enum (PySide6) and integer fallback just in case
-            is_playing = (state == QMediaPlayer.PlaybackState.PlayingState) if hasattr(QMediaPlayer, 'PlaybackState') else (state == QMediaPlayer.PlayingState)
-            print(f"[Taskbar DEBUG] Play state updated. Raw state: {state}, is_playing: {is_playing}", flush=True)
-            target_hwnd = getattr(self, '_verified_taskbar_hwnd', None)
+            # Force buttons_added to True just in case
+            self.taskbar_toolbar.buttons_added = True
             self.taskbar_toolbar.update_play_state(is_playing, target_hwnd=target_hwnd)
     
     def _setup_single_instance_server(self):
@@ -11304,6 +11419,11 @@ First Played: {first_played_formatted}
             if app is not None:
                 self._drop_filter = DropFileNativeFilter(self)
                 self._drop_filter.install(app)
+                
+                # Install Taskbar Event Filter (Layer 1)
+                self._taskbar_filter = TaskbarEventFilter(self)
+                app.installNativeEventFilter(self._taskbar_filter)
+                
                 self._debug_delay()
 
             _drop_debug_log(f"[DragDrop] UIPI bypass applied. hwnd={hex(hwnd)}  admin={bool(ctypes.windll.shell32.IsUserAnAdmin())}")
