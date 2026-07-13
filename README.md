@@ -144,38 +144,6 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 ---
 
 ## ✦ Changelog
-
-### 4.15
-
-- HELXAID:
-  -- Nothing new here.
-
-- HELXAIC:
-  -- Completey Reworked the HELXAIC Behaviour and UI, include:
-  --- Playlist and Media Library page.
-  --- Output device to Preffered Output.
-  --- COMPLETELY REMOVED video player and related features.
-  --- Now user can't hold shortcut to spam the action.
-  --- User must double click the track to play it.
-  --- Add Anti-Bot Cookie Bypass Youtube Downloader feature.
-  --- Add Open File, Open Multiple Files, Open Folder, Open Multiple Folders, Open Location from Clipboard and Open Recent Media at Upper menu bar.
-
-- HELXAIL:
-  -- The notification now pop-out when applying the CPU Setting (Bug fixes).
-
-- HELXAIR:
-  -- Nothing new here.
-
-- HELXAIRO:
-  -- Nothing new here.
-
-- HELXTATS:
-  -- Nothing new here.
-
-### 4.14.1
-
-- If user launch game from steam, it will launch steam first then the game launch.
-
 ### 4.14
 
 - Fixed some bugs in HELXAIC (I forgot to list them, sorry :<)
@@ -222,16 +190,6 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
   -- Network Interface Errors
   -- Network Interface Collisions
 - Fixes "Update Interval" label appeared at all Tab, now it only appears at "Quick Setup", "CPU", "Drive", "System Vital" Tab.
-
-### V4.11
-
-- Sometimes CMD pop-up when launch at startup windows.
-- Fixes "Start as minimized" setting functionality.
-- Add "Hide Initialize Panel" setting functionality.
-- Improve update detection.
-- Add LHM Install panel if user didnt have (I forgot this one, sorry :( ).
-- Add LHM at the list of uninstall tools.
-- Add FFmpeg/FFprobe at the list of uninstall tools.
 
 ---
 
