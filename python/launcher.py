@@ -181,7 +181,10 @@ class DropFileNativeFilter:
                                 WM_COMMAND = 0x0111
                                 if msg.message == WM_COMMAND:
                                     button_id = msg.wParam & 0xFFFF
-                                    if button_id in (0x101, 0x102, 0x103):
+                                    hi_word = (msg.wParam >> 16) & 0xFFFF
+                                    if hi_word == 0x1800: # THBN_CLICKED
+                                        print(f"[Taskbar DEBUG] Filter caught THBN_CLICKED for button: {button_id}", flush=True)
+                                    if button_id in (100, 101, 102):
                                         parent.taskbar_toolbar.handle_button_click(button_id)
                                         return True, 0
                         return False, 0
@@ -895,6 +898,7 @@ try:
         
         def handle_button_click(self, button_id):
             """Handle a button click from WM_COMMAND."""
+            print(f"[Taskbar DEBUG] handle_button_click called with id={button_id}", flush=True)
             if button_id == BUTTON_PREV and self.on_prev:
                 self.on_prev()
             elif button_id == BUTTON_PLAYPAUSE and self.on_playpause:
@@ -6073,25 +6077,38 @@ Stylesheet Selector:
 
     def _taskbar_prev(self):
         """Taskbar button: Previous track."""
-        if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_prev_track'):
-            self.music_panel._prev_track()
+        try:
+            if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_prev_track'):
+                if getattr(self.music_panel, '_playlist', None):
+                    self.music_panel._prev_track()
+        except Exception as e:
+            print(f"[Taskbar] prev error: {e}", flush=True)
     
     def _taskbar_playpause(self):
         """Taskbar button: Play/Pause."""
-        if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_toggle_play'):
-            self.music_panel._toggle_play()
+        try:
+            if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_toggle_play'):
+                # Only toggle if there's a playlist loaded OR player already has media
+                has_playlist = bool(getattr(self.music_panel, '_playlist', None))
+                from PySide6.QtMultimedia import QMediaPlayer
+                has_media = hasattr(self.music_panel, '_player') and self.music_panel._player.source().isValid()
+                if has_playlist or has_media:
+                    self.music_panel._toggle_play()
+                else:
+                    print("[Taskbar] Play ignored: no playlist loaded", flush=True)
+        except Exception as e:
+            print(f"[Taskbar] playpause error: {e}", flush=True)
     
     def _taskbar_next(self):
         """Taskbar button: Next track."""
-        if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_next_track'):
-            self.music_panel._next_track()
+        try:
+            if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_next_track'):
+                if getattr(self.music_panel, '_playlist', None):
+                    self.music_panel._next_track()
+        except Exception as e:
+            print(f"[Taskbar] next error: {e}", flush=True)
     
-    def _update_taskbar_play_state(self, state):
-        """Update taskbar button icon based on playback state."""
-        if self.taskbar_toolbar:
-            from PySide6.QtMultimedia import QMediaPlayer
-            is_playing = (state == QMediaPlayer.PlayingState)
-            self.taskbar_toolbar.update_play_state(is_playing)
+
     def _on_music_panel_loaded(self, success):
         """Called when HTML music panel finishes loading."""
         if success and hasattr(self, 'music_bridge'):
@@ -11065,16 +11082,15 @@ First Played: {first_played_formatted}
         self._init_taskbar_buttons()
     
     def _init_taskbar_buttons(self, proxy_hwnd=None):
-        """Initialize taskbar thumbnail buttons with a verified proxy HWND."""
+        """Initialize taskbar thumbnail buttons using the main window HWND."""
         if not hasattr(self, 'taskbar_toolbar') or not self.taskbar_toolbar:
             return
             
-        # We must explicitly fallback to int(self.winId())! 
-        # Qt directly owns the DWM connection, allowing GetAncestor to fetch a higher root 
-        # causes PySide6 DWM rejection.
-        target_hwnd = proxy_hwnd if proxy_hwnd else getattr(self, '_verified_taskbar_hwnd', None)
-        if not target_hwnd:
-            target_hwnd = int(self.winId())
+        # FORCE using the main window HWND instead of the explorer proxy HWND.
+        # This ensures that WM_COMMAND (THBN_CLICKED) messages are sent directly to
+        # our main window, allowing us to catch them in QWidget.nativeEvent safely
+        # without requiring ANY dangerous ctypes hooks (which crash on drag-and-drop).
+        target_hwnd = int(self.winId())
         
         if proxy_hwnd: 
             self._verified_taskbar_hwnd = proxy_hwnd
@@ -11111,60 +11127,84 @@ First Played: {first_played_formatted}
     def _exec_os_taskbar_init(self):
         """Executes taskbar init specifically triggered by Explorer OS message."""
         self._init_taskbar_buttons(getattr(self, '_os_taskbar_proxy_hwnd', None))
-        
+
     def nativeEvent(self, eventType, message):
         """Handle Windows native events for taskbar button clicks."""
         try:
             import ctypes
-            from ctypes.wintypes import MSG
+            from ctypes import wintypes
             msg_ptr = int(message)
-            msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
+            msg = ctypes.cast(msg_ptr, ctypes.POINTER(wintypes.MSG)).contents
             
-            # 1. Listen for TaskbarButtonCreated
-            if hasattr(self, '_WM_TASKBARBUTTONCREATED') and msg.message == self._WM_TASKBARBUTTONCREATED:
-                print(f"[Taskbar ENFORCER] Caught TaskbarButtonCreated msg! Explorer assigned HWND: {hex(msg.hWnd)}")
-                self._verified_taskbar_hwnd = msg.hWnd
-                self._os_taskbar_proxy_hwnd = msg.hWnd
-                from PySide6.QtCore import QTimer
-                self._os_taskbar_timer = QTimer(self)
-                self._os_taskbar_timer.setSingleShot(True)
-                self._os_taskbar_timer.timeout.connect(self._exec_os_taskbar_init)
-                self._os_taskbar_timer.start(100)
+            # Intercept Taskbar Thumbnail Button Clicks natively
+            # By bypassing the proxy HWND and registering directly to the main window,
+            # Explorer sends WM_COMMAND directly here, completely removing the need for ctypes hooks.
+            WM_COMMAND = 0x0111
+            if msg.message == WM_COMMAND:
+                hi_word = (msg.wParam >> 16) & 0xFFFF
+                if hi_word == 0x1800:  # THBN_CLICKED
+                    lo_word = msg.wParam & 0xFFFF
+                    print(f"[Taskbar DEBUG] nativeEvent caught THBN_CLICKED! button_id={lo_word}", flush=True)
+                    if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
+                        from PySide6.QtCore import QTimer
+                        QTimer.singleShot(0, lambda: self.taskbar_toolbar.handle_button_click(lo_word))
+                    return True, 0
+            
+            # System sleep/resume events
+            if msg.message == 0x0218:
+                if msg.wParam == 0x0000:
+                    print("[System] Entering Sleep Mode")
+                    self.system_sleep_event.emit(True)
+                elif msg.wParam == 0x0007:
+                    print("[System] Waking Up")
+                    self.system_sleep_event.emit(False)
+                    
+            # Custom WM_HELXAID_WAKE message to show window
+            if msg.message == self._WM_HELXAID_WAKE:
+                print("[NativeEvent] Received WM_HELXAID_WAKE message. Restoring window.")
+                self.restore_from_tray()
                 return True, 0
-                
-            # 2. Listen for WM_COMMAND when buttons are clicked
-            if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
-                WM_COMMAND = 0x0111
-                if msg.message == WM_COMMAND:
-                    button_id = msg.wParam & 0xFFFF
-                    if button_id in (0x101, 0x102, 0x103): # PREV, PLAYPAUSE, NEXT
-                        self.taskbar_toolbar.handle_button_click(button_id)
-                        return True, 0
-        except Exception:
+
+        except Exception as e:
             pass
-            
+
         return super().nativeEvent(eventType, message)
 
     def _taskbar_prev(self):
         """Handle taskbar Previous button."""
-        if hasattr(self, 'music_panel'):
-            self.music_panel._prev_track()
-        elif hasattr(self, 'audio_player') and self.audio_player:
-            self.audio_player.prev_track()
+        try:
+            if hasattr(self, 'music_panel') and getattr(self.music_panel, '_playlist', None):
+                self.music_panel._prev_track()
+            elif hasattr(self, 'audio_player') and self.audio_player:
+                self.audio_player.prev_track()
+        except Exception as e:
+            print(f"[Taskbar] prev error: {e}", flush=True)
     
     def _taskbar_playpause(self):
         """Handle taskbar Play/Pause toggle button."""
-        if hasattr(self, 'music_panel'):
-            self.music_panel._toggle_play()
-        elif hasattr(self, 'audio_player') and self.audio_player:
-            self.audio_player.toggle_play()
+        try:
+            if hasattr(self, 'music_panel'):
+                has_playlist = bool(getattr(self.music_panel, '_playlist', None))
+                from PySide6.QtMultimedia import QMediaPlayer
+                has_media = hasattr(self.music_panel, '_player') and self.music_panel._player.source().isValid()
+                if has_playlist or has_media:
+                    self.music_panel._toggle_play()
+                else:
+                    print("[Taskbar] Play ignored: no playlist loaded", flush=True)
+            elif hasattr(self, 'audio_player') and self.audio_player:
+                self.audio_player.toggle_play()
+        except Exception as e:
+            print(f"[Taskbar] playpause error: {e}", flush=True)
     
     def _taskbar_next(self):
         """Handle taskbar Next button."""
-        if hasattr(self, 'music_panel'):
-            self.music_panel._next_track()
-        elif hasattr(self, 'audio_player') and self.audio_player:
-            self.audio_player.next_track()
+        try:
+            if hasattr(self, 'music_panel') and getattr(self.music_panel, '_playlist', None):
+                self.music_panel._next_track()
+            elif hasattr(self, 'audio_player') and self.audio_player:
+                self.audio_player.next_track()
+        except Exception as e:
+            print(f"[Taskbar] next error: {e}", flush=True)
     
     def _update_taskbar_play_state(self, state):
         """Update taskbar button based on playback state."""
@@ -11172,6 +11212,7 @@ First Played: {first_played_formatted}
             from PySide6.QtMultimedia import QMediaPlayer
             # Handle both string enum (PySide6) and integer fallback just in case
             is_playing = (state == QMediaPlayer.PlaybackState.PlayingState) if hasattr(QMediaPlayer, 'PlaybackState') else (state == QMediaPlayer.PlayingState)
+            print(f"[Taskbar DEBUG] Play state updated. Raw state: {state}, is_playing: {is_playing}", flush=True)
             target_hwnd = getattr(self, '_verified_taskbar_hwnd', None)
             self.taskbar_toolbar.update_play_state(is_playing, target_hwnd=target_hwnd)
     
