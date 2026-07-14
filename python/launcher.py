@@ -2051,17 +2051,32 @@ def load_settings():
     return DEFAULT_SETTINGS.copy()
 
 def save_settings(settings):
-    """Save app settings to settings.json, merging to preserve external changes."""
+    """Save app settings to settings.json.
+    
+    Keys managed exclusively by other modules (MusicPanelWidget, MediaLibraryPage)
+    are always read fresh from disk so launcher.py's stale in-memory copy can never
+    overwrite them.
+    """
+    # Keys that are written directly to settings.json by other modules.
+    # launcher.py does NOT own these; always restore their latest on-disk values.
+    EXTERNAL_KEYS = [
+        'playlist_covers',
+        'media_library_items',
+        'media_library_folders',
+        'last_cover_dir',
+    ]
     try:
         if os.path.exists(SETTINGS_PATH):
             try:
                 with open(SETTINGS_PATH, "r", encoding='utf-8') as f:
                     disk_settings = json.load(f)
-                disk_settings.update(settings)
-                settings = disk_settings
+                # Restore externally-managed keys from disk so we never clobber them
+                for k in EXTERNAL_KEYS:
+                    if k in disk_settings:
+                        settings[k] = disk_settings[k]
             except Exception:
                 pass
-                
+
         tmp_path = SETTINGS_PATH + ".tmp"
         with open(tmp_path, "w", encoding='utf-8') as f:
             json.dump(settings, f, indent=4)

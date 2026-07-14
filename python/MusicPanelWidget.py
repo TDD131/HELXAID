@@ -1727,6 +1727,57 @@ class FullscreenImageOverlay(QDialog):
             self.accept()
 
 
+class RoundedImageLabel(QLabel):
+    def __init__(self, radius=8, parent=None):
+        super().__init__(parent)
+        self._pixmap = None
+        self._radius = radius
+        self._border_width = 1
+        from PySide6.QtGui import QColor
+        self._border_color = QColor("#444444")
+        self._bg_color = QColor("#2a2a3a")
+        
+    def setPixmap(self, pixmap):
+        self._pixmap = pixmap
+        from PySide6.QtGui import QPixmap
+        super().setPixmap(QPixmap())  # Clear native pixmap so we draw custom
+        self.update()
+        
+    def clear(self):
+        self._pixmap = None
+        super().clear()
+        self.update()
+        
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QPainterPath, QBrush, QPen
+        from PySide6.QtCore import Qt, QRectF
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        rect = QRectF(self.rect()).adjusted(
+            self._border_width/2, self._border_width/2, 
+            -self._border_width/2, -self._border_width/2
+        )
+        
+        path = QPainterPath()
+        path.addRoundedRect(rect, self._radius, self._radius)
+        
+        painter.fillPath(path, QBrush(self._bg_color))
+        
+        if self._pixmap and not self._pixmap.isNull():
+            painter.setClipPath(path)
+            scaled = self._pixmap.scaled(self.rect().size(), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            painter.drawPixmap(0, 0, scaled)
+            painter.setClipping(False)
+            
+        pen = QPen(self._border_color, self._border_width)
+        painter.setPen(pen)
+        painter.drawPath(path)
+        
+        super().paintEvent(event)
+
+
 class InteractiveCoverLabel(QWidget):
     from PySide6.QtCore import Signal
     clicked_signal = Signal()
@@ -1752,10 +1803,9 @@ class InteractiveCoverLabel(QWidget):
         self.img_container = QWidget()
         self.img_container.setFixedSize(160, 160)
 
-        self.img_lbl = QLabel(self.img_container)
+        self.img_lbl = RoundedImageLabel(radius=8, parent=self.img_container)
         self.img_lbl.setGeometry(0, 0, 160, 160)
-        self.img_lbl.setScaledContents(True)
-        self.img_lbl.setStyleSheet("background: #2a2a3a; border-radius: 8px; border: 1px solid #444;")
+        # Note: No need for setScaledContents or stylesheet because RoundedImageLabel draws it
 
         self.overlay = QLabel(self.img_container)
         self.overlay.setGeometry(0, 0, 160, 160)
@@ -2142,18 +2192,16 @@ class PlaylistHeader(QFrame):
         container.setFixedSize(120, 120)
 
         # Back cover (moved right and up to clearly look like a vinyl sleeve/back album)
-        self.cover_back = QLabel(container)
+        self.cover_back = RoundedImageLabel(radius=6, parent=container)
         self.cover_back.setObjectName("coverBack")
         self.cover_back.setGeometry(25, 5, 85, 85)
-        self.cover_back.setScaledContents(True)
         self.cover_back.setCursor(Qt.PointingHandCursor)
         self.cover_back.setToolTip("Left-click: Edit Covers")
 
         # Front cover (slightly smaller so back cover is heavily visible)
-        self.cover_front = QLabel(container)
+        self.cover_front = RoundedImageLabel(radius=6, parent=container)
         self.cover_front.setObjectName("coverFront")
         self.cover_front.setGeometry(0, 20, 95, 95)
-        self.cover_front.setScaledContents(True)
         self.cover_front.setCursor(Qt.PointingHandCursor)
         self.cover_front.setToolTip("Left-click: Edit Covers")
         

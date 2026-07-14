@@ -28,6 +28,8 @@ python/music_panel_state.json
 .vscode/
 .idea/
 .vercel/
+.agents/
+.nogic/
 web/
 
 # Native Build files
