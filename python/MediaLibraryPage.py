@@ -647,7 +647,10 @@ class MediaLibraryPage(QWidget):
                 total_folders += 1
                 folder_item = QTreeWidgetItem(self.tree)
                 folder_name = os.path.basename(path) or path
-                folder_item.setText(1, f"📁 {folder_name}")
+                from PySide6.QtGui import QIcon
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
+                folder_item.setIcon(1, QIcon(icon_path))
+                folder_item.setText(1, folder_name)
                 folder_item.setData(0, Qt.UserRole, "folder")
                 folder_item.setData(1, Qt.UserRole, path)
                 

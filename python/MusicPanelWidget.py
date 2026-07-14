@@ -12,13 +12,13 @@ from PySide6.QtWidgets import (
     QSlider, QTableWidget, QTableWidgetItem, QHeaderView,
     QFrame, QStackedWidget, QSizePolicy, QAbstractItemView,
     QScrollArea, QLineEdit, QSpinBox, QSpacerItem,
-    QDialog, QComboBox, QRadioButton, QButtonGroup,
-    QProgressBar, QGroupBox, QSplitter, QApplication
+    QDialog, QComboBox, QRadioButton, QButtonGroup, QCheckBox,
+    QProgressBar, QGroupBox, QSplitter, QApplication, QToolButton
 )
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import (
     Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
-    QSize, QPoint, QUrl, QThread, QSettings, QRect, Property
+    QSize, QPoint, QUrl, QThread, QSettings, QRect, Property, QEvent
 )
 from PySide6.QtGui import (
     QPixmap, QIcon, QFont, QColor, QPalette, QCursor,
@@ -584,11 +584,14 @@ class YouTubeDownloaderPanel(QFrame):
             except Exception:
                 pass
                 
-            # Move to graveyard instead of deleting immediately while running
             if hasattr(self, '_thread_graveyard'):
                 self._thread_graveyard.append(worker)
                 # Cleanup graveyard when thread actually finishes
-                worker.finished.connect(lambda w=worker: self._safe_remove_from_graveyard(w))
+                try:
+                    worker.finished.connect(lambda w=worker: self._safe_remove_from_graveyard(w))
+                except RuntimeError:
+                    # Signal source has already been deleted
+                    pass
 
     def _safe_remove_from_graveyard(self, worker):
         """Called when a worker in the graveyard finally finishes."""
@@ -625,6 +628,7 @@ class YouTubeDownloaderPanel(QFrame):
         from smooth_scroll import SmoothScrollArea
         self.scroll_area = SmoothScrollArea()
         self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet("background: transparent; border: none;")
         
         self.scroll_content = QWidget()
@@ -635,8 +639,10 @@ class YouTubeDownloaderPanel(QFrame):
 
         # Header with close button
         header_row = QHBoxLayout()
-        title = QLabel("YouTube Downloader")
-        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #FF5B06;")
+        title = QLabel("YOUTUBE DOWNLOADER")
+        title.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 900; color: #FF5B06; letter-spacing: 1px;")
+        title.setWordWrap(True)
+        title.setMinimumWidth(10)
         header_row.addWidget(title)
         
         header_row.addStretch()
@@ -653,12 +659,13 @@ class YouTubeDownloaderPanel(QFrame):
         layout.addLayout(header_row)
 
         # URL input
-        url_lbl = QLabel("Paste URL:")
-        url_lbl.setStyleSheet("color: #888; font-size: 11px; font-weight: bold;")
+        url_lbl = QLabel("LINK VIDEO")
+        url_lbl.setStyleSheet("color: #FF5B06; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
         layout.addWidget(url_lbl)
         
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("https://www.youtube.com/...")
+        self.url_edit.setMinimumWidth(10)
         layout.addWidget(self.url_edit)
 
         # ---- Preview Section (Thumbnail + Title) ----
@@ -679,7 +686,7 @@ class YouTubeDownloaderPanel(QFrame):
 
         # Image Container
         self.thumb_container = QFrame()
-        self.thumb_container.setFixedSize(270, 152) # 16:9 balanced for 320px panel
+        self.thumb_container.setMinimumSize(160, 90) # 16:9 flexible
         self.thumb_container.setStyleSheet("background: rgba(0,0,0,0.4); border-radius: 4px;")
         
         thumb_inner_layout = QVBoxLayout(self.thumb_container)
@@ -700,14 +707,32 @@ class YouTubeDownloaderPanel(QFrame):
         layout.addWidget(self.preview_section)
 
         # Format & Quality
-        fmt_group = QGroupBox("Format & Quality")
+        fmt_group = QFrame()
+        fmt_group.setObjectName("ytModernGroup")
         fmt_layout = QVBoxLayout(fmt_group)
+        fmt_layout.setContentsMargins(12, 12, 12, 12)
+        fmt_layout.setSpacing(10)
         
-        self.rb_audio = QRadioButton("Audio (MP3)")
-        self.rb_video = QRadioButton("Video (MP4)")
+        fmt_title = QLabel("FORMAT & QUALITY")
+        fmt_title.setStyleSheet("color: #FF5B06; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
+        fmt_layout.addWidget(fmt_title)
+        
+        rb_layout = QHBoxLayout()
+        self.rb_audio = QCheckBox("Audio (MP3)")
+        self.rb_video = QCheckBox("Video (MP4)")
         self.rb_audio.setChecked(True)
-        fmt_layout.addWidget(self.rb_audio)
-        fmt_layout.addWidget(self.rb_video)
+        self.rb_audio.setCursor(Qt.PointingHandCursor)
+        self.rb_video.setCursor(Qt.PointingHandCursor)
+        
+        self.fmt_btn_group = QButtonGroup(self)
+        self.fmt_btn_group.addButton(self.rb_audio)
+        self.fmt_btn_group.addButton(self.rb_video)
+        self.fmt_btn_group.setExclusive(True)
+        
+        rb_layout.addWidget(self.rb_audio)
+        rb_layout.addWidget(self.rb_video)
+        rb_layout.addStretch()
+        fmt_layout.addLayout(rb_layout)
         
         self.quality_combo = QComboBox()
         self.quality_combo.setObjectName("ytQualityCombo")
@@ -761,25 +786,44 @@ class YouTubeDownloaderPanel(QFrame):
         self.size_lbl.setStyleSheet("color: #888; font-size: 11px; margin-top: 5px;")
         self.size_lbl.setWordWrap(True)
         
-        fmt_layout.addWidget(QLabel("Quality:"))
+        fmt_layout.addWidget(self.quality_combo)
         fmt_layout.addWidget(self.quality_combo)
         fmt_layout.addWidget(self.size_lbl)
         layout.addWidget(fmt_group)
 
         # Output Folder
-        folder_group = QGroupBox("Save to")
-        folder_layout = QHBoxLayout(folder_group)
+        folder_group = QFrame()
+        folder_group.setObjectName("ytModernGroup")
+        folder_layout = QVBoxLayout(folder_group)
+        folder_layout.setContentsMargins(12, 12, 12, 12)
+        folder_layout.setSpacing(10)
         
+        folder_title = QLabel("SAVE DIRECTORY")
+        folder_title.setStyleSheet("color: #FF5B06; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
+        folder_layout.addWidget(folder_title)
+        
+        folder_row = QHBoxLayout()
         self.folder_edit = QLineEdit()
         self.folder_edit.setReadOnly(True)
+        self.folder_edit.setCursor(Qt.ArrowCursor)
+        self.folder_edit.setMinimumWidth(10)
         settings = QSettings("TDD131", "HELXAID")
         last_dir = settings.value("YouTubeDownloader/last_output_dir", "", type=str)
         default_path = os.path.join(os.environ.get("USERPROFILE", ""), "Downloads")
         self.folder_edit.setText(last_dir or default_path)
         
-        browse_btn = QPushButton("...")
-        browse_btn.setFixedSize(30, 26)
-        browse_btn.setStyleSheet("background: rgba(255,255,255,0.1); font-weight: normal;")
+        browse_btn = QToolButton()
+        from PySide6.QtGui import QIcon
+        from PySide6.QtCore import QSize
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
+        browse_btn.setIcon(QIcon(icon_path))
+        browse_btn.setIconSize(QSize(16, 16))
+        browse_btn.setFixedSize(30, 30)
+        browse_btn.setCursor(Qt.PointingHandCursor)
+        browse_btn.setStyleSheet("""
+            QToolButton { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; }
+            QToolButton:hover { background: rgba(255, 91, 6, 0.2); border: 1px solid #FF5B06; }
+        """)
         
         def pick_folder():
             from PySide6.QtWidgets import QFileDialog
@@ -790,8 +834,9 @@ class YouTubeDownloaderPanel(QFrame):
                 settings.setValue("YouTubeDownloader/last_output_dir", d)
         
         browse_btn.clicked.connect(pick_folder)
-        folder_layout.addWidget(self.folder_edit, 1)
-        folder_layout.addWidget(browse_btn)
+        folder_row.addWidget(self.folder_edit, 1)
+        folder_row.addWidget(browse_btn)
+        folder_layout.addLayout(folder_row)
         layout.addWidget(folder_group)
 
         # Progress Section
@@ -807,6 +852,12 @@ class YouTubeDownloaderPanel(QFrame):
 
         layout.addStretch()
 
+        # Animation for fetching metadata
+        from PySide6.QtCore import QTimer
+        self._meta_anim_timer = QTimer(self)
+        self._meta_anim_dots = 0
+        self._meta_anim_timer.timeout.connect(self._animate_metadata_label)
+        
         # Action Button
         self.download_btn = QPushButton("Start Download")
         self.download_btn.setObjectName("ytPanelDownloadBtn")
@@ -815,16 +866,18 @@ class YouTubeDownloaderPanel(QFrame):
             QPushButton#ytPanelDownloadBtn {
                 background-color: #FF5B06;
                 color: #ffffff;
-                border: 1px solid rgba(255, 91, 6, 0.55);
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-weight: bold;
-                font-size: 13px;
+                border: none;
+                border-radius: 8px;
+                padding: 12px;
+                font-family: 'Orbitron', sans-serif;
+                font-weight: 900;
+                font-size: 14px;
+                letter-spacing: 1px;
             }
             QPushButton#ytPanelDownloadBtn:hover { background-color: #FF7B26; }
             QPushButton#ytPanelDownloadBtn:pressed { background-color: #E94F00; }
             QPushButton#ytPanelDownloadBtn:focus { outline: 0; }
-            QPushButton#ytPanelDownloadBtn:disabled { background-color: #333; color: #666; border-color: rgba(255,255,255,0.08); }
+            QPushButton#ytPanelDownloadBtn:disabled { background-color: #333; color: #666; }
         """)
         self.download_btn.clicked.connect(self._start_download)
         layout.addWidget(self.download_btn)
@@ -856,12 +909,33 @@ class YouTubeDownloaderPanel(QFrame):
                 border-radius: 4px; padding: 6px; color: #fff; font-size: 12px;
             }
             QLineEdit:focus { border-color: #FF5B06; }
-            QGroupBox {
-                border: 1px solid rgba(255, 91, 6, 0.1);
-                border-radius: 6px; margin-top: 15px; padding-top: 15px;
-                color: #888; font-size: 11px;
+            QFrame#ytModernGroup {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 91, 6, 0.15);
+                border-radius: 8px;
             }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; color: #FF5B06; }
+            
+            QCheckBox {
+                color: #ccc;
+                font-size: 11px;
+                font-weight: bold;
+                spacing: 6px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                border: 1px solid #777;
+                background: #2a2a2a;
+            }
+            QCheckBox::indicator:hover {
+                border-color: #FF5B06;
+            }
+            QCheckBox::indicator:checked {
+                border: 1px solid #FF5B06;
+                background: #FF5B06;
+                image: url(:/qt-project.org/styles/commonstyle/images/checkbox_checked.png);
+            }
             QComboBox {
                 background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
                 border-radius: 4px; padding: 4px; color: #e0e0e0;
@@ -923,6 +997,8 @@ class YouTubeDownloaderPanel(QFrame):
         # Basic validation to avoid yt-dlp noise on random text
         # Must have at least one dot and look like a potential link
         if not url or len(url) < 8 or '.' not in url:
+            if hasattr(self, '_meta_anim_timer'):
+                self._meta_anim_timer.stop()
             self.size_lbl.setText("Ready")
             self.size_lbl.setStyleSheet("color: #888; font-size: 11px;")
             self.preview_section.hide()
@@ -938,7 +1014,10 @@ class YouTubeDownloaderPanel(QFrame):
         # Clear UI for fresh fetch
         self.thumb_lbl.clear()
         self.title_lbl.setText("Resolving link...")
-        self.size_lbl.setText("Fetching metadata...")
+        self._meta_anim_dots = 0
+        self.size_lbl.setText("Fetching Metadata")
+        if hasattr(self, '_meta_anim_timer'):
+            self._meta_anim_timer.start(500)
 
         fmt = 'audio' if self.rb_audio.isChecked() else 'video'
         worker = MetadataWorker(url, fmt, self.quality_combo.currentIndex())
@@ -968,8 +1047,24 @@ class YouTubeDownloaderPanel(QFrame):
                 pass
 
         worker.metadata.connect(on_meta)
-        worker.error.connect(lambda _: self.size_lbl.setText("Meta: Failed"))
+        
+        def on_error(err):
+            if hasattr(self, '_meta_anim_timer'):
+                self._meta_anim_timer.stop()
+            self.size_lbl.setText("Meta: Failed")
+            
+        worker.error.connect(on_error)
         worker.start()
+
+    def _animate_metadata_label(self):
+        """Animates the size_lbl with dots while fetching metadata."""
+        if not self.size_lbl.text().startswith("Fetching Metadata"):
+            self._meta_anim_timer.stop()
+            return
+            
+        self._meta_anim_dots = (self._meta_anim_dots + 1) % 4
+        dots = "." * self._meta_anim_dots
+        self.size_lbl.setText(f"Fetching Metadata{dots}")
 
     def _on_thumb_loaded(self, data):
         """Update thumbnail label with downloaded preview image."""
@@ -1689,12 +1784,18 @@ class InteractiveCoverLabel(QWidget):
         self.path_edit.setCursor(Qt.ArrowCursor)
         
         self.folder_btn = QToolButton()
-        self.folder_btn.setText("📁")
+        import os
+        from PySide6.QtGui import QIcon
+        from PySide6.QtCore import QSize
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        folder_icon_path = os.path.join(script_dir, "UI Icons", "folder-icon-white.svg").replace("\\", "/")
+        self.folder_btn.setIcon(QIcon(folder_icon_path))
+        self.folder_btn.setIconSize(QSize(14, 14))
         self.folder_btn.setToolTip("Pick File" if action_text == "Edit" else "Open Folder")
         self.folder_btn.setStyleSheet("""
             QToolButton {
                 background: rgba(255, 255, 255, 0.05);
-                border: 1px solid #444; border-radius: 4px; padding: 2px; font-size: 12px;
+                border: 1px solid #444; border-radius: 4px; padding: 3px;
             }
             QToolButton:hover {
                 background: rgba(255, 91, 6, 0.5);
@@ -2037,21 +2138,24 @@ class PlaylistHeader(QFrame):
         subclassing QWidget.
         """
         container = QWidget()
+        container.setObjectName("coverContainer")
         container.setFixedSize(120, 120)
-        container.setCursor(Qt.PointingHandCursor)
-        container.setToolTip("Right-click: Manage Covers")
 
         # Back cover (moved right and up to clearly look like a vinyl sleeve/back album)
         self.cover_back = QLabel(container)
         self.cover_back.setObjectName("coverBack")
         self.cover_back.setGeometry(25, 5, 85, 85)
         self.cover_back.setScaledContents(True)
+        self.cover_back.setCursor(Qt.PointingHandCursor)
+        self.cover_back.setToolTip("Left-click: Edit Covers")
 
         # Front cover (slightly smaller so back cover is heavily visible)
         self.cover_front = QLabel(container)
         self.cover_front.setObjectName("coverFront")
         self.cover_front.setGeometry(0, 20, 95, 95)
         self.cover_front.setScaledContents(True)
+        self.cover_front.setCursor(Qt.PointingHandCursor)
+        self.cover_front.setToolTip("Left-click: Edit Covers")
         
         # Add a subtle drop shadow to ground the front cover and make layers pop
         from PySide6.QtWidgets import QGraphicsDropShadowEffect
@@ -2061,17 +2165,62 @@ class PlaylistHeader(QFrame):
         shadow.setColor(Qt.black)
         self.cover_front.setGraphicsEffect(shadow)
 
+        # Edit overlay (shown on hover over container)
+        self._cover_edit_overlay = QLabel(container)
+        self._cover_edit_overlay.setObjectName("coverEditOverlay")
+        self._cover_edit_overlay.setGeometry(0, 0, 120, 120)
+        self._cover_edit_overlay.setStyleSheet("background: rgba(0, 0, 0, 0.7); border-radius: 8px; border: none;")
+        self._cover_edit_overlay.setAlignment(Qt.AlignCenter)
+        self._cover_edit_overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        edit_icon_path = os.path.join(script_dir, "UI Icons", "edit.svg").replace("\\", "/")
+        self._cover_edit_overlay.setPixmap(QIcon(edit_icon_path).pixmap(28, 28))
+        self._cover_edit_overlay.show()
+        
+        # Setup opacity effect for fade in/out
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        self._cover_edit_effect = QGraphicsOpacityEffect(self._cover_edit_overlay)
+        self._cover_edit_effect.setOpacity(0.0)
+        self._cover_edit_overlay.setGraphicsEffect(self._cover_edit_effect)
+        
+        self._cover_fade_in = QPropertyAnimation(self._cover_edit_effect, b"opacity", self)
+        self._cover_fade_in.setDuration(200)
+        self._cover_fade_in.setEndValue(1.0)
+        
+        self._cover_fade_out = QPropertyAnimation(self._cover_edit_effect, b"opacity", self)
+        self._cover_fade_out.setDuration(250)
+        self._cover_fade_out.setEndValue(0.0)
+        
+        # Install event filter to detect hover specifically on the container
+        container.installEventFilter(self)
+
         # Route mouse button presses to _on_cover_mousepress
-        container.mousePressEvent = self._on_cover_mousepress
+        self.cover_back.mousePressEvent = self._on_cover_mousepress
+        self.cover_front.mousePressEvent = self._on_cover_mousepress
 
         self._cover_container = container
         return container
 
     def eventFilter(self, obj, event):
-        """No longer handles hover overlays internally for the container."""
+        """Handle hover overlay on front cover."""
+        if obj == self._cover_container:
+            if event.type() == QEvent.Enter:
+                self._cover_edit_overlay.show()
+                self._cover_fade_out.stop()
+                self._cover_fade_in.setStartValue(self._cover_edit_effect.opacity())
+                self._cover_fade_in.start()
+            elif event.type() == QEvent.Leave:
+                self._cover_fade_in.stop()
+                self._cover_fade_out.setStartValue(self._cover_edit_effect.opacity())
+                self._cover_fade_out.start()
         return super().eventFilter(obj, event)
     def _apply_style(self):
         self.setStyleSheet("""
+            QWidget#coverContainer {
+                background: transparent;
+            }
+            
             QFrame#playlistHeader {
                 background: transparent;
             }
@@ -2079,13 +2228,13 @@ class PlaylistHeader(QFrame):
             QLabel#coverBack {
                 background: #2a2a3a;
                 border-radius: 8px;
-                border: 1px solid rgba(255, 255, 255, 0.15);
+                border: 1px solid #444444;
             }
             
             QLabel#coverFront {
                 background: #3a3a4a;
                 border-radius: 8px;
-                border: 2px solid rgba(255, 91, 6, 0.4);
+                border: 1px solid #FF5B06;
             }
             
             QLabel#playlistLabel {
@@ -2143,13 +2292,13 @@ class PlaylistHeader(QFrame):
     def _on_cover_mousepress(self, event):
         """
         Route mouse button events on the cover container:
-          - Left button  → Ignored (no accidental file picker popping up).
-          - Right button → Show context menu for managing covers.
+          - Left button  → Show context menu for managing covers.
+          - Right button → Ignored.
         """
         from PySide6.QtWidgets import QMenu
         from PySide6.QtGui import QCursor
         
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.LeftButton:
             menu = QMenu(self)
             menu.addAction("Review Images", lambda: self._open_cover_manager('review'))
             menu.addAction("Edit images", lambda: self._open_cover_manager('edit'))
@@ -2515,7 +2664,7 @@ class PlaylistTable(QWidget):
                     if path and os.path.exists(path):
                         urls.append(QUrl.fromLocalFile(path))
                 elif role_data == "folder":
-                    group_name = item.text(1).replace("📁 ", "")
+                    group_name = item.text(1)
                     for track in self._tracks:
                         if track.get('playlist_group') == group_name:
                             path = track.get('path')
@@ -2701,7 +2850,7 @@ class PlaylistTable(QWidget):
         if role == "folder":
             # Detect triple click (within 400ms after double click)
             if (now - getattr(self, '_last_double_click_time', 0)) < 0.4:
-                folder_name = item.text(1).replace("📁 ", "")
+                folder_name = item.text(1)
                 self.flattenGroup.emit(folder_name)
                 self._last_double_click_time = 0
                 return
@@ -2769,7 +2918,7 @@ class PlaylistTable(QWidget):
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
             if item.data(0, Qt.UserRole) == "folder":
-                group_name = item.text(1).replace("📁 ", "")
+                group_name = item.text(1)
                 expanded_states[group_name] = item.isExpanded()
                 
         self.tree.setUpdatesEnabled(False)
@@ -2865,9 +3014,12 @@ class PlaylistTable(QWidget):
         
         # Process grouped items folder by folder
         for group, items in folders_dict.items():
-            folder_item = QTreeWidgetItem()
+            folder_item = QTreeWidgetItem(self.tree)
+            from PySide6.QtGui import QIcon
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
+            folder_item.setIcon(1, QIcon(icon_path))
+            folder_item.setText(1, group)
             folder_item.setData(0, Qt.UserRole, "folder")
-            folder_item.setText(1, f"📁 {group}")
             for c in range(4):
                 folder_item.setBackground(c, QColor(40, 40, 45, 180))
                 font = folder_item.font(c)
@@ -2949,6 +3101,7 @@ class PlayerBar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("playerBar")
+        self.setFocusPolicy(Qt.ClickFocus)
         self.setFixedHeight(75)
         self.setMinimumHeight(75)  # Prevent compression
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # Never shrink vertically
@@ -3104,19 +3257,37 @@ class PlayerBar(QFrame):
         self.volume_slider.setFixedWidth(80)
         self.volume_slider.valueChanged.connect(self._on_volume_change)
         
-        self.volume_input = QSpinBox()
+        self.volume_input = QLineEdit("100")
         self.volume_input.setObjectName("volumeInput")
-        self.volume_input.setRange(0, 125)  # Allow volume boost up to 125%
-        self.volume_input.setValue(100)
-        self.volume_input.setFixedWidth(50)
-        self.volume_input.setButtonSymbols(QSpinBox.NoButtons)
-        self.volume_input.valueChanged.connect(self._on_volume_input_change)
+        self.volume_input.setFixedWidth(55)
+        self.volume_input.setAlignment(Qt.AlignCenter)
+        self.volume_input.editingFinished.connect(self._on_volume_input_return)
         
         volume_layout.addWidget(self.volume_icon)
         volume_layout.addWidget(self.volume_slider)
         volume_layout.addWidget(self.volume_input)
-        
+        # Install event filters so global shortcuts aren't swallowed by inputs
+        self.time_current.installEventFilter(self)
+        self.volume_input.installEventFilter(self)
+            
         layout.addLayout(volume_layout)
+        
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import Qt
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
+            # Intercept global media controls (Space, P, N, L, R, F)
+            if key in (Qt.Key_Space, Qt.Key_P, Qt.Key_N, Qt.Key_L, Qt.Key_R, Qt.Key_F):
+                # Don't intercept if modifier keys like Ctrl are pressed (for normal text shortcuts like Ctrl+C)
+                if event.modifiers() == Qt.NoModifier:
+                    parent = self.parentWidget()
+                    while parent:
+                        if parent.__class__.__name__ == "MusicPanelWidget":
+                            parent.keyPressEvent(event)
+                            return True
+                        parent = parent.parentWidget()
+        return super().eventFilter(obj, event)
     
     def _create_icon_btn(self, icon_name: str, tooltip: str) -> QPushButton:
         btn = QPushButton()
@@ -3315,15 +3486,23 @@ class PlayerBar(QFrame):
     
     def _on_volume_change(self, value: int):
         self.volume_input.blockSignals(True)
-        self.volume_input.setValue(value)
+        self.volume_input.setText(str(value))
         self.volume_input.blockSignals(False)
         self.volumeChanged.emit(value)
     
-    def _on_volume_input_change(self, value: int):
-        self.volume_slider.blockSignals(True)
-        self.volume_slider.setValue(value)
-        self.volume_slider.blockSignals(False)
-        self.volumeChanged.emit(value)
+    def _on_volume_input_return(self):
+        text = self.volume_input.text().strip()
+        try:
+            val = int(text)
+            val = max(0, min(125, val))
+            self.volume_slider.blockSignals(True)
+            self.volume_slider.setValue(val)
+            self.volume_slider.blockSignals(False)
+            self.volumeChanged.emit(val)
+            self.volume_input.setText(str(val))
+        except ValueError:
+            pass
+        self.volume_input.clearFocus()
     
     def set_playing(self, playing: bool):
         self._is_playing = playing
@@ -3387,19 +3566,34 @@ class PlayerBar(QFrame):
         """Handle time input from the editable time field."""
         text = self.time_current.text().strip()
         try:
-            # Parse mm:ss or m:ss format
+            total_seconds = 0
             if ':' in text:
                 parts = text.split(':')
-                mins = int(parts[0])
-                secs = int(parts[1]) if len(parts) > 1 else 0
+                parts.reverse()  # [secs, mins, hours]
+                secs = int(parts[0]) if len(parts) > 0 else 0
+                mins = int(parts[1]) if len(parts) > 1 else 0
+                hours = int(parts[2]) if len(parts) > 2 else 0
+                total_seconds = hours * 3600 + mins * 60 + secs
             else:
-                # Just seconds
-                mins = 0
-                secs = int(text)
+                # Advanced raw number logic (e.g. 130 -> 1m30s, 10265 -> 1h02m65s)
+                if len(text) <= 2:
+                    total_seconds = int(text)
+                else:
+                    secs = int(text[-2:])
+                    remaining = text[:-2]
+                    if len(remaining) <= 2:
+                        mins = int(remaining)
+                        total_seconds = mins * 60 + secs
+                    else:
+                        mins = int(remaining[-2:])
+                        hours = int(remaining[:-2])
+                        total_seconds = hours * 3600 + mins * 60 + secs
             
-            total_seconds = mins * 60 + secs
-            # Emit seek in seconds directly
-            self.seekChanged.emit(total_seconds)
+            duration = getattr(self, '_last_total_duration', 0)
+            if duration > 0:
+                # Convert raw seconds into a percentage (0.0 to 1.0) for the seek method
+                percent = max(0.0, min(1.0, total_seconds / duration))
+                self.seekChanged.emit(percent)
         except (ValueError, IndexError):
             pass  # Invalid input, ignore
         
@@ -3456,8 +3650,8 @@ class ResumeNotificationWidget(QFrame):
         
         self.setStyleSheet("""
             QFrame#resumeNotification {
-                background-color: #131317;
-                border: 1px solid #FF5B06;
+                background-color: #1F2029;
+                border: none;
                 border-radius: 8px;
             }
             QLabel {
@@ -3469,20 +3663,21 @@ class ResumeNotificationWidget(QFrame):
             }
             QPushButton {
                 color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.4);
+                background-color: #333544;
+                border: none;
                 border-radius: 6px;
-                padding: 4px 14px;
-                background: transparent;
+                padding: 0px 16px;
+                min-height: 28px;
+                max-height: 28px;
                 font-family: 'Orbitron', 'Rajdhani', sans-serif;
                 font-weight: bold;
                 font-size: 10px;
             }
             QPushButton:hover {
-                border-color: #FFFFFF;
-                background: rgba(255, 255, 255, 0.1);
+                background-color: #45485B;
             }
             QPushButton:pressed {
-                background: rgba(255, 255, 255, 0.2);
+                background-color: #242530;
             }
         """)
         
@@ -3490,26 +3685,24 @@ class ResumeNotificationWidget(QFrame):
         layout.setContentsMargins(15, 0, 15, 0)
         layout.setSpacing(12)
         
-        # Icon (Reload/Restart)
-        self.icon_lbl = QLabel("⟳", self)
-        self.icon_lbl.setStyleSheet("color: #FF5B06; font-size: 14px; font-weight: bold; margin-bottom: 2px;")
-        layout.addWidget(self.icon_lbl)
-        
         # Label
         self.lbl_msg = QLabel("Resume: Unknown?", self)
         self.lbl_msg.setObjectName("resumeLabel")
-        layout.addWidget(self.lbl_msg)
-        
-        layout.addStretch()
+        layout.addWidget(self.lbl_msg, alignment=Qt.AlignVCenter)
         
         # Buttons
         self.btn_resume = QPushButton("Resume", self)
         self.btn_resume.setCursor(Qt.PointingHandCursor)
+        self.btn_resume.setFixedHeight(28)
         self.btn_dismiss = QPushButton("Dismiss", self)
         self.btn_dismiss.setCursor(Qt.PointingHandCursor)
+        self.btn_dismiss.setFixedHeight(28)
         
-        layout.addWidget(self.btn_resume)
-        layout.addWidget(self.btn_dismiss)
+        layout.addWidget(self.btn_resume, alignment=Qt.AlignVCenter)
+        layout.addWidget(self.btn_dismiss, alignment=Qt.AlignVCenter)
+        
+        # Push everything to the left
+        layout.addStretch()
         
         # Connections
         self.btn_resume.clicked.connect(self.resume_clicked.emit)
@@ -3518,13 +3711,58 @@ class ResumeNotificationWidget(QFrame):
     def set_track_title(self, title):
         self.lbl_msg.setText(f"Resume: {title}?")
         self.adjustSize()
+        self.btn_resume.setEnabled(True)
+        self.btn_dismiss.setEnabled(True)
+        if self.graphicsEffect():
+            self.graphicsEffect().setOpacity(1.0)
         if self.parent():
             self.move(self.parent().width() - self.width() - 20, 20)
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.btn_resume.setEnabled(True)
+        self.btn_dismiss.setEnabled(True)
+        if self.graphicsEffect():
+            self.graphicsEffect().setOpacity(1.0)
         if self.parent():
             self.move(self.parent().width() - self.width() - 20, 20)
+            
+    def animate_out(self, callback=None):
+        self.btn_resume.setEnabled(False)
+        self.btn_dismiss.setEnabled(False)
+        
+        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QPoint
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        
+        if not self.graphicsEffect():
+            effect = QGraphicsOpacityEffect(self)
+            self.setGraphicsEffect(effect)
+        else:
+            effect = self.graphicsEffect()
+            
+        self._anim_group = QParallelAnimationGroup(self)
+        
+        pos_anim = QPropertyAnimation(self, b"pos")
+        pos_anim.setDuration(350)
+        pos_anim.setStartValue(self.pos())
+        pos_anim.setEndValue(self.pos() + QPoint(0, -30))
+        pos_anim.setEasingCurve(QEasingCurve.InBack)
+        
+        fade_anim = QPropertyAnimation(effect, b"opacity")
+        fade_anim.setDuration(300)
+        fade_anim.setStartValue(1.0)
+        fade_anim.setEndValue(0.0)
+        
+        self._anim_group.addAnimation(pos_anim)
+        self._anim_group.addAnimation(fade_anim)
+        
+        def on_finished():
+            self.hide()
+            if callback:
+                callback()
+                
+        self._anim_group.finished.connect(on_finished)
+        self._anim_group.start()
 
 
 class MusicPanelWidget(QWidget):
@@ -3541,6 +3779,7 @@ class MusicPanelWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("MusicPanelWidget")
+        self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         
         # Check FFmpeg availability first
@@ -4013,6 +4252,22 @@ class MusicPanelWidget(QWidget):
             self._player.setPosition(new_pos)
             event.accept()
             return
+            
+        # Up Arrow: Volume Up 5%
+        if key == Qt.Key_Up:
+            if hasattr(self, 'player_bar'):
+                current_vol = self.player_bar.volume_slider.value()
+                self.player_bar.volume_slider.setValue(min(125, current_vol + 5))
+            event.accept()
+            return
+            
+        # Down Arrow: Volume Down 5%
+        if key == Qt.Key_Down:
+            if hasattr(self, 'player_bar'):
+                current_vol = self.player_bar.volume_slider.value()
+                self.player_bar.volume_slider.setValue(max(0, current_vol - 5))
+            event.accept()
+            return
         
         # Pass to parent if not handled
         super().keyPressEvent(event)
@@ -4462,7 +4717,7 @@ class MusicPanelWidget(QWidget):
                     setattr(self, attr, nxt)
 
                 if self._is_pressed:
-                    self._gradient_offset = (self._gradient_offset + 0.04) % 1.0
+                    self._gradient_offset = (self._gradient_offset + 0.005) % 1.0
                     changed = True
 
                 if changed:
@@ -4474,17 +4729,17 @@ class MusicPanelWidget(QWidget):
 
                 if self._is_pressed:
                     # Draw animated gradient
-                    from PySide6.QtGui import QLinearGradient
-                    gradient = QLinearGradient(0, 0, 0, self.height())
+                    from PySide6.QtGui import QLinearGradient, QGradient
+                    h = self.height()
+                    shift = self._gradient_offset * h
+                    gradient = QLinearGradient(0, shift, 0, h + shift)
+                    gradient.setSpread(QGradient.RepeatSpread)
+                    
                     colors = self._gradient_colors
-                    stops = []
                     for i, color in enumerate(colors):
                         base = i / (len(colors) - 1)
-                        shifted = (base + self._gradient_offset) % 1.0
-                        stops.append((shifted, QColor(color)))
-                    stops.sort(key=lambda x: x[0])
-                    for pos, color in stops:
-                        gradient.setColorAt(pos, color)
+                        gradient.setColorAt(base, QColor(color))
+                        
                     painter.fillRect(self.rect(), gradient)
                 else:
                     color = QColor(
@@ -4609,8 +4864,8 @@ class MusicPanelWidget(QWidget):
         if not hasattr(self, 'yt_panel'):
             return
         total_w = max(1, self.width())
-        # Minimum width is 20% of total, maximum is 50% of total
-        min_w = max(1, int(total_w * 0.2))
+        # Minimum width is 240px, maximum is 50% of total
+        min_w = 240
         max_w = max(min_w, int(total_w * 0.5))
 
         self.yt_panel.setMinimumWidth(min_w)
@@ -4619,23 +4874,23 @@ class MusicPanelWidget(QWidget):
         # If visible and currently wider than max, pull it back via splitter sizes.
         if hasattr(self, 'main_splitter') and self.yt_panel.isVisible():
             sizes = self.main_splitter.sizes()
-            if len(sizes) >= 2:
-                total = max(1, sizes[0] + sizes[1])
-                if sizes[1] > max_w:
-                    sizes[1] = max_w
-                    sizes[0] = max(1, total - sizes[1])
+            if len(sizes) >= 3:
+                if sizes[2] > max_w:
+                    diff = sizes[2] - max_w
+                    sizes[2] = max_w
+                    sizes[1] += diff
                     self.main_splitter.setSizes(sizes)
 
     def _on_main_splitter_moved(self, pos, index):
         # Record the user's chosen width and keep it clamped.
         if hasattr(self, 'main_splitter'):
             sizes = self.main_splitter.sizes()
-            if len(sizes) >= 2:
+            if len(sizes) >= 3:
                 # Remember last width but keep it within current min/max.
                 total_w = max(1, self.width())
                 min_w = max(1, int(total_w * 0.2))
                 max_w = max(min_w, int(total_w * 0.5))
-                self._yt_last_width = max(min_w, min(max_w, sizes[1]))
+                self._yt_last_width = max(min_w, min(max_w, sizes[2]))
         self._update_yt_panel_constraints()
     
     def _create_search_bar(self, parent_layout):
@@ -4871,13 +5126,52 @@ class MusicPanelWidget(QWidget):
         menu_bar = QMenuBar()
         menu_bar.setObjectName("musicMenuBar")
         
+        # === Media Menu ===
+        media_menu = menu_bar.addMenu("Media")
+        media_menu.setObjectName("mediaMenu")
+        
+        # Open File
+        self.action_open_file = QAction("Open File", self)
+        self.action_open_file.setShortcut("Ctrl+O")
+        self.action_open_file.triggered.connect(self._open_file_direct)
+        media_menu.addAction(self.action_open_file)
+        
+        # Open Multiple Files
+        self.action_open_multiple_files = QAction("Open Multiple Files", self)
+        self.action_open_multiple_files.setShortcut("Ctrl+Shift+O")
+        media_menu.addAction(self.action_open_multiple_files)
+        
+        # Open Folder
+        self.action_open_folder = QAction("Open Folder", self)
+        from PySide6.QtGui import QKeySequence
+        self.action_open_folder.setShortcut(QKeySequence("Ctrl+K, O"))
+        self.action_open_folder.triggered.connect(self._browse_folder_direct)
+        media_menu.addAction(self.action_open_folder)
+        
+        # Open Multiple Folders
+        self.action_open_multiple_folders = QAction("Open Multiple Folders", self)
+        self.action_open_multiple_folders.setShortcut(QKeySequence("Ctrl+Shift+K, O"))
+        media_menu.addAction(self.action_open_multiple_folders)
+        
+        # Open Location From Clipboard
+        self.action_open_clipboard = QAction("Open Location From Clipboard", self)
+        self.action_open_clipboard.setShortcut("Ctrl+Shift+V")
+        media_menu.addAction(self.action_open_clipboard)
+        
+        media_menu.addSeparator()
+        
+        # Open Recent Media (Submenu)
+        self.recent_media_menu = media_menu.addMenu("Open Recent Media")
+        self.recent_media_menu.setObjectName("recentMediaMenu")
+        self.recent_media_menu.addAction("No Recent Media").setEnabled(False)
+        
         # === Audio Menu ===
         audio_menu = menu_bar.addMenu("Audio")
         audio_menu.setObjectName("audioMenu")
         self._audio_menu = audio_menu  # Store reference for dynamic updates
         
-        # Output Device submenu
-        self._device_menu = audio_menu.addMenu("Output Device")
+        # Preferred Output submenu
+        self._device_menu = audio_menu.addMenu("Preferred Output")
         self._device_menu.setObjectName("deviceMenu")
         self._populate_audio_devices()
         self._device_menu.aboutToShow.connect(self._populate_audio_devices)
@@ -4937,6 +5231,7 @@ class MusicPanelWidget(QWidget):
                 self._crossfade_label.setText(f"{val} sec")
                 self._crossfade_enabled = True
                 self._crossfade_duration = float(val)
+            self._save_state()
         
         self._crossfade_slider.valueChanged.connect(on_crossfade_slider_change)
         
@@ -4948,36 +5243,15 @@ class MusicPanelWidget(QWidget):
         crossfade_menu.addAction(slider_action)
         
 
-        
         # === Tools Menu ===
         tools_menu = menu_bar.addMenu("Tools")
         tools_menu.setObjectName("toolsMenu")
         
-        # Open Media File
-        self.action_open_file = QAction("Open Media File...", self)
-        self.action_open_file.setShortcut("Ctrl+O")
-        self.action_open_file.triggered.connect(self._open_file_direct)
-        tools_menu.addAction(self.action_open_file)
-        
-        # Select Folder
-        self.action_select_folder = QAction("Select Media Folder...\tCtrl+K+O", self)
-        # We handle Ctrl+K+O via background QShortcut for better chord handling
-        self.action_select_folder.triggered.connect(self._browse_folder_direct)
-        tools_menu.addAction(self.action_select_folder)
-        
-        # Download from YouTube
+        # YouTube Downloader
         self.action_download_yt = QAction("YouTube Downloader", self)
         self.action_download_yt.setShortcut("Ctrl+U")
         self.action_download_yt.triggered.connect(self._toggle_yt_panel)
         tools_menu.addAction(self.action_download_yt)
-        
-        tools_menu.addSeparator()
-        
-        # Close Playlist on Done
-        self.action_close_on_done = QAction("Close Playlist when done", self)
-        self.action_close_on_done.setCheckable(True)
-        self.action_close_on_done.setChecked(False)
-        tools_menu.addAction(self.action_close_on_done)
         
         tools_menu.addSeparator()
         
@@ -5144,6 +5418,16 @@ class MusicPanelWidget(QWidget):
         
         self._device_menu.clear()
         
+        # Newly Connected Device (Auto)
+        is_auto = getattr(self, '_auto_audio_device', True)
+        auto_action = QAction("Newly Connected Device", self)
+        auto_action.setCheckable(True)
+        auto_action.setChecked(is_auto)
+        auto_action.triggered.connect(self._set_default_audio_device)
+        self._device_menu.addAction(auto_action)
+        
+        self._device_menu.addSeparator()
+        
         devices = QMediaDevices.audioOutputs()
         current_device = self._audio_output.device()
         
@@ -5156,15 +5440,29 @@ class MusicPanelWidget(QWidget):
         for device in devices:
             action = QAction(device.description(), self)
             action.setCheckable(True)
-            action.setChecked(device.id() == current_device.id())
+            action.setChecked(not is_auto and device.id() == current_device.id())
             action.triggered.connect(lambda checked, d=device: self._set_audio_device(d))
             self._device_menu.addAction(action)
+
+    def _set_default_audio_device(self):
+        """Set to automatically use default (newly connected) device."""
+        from PySide6.QtMultimedia import QMediaDevices
+        self._auto_audio_device = True
+        default_dev = QMediaDevices.defaultAudioOutput()
+        self._audio_output.setDevice(default_dev)
+        if hasattr(self, '_audio_output2'):
+            self._audio_output2.setDevice(default_dev)
+        self._save_state()
+        print("Audio device set to: Newly Connected Device (Auto)")
     
     def _set_audio_device(self, device):
         """Set the audio output device."""
         from PySide6.QtMultimedia import QAudioDevice
         
+        self._auto_audio_device = False
         self._audio_output.setDevice(device)
+        if hasattr(self, '_audio_output2'):
+            self._audio_output2.setDevice(device)
         
         # Save to config
         self._save_state()
@@ -5177,6 +5475,8 @@ class MusicPanelWidget(QWidget):
         # Update checkmarks
         for r, action in self._speed_actions.items():
             action.setChecked(r == rate)
+            
+        self._save_state()
         
         print(f"Playback speed: {rate}x")
     
@@ -5433,16 +5733,21 @@ class MusicPanelWidget(QWidget):
         if self.yt_panel.isVisible():
             self.yt_panel.hide()
             if hasattr(self, 'main_splitter'):
-                # Collapse sidebar
-                self.main_splitter.setSizes([1, 0])
+                # Collapse YT panel, preserve sidebar
+                current_sizes = self.main_splitter.sizes()
+                sidebar_size = current_sizes[0] if len(current_sizes) > 0 else 200
+                total = sum(current_sizes)
+                self.main_splitter.setSizes([sidebar_size, max(1, total - sidebar_size), 0])
         else:
             self.yt_panel.show()
             self._update_yt_panel_constraints()
             if hasattr(self, 'main_splitter'):
+                current_sizes = self.main_splitter.sizes()
+                sidebar_size = current_sizes[0] if len(current_sizes) > 0 else 200
                 max_w = self.yt_panel.maximumWidth()
                 desired = min(max_w, max(self.yt_panel.minimumWidth(), int(getattr(self, '_yt_last_width', 320) or 320)))
                 total = max(1, self.width())
-                self.main_splitter.setSizes([max(1, total - desired), desired])
+                self.main_splitter.setSizes([sidebar_size, max(1, total - sidebar_size - desired), desired])
             self.yt_panel.url_edit.setFocus()
             # If paste buffer has a YT link, auto-fill it
             from PySide6.QtWidgets import QApplication
@@ -6733,13 +7038,16 @@ class MusicPanelWidget(QWidget):
     
 
     def _dismiss_banner(self):
-        self.resume_banner.hide()
+        self.resume_banner.animate_out(lambda: self._finalize_dismiss())
+        
+    def _finalize_dismiss(self):
         if hasattr(self, '_pending_single_track_resume'):
             self._pending_single_track_resume = None
 
     def _resume_playback_from_banner(self):
-        self.resume_banner.hide()
-        
+        self.resume_banner.animate_out(lambda: self._finalize_resume())
+
+    def _finalize_resume(self):
         if hasattr(self, '_pending_single_track_resume') and self._pending_single_track_resume:
             track_info = self._pending_single_track_resume
             import datetime
@@ -6877,6 +7185,43 @@ class MusicPanelWidget(QWidget):
                 
                 if 'loop_mode' in state:
                     self.player_bar.set_loop_mode(state['loop_mode'])
+                    
+                # Restore audio device
+                auto_audio = state.get('auto_audio_device', True)
+                self._auto_audio_device = auto_audio
+                if not auto_audio:
+                    device_id = state.get('audio_device_id', '')
+                    if device_id:
+                        from PySide6.QtMultimedia import QMediaDevices
+                        for device in QMediaDevices.audioOutputs():
+                            if device.id().data().decode('utf-8', 'ignore') == device_id:
+                                self._audio_output.setDevice(device)
+                                if hasattr(self, '_audio_output2'):
+                                    self._audio_output2.setDevice(device)
+                                break
+                                
+                # Restore playback speed
+                speed = state.get('playback_speed', 1.0)
+                if hasattr(self, '_set_playback_speed'):
+                    self._set_playback_speed(speed)
+                    
+                # Restore crossfade
+                crossfade_enabled = state.get('crossfade_enabled', True)
+                crossfade_dur = state.get('crossfade_duration', 3.0)
+                if hasattr(self, '_crossfade_slider'):
+                    # Temporarily block signals to prevent redundant save
+                    self._crossfade_slider.blockSignals(True)
+                    if crossfade_enabled:
+                        self._crossfade_slider.setValue(int(crossfade_dur))
+                        if hasattr(self, '_crossfade_label'):
+                            self._crossfade_label.setText(f"{int(crossfade_dur)} sec")
+                    else:
+                        self._crossfade_slider.setValue(0)
+                        if hasattr(self, '_crossfade_label'):
+                            self._crossfade_label.setText("Off")
+                    self._crossfade_slider.blockSignals(False)
+                    self._crossfade_enabled = crossfade_enabled
+                    self._crossfade_duration = crossfade_dur
                 
                 # Restore shuffle sequence and pointer
                 self._shuffled_sequence = state.get('shuffled_sequence', [])
@@ -6923,7 +7268,12 @@ class MusicPanelWidget(QWidget):
                 'shuffled_sequence': self._shuffled_sequence,
                 'shuffled_pointer': self._shuffled_pointer,
                 'subtitle_style_preset': getattr(self, '_subtitle_style_preset', 'outline'),
-                'subtitle_font_size': getattr(self, '_subtitle_font_size', 16)
+                'subtitle_font_size': getattr(self, '_subtitle_font_size', 16),
+                'auto_audio_device': getattr(self, '_auto_audio_device', True),
+                'audio_device_id': getattr(self._audio_output.device(), 'id', lambda: b'')().data().decode('utf-8', 'ignore') if hasattr(self, '_audio_output') and hasattr(self._audio_output, 'device') else '',
+                'playback_speed': getattr(self._player, 'playbackRate', lambda: 1.0)() if hasattr(self, '_player') else 1.0,
+                'crossfade_enabled': getattr(self, '_crossfade_enabled', True),
+                'crossfade_duration': getattr(self, '_crossfade_duration', 3.0)
             }
             
             with open(self._config_path, 'w', encoding='utf-8') as f:

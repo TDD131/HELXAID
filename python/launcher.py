@@ -2051,10 +2051,19 @@ def load_settings():
     return DEFAULT_SETTINGS.copy()
 
 def save_settings(settings):
-    """Save app settings to settings.json"""
+    """Save app settings to settings.json, merging to preserve external changes."""
     try:
+        if os.path.exists(SETTINGS_PATH):
+            try:
+                with open(SETTINGS_PATH, "r", encoding='utf-8') as f:
+                    disk_settings = json.load(f)
+                disk_settings.update(settings)
+                settings = disk_settings
+            except Exception:
+                pass
+                
         tmp_path = SETTINGS_PATH + ".tmp"
-        with open(tmp_path, "w") as f:
+        with open(tmp_path, "w", encoding='utf-8') as f:
             json.dump(settings, f, indent=4)
         os.replace(tmp_path, SETTINGS_PATH)
     except Exception as e:
@@ -5217,7 +5226,7 @@ class GameLauncher(QWidget):
                 font-family: 'Orbitron', 'Segoe UI', Arial;
             }}
             QPushButton {{
-                border: 2px solid {hex_to_rgba(primary, 0.4)};
+                border: 1px solid {primary};
                 padding: 8px 16px;
                 border-radius: 12px;
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -5230,12 +5239,12 @@ class GameLauncher(QWidget):
             QPushButton:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 {hex_to_rgba(primary, 0.3)}, stop:1 {hex_to_rgba(secondary, 0.4)});
-                border: 2px solid {hex_to_rgba(secondary, 0.8)};
+                border: 1px solid {secondary};
             }}
             QPushButton:pressed {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 {hex_to_rgba(secondary, 0.5)}, stop:1 {hex_to_rgba(primary, 0.6)});
-                border: 2px solid {hex_to_rgba(secondary, 0.9)};
+                border: 1px solid {secondary};
             }}
             QPushButton#gameBtn {{
                 border: none;
@@ -5324,7 +5333,7 @@ class GameLauncher(QWidget):
             }}
             QLineEdit {{
                 background: {hex_to_rgba(bg_light, 0.8)};
-                border: 1px solid {hex_to_rgba(primary, 0.5)};
+                border: 1px solid {primary};
                 border-radius: 8px;
                 padding: 8px;
                 color: {text};
