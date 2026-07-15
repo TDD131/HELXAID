@@ -2717,14 +2717,47 @@ class PlaylistTable(QWidget):
         def _tree_mousePressEvent(event):
             if event.button() == Qt.LeftButton:
                 item = self.tree.itemAt(event.pos())
-                if not item:
+                column = self.tree.columnAt(event.pos().x())
+                
+                should_rubber_band = False
+                if not item or column == -1:
+                    should_rubber_band = True
+                elif column >= 2:
+                    should_rubber_band = True
+                else:
+                    from PySide6.QtGui import QFontMetrics
+                    font = item.font(column) if item.font(column).family() else self.tree.font()
+                    fm = QFontMetrics(font)
+                    text_width = fm.horizontalAdvance(item.text(column))
+                    
+                    cell_x = self.tree.header().sectionPosition(column)
+                    depth = 0
+                    p = item.parent()
+                    while p:
+                        depth += 1
+                        p = p.parent()
+                        
+                    indent = 0
+                    if column == 0:
+                        indent = depth * self.tree.indentation() + 24
+                        
+                    if event.pos().x() > (cell_x + indent + text_width + 30):
+                        should_rubber_band = True
+                
+                if should_rubber_band:
                     self.tree._rubber_band_origin = event.pos()
                     self.tree._rubber_band.setGeometry(QRect(self.tree._rubber_band_origin, self.tree._rubber_band_origin))
                     self.tree._rubber_band.show()
                     self.tree._rubber_band_active = True
-                    if not (event.modifiers() & Qt.ControlModifier):
+                    self.tree._rubber_band_dragged = False
+                    
+                    if not item and not (event.modifiers() & Qt.ControlModifier):
                         self.tree.clearSelection()
+                        
+                    orig_mousePressEvent(event)
                     return
+                else:
+                    self.tree._rubber_band_active = False
                 
                 if not self._click_timer.isActive():
                     self._click_count = 1
@@ -2772,21 +2805,24 @@ class PlaylistTable(QWidget):
             
         def _tree_mouseMoveEvent(event):
             if getattr(self.tree, '_rubber_band_active', False) and getattr(self.tree, '_rubber_band_origin', None) is not None:
+                if (event.pos() - self.tree._rubber_band_origin).manhattanLength() > 3:
+                    self.tree._rubber_band_dragged = True
+                    
                 rect = QRect(self.tree._rubber_band_origin, event.pos()).normalized()
                 self.tree._rubber_band.setGeometry(rect)
-                for i in range(self.tree.topLevelItemCount()):
-                    item = self.tree.topLevelItem(i)
-                    if rect.intersects(self.tree.visualItemRect(item)):
+                
+                def check_item(item):
+                    item_rect = self.tree.visualItemRect(item)
+                    if rect.top() <= item_rect.bottom() and rect.bottom() >= item_rect.top():
                         item.setSelected(True)
                     else:
                         item.setSelected(False)
                     if item.isExpanded():
                         for j in range(item.childCount()):
-                            child = item.child(j)
-                            if rect.intersects(self.tree.visualItemRect(child)):
-                                child.setSelected(True)
-                            else:
-                                child.setSelected(False)
+                            check_item(item.child(j))
+                            
+                for i in range(self.tree.topLevelItemCount()):
+                    check_item(self.tree.topLevelItem(i))
                 return
             orig_mouseMoveEvent(event)
             
@@ -2795,7 +2831,8 @@ class PlaylistTable(QWidget):
                 self.tree._rubber_band.hide()
                 self.tree._rubber_band_active = False
                 self.tree._rubber_band_origin = None
-                return
+                if getattr(self.tree, '_rubber_band_dragged', False):
+                    return
             orig_mouseReleaseEvent(event)
             
         self.tree.mousePressEvent = _tree_mousePressEvent
@@ -3510,15 +3547,19 @@ class PlayerBar(QFrame):
                 font-size: 11px;
             }
             
+            QSlider#timelineSlider {
+                background: transparent;
+            }
+            
             QSlider#timelineSlider::groove:horizontal {
                 background: rgba(255, 255, 255, 0.1);
                 height: 4px;
                 border-radius: 2px;
             }
             QSlider#timelineSlider::handle:horizontal {
-                width: 14px;
-                height: 14px;
-                margin: -5px 0;
+                width: 16px;
+                height: 16px;
+                margin: -6px 0;
                 background: transparent;
                 border: none;
             }
@@ -5304,13 +5345,13 @@ class MusicPanelWidget(QWidget):
         
         # Open Multiple Files
         self.action_open_multiple_files = QAction("Open Multiple Files", self)
-        self.action_open_multiple_files.setShortcut("Ctrl+Shift+O")
+        from PySide6.QtGui import QKeySequence
+        self.action_open_multiple_files.setShortcut(QKeySequence("Ctrl+K, O"))
         media_menu.addAction(self.action_open_multiple_files)
         
         # Open Folder
         self.action_open_folder = QAction("Open Folder", self)
-        from PySide6.QtGui import QKeySequence
-        self.action_open_folder.setShortcut(QKeySequence("Ctrl+K, O"))
+        self.action_open_folder.setShortcut("Ctrl+Shift+O")
         self.action_open_folder.triggered.connect(self._browse_folder_direct)
         media_menu.addAction(self.action_open_folder)
         

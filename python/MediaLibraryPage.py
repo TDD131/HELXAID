@@ -160,7 +160,30 @@ class MediaLibraryPage(QWidget):
                 item = self.tree.itemAt(event.pos())
                 column = self.tree.columnAt(event.pos().x())
                 
-                should_rubber_band = not item or column >= 2 or column == -1
+                should_rubber_band = False
+                if not item or column == -1:
+                    should_rubber_band = True
+                elif column >= 2:
+                    should_rubber_band = True
+                else:
+                    from PySide6.QtGui import QFontMetrics
+                    font = item.font(column) if item.font(column).family() else self.tree.font()
+                    fm = QFontMetrics(font)
+                    text_width = fm.horizontalAdvance(item.text(column))
+                    
+                    cell_x = self.tree.header().sectionPosition(column)
+                    depth = 0
+                    p = item.parent()
+                    while p:
+                        depth += 1
+                        p = p.parent()
+                        
+                    indent = 0
+                    if column == 0:
+                        indent = depth * self.tree.indentation() + 24
+                        
+                    if event.pos().x() > (cell_x + indent + text_width + 30):
+                        should_rubber_band = True
                 
                 if should_rubber_band:
                     self.tree._rubber_band_origin = event.pos()
@@ -186,19 +209,19 @@ class MediaLibraryPage(QWidget):
                     
                 rect = QRect(self.tree._rubber_band_origin, event.pos()).normalized()
                 self.tree._rubber_band.setGeometry(rect)
-                for i in range(self.tree.topLevelItemCount()):
-                    item = self.tree.topLevelItem(i)
-                    if rect.intersects(self.tree.visualItemRect(item)):
+                
+                def check_item(item):
+                    item_rect = self.tree.visualItemRect(item)
+                    if rect.top() <= item_rect.bottom() and rect.bottom() >= item_rect.top():
                         item.setSelected(True)
                     else:
                         item.setSelected(False)
                     if item.isExpanded():
                         for j in range(item.childCount()):
-                            child = item.child(j)
-                            if rect.intersects(self.tree.visualItemRect(child)):
-                                child.setSelected(True)
-                            else:
-                                child.setSelected(False)
+                            check_item(item.child(j))
+                            
+                for i in range(self.tree.topLevelItemCount()):
+                    check_item(self.tree.topLevelItem(i))
                 return
             orig_mouseMoveEvent(event)
             
