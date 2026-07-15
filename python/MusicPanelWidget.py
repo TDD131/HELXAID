@@ -1781,6 +1781,7 @@ class RoundedImageLabel(QLabel):
 class InteractiveCoverLabel(QWidget):
     from PySide6.QtCore import Signal
     clicked_signal = Signal()
+    remove_clicked_signal = Signal()
     folder_clicked_signal = Signal()
 
     def __init__(self, title, action_text, parent=None):
@@ -1864,7 +1865,13 @@ class InteractiveCoverLabel(QWidget):
     def _on_press(self, event):
         from PySide6.QtCore import Qt
         if event.button() == Qt.LeftButton:
-            self.clicked_signal.emit()
+            if self._current_pixmap and not self._current_pixmap.isNull() and self.action_text == "Edit":
+                if event.pos().y() > self.img_container.height() / 2:
+                    self.remove_clicked_signal.emit()
+                else:
+                    self.clicked_signal.emit()
+            else:
+                self.clicked_signal.emit()
 
     def eventFilter(self, obj, event):
         from PySide6.QtCore import QEvent
@@ -1879,10 +1886,14 @@ class InteractiveCoverLabel(QWidget):
         self._current_pixmap = pixmap
         if pixmap and not pixmap.isNull():
             self.img_lbl.setPixmap(pixmap)
+            if self.action_text == "Edit":
+                self.overlay.setText("Edit\n\n\nRemove")
         else:
             self.img_lbl.clear()
             self.img_lbl.setText("No Cover")
             self.img_lbl.setAlignment(Qt.AlignCenter)
+            if self.action_text == "Edit":
+                self.overlay.setText("Add")
 
         self.path_edit.setText(source_path)
         self.path_edit.setCursorPosition(0)  # Reset scroll
@@ -1956,10 +1967,12 @@ class CoverManagerDialog(QDialog):
         
         self.front_lbl = InteractiveCoverLabel("Front Cover", action_text=action_text)
         self.front_lbl.clicked_signal.connect(lambda: self._handle_click('front'))
+        self.front_lbl.remove_clicked_signal.connect(lambda: self._handle_remove('front'))
         self.front_lbl.folder_clicked_signal.connect(lambda: self._handle_folder_click('front'))
             
         self.back_lbl = InteractiveCoverLabel("Back Cover", action_text=action_text)
         self.back_lbl.clicked_signal.connect(lambda: self._handle_click('back'))
+        self.back_lbl.remove_clicked_signal.connect(lambda: self._handle_remove('back'))
         self.back_lbl.folder_clicked_signal.connect(lambda: self._handle_folder_click('back'))
 
         covers_layout.addWidget(self.front_lbl)
@@ -2007,8 +2020,21 @@ class CoverManagerDialog(QDialog):
         self.reset_all = True
         self.new_front_pixmap = None
         self.new_back_pixmap = None
+        self.new_front_source = ''
+        self.new_back_source = ''
         self.front_lbl.set_content(None, "")
         self.back_lbl.set_content(None, "")
+
+    def _handle_remove(self, target):
+        self.reset_all = False
+        if target == 'front':
+            self.new_front_pixmap = "REMOVED"
+            self.new_front_source = ''
+            self.front_lbl.set_content(None, "")
+        else:
+            self.new_back_pixmap = "REMOVED"
+            self.new_back_source = ''
+            self.back_lbl.set_content(None, "")
 
     def _handle_click(self, target):
         import os
@@ -2377,7 +2403,16 @@ class PlaylistHeader(QFrame):
             
             # Apply Front Cover changes
             f_pix = changes.get('front')
-            if f_pix is not None:
+            if f_pix == "REMOVED":
+                if os.path.exists(self._cover_front_path):
+                    try: os.remove(self._cover_front_path)
+                    except Exception: pass
+                self._cover_front_path = ''
+                self._cover_front_source = ''
+                self.cover_front.clear()
+                self.cover_front.setText("No Cover")
+                changed = True
+            elif f_pix is not None:
                 saved_path = self._save_cropped_cover(f_pix, 'front')
                 if saved_path:
                     self._cover_front_path = saved_path
@@ -2389,7 +2424,16 @@ class PlaylistHeader(QFrame):
                     
             # Apply Back Cover changes
             b_pix = changes.get('back')
-            if b_pix is not None:
+            if b_pix == "REMOVED":
+                if os.path.exists(self._cover_back_path):
+                    try: os.remove(self._cover_back_path)
+                    except Exception: pass
+                self._cover_back_path = ''
+                self._cover_back_source = ''
+                self.cover_back.clear()
+                self.cover_back.setText("No Cover")
+                changed = True
+            elif b_pix is not None:
                 saved_path = self._save_cropped_cover(b_pix, 'back')
                 if saved_path:
                     self._cover_back_path = saved_path
@@ -2610,7 +2654,8 @@ class PlaylistTable(QWidget):
         self._sort_column = "title"
         self._sort_ascending = True
         self._sorted_indices = []  # Stores sorted order of original indices
-        self._last_double_click_time = 0
+        self._click_count = 0
+        self._last_clicked_item = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -2652,7 +2697,23 @@ class PlaylistTable(QWidget):
         orig_mousePressEvent = self.tree.mousePressEvent
         orig_mouseMoveEvent = self.tree.mouseMoveEvent
         orig_mouseReleaseEvent = self.tree.mouseReleaseEvent
+        orig_mouseDoubleClickEvent = self.tree.mouseDoubleClickEvent
         
+        from PySide6.QtCore import QTimer
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        
+        def _on_click_timeout():
+            if self._click_count == 2:
+                item = getattr(self, '_last_clicked_item', None)
+                if item and item.data(0, Qt.UserRole) == "folder":
+                    item.setExpanded(not item.isExpanded())
+            
+            self._click_count = 0
+            self._last_clicked_item = None
+            
+        self._click_timer.timeout.connect(_on_click_timeout)
+
         def _tree_mousePressEvent(event):
             if event.button() == Qt.LeftButton:
                 item = self.tree.itemAt(event.pos())
@@ -2664,7 +2725,50 @@ class PlaylistTable(QWidget):
                     if not (event.modifiers() & Qt.ControlModifier):
                         self.tree.clearSelection()
                     return
+                
+                if not self._click_timer.isActive():
+                    self._click_count = 1
+                    self._last_clicked_item = item
+                    self._click_timer.start(350)
+                else:
+                    self._click_count += 1
+                    
+                if self._click_count >= 3:
+                    self._click_timer.stop()
+                    item_target = getattr(self, '_last_clicked_item', None)
+                    if item_target and item_target.data(0, Qt.UserRole) == "folder":
+                        folder_name = item_target.text(1)
+                        self.flattenGroup.emit(folder_name)
+                    self._click_count = 0
+                    self._last_clicked_item = None
+                    return
             orig_mousePressEvent(event)
+            
+        def _tree_mouseDoubleClickEvent(event):
+            if event.button() == Qt.LeftButton:
+                item = self.tree.itemAt(event.pos())
+                
+                if self._click_timer.isActive():
+                    self._click_count += 1
+                else:
+                    self._click_count = 2
+                    self._last_clicked_item = item
+                    self._click_timer.start(350)
+                    
+                if self._click_count >= 3:
+                    self._click_timer.stop()
+                    item_target = getattr(self, '_last_clicked_item', None)
+                    if item_target and item_target.data(0, Qt.UserRole) == "folder":
+                        folder_name = item_target.text(1)
+                        self.flattenGroup.emit(folder_name)
+                    self._click_count = 0
+                    self._last_clicked_item = None
+                    return
+                    
+                if item and item.data(0, Qt.UserRole) == "folder":
+                    return # Block native expansion!
+                    
+            orig_mouseDoubleClickEvent(event)
             
         def _tree_mouseMoveEvent(event):
             if getattr(self.tree, '_rubber_band_active', False) and getattr(self.tree, '_rubber_band_origin', None) is not None:
@@ -2695,9 +2799,9 @@ class PlaylistTable(QWidget):
             orig_mouseReleaseEvent(event)
             
         self.tree.mousePressEvent = _tree_mousePressEvent
+        self.tree.mouseDoubleClickEvent = _tree_mouseDoubleClickEvent
         self.tree.mouseMoveEvent = _tree_mouseMoveEvent
         self.tree.mouseReleaseEvent = _tree_mouseReleaseEvent
-        # ------------------------
         
         # Override mimeData to allow dragging items out (to OS or other widgets)
         def _tree_mimeData(items):
@@ -2891,27 +2995,13 @@ class PlaylistTable(QWidget):
                     item.setText(i, title)
     
     def _on_item_clicked(self, item, column):
-        import time
-        now = time.time()
-        role = item.data(0, Qt.UserRole)
-        
-        if role == "folder":
-            # Detect triple click (within 400ms after double click)
-            if (now - getattr(self, '_last_double_click_time', 0)) < 0.4:
-                folder_name = item.text(1)
-                self.flattenGroup.emit(folder_name)
-                self._last_double_click_time = 0
-                return
-            
-            # Normal single click toggles expansion
-            item.setExpanded(not item.isExpanded())
+        pass
 
     def _on_item_double_clicked(self, item, column):
-        import time
-        self._last_double_click_time = time.time()
-        
         role = item.data(0, Qt.UserRole)
-        if role != "folder":
+        if role == "folder":
+            pass # Expansion is handled securely by the timeout logic now
+        else:
             orig_idx = item.data(0, Qt.UserRole)
             if orig_idx is not None and isinstance(orig_idx, int):
                 self.trackDoubleClicked.emit(orig_idx)
@@ -2927,6 +3017,16 @@ class PlaylistTable(QWidget):
             QMenu::item:selected { background-color: #FF5B06; }
         """)
         
+        item = self.tree.itemAt(pos)
+        
+        # Folder-specific context menu actions
+        if item and item.data(0, Qt.UserRole) == "folder":
+            extract_action = QAction("Extract Folder (Flatten)", self)
+            folder_name = item.text(1)
+            extract_action.triggered.connect(lambda: self.flattenGroup.emit(folder_name))
+            menu.addAction(extract_action)
+            menu.addSeparator()
+
         delete_selected_action = QAction("Delete Selected", self)
         delete_selected_action.triggered.connect(self._on_delete_selected)
         
@@ -3905,6 +4005,10 @@ class MusicPanelWidget(QWidget):
         
         # Restore last state (folder, track, position, volume)
         self._load_last_state()
+        
+        # If no playlist was loaded from the last state, ensure the default playlist's cover is still loaded
+        if not getattr(self, '_playlist', None) and hasattr(self, 'header'):
+            self.header.load_saved_cover(self.header.playlist_title.text())
         
         # Connect to app exit signal for final state save
         app = QApplication.instance()
@@ -5084,6 +5188,11 @@ class MusicPanelWidget(QWidget):
         from PySide6.QtGui import QKeySequence, QShortcut
         self.sc_folder = QShortcut(QKeySequence("Ctrl+K, Ctrl+O"), self)
         self.sc_folder.activated.connect(self._browse_folder_direct)
+        
+        # Shortcut for Ctrl+A (Select All Tracks)
+        self.sc_select_all = QShortcut(QKeySequence("Ctrl+A"), self)
+        self.sc_select_all.activated.connect(self._on_select_all_tracks)
+        
         self.player_bar.seekChanged.connect(self._seek)
         self.player_bar.volumeChanged.connect(self._set_volume)
                 
@@ -5114,6 +5223,15 @@ class MusicPanelWidget(QWidget):
         self._player.errorOccurred.connect(self._on_player_error)
         self._player.mediaStatusChanged.connect(self._on_media_status)
     
+    def _on_select_all_tracks(self):
+        from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            fw.selectAll()
+        else:
+            if hasattr(self, 'table') and hasattr(self.table, 'tree'):
+                self.table.tree.selectAll()
+                
     def _on_player_error(self, error, error_string):
         """Handle media player errors."""
         print(f"Player error: {error} - {error_string}")
@@ -7113,8 +7231,9 @@ class MusicPanelWidget(QWidget):
                 'duration': 0,
                 'date_added': date_str
             }
+            playlist_name = track_info.get('playlist_name', 'Previous Session')
             # Add to playlist
-            self.set_playlist("Previous Session", [track])
+            self.set_playlist(playlist_name, [track])
             self._current_index = 0
             self.table.highlight_playing(0)
             self.player_bar.set_track_info(track_info['title'], 'Single Track')
@@ -7213,7 +7332,8 @@ class MusicPanelWidget(QWidget):
                         self._pending_single_track_resume = {
                             'path': last_path,
                             'title': title,
-                            'position': last_pos
+                            'position': last_pos,
+                            'playlist_name': state.get('playlist_name', 'Previous Session')
                         }
                         if last_pos > 0:
                             self.resume_banner.set_track_title(title)
@@ -7308,6 +7428,7 @@ class MusicPanelWidget(QWidget):
             
             state = {
                 'folder': self._music_folder or '',
+                'playlist_name': getattr(self.header, '_name', 'Previous Session') if hasattr(self, 'header') else 'Previous Session',
                 'last_track_path': current_track_path,
                 'last_position': position,
                 'volume': self.player_bar.volume_slider.value(),

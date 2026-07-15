@@ -5,8 +5,8 @@ ENABLE_SIDEBAR = True
 ENABLE_DISCORD = True
 ENABLE_DEFERRED_TASKS = True
 ENABLE_TASKBAR = True
-ENABLE_DEBUG_DELAYS = True
-DEBUG_DELAY_MS = 3000
+ENABLE_DEBUG_DELAYS = False
+DEBUG_DELAY_MS = 0
 # ==========================================
 
 import sys

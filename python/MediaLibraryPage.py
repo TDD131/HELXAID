@@ -158,18 +158,32 @@ class MediaLibraryPage(QWidget):
         def _tree_mousePressEvent(event):
             if event.button() == Qt.LeftButton:
                 item = self.tree.itemAt(event.pos())
-                if not item:
+                column = self.tree.columnAt(event.pos().x())
+                
+                should_rubber_band = not item or column >= 2 or column == -1
+                
+                if should_rubber_band:
                     self.tree._rubber_band_origin = event.pos()
                     self.tree._rubber_band.setGeometry(QRect(self.tree._rubber_band_origin, self.tree._rubber_band_origin))
                     self.tree._rubber_band.show()
                     self.tree._rubber_band_active = True
-                    if not (event.modifiers() & Qt.ControlModifier):
+                    self.tree._rubber_band_dragged = False
+                    
+                    if not item and not (event.modifiers() & Qt.ControlModifier):
                         self.tree.clearSelection()
+                        
+                    orig_mousePressEvent(event)
                     return
+                else:
+                    self.tree._rubber_band_active = False
+                    
             orig_mousePressEvent(event)
             
         def _tree_mouseMoveEvent(event):
-            if self.tree._rubber_band_active and self.tree._rubber_band_origin is not None:
+            if getattr(self.tree, '_rubber_band_active', False) and getattr(self.tree, '_rubber_band_origin', None) is not None:
+                if (event.pos() - self.tree._rubber_band_origin).manhattanLength() > 3:
+                    self.tree._rubber_band_dragged = True
+                    
                 rect = QRect(self.tree._rubber_band_origin, event.pos()).normalized()
                 self.tree._rubber_band.setGeometry(rect)
                 for i in range(self.tree.topLevelItemCount()):
@@ -189,11 +203,12 @@ class MediaLibraryPage(QWidget):
             orig_mouseMoveEvent(event)
             
         def _tree_mouseReleaseEvent(event):
-            if self.tree._rubber_band_active:
+            if getattr(self.tree, '_rubber_band_active', False):
                 self.tree._rubber_band.hide()
                 self.tree._rubber_band_active = False
                 self.tree._rubber_band_origin = None
-                return
+                if getattr(self.tree, '_rubber_band_dragged', False):
+                    return
             orig_mouseReleaseEvent(event)
             
         self.tree.mousePressEvent = _tree_mousePressEvent
@@ -754,10 +769,7 @@ class MediaLibraryPage(QWidget):
             item.setExpanded(not item.isExpanded())
 
     def _on_item_clicked(self, item, column):
-        role = item.data(0, Qt.UserRole)
-        if role == "track":
-            # Just select it, no playback action needed
-            pass
+        pass # Just select it
 
     def _on_search(self, text):
         query = text.lower()
