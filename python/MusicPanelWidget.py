@@ -4014,6 +4014,10 @@ class MusicPanelWidget(QWidget):
         self._render_gate_reason = None
         self._video_was_on_when_suspended = False
 
+        self._is_maximized = False
+        self._subtitle_offset_ms = 0
+
+        # Internal statelse
         self._rtss_excluded_once = False
         self._subtitle_appearance_applied_once = False
         self._last_media_for_sub_auto_pick = None
@@ -5340,30 +5344,35 @@ class MusicPanelWidget(QWidget):
         # Open File
         self.action_open_file = QAction("Open File", self)
         self.action_open_file.setShortcut("Ctrl+O")
+        self.action_open_file.setShortcutContext(Qt.WindowShortcut)
         self.action_open_file.triggered.connect(self._open_file_direct)
         media_menu.addAction(self.action_open_file)
+        self.addAction(self.action_open_file)
         
         # Open Multiple Files
         self.action_open_multiple_files = QAction("Open Multiple Files", self)
-        from PySide6.QtGui import QKeySequence
-        self.action_open_multiple_files.setShortcut(QKeySequence("Ctrl+K, O"))
+        self.action_open_multiple_files.setShortcut("Ctrl+K, O")
+        self.action_open_multiple_files.setShortcutContext(Qt.WindowShortcut)
+        self.action_open_multiple_files.triggered.connect(self._open_multiple_files_direct)
         media_menu.addAction(self.action_open_multiple_files)
+        self.addAction(self.action_open_multiple_files)
         
         # Open Folder
         self.action_open_folder = QAction("Open Folder", self)
         self.action_open_folder.setShortcut("Ctrl+Shift+O")
+        self.action_open_folder.setShortcutContext(Qt.WindowShortcut)
         self.action_open_folder.triggered.connect(self._browse_folder_direct)
         media_menu.addAction(self.action_open_folder)
-        
-        # Open Multiple Folders
-        self.action_open_multiple_folders = QAction("Open Multiple Folders", self)
-        self.action_open_multiple_folders.setShortcut(QKeySequence("Ctrl+Shift+K, O"))
-        media_menu.addAction(self.action_open_multiple_folders)
+        self.addAction(self.action_open_folder)
+
         
         # Open Location From Clipboard
         self.action_open_clipboard = QAction("Open Location From Clipboard", self)
         self.action_open_clipboard.setShortcut("Ctrl+Shift+V")
+        self.action_open_clipboard.setShortcutContext(Qt.WindowShortcut)
+        self.action_open_clipboard.triggered.connect(self._open_clipboard_direct)
         media_menu.addAction(self.action_open_clipboard)
+        self.addAction(self.action_open_clipboard)
         
         media_menu.addSeparator()
         
@@ -7498,15 +7507,95 @@ class MusicPanelWidget(QWidget):
         from PySide6.QtWidgets import QFileDialog
         
         start = getattr(self, '_music_folder', None) or os.path.expanduser("~")
-        folder = QFileDialog.getExistingDirectory(
-            self, "Select Media Folder", start, QFileDialog.ShowDirsOnly
-        )
+        folder = QFileDialog.getExistingDirectory(self, "Select Media Folder", start, QFileDialog.ShowDirsOnly)
         
         if folder:
             self._music_folder = folder
             self._load_tracks_from_folder(folder)
             # Save immediately so folder is remembered after restart
             QTimer.singleShot(500, self._save_state)
+    def _open_multiple_files_direct(self):
+        """Pick multiple media files and append them to current playlist."""
+        from PySide6.QtWidgets import QFileDialog
+        import datetime
+        import os
+        
+        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
+        filters = "Media Files (" + " ".join(["*" + e for e in audio_exts]) + ");;All Files (*.*)"
+        start_dir = getattr(self, '_music_folder', None) or os.path.expanduser("~")
+        paths, _ = QFileDialog.getOpenFileNames(self, "Open Multiple Media Files", start_dir, filters)
+        
+        if paths:
+            for path in paths:
+                ext = os.path.splitext(path)[1].lower()
+                title = os.path.splitext(os.path.basename(path))[0]
+                
+                try:
+                    mtime = os.path.getmtime(path)
+                    dt = datetime.datetime.fromtimestamp(mtime)
+                    date_str = dt.strftime("%b %d, %Y")
+                except Exception:
+                    date_str = ""
+                    
+                track = {
+                    'path': path,
+                    'title': title,
+                    'artist': 'Single Track',
+                    'duration': 0,
+                    'date_added': date_str,
+                    'playlist_group': 'Imported Files'
+                }
+                
+                self._tracks.append(track)
+                
+            self._build_tree()
+            self._current_index = len(self._tracks) - len(paths)
+            self._play_current()
+            QTimer.singleShot(500, self._save_state)
+            
+    def _open_clipboard_direct(self):
+        """Open a file or folder from clipboard."""
+        from PySide6.QtGui import QClipboard
+        from PySide6.QtWidgets import QApplication
+        import os
+        import datetime
+        
+        clipboard = QApplication.clipboard()
+        path = clipboard.text().strip().strip('"').strip("'")
+        
+        if not path or not os.path.exists(path):
+            return
+            
+        if os.path.isdir(path):
+            self._music_folder = path
+            self._load_tracks_from_folder(path)
+            QTimer.singleShot(500, self._save_state)
+        elif os.path.isfile(path):
+            ext = os.path.splitext(path)[1].lower()
+            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
+            if ext in audio_exts:
+                title = os.path.splitext(os.path.basename(path))[0]
+                try:
+                    mtime = os.path.getmtime(path)
+                    dt = datetime.datetime.fromtimestamp(mtime)
+                    date_str = dt.strftime("%b %d, %Y")
+                except Exception:
+                    date_str = ""
+                    
+                track = {
+                    'path': path,
+                    'title': title,
+                    'artist': 'Single Track',
+                    'duration': 0,
+                    'date_added': date_str,
+                    'playlist_group': 'Imported Files'
+                }
+                
+                self._tracks.append(track)
+                self._build_tree()
+                self._current_index = len(self._tracks) - 1
+                self._play_current()
+                QTimer.singleShot(500, self._save_state)
 
     def _open_file_direct(self):
         """Pick a single media file and play it."""
@@ -7514,8 +7603,8 @@ class MusicPanelWidget(QWidget):
         import datetime
         
         audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
-        filters = "Media Files (" + " ".join(["*" + e for e in (audio_exts)]) + ");;All Files (*.*)"
-        path, _ = QFileDialog.getOpenFileName(self, "Open Media File", "", filters)
+        dialog_filters = "Media Files (" + " ".join(["*" + e for e in (audio_exts)]) + ");;All Files (*.*)"
+        path, _ = QFileDialog.getOpenFileName(self, "Open Media File", "", dialog_filters)
         
         if path:
             ext = os.path.splitext(path)[1].lower()
