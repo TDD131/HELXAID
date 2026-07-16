@@ -3849,8 +3849,8 @@ class ResumeNotificationWidget(QFrame):
         
         self.setStyleSheet("""
             QFrame#resumeNotification {
-                background-color: #1F2029;
-                border: none;
+                background-color: rgba(31, 32, 41, 0.95);
+                border: 1px solid rgba(255, 255, 255, 0.05);
                 border-radius: 8px;
             }
             QLabel {
@@ -3880,9 +3880,17 @@ class ResumeNotificationWidget(QFrame):
             }
         """)
         
-        layout = QHBoxLayout(self)
+        from PySide6.QtWidgets import QVBoxLayout
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        content_widget = QWidget(self)
+        content_widget.setStyleSheet("background: transparent; border: none;")
+        layout = QHBoxLayout(content_widget)
         layout.setContentsMargins(15, 0, 15, 0)
         layout.setSpacing(12)
+        main_layout.addWidget(content_widget, stretch=1)
         
         # Label
         self.lbl_msg = QLabel("Resume: Unknown?", self)
@@ -3903,9 +3911,52 @@ class ResumeNotificationWidget(QFrame):
         # Push everything to the left
         layout.addStretch()
         
+        from PySide6.QtWidgets import QProgressBar
+        self.progress = QProgressBar(self)
+        self.progress.setFixedHeight(2)
+        self.progress.setTextVisible(False)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                background-color: transparent;
+                border: none;
+            }
+            QProgressBar::chunk {
+                background-color: #FF5B06;
+                border-bottom-left-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }
+        """)
+        main_layout.addWidget(self.progress)
+        
         # Connections
-        self.btn_resume.clicked.connect(self.resume_clicked.emit)
-        self.btn_dismiss.clicked.connect(self.dismiss_clicked.emit)
+        self.btn_resume.clicked.connect(self._on_resume_clicked)
+        self.btn_dismiss.clicked.connect(self._on_dismiss_clicked)
+        
+        # Auto-dismiss timer
+        from PySide6.QtCore import QTimer
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._update_progress)
+        self._timeout_ms = 10000
+        self._elapsed_ms = 0
+        
+        self.progress.setRange(0, self._timeout_ms)
+        
+    def _on_resume_clicked(self):
+        self._timer.stop()
+        self.resume_clicked.emit()
+        
+    def _on_dismiss_clicked(self):
+        self._timer.stop()
+        self.dismiss_clicked.emit()
+        
+    def _update_progress(self):
+        self._elapsed_ms += 16
+        remaining = max(0, self._timeout_ms - self._elapsed_ms)
+        self.progress.setValue(remaining)
+        if self._elapsed_ms >= self._timeout_ms:
+            self._timer.stop()
+            self.dismiss_clicked.emit()
 
     def set_track_title(self, title):
         self.lbl_msg.setText(f"Resume: {title}?")
@@ -3921,10 +3972,40 @@ class ResumeNotificationWidget(QFrame):
         super().showEvent(event)
         self.btn_resume.setEnabled(True)
         self.btn_dismiss.setEnabled(True)
-        if self.graphicsEffect():
-            self.graphicsEffect().setOpacity(1.0)
+        self.progress.setValue(self._timeout_ms)
+        self._elapsed_ms = 0
+        self._timer.start()
+        
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        if not self.graphicsEffect():
+            effect = QGraphicsOpacityEffect(self)
+            self.setGraphicsEffect(effect)
+        else:
+            effect = self.graphicsEffect()
+            
+        effect.setOpacity(0.0)
+        
         if self.parent():
-            self.move(self.parent().width() - self.width() - 20, 20)
+            x = self.parent().width() - self.width() - 20
+            self.move(x, 20)
+            
+        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QPoint
+        self._in_anim_group = QParallelAnimationGroup(self)
+        
+        pos_anim = QPropertyAnimation(self, b"pos")
+        pos_anim.setDuration(400)
+        pos_anim.setStartValue(QPoint(self.x(), -30))
+        pos_anim.setEndValue(QPoint(self.x(), 20))
+        pos_anim.setEasingCurve(QEasingCurve.OutBack)
+        
+        fade_anim = QPropertyAnimation(effect, b"opacity")
+        fade_anim.setDuration(300)
+        fade_anim.setStartValue(0.0)
+        fade_anim.setEndValue(1.0)
+        
+        self._in_anim_group.addAnimation(pos_anim)
+        self._in_anim_group.addAnimation(fade_anim)
+        self._in_anim_group.start()
             
     def animate_out(self, callback=None):
         self.btn_resume.setEnabled(False)
@@ -3973,7 +4054,7 @@ class FloatingUrlInputWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("floatingUrlInput")
-        self.setFixedSize(450, 50)
+        self.setFixedSize(450, 75)
         self.hide()
         
         self.setStyleSheet("""
@@ -4008,12 +4089,21 @@ class FloatingUrlInputWidget(QFrame):
             QPushButton:pressed {
                 background-color: #E04B00;
             }
+            QLabel#errorLabel {
+                color: #FF5B06;
+                font-size: 11px;
+                font-weight: bold;
+            }
         """)
         
-        from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 0, 10, 0)
-        layout.setSpacing(10)
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(5)
+        
+        input_layout = QHBoxLayout()
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(10)
         
         self.input_field = QLineEdit(self)
         self.input_field.setPlaceholderText("Type song name or paste URL")
@@ -4023,8 +4113,14 @@ class FloatingUrlInputWidget(QFrame):
         self.btn_play.setFixedHeight(30)
         self.btn_play.setCursor(Qt.PointingHandCursor)
         
-        layout.addWidget(self.input_field)
-        layout.addWidget(self.btn_play)
+        input_layout.addWidget(self.input_field)
+        input_layout.addWidget(self.btn_play)
+        main_layout.addLayout(input_layout)
+        
+        self.error_label = QLabel("", self)
+        self.error_label.setObjectName("errorLabel")
+        self.error_label.hide()
+        main_layout.addWidget(self.error_label)
         
         # Connections
         self.btn_play.clicked.connect(self._submit)
@@ -4032,6 +4128,8 @@ class FloatingUrlInputWidget(QFrame):
         
     def showEvent(self, event):
         super().showEvent(event)
+        self.error_label.hide()
+        self.setStyleSheet(self.styleSheet().replace("border: 1px solid #FF0000;", "border: 1px solid rgba(255, 255, 255, 0.05);"))
         self.input_field.clear()
         self.input_field.setFocus()
         if self.parent():
@@ -4048,22 +4146,55 @@ class FloatingUrlInputWidget(QFrame):
         self._anim.setEasingCurve(QEasingCurve.OutBack)
         self._anim.start()
         
+    def animate_out(self):
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
+        self._anim = QPropertyAnimation(self, b"pos")
+        self._anim.setDuration(200)
+        self._anim.setStartValue(self.pos())
+        self._anim.setEndValue(QPoint(self.x(), 20))
+        self._anim.setEasingCurve(QEasingCurve.InBack)
+        self._anim.finished.connect(self.hide)
+        self._anim.start()
+        
     def focusOutEvent(self, event):
         super().focusOutEvent(event)
         # Hide when clicking outside
-        self.hide()
+        self.animate_out()
 
     def _submit(self):
         url = self.input_field.text().strip()
         if url:
             if "spotify.com" in url.lower():
-                from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Spotify DRM Restricted", "Spotify links cannot be downloaded due to strict DRM encryption.\n\nPRO TIP: Simply type the Song Name and Artist here instead of pasting a link, and HELXAID will automatically find and download it for you!")
+                self.error_label.setText("Spotify DRM Restricted. Type song name instead.")
+                self.error_label.show()
+                self.setStyleSheet(self.styleSheet().replace("border: 1px solid rgba(255, 255, 255, 0.05);", "border: 1px solid #FF0000;"))
+                
+                # Shake animation
+                from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
+                self._shake = QPropertyAnimation(self, b"pos")
+                self._shake.setDuration(300)
+                
+                import math
+                from PySide6.QtCore import QVariantAnimation
+                self._shake_var = QVariantAnimation(self)
+                self._shake_var.setDuration(400)
+                self._shake_var.setStartValue(0.0)
+                self._shake_var.setEndValue(1.0)
+                
+                base_x = self.x()
+                base_y = self.y()
+                
+                def on_shake(val):
+                    offset = math.sin(val * math.pi * 6) * 10 * (1 - val)
+                    self.move(int(base_x + offset), base_y)
+                    
+                self._shake_var.valueChanged.connect(on_shake)
+                self._shake_var.start()
                 return
                 
             # Let yt-dlp's default_search handle non-URL queries
             self.url_submitted.emit(url)
-            self.hide()
+            self.animate_out()
 
 
 class StreamLoadingOverlayWidget(QFrame):
@@ -4183,7 +4314,7 @@ class StreamLoadingOverlayWidget(QFrame):
         
         self.btn_close = QPushButton("Close", self)
         self.btn_close.setFixedHeight(24)
-        self.btn_close.setMinimumWidth(100)
+        self.btn_close.setFixedWidth(110)
         self.btn_close.setCursor(Qt.PointingHandCursor)
         self.btn_close.setStyleSheet("""
             QPushButton {
@@ -5816,7 +5947,7 @@ class MusicPanelWidget(QWidget):
         tools_menu.setObjectName("toolsMenu")
         
         # Play from URL (Stream)
-        self.action_play_url = QAction("URL Stream", self)
+        self.action_play_url = QAction("URL Stream (Beta)", self)
         self.action_play_url.setShortcut("Ctrl+Y")
         self.action_play_url.setShortcutContext(Qt.ApplicationShortcut)
         self.action_play_url.triggered.connect(self._prompt_play_url)
