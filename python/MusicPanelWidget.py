@@ -2410,7 +2410,6 @@ class PlaylistHeader(QFrame):
                 self._cover_front_path = ''
                 self._cover_front_source = ''
                 self.cover_front.clear()
-                self.cover_front.setText("No Cover")
                 changed = True
             elif f_pix is not None:
                 saved_path = self._save_cropped_cover(f_pix, 'front')
@@ -2431,7 +2430,6 @@ class PlaylistHeader(QFrame):
                 self._cover_back_path = ''
                 self._cover_back_source = ''
                 self.cover_back.clear()
-                self.cover_back.setText("No Cover")
                 changed = True
             elif b_pix is not None:
                 saved_path = self._save_cropped_cover(b_pix, 'back')
