@@ -3237,22 +3237,23 @@ class PlaylistTable(QWidget):
             folder_item.setExpanded(expanded_states.get(group, False))
             
         self.tree.setUpdatesEnabled(True)
-        
-        # Force expand the currently playing track's group with animation
-        # Only do this if we actually have media loaded (prevents auto-expanding on empty/restored state pastes)
-        if getattr(self, '_current_index', -1) >= 0 and self._current_index < len(self._tracks):
-            from PySide6.QtMultimedia import QMediaPlayer
-            if hasattr(self, '_player') and not self._player.source().isEmpty():
-                playing_track = self._tracks[self._current_index]
-                playing_group = playing_track.get('playlist_group')
-                if playing_group and playing_group in created_folders:
-                    folder_item = created_folders[playing_group]
-                    if not folder_item.isExpanded():
-                        folder_item.setExpanded(True)
             
     def highlight_playing(self, index: int):
         self._current_index = index
         self._render_tracks()
+        
+        # Auto-expand the folder of the currently playing track
+        if 0 <= index < len(self._tracks):
+            playing_track = self._tracks[index]
+            playing_group = playing_track.get('playlist_group')
+            if playing_group:
+                # Find the folder item in the tree
+                for i in range(self.tree.topLevelItemCount()):
+                    item = self.tree.topLevelItem(i)
+                    if item.data(0, Qt.UserRole) == "folder" and item.text(1) == playing_group:
+                        if not item.isExpanded():
+                            item.setExpanded(True)
+                        break
     
     def get_next_index(self, current_index: int) -> int:
         if not self._sorted_indices:
@@ -4080,7 +4081,7 @@ class StreamLoadingOverlayWidget(QFrame):
         self.setStyleSheet("""
             QFrame#streamLoadingOverlay {
                 background-color: rgba(31, 32, 41, 0.95);
-                border: 1px solid rgba(255, 91, 6, 0.5);
+                border: none;
                 border-radius: 8px;
             }
             QLabel {
