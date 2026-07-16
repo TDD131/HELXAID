@@ -49,8 +49,8 @@ class MediaLibraryPage(QWidget):
         QShortcut(QKeySequence("Ctrl+O"), self, activated=self._add_single_file)
         # Ctrl+Shift+O : Add Folder
         QShortcut(QKeySequence("Ctrl+Shift+O"), self, activated=self._add_single_folder)
-        # Ctrl+K, O : Add Multiple Files
-        QShortcut(QKeySequence("Ctrl+K, O"), self, activated=self._add_multiple_files)
+        # Ctrl+K, Ctrl+O (holding Ctrl) : Add Multiple Files
+        QShortcut(QKeySequence("Ctrl+K, Ctrl+O"), self, activated=self._add_multiple_files)
         # Ctrl+Shift+K, O (or Ctrl+K, Shift+O) : Add Multiple Folders
         QShortcut(QKeySequence("Ctrl+K, Shift+O"), self, activated=self._add_multiple_folders)
 

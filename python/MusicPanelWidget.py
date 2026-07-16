@@ -2683,6 +2683,7 @@ class PlaylistTable(QWidget):
         self.tree.setAnimated(True)
         self.tree.setExpandsOnDoubleClick(False) # Manual handling for triple click
         self.tree.setRootIsDecorated(False) # Hide expand arrows for cleaner look
+        self.tree.setIndentation(12) # Reduce indent to prevent text clipping
         
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
@@ -2706,8 +2707,11 @@ class PlaylistTable(QWidget):
         def _on_click_timeout():
             if self._click_count == 2:
                 item = getattr(self, '_last_clicked_item', None)
-                if item and item.data(0, Qt.UserRole) == "folder":
-                    item.setExpanded(not item.isExpanded())
+                try:
+                    if item and item.data(0, Qt.UserRole) == "folder":
+                        item.setExpanded(not item.isExpanded())
+                except RuntimeError:
+                    pass
             
             self._click_count = 0
             self._last_clicked_item = None
@@ -2762,16 +2766,20 @@ class PlaylistTable(QWidget):
                 if not self._click_timer.isActive():
                     self._click_count = 1
                     self._last_clicked_item = item
-                    self._click_timer.start(350)
+                    self._click_timer.start(500)
                 else:
                     self._click_count += 1
                     
                 if self._click_count >= 3:
                     self._click_timer.stop()
                     item_target = getattr(self, '_last_clicked_item', None)
-                    if item_target and item_target.data(0, Qt.UserRole) == "folder":
-                        folder_name = item_target.text(1)
-                        self.flattenGroup.emit(folder_name)
+                    if item_target:
+                        try:
+                            if item_target.data(0, Qt.UserRole) == "folder":
+                                folder_name = item_target.text(1)
+                                self.flattenGroup.emit(folder_name)
+                        except RuntimeError:
+                            pass
                     self._click_count = 0
                     self._last_clicked_item = None
                     return
@@ -2786,7 +2794,7 @@ class PlaylistTable(QWidget):
                 else:
                     self._click_count = 2
                     self._last_clicked_item = item
-                    self._click_timer.start(350)
+                    self._click_timer.start(500)
                     
                 if self._click_count >= 3:
                     self._click_timer.stop()
@@ -2902,7 +2910,7 @@ class PlaylistTable(QWidget):
         self.tree.startDrag = _custom_startDrag
         
         # Column widths & resize behavior
-        self.tree.setColumnWidth(0, 50)    # Index
+        self.tree.setColumnWidth(0, 70)    # Index
         self.tree.setColumnWidth(2, 160)   # Date Added
         self.tree.setColumnWidth(3, 80)    # Duration
         
@@ -2911,7 +2919,7 @@ class PlaylistTable(QWidget):
         header.setSectionResizeMode(1, QHeaderView.Stretch)         
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setMinimumSectionSize(50)
+        header.setMinimumSectionSize(70)
         header.setStretchLastSection(False)
         
         header_item = self.tree.headerItem()
@@ -3152,8 +3160,8 @@ class PlaylistTable(QWidget):
             track_item = QTreeWidgetItem(parent)
             track_item.setData(0, Qt.UserRole, orig_idx)
             num_text = ">" if is_playing else num_str
-            track_item.setText(0, num_text)
-            track_item.setTextAlignment(0, Qt.AlignCenter)
+            track_item.setText(0, " " + num_text)
+            track_item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
             if is_playing:
                 track_item.setForeground(0, QColor("#FF5B06"))
             else:
@@ -3233,13 +3241,16 @@ class PlaylistTable(QWidget):
         self.tree.setUpdatesEnabled(True)
         
         # Force expand the currently playing track's group with animation
+        # Only do this if we actually have media loaded (prevents auto-expanding on empty/restored state pastes)
         if getattr(self, '_current_index', -1) >= 0 and self._current_index < len(self._tracks):
-            playing_track = self._tracks[self._current_index]
-            playing_group = playing_track.get('playlist_group')
-            if playing_group and playing_group in created_folders:
-                folder_item = created_folders[playing_group]
-                if not folder_item.isExpanded():
-                    folder_item.setExpanded(True)
+            from PySide6.QtMultimedia import QMediaPlayer
+            if hasattr(self, '_player') and not self._player.source().isEmpty():
+                playing_track = self._tracks[self._current_index]
+                playing_group = playing_track.get('playlist_group')
+                if playing_group and playing_group in created_folders:
+                    folder_item = created_folders[playing_group]
+                    if not folder_item.isExpanded():
+                        folder_item.setExpanded(True)
             
     def highlight_playing(self, index: int):
         self._current_index = index
@@ -3952,6 +3963,344 @@ class ResumeNotificationWidget(QFrame):
                 
         self._anim_group.finished.connect(on_finished)
         self._anim_group.start()
+
+
+class FloatingUrlInputWidget(QFrame):
+    """
+    Floating URL input overlay with modern UI.
+    """
+    url_submitted = Signal(str)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("floatingUrlInput")
+        self.setFixedSize(450, 50)
+        self.hide()
+        
+        self.setStyleSheet("""
+            QFrame#floatingUrlInput {
+                background-color: rgba(31, 32, 41, 0.95);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 8px;
+            }
+            QLineEdit {
+                background: rgba(0, 0, 0, 0.2);
+                border: none;
+                border-radius: 4px;
+                color: #FFFFFF;
+                padding: 0px 10px;
+                font-size: 12px;
+                selection-background-color: #FF5B06;
+            }
+            QLineEdit:focus {
+                background: rgba(255, 91, 6, 0.15);
+            }
+            QPushButton {
+                color: #FFFFFF;
+                background-color: #FF5B06;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                padding: 0px 15px;
+            }
+            QPushButton:hover {
+                background-color: #FF7B36;
+            }
+            QPushButton:pressed {
+                background-color: #E04B00;
+            }
+        """)
+        
+        from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QPushButton
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(10)
+        
+        self.input_field = QLineEdit(self)
+        self.input_field.setPlaceholderText("Type song name or paste URL")
+        self.input_field.setFixedHeight(30)
+        
+        self.btn_play = QPushButton("Search", self)
+        self.btn_play.setFixedHeight(30)
+        self.btn_play.setCursor(Qt.PointingHandCursor)
+        
+        layout.addWidget(self.input_field)
+        layout.addWidget(self.btn_play)
+        
+        # Connections
+        self.btn_play.clicked.connect(self._submit)
+        self.input_field.returnPressed.connect(self._submit)
+        
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.input_field.clear()
+        self.input_field.setFocus()
+        if self.parent():
+            # Center it horizontally, near the top
+            x = (self.parent().width() - self.width()) // 2
+            self.move(x, 60)
+            
+        # Add a simple drop-in animation
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
+        self._anim = QPropertyAnimation(self, b"pos")
+        self._anim.setDuration(300)
+        self._anim.setStartValue(QPoint(self.x(), 20))
+        self._anim.setEndValue(QPoint(self.x(), 60))
+        self._anim.setEasingCurve(QEasingCurve.OutBack)
+        self._anim.start()
+        
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        # Hide when clicking outside
+        self.hide()
+
+    def _submit(self):
+        url = self.input_field.text().strip()
+        if url:
+            if "spotify.com" in url.lower():
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Spotify DRM Restricted", "Spotify links cannot be downloaded due to strict DRM encryption.\n\nPRO TIP: Simply type the Song Name and Artist here instead of pasting a link, and HELXAID will automatically find and download it for you!")
+                return
+                
+            # Let yt-dlp's default_search handle non-URL queries
+            self.url_submitted.emit(url)
+            self.hide()
+
+
+class StreamLoadingOverlayWidget(QFrame):
+    """
+    Floating loading overlay with infinite progress bar for Stream extraction.
+    """
+    log_updated = Signal(str)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("streamLoadingOverlay")
+        self.setFixedSize(400, 150)
+        self.hide()
+        
+        self.setStyleSheet("""
+            QFrame#streamLoadingOverlay {
+                background-color: rgba(31, 32, 41, 0.95);
+                border: 1px solid rgba(255, 91, 6, 0.5);
+                border-radius: 8px;
+            }
+            QLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                background: transparent;
+                border: none;
+            }
+            QPlainTextEdit {
+                background-color: rgba(0, 0, 0, 0.4);
+                color: #00FF00;
+                font-family: Consolas, 'Courier New', monospace;
+                font-size: 10px;
+                border: none;
+                border-radius: 4px;
+                padding: 5px;
+            }
+        """)
+        
+        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QPlainTextEdit, QLayout
+        from PySide6.QtCore import Qt
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 15, 20, 15)
+        
+        vbox = QVBoxLayout()
+        vbox.setSpacing(10)
+        
+        self.lbl_msg = QLabel("Extracting stream URL...", self)
+        self.lbl_msg.setAlignment(Qt.AlignCenter)
+        
+        self.progress = QProgressBar(self)
+        self.progress.setTextVisible(False)
+        self.progress.setRange(0, 0) # Infinite loading animation
+        self.progress.setFixedHeight(4)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                background-color: rgba(255, 255, 255, 0.1);
+                border: none;
+                border-radius: 2px;
+            }
+            QProgressBar::chunk {
+                background-color: #FF5B06;
+                border-radius: 2px;
+            }
+        """)
+        
+        self.terminal = QPlainTextEdit(self)
+        self.terminal.setReadOnly(True)
+        self.terminal.setMaximumBlockCount(100)
+        self.terminal.setFixedHeight(120)
+        self.terminal.hide()
+        from PySide6.QtCore import Qt
+        self.terminal.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        
+        self.btn_toggle = QPushButton("▶ Show Details", self)
+        self.btn_toggle.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #A0A0A0;
+                border: none;
+                text-align: left;
+                font-size: 11px;
+                padding: 2px 0px;
+            }
+            QPushButton:hover { color: #FFFFFF; }
+        """)
+        
+        def toggle_terminal():
+            if self.terminal.isHidden():
+                self.terminal.show()
+                self.btn_copy.show()
+                self.btn_toggle.setText("▼ Hide Details")
+                self.setFixedSize(400, 280)
+            else:
+                self.terminal.hide()
+                self.btn_copy.hide()
+                self.btn_toggle.setText("▶ Show Details")
+                self.setFixedSize(400, 150)
+            
+        self.btn_toggle.clicked.connect(toggle_terminal)
+        
+        # Action Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        
+        self.btn_copy = QPushButton("Copy Log", self)
+        self.btn_copy.setFixedHeight(24)
+        self.btn_copy.setCursor(Qt.PointingHandCursor)
+        self.btn_copy.setStyleSheet("""
+            QPushButton {
+                background-color: #333544; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+            }
+            QPushButton:hover { background-color: #45485B; }
+            QPushButton:pressed { background-color: #242530; }
+        """)
+        self.btn_copy.clicked.connect(self._copy_log)
+        self.btn_copy.hide()
+        
+        self.btn_close = QPushButton("Close", self)
+        self.btn_close.setFixedHeight(24)
+        self.btn_close.setMinimumWidth(100)
+        self.btn_close.setCursor(Qt.PointingHandCursor)
+        self.btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #DC3545; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+            }
+            QPushButton:hover { background-color: #E04B59; }
+            QPushButton:pressed { background-color: #C82333; }
+        """)
+        self.btn_close.clicked.connect(self.hide)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_copy)
+        btn_layout.addWidget(self.btn_close)
+        
+        vbox.addWidget(self.lbl_msg)
+        vbox.addWidget(self.progress)
+        vbox.addWidget(self.btn_toggle)
+        vbox.addWidget(self.terminal)
+        vbox.addLayout(btn_layout)
+        layout.addLayout(vbox)
+        
+        self.log_updated.connect(self._append_log)
+        
+    def _copy_log(self):
+        from PySide6.QtWidgets import QApplication
+        QApplication.clipboard().setText(self.terminal.toPlainText())
+        self.btn_copy.setText("Copied!")
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(2000, lambda: self.btn_copy.setText("Copy Log"))
+        
+    def _append_log(self, msg):
+        self.terminal.appendPlainText(msg.strip())
+        bar = self.terminal.verticalScrollBar()
+        bar.setValue(bar.maximum())
+        
+    def show_msg(self, msg):
+        self.lbl_msg.setText(msg)
+        self.terminal.clear()
+        self.setFixedSize(400, 150)
+        self.show()
+        self.raise_()
+        
+    def finish_and_close_with_countdown(self):
+        self.progress.setMaximum(100)
+        self.progress.setValue(100)
+        self.lbl_msg.setText("Done! Added to playlist.")
+        
+        self.btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+            }
+            QPushButton:hover { background-color: #DC3545; }
+            QPushButton:pressed { background-color: #C82333; }
+        """)
+        
+        self._countdown = 3
+        self.btn_close.setText(f"Closing in {self._countdown}...")
+        
+        if not hasattr(self, '_hover_filter_installed'):
+            self.btn_close.installEventFilter(self)
+            self._hover_filter_installed = True
+            
+        from PySide6.QtCore import QTimer
+        if hasattr(self, '_countdown_timer'):
+            self._countdown_timer.stop()
+        self._countdown_timer = QTimer(self)
+        self._countdown_timer.timeout.connect(self._on_countdown_tick)
+        self._countdown_timer.start(1000)
+
+    def _on_countdown_tick(self):
+        self._countdown -= 1
+        if self._countdown <= 0:
+            self._countdown_timer.stop()
+            self.hide()
+        else:
+            if not self.btn_close.underMouse():
+                self.btn_close.setText(f"Closing in {self._countdown}...")
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj == self.btn_close and hasattr(self, '_countdown'):
+            if event.type() == QEvent.Enter:
+                self.btn_close.setText("Close")
+            elif event.type() == QEvent.Leave:
+                self.btn_close.setText(f"Closing in {self._countdown}...")
+        return super().eventFilter(obj, event)
+
+    def _reset_ui(self):
+        self.progress.setRange(0, 0)
+        if hasattr(self, '_countdown_timer'):
+            self._countdown_timer.stop()
+        if hasattr(self, '_countdown'):
+            delattr(self, '_countdown')
+        self.btn_close.setText("Close")
+        self.btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #DC3545; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+            }
+            QPushButton:hover { background-color: #E04B59; }
+            QPushButton:pressed { background-color: #C82333; }
+        """)
+        self.terminal.hide()
+        self.btn_copy.hide()
+        self.btn_toggle.setText("▶ Show Details")
+        self.setFixedSize(400, 150)
+
+    def hideEvent(self, event):
+        self._reset_ui()
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self.parent():
+            x = (self.parent().width() - self.width()) // 2
+            y = (self.parent().height() - self.height()) // 2
+            self.move(x, y)
 
 
 class MusicPanelWidget(QWidget):
@@ -4841,6 +5190,13 @@ class MusicPanelWidget(QWidget):
         self.resume_banner.dismiss_clicked.connect(self._dismiss_banner)
         self.resume_banner.resume_clicked.connect(self._resume_playback_from_banner)
         
+        # Floating URL Input
+        self.floating_url_input = FloatingUrlInputWidget(self)
+        self.floating_url_input.url_submitted.connect(self._process_url_stream_async)
+        
+        # Loading Overlay for Streams
+        self.stream_loading = StreamLoadingOverlayWidget(self)
+        
         # Main content stack
         self.stack = QStackedWidget()
         
@@ -5229,11 +5585,8 @@ class MusicPanelWidget(QWidget):
         self.player_bar.nextClicked.connect(self._next_track)
         self.player_bar.loopClicked.connect(self._save_state)
         
-        # Background shortcut for Ctrl+K, O (displays as Ctrl+K+O)
+        # Background shortcut removed due to conflict
         from PySide6.QtGui import QKeySequence, QShortcut
-        self.sc_folder = QShortcut(QKeySequence("Ctrl+K, Ctrl+O"), self)
-        self.sc_folder.activated.connect(self._browse_folder_direct)
-        
         # Shortcut for Ctrl+A (Select All Tracks)
         self.sc_select_all = QShortcut(QKeySequence("Ctrl+A"), self)
         self.sc_select_all.activated.connect(self._on_select_all_tracks)
@@ -5341,24 +5694,24 @@ class MusicPanelWidget(QWidget):
         media_menu = menu_bar.addMenu("Media")
         media_menu.setObjectName("mediaMenu")
         
-        # Open File
-        self.action_open_file = QAction("Open File", self)
+        # Add File
+        self.action_open_file = QAction("Add File", self)
         self.action_open_file.setShortcut("Ctrl+O")
         self.action_open_file.setShortcutContext(Qt.WindowShortcut)
         self.action_open_file.triggered.connect(self._open_file_direct)
         media_menu.addAction(self.action_open_file)
         self.addAction(self.action_open_file)
         
-        # Open Multiple Files
-        self.action_open_multiple_files = QAction("Open Multiple Files", self)
-        self.action_open_multiple_files.setShortcut("Ctrl+K, O")
+        # Add Multiple Files
+        self.action_open_multiple_files = QAction("Add Multiple Files", self)
+        self.action_open_multiple_files.setShortcut("Ctrl+K, Ctrl+O")
         self.action_open_multiple_files.setShortcutContext(Qt.WindowShortcut)
         self.action_open_multiple_files.triggered.connect(self._open_multiple_files_direct)
         media_menu.addAction(self.action_open_multiple_files)
         self.addAction(self.action_open_multiple_files)
         
-        # Open Folder
-        self.action_open_folder = QAction("Open Folder", self)
+        # Add Folder
+        self.action_open_folder = QAction("Add Folder", self)
         self.action_open_folder.setShortcut("Ctrl+Shift+O")
         self.action_open_folder.setShortcutContext(Qt.WindowShortcut)
         self.action_open_folder.triggered.connect(self._browse_folder_direct)
@@ -5366,8 +5719,8 @@ class MusicPanelWidget(QWidget):
         self.addAction(self.action_open_folder)
 
         
-        # Open Location From Clipboard
-        self.action_open_clipboard = QAction("Open Location From Clipboard", self)
+        # Add Location From Clipboard
+        self.action_open_clipboard = QAction("Add Location From Clipboard", self)
         self.action_open_clipboard.setShortcut("Ctrl+Shift+V")
         self.action_open_clipboard.setShortcutContext(Qt.WindowShortcut)
         self.action_open_clipboard.triggered.connect(self._open_clipboard_direct)
@@ -5462,6 +5815,16 @@ class MusicPanelWidget(QWidget):
         # === Tools Menu ===
         tools_menu = menu_bar.addMenu("Tools")
         tools_menu.setObjectName("toolsMenu")
+        
+        # Play from URL (Stream)
+        self.action_play_url = QAction("URL Stream", self)
+        self.action_play_url.setShortcut("Ctrl+Y")
+        self.action_play_url.setShortcutContext(Qt.ApplicationShortcut)
+        self.action_play_url.triggered.connect(self._prompt_play_url)
+        tools_menu.addAction(self.action_play_url)
+        self.addAction(self.action_play_url)
+        
+        tools_menu.addSeparator()
         
         # YouTube Downloader
         self.action_download_yt = QAction("YouTube Downloader", self)
@@ -6446,6 +6809,11 @@ class MusicPanelWidget(QWidget):
             self._play_track(0)
             return
             
+        # If a track is selected (e.g. from state restore) but not loaded into the player yet
+        if getattr(self, '_current_index', -1) >= 0 and self._player.source().isEmpty() and hasattr(self, '_playlist') and self._playlist:
+            self._play_track(self._current_index)
+            return
+            
         if self._player.playbackState() == QMediaPlayer.PlayingState:
             self._player.pause()
         else:
@@ -6815,45 +7183,21 @@ class MusicPanelWidget(QWidget):
         self.player_bar.set_track_info(f"Loading {track.get('title', 'Stream')}...", track.get('artist', ''))
         
         def fetch():
-            import sys
-            import subprocess
-            import json
-            import os
-            
             url = track.get('original_url', track.get('path', ''))
-            # Capture tracking ticket BEFORE we go into heavy shell blocking
             request_id = getattr(self, '_stream_request_id', 0)
             
             try:
                 import yt_dlp
-                main_py = os.path.join(os.path.dirname(yt_dlp.__file__), '__main__.py')
-            except ImportError as e:
-                print(f"yt-dlp core module missing entirely: {e}")
-                return
-            
-            cmd = [
-                sys.executable, main_py,
-                '--dump-json',
-                '-f', '18/best[ext=mp4][height<=360]/bestaudio/best',
-                '--no-playlist',
-                '--quiet',
-                '--no-warnings',
-                '--socket-timeout', '10',
-                '--no-check-certificate',
-                '--extractor-args', 'youtube:player_client=android',
-                url
-            ]
-            
-            try:
-                startupinfo = None
-                if sys.platform == 'win32':
-                    from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
-                    startupinfo = STARTUPINFO()
-                    startupinfo.dwFlags |= STARTF_USESHOWWINDOW
-                    
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=25, startupinfo=startupinfo)
-                if result.returncode == 0 and result.stdout:
-                    info = json.loads(result.stdout)
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'quiet': True,
+                    'no_warnings': True,
+                    'extract_flat': False
+                }
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if 'entries' in info:
+                        info = info['entries'][0]
                     stream_url = info.get('url')
                     
                     if stream_url:
@@ -6862,9 +7206,6 @@ class MusicPanelWidget(QWidget):
                     else:
                         print(f"Failed to extract stream url for {url}")
                         self._revert_loading_ui(track, request_id)
-                else:
-                    print(f"yt-dlp shell error: {result.stderr}")
-                    self._revert_loading_ui(track, request_id)
             except Exception as e:
                 print(f"yt-dlp fetch error: {e}")
                 self._revert_loading_ui(track, request_id)
@@ -6883,7 +7224,7 @@ class MusicPanelWidget(QWidget):
         QTimer.singleShot(0, restore)
         
     def _play_resolved_stream(self, stream_url, track, request_id):
-        """Play the resolved direct stream URL with native VLC backend."""
+        """Play the resolved direct stream URL with QMediaPlayer."""
         from PySide6.QtCore import QUrl, QTimer
         
         # Abort overlapping race condition requests (e.g if user presses Next 5 times very fast)
@@ -7281,12 +7622,19 @@ class MusicPanelWidget(QWidget):
                 'duration': 0,
                 'date_added': date_str
             }
-            playlist_name = track_info.get('playlist_name', 'Previous Session')
-            # Add to playlist
-            self.set_playlist(playlist_name, [track])
-            self._current_index = 0
-            self.table.highlight_playing(0)
-            self.player_bar.set_track_info(track_info['title'], 'Single Track')
+            target_path = track_info['path']
+            found_index = next((i for i, t in enumerate(self._playlist) if t['path'] == target_path), -1)
+            
+            if found_index != -1:
+                self._current_index = found_index
+                self.table.highlight_playing(found_index)
+                t = self._playlist[found_index]
+                self.player_bar.set_track_info(t.get('title', track_info['title']), t.get('artist', 'Unknown'))
+            else:
+                self._append_tracks_to_playlist([track])
+                self._current_index = len(self._playlist) - 1
+                self.table.highlight_playing(self._current_index)
+                self.player_bar.set_track_info(track_info['title'], 'Single Track')
             self._player.setSource(QUrl.fromLocalFile(track_info['path']))
             
             try:
@@ -7520,12 +7868,17 @@ class MusicPanelWidget(QWidget):
         import datetime
         import os
         
-        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
+        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
         filters = "Media Files (" + " ".join(["*" + e for e in audio_exts]) + ");;All Files (*.*)"
         start_dir = getattr(self, '_music_folder', None) or os.path.expanduser("~")
-        paths, _ = QFileDialog.getOpenFileNames(self, "Open Multiple Media Files", start_dir, filters)
+        dialog = QFileDialog(self, "Open Multiple Media Files", start_dir)
+        dialog.setNameFilter(filters)
+        dialog.setFileMode(QFileDialog.ExistingFiles)
+        dialog.setOption(QFileDialog.ShowDirsOnly, False)
+        paths = dialog.selectedFiles() if dialog.exec() else []
         
         if paths:
+            tracks_to_append = []
             for path in paths:
                 ext = os.path.splitext(path)[1].lower()
                 title = os.path.splitext(os.path.basename(path))[0]
@@ -7542,37 +7895,197 @@ class MusicPanelWidget(QWidget):
                     'title': title,
                     'artist': 'Single Track',
                     'duration': 0,
-                    'date_added': date_str,
-                    'playlist_group': 'Imported Files'
+                    'date_added': date_str
                 }
                 
-                self._tracks.append(track)
+                tracks_to_append.append(track)
                 
-            self._build_tree()
-            self._current_index = len(self._tracks) - len(paths)
-            self._play_current()
+            self._append_tracks_to_playlist(tracks_to_append)
+            self._fetch_metadata_async(self._playlist, "Multiple Files")
             QTimer.singleShot(500, self._save_state)
             
+    def _prompt_play_url(self):
+        if hasattr(self, 'floating_url_input'):
+            self.floating_url_input.show()
+            self.floating_url_input.raise_()
+
+    def _process_url_stream_async(self, url):
+        import threading
+        
+        from PySide6.QtWidgets import QMessageBox
+        
+        if hasattr(self, 'stream_loading'):
+            display_url = url if len(url) <= 45 else url[:42] + "..."
+            self.stream_loading.show_msg(f"Extracting stream URL\n{display_url}")
+            
+        class YtLogger:
+            def __init__(self, overlay):
+                self.overlay = overlay
+            def debug(self, msg):
+                if hasattr(self.overlay, 'log_updated'):
+                    self.overlay.log_updated.emit(msg)
+            def warning(self, msg):
+                if hasattr(self.overlay, 'log_updated'):
+                    self.overlay.log_updated.emit(f"[WARN] {msg}")
+            def error(self, msg):
+                if hasattr(self.overlay, 'log_updated'):
+                    self.overlay.log_updated.emit(f"[ERR] {msg}")
+        
+        def _worker():
+            import yt_dlp
+            from PySide6.QtCore import QTimer
+            import tempfile
+            import os
+            import time
+            import glob
+            
+            temp_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_Streams')
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Clean up streams older than 1 day
+            try:
+                now = time.time()
+                for f in glob.glob(os.path.join(temp_dir, '*')):
+                    if now - os.path.getmtime(f) > 86400:
+                        os.remove(f)
+            except Exception:
+                pass
+            
+            ydl_opts = {
+                'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+                'quiet': False,
+                'no_warnings': False,
+                'extract_flat': False,
+                'noplaylist': True,
+                'default_search': 'ytsearch'
+            }
+            
+            if hasattr(self, 'stream_loading'):
+                ydl_opts['logger'] = YtLogger(self.stream_loading)
+            
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    
+                    if 'entries' in info:
+                        info = info['entries'][0]
+                        
+                    local_path = ydl.prepare_filename(info)
+                    title = info.get('title', 'Unknown Stream')
+                    artist = info.get('uploader', 'Unknown Artist')
+                    duration = info.get('duration', 0)
+                    
+                    if os.path.exists(local_path):
+                        track = {
+                            'path': local_path,
+                            'title': title,
+                            'artist': artist,
+                            'duration': duration,
+                            'date_added': "Online Stream",
+                            'is_stream': True,
+                            'is_online': False,  # Play natively as local file
+                            'original_url': url
+                        }
+                        
+                        def _update_ui():
+                            if hasattr(self, 'stream_loading'):
+                                self.stream_loading.finish_and_close_with_countdown()
+                            self._append_tracks_to_playlist([track], group_name="Online Streams")
+                            
+                        QTimer.singleShot(0, self, _update_ui)
+                    else:
+                        def _err_no_url():
+                            if hasattr(self, 'stream_loading'):
+                                self.stream_loading.hide()
+                            from PySide6.QtWidgets import QMessageBox
+                            QMessageBox.warning(self, "Stream Error", "Failed to download stream.")
+                        QTimer.singleShot(0, self, _err_no_url)
+            except Exception as e:
+                print(f"[Stream] Error extracting URL: {e}")
+                def _err_ex():
+                    if hasattr(self, 'stream_loading'):
+                        self.stream_loading.hide()
+                    from PySide6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "Stream Error", f"Could not process URL:\n{e}")
+                QTimer.singleShot(0, self, _err_ex)
+                
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _open_clipboard_direct(self):
         """Open a file or folder from clipboard."""
         from PySide6.QtGui import QClipboard
         from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import QTimer
         import os
         import datetime
         
         clipboard = QApplication.clipboard()
-        path = clipboard.text().strip().strip('"').strip("'")
+        mime_data = clipboard.mimeData()
         
+        raw_text = clipboard.text()
+        print(f"[Clipboard] Raw text: {repr(raw_text)}")
+        
+        # Check if it's a URL
+        if raw_text.strip().startswith("http://") or raw_text.strip().startswith("https://"):
+            if "spotify.com" in raw_text.lower():
+                from PySide6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Spotify DRM Restricted", "Spotify links cannot be downloaded due to strict DRM encryption.\n\nPRO TIP: Open the Stream URL box and type the Song Name to search and download it instead!")
+                return
+            self._process_url_stream_async(raw_text.strip())
+            return
+            
+        print(f"[Clipboard] Has URLs: {mime_data.hasUrls()}")
+        
+        path = raw_text.strip().strip('"').strip("'")
+        
+        if not path and mime_data.hasUrls():
+            urls = mime_data.urls()
+            print(f"[Clipboard] URLs found: {urls}")
+            if urls and urls[0].isLocalFile():
+                path = urls[0].toLocalFile()
+                
+        print(f"[Clipboard] Final parsed path: {repr(path)}")
+        print(f"[Clipboard] Path exists? {os.path.exists(path) if path else False}")
+                
         if not path or not os.path.exists(path):
+            print("[Clipboard] Invalid path or does not exist. Aborting.")
             return
             
         if os.path.isdir(path):
-            self._music_folder = path
-            self._load_tracks_from_folder(path)
+            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
+            folder_name = os.path.basename(path)
+            folder_tracks = []
+            
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    ext = os.path.splitext(f)[1].lower()
+                    if ext in audio_exts:
+                        fpath = os.path.join(root, f)
+                        title = os.path.splitext(f)[0]
+                        try:
+                            mtime = os.path.getmtime(fpath)
+                            dt = datetime.datetime.fromtimestamp(mtime)
+                            date_str = dt.strftime("%b %d, %Y")
+                        except Exception:
+                            date_str = ""
+                            
+                        folder_tracks.append({
+                            'path': fpath,
+                            'title': title,
+                            'artist': '',
+                            'duration': 0,
+                            'date_added': date_str
+                        })
+            
+            if folder_tracks:
+                self._append_tracks_to_playlist(folder_tracks, group_name=folder_name)
+                self._fetch_metadata_async(self._playlist, folder_name)
+                
             QTimer.singleShot(500, self._save_state)
         elif os.path.isfile(path):
             ext = os.path.splitext(path)[1].lower()
-            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
+            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
             if ext in audio_exts:
                 title = os.path.splitext(os.path.basename(path))[0]
                 try:
@@ -7587,24 +8100,24 @@ class MusicPanelWidget(QWidget):
                     'title': title,
                     'artist': 'Single Track',
                     'duration': 0,
-                    'date_added': date_str,
-                    'playlist_group': 'Imported Files'
+                    'date_added': date_str
                 }
                 
-                self._tracks.append(track)
-                self._build_tree()
-                self._current_index = len(self._tracks) - 1
-                self._play_current()
-                QTimer.singleShot(500, self._save_state)
+                self._append_tracks_to_playlist([track])
+                self._fetch_metadata_async(self._playlist, "Single File")
 
     def _open_file_direct(self):
         """Pick a single media file and play it."""
         from PySide6.QtWidgets import QFileDialog
         import datetime
         
-        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
+        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
         dialog_filters = "Media Files (" + " ".join(["*" + e for e in (audio_exts)]) + ");;All Files (*.*)"
-        path, _ = QFileDialog.getOpenFileName(self, "Open Media File", "", dialog_filters)
+        dialog = QFileDialog(self, "Open Media File", getattr(self, '_music_folder', None) or "")
+        dialog.setNameFilter(dialog_filters)
+        dialog.setFileMode(QFileDialog.ExistingFile)
+        dialog.setOption(QFileDialog.ShowDirsOnly, False)
+        path = dialog.selectedFiles()[0] if dialog.exec() else ""
         
         if path:
             ext = os.path.splitext(path)[1].lower()
@@ -7620,24 +8133,14 @@ class MusicPanelWidget(QWidget):
             
             track = {
                 'path': path,
-                'title': title,
+                'title': os.path.splitext(os.path.basename(path))[0],
                 'artist': 'Single Track',
                 'duration': 0,
-                                'date_added': date_str
+                'date_added': date_str
             }
             
-            # Append to currently loaded tracks and play index
-            if not hasattr(self, '_tracks'):
-                self._tracks = []
-                
-            self._tracks.append(track)
-            
-            # Refresh the list widget to show the new item
-            if hasattr(self, 'track_list_widget'):
-                self.track_list_widget.set_tracks(self._tracks)
-            
-            # Start playing the new track
-            self._play_track(len(self._tracks) - 1)
+            self._append_tracks_to_playlist([track])
+            self._fetch_metadata_async(self._playlist, "Single File")
             
             # Save state so the track is remembered in session
             QTimer.singleShot(500, self._save_state)
@@ -7872,7 +8375,7 @@ class MusicPanelWidget(QWidget):
         import datetime
         import subprocess
         
-        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma'}
+        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
         tracks = []
         for root, dirs, files in os.walk(folder):
             for f in files:
