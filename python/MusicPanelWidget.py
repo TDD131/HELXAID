@@ -2745,6 +2745,9 @@ class PlaylistTable(QWidget):
                         
                     if event.pos().x() > (cell_x + indent + text_width + 30):
                         should_rubber_band = True
+                        
+                if item and item.isSelected():
+                    should_rubber_band = False
                 
                 if should_rubber_band:
                     self.tree._rubber_band_origin = event.pos()
@@ -2847,10 +2850,11 @@ class PlaylistTable(QWidget):
         self.tree.mouseReleaseEvent = _tree_mouseReleaseEvent
         
         # Override mimeData to allow dragging items out (to OS or other widgets)
+        orig_mimeData = self.tree.mimeData
         def _tree_mimeData(items):
-            from PySide6.QtCore import QMimeData, QUrl
+            from PySide6.QtCore import QUrl
             import os
-            mime = QMimeData()
+            mime = orig_mimeData(items)
             urls = []
             for item in items:
                 role_data = item.data(0, Qt.UserRole)
@@ -2865,10 +2869,10 @@ class PlaylistTable(QWidget):
                             path = track.get('path')
                             if path and os.path.exists(path):
                                 urls.append(QUrl.fromLocalFile(path))
-            mime.setUrls(urls)
+            if urls:
+                mime.setUrls(urls)
             return mime
         self.tree.mimeData = _tree_mimeData
-        
         # Override startDrag to show a custom clean pixmap instead of a huge row snapshot
         def _custom_startDrag(supportedActions):
             from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont
@@ -3156,6 +3160,7 @@ class PlaylistTable(QWidget):
         def _create_track_item(parent, orig_idx, track, num_str):
             is_playing = orig_idx == self._current_index
             track_item = QTreeWidgetItem(parent)
+            track_item.setFlags(track_item.flags() & ~Qt.ItemIsDropEnabled)
             track_item.setData(0, Qt.UserRole, orig_idx)
             num_text = ">" if is_playing else num_str
             track_item.setText(0, " " + num_text)
@@ -4005,7 +4010,8 @@ class ResumeNotificationWidget(QFrame):
         
         self._in_anim_group.addAnimation(pos_anim)
         self._in_anim_group.addAnimation(fade_anim)
-        self._in_anim_group.start()
+        from PySide6.QtCore import QAbstractAnimation
+        self._in_anim_group.start(QAbstractAnimation.DeleteWhenStopped)
             
     def animate_out(self, callback=None):
         self.btn_resume.setEnabled(False)
@@ -4042,7 +4048,8 @@ class ResumeNotificationWidget(QFrame):
                 callback()
                 
         self._anim_group.finished.connect(on_finished)
-        self._anim_group.start()
+        from PySide6.QtCore import QAbstractAnimation
+        self._anim_group.start(QAbstractAnimation.DeleteWhenStopped)
 
 
 class FloatingUrlInputWidget(QFrame):
@@ -5165,7 +5172,8 @@ class MusicPanelWidget(QWidget):
                             self._transitioning = False
                     for anim in fade_in_anims:
                         anim.finished.connect(on_fade_in_done)
-                        anim.start()
+                        from PySide6.QtCore import QAbstractAnimation
+                    anim.start(QAbstractAnimation.DeleteWhenStopped)
 
                 for anim in fade_out_anims:
                     anim.finished.connect(on_fade_out_done)

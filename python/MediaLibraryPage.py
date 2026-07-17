@@ -141,8 +141,10 @@ class MediaLibraryPage(QWidget):
         """)
         
         # Force the tree to pass drag & drop events to the parent logic
-        self.tree.setAcceptDrops(True)
+        self.tree.setDragDropMode(QAbstractItemView.InternalMove)
         self.tree.setDragEnabled(True)
+        self.tree.setAcceptDrops(True)
+        self.tree.setDropIndicatorShown(True)
         
         # --- Rubber Band Setup ---
         from PySide6.QtWidgets import QRubberBand
@@ -184,6 +186,9 @@ class MediaLibraryPage(QWidget):
                         
                     if event.pos().x() > (cell_x + indent + text_width + 30):
                         should_rubber_band = True
+                        
+                if item and item.isSelected():
+                    should_rubber_band = False
                 
                 if should_rubber_band:
                     self.tree._rubber_band_origin = event.pos()
@@ -244,15 +249,17 @@ class MediaLibraryPage(QWidget):
         self.tree.dropEvent = self.dropEvent
         
         # Override mimeData to allow dragging items out (to OS or other widgets)
+        orig_mimeData = self.tree.mimeData
         def _tree_mimeData(items):
-            from PySide6.QtCore import QMimeData, QUrl
-            mime = QMimeData()
+            from PySide6.QtCore import QUrl
+            mime = orig_mimeData(items)
             urls = []
             for item in items:
                 path = item.data(1, Qt.UserRole)
                 if path:
                     urls.append(QUrl.fromLocalFile(path))
-            mime.setUrls(urls)
+            if urls:
+                mime.setUrls(urls)
             return mime
         self.tree.mimeData = _tree_mimeData
         
@@ -360,7 +367,7 @@ class MediaLibraryPage(QWidget):
         
         header_view.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.tree.setSortingEnabled(False)
-        self._sort_column = "title"
+        self._sort_column = None
         self._sort_ascending = True
         
         # Block sorting on the '#' column by intercepting clicks
@@ -536,18 +543,49 @@ class MediaLibraryPage(QWidget):
             
     # --- Drag and Drop ---
     def dragEnterEvent(self, event):
+        if event.source() == self.tree:
+            from PySide6.QtWidgets import QTreeWidget
+            QTreeWidget.dragEnterEvent(self.tree, event)
+            return
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             
     def dragMoveEvent(self, event):
+        if event.source() == self.tree:
+            from PySide6.QtWidgets import QTreeWidget
+            QTreeWidget.dragMoveEvent(self.tree, event)
+            return
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             
     def dropEvent(self, event):
+        if event.source() == self.tree:
+            from PySide6.QtWidgets import QTreeWidget
+            QTreeWidget.dropEvent(self.tree, event)
+            self._sync_library_from_tree()
+            return
+            
         urls = event.mimeData().urls()
         paths = [u.toLocalFile() for u in urls if u.isLocalFile()]
         self._process_dropped_paths(paths)
         event.acceptProposedAction()
+        
+    def _sync_library_from_tree(self):
+        new_library = []
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            role_data = item.data(0, Qt.UserRole)
+            path = item.data(1, Qt.UserRole)
+            if role_data == "folder":
+                new_library.append({'path': path, 'is_folder': True})
+            elif role_data == "track":
+                new_library.append({'path': path, 'is_folder': False})
+                
+        if len(new_library) == len(self._library_data):
+            self._library_data = new_library
+            self._sort_column = None
+            self._save_library()
+            self._refresh_tree()
         
     def _process_dropped_paths(self, paths):
         for path in paths:
@@ -653,7 +691,8 @@ class MediaLibraryPage(QWidget):
         def sort_folder(item_data):
             return natural_sort_key(os.path.basename(item_data['path']))
             
-        folders = sorted(folders, key=sort_folder, reverse=not self._sort_ascending)
+        if self._sort_column is not None:
+            folders = sorted(folders, key=sort_folder, reverse=not self._sort_ascending)
         
         # Sort standalone files
         def sort_file(item_data):
@@ -672,7 +711,8 @@ class MediaLibraryPage(QWidget):
             else:
                 return natural_sort_key(track.get('title', ''))
                 
-        standalone_files = sorted(standalone_files, key=sort_file, reverse=not self._sort_ascending)
+        if self._sort_column is not None:
+            standalone_files = sorted(standalone_files, key=sort_file, reverse=not self._sort_ascending)
         
         # Combine them with folders always on top
         sorted_library_data = folders + standalone_files
@@ -720,10 +760,14 @@ class MediaLibraryPage(QWidget):
                     else:
                         return natural_sort_key(track.get('title', ''))
                         
-                sorted_tracks = sorted(tracks, key=sort_track, reverse=not self._sort_ascending)
+                if self._sort_column is not None:
+                    sorted_tracks = sorted(tracks, key=sort_track, reverse=not self._sort_ascending)
+                else:
+                    sorted_tracks = tracks
                 
                 for idx, track in enumerate(sorted_tracks):
                     track_item = QTreeWidgetItem(folder_item)
+                    track_item.setFlags(track_item.flags() & ~Qt.ItemIsDropEnabled)
                     track_item.setData(0, Qt.UserRole, "track")
                     track_item.setData(1, Qt.UserRole, track['path'])
                     
@@ -756,6 +800,7 @@ class MediaLibraryPage(QWidget):
                 if not track: continue
                 
                 track_item = QTreeWidgetItem(self.tree)
+                track_item.setFlags(track_item.flags() & ~Qt.ItemIsDropEnabled)
                 track_item.setData(0, Qt.UserRole, "track")
                 track_item.setData(1, Qt.UserRole, track['path'])
                 
@@ -872,11 +917,30 @@ class MediaLibraryPage(QWidget):
                     title = audio.get('title', [title])[0]
                     artist = audio.get('artist', [artist])[0]
                     album = audio.get('album', [album])[0]
-                elif ext == '.m4a':
-                    audio = M4A(path)
+                elif ext in ['.m4a', '.mp4', '.m4v']:
+                    from mutagen.mp4 import MP4
+                    audio = MP4(path)
+                    try:
+                        title = audio.tags.get('\xa9nam', [title])[0]
+                        artist = audio.tags.get('\xa9ART', [artist])[0]
+                        album = audio.tags.get('\xa9alb', [album])[0]
+                    except:
+                        pass
                 
                 if audio and hasattr(audio, 'info') and hasattr(audio.info, 'length'):
                     duration = audio.info.length
+            except Exception:
+                pass
+                
+        if duration == 0.0:
+            try:
+                import subprocess
+                cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', path]
+                # Windows flag to hide terminal window (creationflags=0x08000000)
+                out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, creationflags=0x08000000, timeout=1)
+                dur_str = out.decode('utf-8').strip()
+                if dur_str:
+                    duration = float(dur_str)
             except Exception:
                 pass
                 

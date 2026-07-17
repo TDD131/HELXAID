@@ -73,15 +73,16 @@ class AnimatedButton(QPushButton):
     
     def _animate_fill(self, target):
         """Animate the fill progress."""
-        if self._animation:
-            self._animation.stop()
+        if not hasattr(self, '_fill_animation'):
+            self._fill_animation = QPropertyAnimation(self, b"fillProgress")
+            self._fill_animation.setDuration(300)  # 0.3 seconds
+            self._fill_animation.setEasingCurve(QEasingCurve.InOutCubic)
+        else:
+            self._fill_animation.stop()
         
-        self._animation = QPropertyAnimation(self, b"fillProgress")
-        self._animation.setDuration(300)  # 0.3 seconds
-        self._animation.setStartValue(self._fill_progress)
-        self._animation.setEndValue(target)
-        self._animation.setEasingCurve(QEasingCurve.InOutCubic)
-        self._animation.start()
+        self._fill_animation.setStartValue(self._fill_progress)
+        self._fill_animation.setEndValue(target)
+        self._fill_animation.start()
     
     def getFillProgress(self):
         return self._fill_progress

@@ -7125,7 +7125,8 @@ Stylesheet Selector:
                             chevron_anim.setStartValue(0.0)
                             chevron_anim.setEndValue(1.0)
                             chevron_anim.valueChanged.connect(animate_chevron)
-                            chevron_anim.start()
+                            from PySide6.QtCore import QAbstractAnimation
+                            chevron_anim.start(QAbstractAnimation.DeleteWhenStopped)
                             grp["chevron_anim"] = chevron_anim
                     else:
                         # COLLAPSE: Animate height, then hide
@@ -7153,7 +7154,8 @@ Stylesheet Selector:
                             chevron_anim.setStartValue(0.0)
                             chevron_anim.setEndValue(1.0)
                             chevron_anim.valueChanged.connect(animate_chevron)
-                            chevron_anim.start()
+                            from PySide6.QtCore import QAbstractAnimation
+                            chevron_anim.start(QAbstractAnimation.DeleteWhenStopped)
                             grp["chevron_anim"] = chevron_anim
                 
                 return toggle
