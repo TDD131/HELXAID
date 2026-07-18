@@ -20,6 +20,9 @@ try:
 except ImportError as e:
     print(f"[Crosshair] OpenGL not available: {e}")
 
+# FORCE DISABLE OpenGL due to black screen transparency issues on some systems
+OPENGL_AVAILABLE = False
+
 
 class CrosshairOverlay(QWidget):
     """Transparent overlay window for crosshair display."""

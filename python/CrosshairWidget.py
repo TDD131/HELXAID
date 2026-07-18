@@ -410,6 +410,42 @@ class ColorButton(QPushButton):
             dialog.setWindowTitle("Select Color")
             dialog.setOption(QColorDialog.DontUseNativeDialog, True)
             
+            # Apply glassy HELXAID native styling
+            dialog.setStyleSheet("""
+                QColorDialog {
+                    background-color: #121212;
+                }
+                QPushButton {
+                    background: rgba(255, 255, 255, 0.1);
+                    border: none;
+                    border-radius: 8px;
+                    padding: 8px 16px;
+                    color: #e0e0e0;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: rgba(255, 255, 255, 0.2);
+                }
+                QPushButton:pressed {
+                    background: rgba(255, 91, 6, 0.2);
+                }
+                QSpinBox, QLineEdit {
+                    background: rgba(255, 255, 255, 0.1);
+                    border: none;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                    color: #e0e0e0;
+                }
+                QSpinBox::up-button, QSpinBox::down-button {
+                    background: transparent;
+                    border: none;
+                }
+                QLabel {
+                    color: #e0e0e0;
+                    font-weight: bold;
+                }
+            """)
+            
             # Find and rename "Pick Screen Color" button to "Eyedrop"
             for btn in dialog.findChildren(QPushButton):
                 if "pick" in btn.text().lower() or "screen" in btn.text().lower():
@@ -491,11 +527,20 @@ class ColorButton(QPushButton):
 
 
 class CrosshairWidget(QWidget):
-    """Panel UI for crosshair customization."""
+    """
+    Panel UI for crosshair customization.
+    
+    Component Name: CrosshairWidget
+    """
+    
+    # Thread-safe signal for hotkey
+    hotkey_triggered = Signal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("crosshairPanel")
+        
+        self.hotkey_triggered.connect(self._on_toggle)
         
         # Create the overlay (hidden by default)
         self.overlay = CrosshairOverlay()
@@ -567,6 +612,7 @@ class CrosshairWidget(QWidget):
         
         self.enable_btn = QPushButton("Enable Crosshair")
         self.enable_btn.setCheckable(True)
+        self.enable_btn.setFixedWidth(190)
         self.enable_btn.setStyleSheet(self._toggle_btn_style())
         self.enable_btn.clicked.connect(self._on_toggle)
         toggle_layout.addWidget(self.enable_btn)
@@ -802,7 +848,8 @@ class CrosshairWidget(QWidget):
         
         try:
             # Use keyboard library - uses low-level Windows hooks that work in games
-            kb_hook.add_hotkey('ctrl+shift+c', self._on_toggle, suppress=False)
+            # Emit signal to handle toggle in the main thread to prevent OpenGL crashes
+            kb_hook.add_hotkey('ctrl+shift+c', self.hotkey_triggered.emit, suppress=False)
             print("Global hotkey registered: Ctrl+Shift+C (low-level hook)")
         except Exception as e:
             print(f"Failed to register hotkey: {e}")
@@ -817,19 +864,19 @@ class CrosshairWidget(QWidget):
     def _offset_btn_style(self):
         return """
             QPushButton {
-                background: rgba(30, 33, 40, 0.9);
-                border: 1px solid rgba(80, 80, 80, 0.4);
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
                 border-radius: 6px;
                 color: #e0e0e0;
                 font-weight: bold;
                 font-size: 16px;
             }
             QPushButton:hover {
-                background: rgba(255, 91, 6, 0.3);
-                border-color: #FF5B06;
+                background: rgba(255, 255, 255, 0.2);
             }
             QPushButton:pressed {
-                background: rgba(255, 91, 6, 0.5);
+                background: rgba(255, 91, 6, 0.2);
+                color: #FDA903;
             }
         """
     
@@ -918,8 +965,8 @@ class CrosshairWidget(QWidget):
                 font-weight: 600;
                 font-size: 14px;
                 color: #FDA903;
-                background: rgba(26, 26, 26, 0.5);
-                border: 1px solid rgba(255, 91, 6, 0.3);
+                background-color: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 14px;
                 margin-top: 12px;
                 padding: 16px 12px 12px 12px;
@@ -943,53 +990,51 @@ class CrosshairWidget(QWidget):
     def _btn_style(self):
         return """
             QPushButton {
-                background: rgba(26, 26, 26, 0.8);
-                border: 1px solid rgba(255, 91, 6, 0.5);
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
                 border-radius: 10px;
                 padding: 10px 18px;
                 color: #e0e0e0;
                 font-weight: 600;
             }
             QPushButton:hover {
-                background: rgba(255, 91, 6, 0.2);
-                border-color: #FDA903;
+                background: rgba(255, 255, 255, 0.2);
             }
         """
     
     def _toggle_btn_style(self):
         return """
             QPushButton {
-                background: rgba(26, 26, 26, 0.8);
-                border: 2px solid rgba(255, 91, 6, 0.5);
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
                 border-radius: 8px;
                 padding: 12px 20px;
-                color: #FDA903;
+                color: #e0e0e0;
                 font-size: 14px;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background: rgba(255, 91, 6, 0.2);
-                border-color: #FDA903;
+                background: rgba(255, 255, 255, 0.2);
             }
             QPushButton:checked {
-                background: rgba(255, 91, 6, 0.3);
-                border-color: #FF5B06;
-                color: #ffffff;
+                background: rgba(255, 91, 6, 0.2);
+                border: 1px solid rgba(255, 91, 6, 0.5);
+                color: #FDA903;
             }
         """
     
     def _combo_style(self):
         return """
             QComboBox {
-                background: rgba(26, 26, 26, 0.8);
-                border: 1px solid rgba(255, 91, 6, 0.5);
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
                 border-radius: 10px;
                 padding: 10px 14px;
                 color: #e0e0e0;
                 font-weight: 500;
             }
             QComboBox:hover {
-                border-color: #FDA903;
+                background: rgba(255, 255, 255, 0.2);
             }
             QComboBox::drop-down {
                 border: none;
@@ -1009,8 +1054,8 @@ class CrosshairWidget(QWidget):
             QComboBox QAbstractItemView {
                 background: #1a1a1a;
                 color: #e0e0e0;
-                selection-background-color: #FF5B06;
-                border: 1px solid #FF5B06;
+                selection-background-color: rgba(255, 91, 6, 0.2);
+                border: none;
                 border-radius: 8px;
             }
         """
@@ -1019,15 +1064,15 @@ class CrosshairWidget(QWidget):
         """Style for AnimatedComboBox - hides default arrow since we use custom animated one."""
         return """
             QComboBox {
-                background: rgba(26, 26, 26, 0.8);
-                border: 1px solid rgba(255, 91, 6, 0.5);
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
                 border-radius: 10px;
                 padding: 10px 35px 10px 14px;
                 color: #e0e0e0;
                 font-weight: 500;
             }
             QComboBox:hover {
-                border-color: #FDA903;
+                background: rgba(255, 255, 255, 0.2);
             }
             QComboBox::drop-down {
                 border: none;
@@ -1042,29 +1087,30 @@ class CrosshairWidget(QWidget):
             QComboBox QAbstractItemView {
                 background: #1a1a1a;
                 color: #e0e0e0;
-                selection-background-color: #FF5B06;
-                border: 1px solid #FF5B06;
+                selection-background-color: rgba(255, 91, 6, 0.2);
+                border: none;
                 border-radius: 8px;
             }
         """
     
     def _slider_style(self):
         return """
+            QSlider { background: transparent; }
             QSlider::groove:horizontal { 
                 height: 4px; 
                 background: rgba(60, 64, 72, 0.8); 
                 border-radius: 2px; 
             }
             QSlider::handle:horizontal { 
-                background: #1a1a1a; 
+                background: #e0e0e0; 
                 width: 14px; 
                 height: 14px; 
                 margin: -5px 0; 
                 border-radius: 7px;
-                border: 2px solid #ffffff;
+                border: none;
             }
             QSlider::handle:horizontal:hover { 
-                background: #FF5B06; 
+                background: #ffffff; 
             }
             QSlider::sub-page:horizontal { 
                 background: rgba(255, 130, 60, 0.8); 
@@ -1075,8 +1121,8 @@ class CrosshairWidget(QWidget):
     def _spin_style(self):
         return """
             QSpinBox {
-                background: rgba(255, 91, 6, 0.7);
-                border: 1px solid rgba(255, 130, 60, 0.6);
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
                 border-radius: 10px;
                 padding: 8px 12px;
                 color: #e0e0e0;
@@ -1089,7 +1135,7 @@ class CrosshairWidget(QWidget):
                 height: 12px;
             }
             QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background: rgba(255, 130, 60, 0.3);
+                background: rgba(255, 255, 255, 0.2);
             }
             QSpinBox::up-arrow {
                 image: url(python/up-arrow.png);

@@ -7705,7 +7705,7 @@ Stylesheet Selector:
         btn_layout.setContentsMargins(0, 8, 0, 0)
         btn_layout.setSpacing(16)
         
-        reset_btn = AnimatedButton("↺  Reset Defaults")
+        reset_btn = AnimatedButton("Reset to Default")
         reset_btn.setObjectName("cpuResetButton")
         reset_btn.setFixedHeight(44)
         reset_btn.setCursor(Qt.PointingHandCursor)
@@ -8537,10 +8537,18 @@ Stylesheet Selector:
     def _reset_cpu_sliders(self):
         """Reset all CPU sliders to default values."""
         defaults = get_default_profile()
+        enabled_defaults = defaults.get("enabled_settings", {})
+        
         for key, (slider, label, unit) in self.cpu_sliders.items():
             default_val = defaults.get(key, slider.value())
             slider.setValue(default_val)
             label.setText(f"{default_val}{unit}")
+            
+            # Reset checkbox toggle state
+            if hasattr(self, '_cpu_slider_checkboxes') and key in self._cpu_slider_checkboxes:
+                is_enabled = enabled_defaults.get(key, False)
+                self._cpu_slider_checkboxes[key].setChecked(is_enabled)
+                
         self.cpu_settings.profile = defaults
     
     def _apply_cpu_settings(self):
