@@ -1221,3 +1221,49 @@ def ensure_ffmpeg_and_vlc(parent=None) -> bool:
         else:
             success2 = True
         return success1 and success2
+
+def download_and_install_uxtu(progress_callback: Callable[[int, int], None] = None) -> Tuple[bool, str]:
+    """Download and launch the UXTU installer (.msix) from GitHub."""
+    import urllib.request
+    import json
+    import tempfile
+    
+    api_url = "https://api.github.com/repos/JamesCJ60/Universal-x86-Tuning-Utility/releases/latest"
+    try:
+        req = urllib.request.Request(
+            api_url,
+            headers={"User-Agent": "HELXAID-Launcher", "Accept": "application/vnd.github+json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            
+            # Find MSIX asset
+            msix_url = None
+            msix_name = "Universal.x86.Tuning.Utility.msix"
+            for asset in data.get("assets", []):
+                if asset.get("name", "").endswith(".msix") or asset.get("name", "").endswith(".msi"):
+                    msix_url = asset.get("browser_download_url")
+                    msix_name = asset.get("name")
+                    break
+            
+            if not msix_url:
+                return False, "Could not find UXTU installer in the latest release."
+            
+            temp_dir = tempfile.gettempdir()
+            download_path = os.path.join(temp_dir, msix_name)
+            
+            # Download file
+            def report_hook(block_num, block_size, total_size):
+                if progress_callback:
+                    downloaded = block_num * block_size
+                    progress_callback(min(downloaded, total_size), total_size)
+                    
+            urllib.request.urlretrieve(msix_url, download_path, reporthook=report_hook)
+            
+            # Launch installer
+            os.startfile(download_path)
+            
+            return True, "UXTU installer launched successfully."
+            
+    except Exception as e:
+        return False, str(e)

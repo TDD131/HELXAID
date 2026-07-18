@@ -1,3 +1,9 @@
+DEFAULT_UXTU_PATH = 'C:\\Program Files\\JamesCJ60\\Universal x86 Tuning Utility\\Universal x86 Tuning Utility.exe'
+
+def is_uxtu_installed(custom_path=None):
+    import os
+    return os.path.exists(custom_path or DEFAULT_UXTU_PATH)
+
 """  
 CPU Controller Module for TDD Game Launcher
 Handles CPU power/temperature control via RyzenAdj.
@@ -257,6 +263,16 @@ def apply_settings_direct(profile: dict, custom_path: str = None) -> tuple:
     return False, "Neither RyzenAdj nor UXTU found. Please install RyzenAdj in assets folder."
 
 
+def is_pawnio_running() -> bool:
+    """Check if UXTU's PawnIO driver is currently running."""
+    try:
+        import subprocess
+        # Check via sc query (works for drivers too)
+        result = subprocess.run(["sc.exe", "query", "PawnIO"], capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        return "STATE" in result.stdout and "RUNNING" in result.stdout
+    except Exception:
+        return False
+
 def apply_ryzenadj(profile: dict) -> tuple:
     """
     Apply CPU settings using RyzenAdj CLI.
@@ -469,6 +485,10 @@ def _execute_ryzenadj_elevated(ryzenadj_path: str, args: list) -> tuple:
         # and wraps execution in try/catch to handle crash gracefully
         ps_script = f'''
 $ErrorActionPreference = 'SilentlyContinue'
+
+# Auto-kill UXTU's PawnIO driver to prevent RyzenAdj crash
+sc.exe stop PawnIO | Out-Null
+Start-Sleep -Seconds 1.5
 
 # Suppress WER crash dialogs for child processes
 $signature = @"

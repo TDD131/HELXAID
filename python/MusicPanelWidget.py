@@ -293,7 +293,7 @@ class MarqueeLabel(QLabel):
         painter.end()
 
 
-# ---- YouTube Downloader Classes ----
+# ---- Universal Downloader Classes ----
 
 class DownloadWorker(QThread):
     """
@@ -307,12 +307,13 @@ class DownloadWorker(QThread):
     finished = Signal(str)
     error    = Signal(str)
 
-    def __init__(self, url, out_dir, fmt, quality_idx):
+    def __init__(self, url, out_dir, fmt, quality_idx, browser_cookies="None"):
         super().__init__()
         self.url = url
         self.out_dir = out_dir
         self.fmt = fmt
         self.quality_idx = quality_idx
+        self.browser_cookies = browser_cookies
         self._is_cancelled = False
         self._proc = None
 
@@ -373,9 +374,13 @@ class DownloadWorker(QThread):
                 '--no-check-certificate',
                 '--format', f_str,
                 '--output', out_tmpl,
-                '--progress-template', '"[download] %(progress._percent_str)s"',
-                self.url
+                '--progress-template', '"[download] %(progress._percent_str)s"'
             ]
+            
+            if getattr(self, 'browser_cookies', 'None').lower() != 'none':
+                cmd.extend(['--cookies-from-browser', self.browser_cookies.lower()])
+                
+            cmd.append(self.url)
 
             if ffmpeg_location:
                 cmd.extend(['--ffmpeg-location', ffmpeg_location])
@@ -452,11 +457,12 @@ class MetadataWorker(QThread):
     metadata = Signal(dict)
     error    = Signal(str)
 
-    def __init__(self, url, fmt, quality_idx):
+    def __init__(self, url, fmt, quality_idx, browser_cookies="None"):
         super().__init__()
         self.url = url
         self.fmt = fmt
         self.quality_idx = quality_idx
+        self.browser_cookies = browser_cookies
         self._is_cancelled = False
 
     def cancel(self):
@@ -473,7 +479,7 @@ class MetadataWorker(QThread):
             import yt_dlp as _yt_dlp_mod
             main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
             
-            dw = DownloadWorker(self.url, "", self.fmt, self.quality_idx)
+            dw = DownloadWorker(self.url, "", self.fmt, self.quality_idx, self.browser_cookies)
             f_str = dw.get_f_str()
             
             # Request Title, Thumbnail URL, and Size
@@ -487,9 +493,13 @@ class MetadataWorker(QThread):
                 '--format', f_str,
                 '--print', 'title',
                 '--print', 'thumbnail',
-                '--print', 'filesize,filesize_approx',
-                self.url
+                '--print', 'filesize,filesize_approx'
             ]
+            
+            if getattr(self, 'browser_cookies', 'None').lower() != 'none':
+                cmd.extend(['--cookies-from-browser', self.browser_cookies.lower()])
+                
+            cmd.append(self.url)
             
             startupinfo = None
             if sys.platform == 'win32':
@@ -545,12 +555,12 @@ class ImageLoader(QThread):
         except: pass
 
 
-class YouTubeDownloaderPanel(QFrame):
+class UniversalDownloaderPanel(QFrame):
     """
     Integrated YouTube downloader panel that replaces the floating dialog.
     Matches the sleek dark design of HELXAID.
     
-    Component Name: YouTubeDownloaderPanel
+    Component Name: UniversalDownloaderPanel
     """
     downloadFinished = Signal(str)
     closeRequested = Signal()
@@ -639,7 +649,7 @@ class YouTubeDownloaderPanel(QFrame):
 
         # Header with close button
         header_row = QHBoxLayout()
-        title = QLabel("YOUTUBE DOWNLOADER")
+        title = QLabel("UNIVERSAL DOWNLOADER")
         title.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 900; color: #FF5B06; letter-spacing: 1px;")
         title.setWordWrap(True)
         title.setMinimumWidth(10)
@@ -664,7 +674,7 @@ class YouTubeDownloaderPanel(QFrame):
         layout.addWidget(url_lbl)
         
         self.url_edit = QLineEdit()
-        self.url_edit.setPlaceholderText("https://www.youtube.com/...")
+        self.url_edit.setPlaceholderText("https://... (YouTube, SoundCloud, Spotify, etc)")
         self.url_edit.setMinimumWidth(10)
         layout.addWidget(self.url_edit)
 
@@ -808,7 +818,11 @@ class YouTubeDownloaderPanel(QFrame):
         self.folder_edit.setCursor(Qt.ArrowCursor)
         self.folder_edit.setMinimumWidth(10)
         settings = QSettings("TDD131", "HELXAID")
-        last_dir = settings.value("YouTubeDownloader/last_output_dir", "", type=str)
+        last_dir = settings.value("UniversalDownloader/last_output_dir", "", type=str)
+        if not last_dir:
+            last_dir = settings.value("YouTubeDownloader/last_output_dir", "", type=str)
+            if last_dir:
+                settings.setValue("UniversalDownloader/last_output_dir", last_dir)
         default_path = os.path.join(os.environ.get("USERPROFILE", ""), "Downloads")
         self.folder_edit.setText(last_dir or default_path)
         
@@ -831,13 +845,96 @@ class YouTubeDownloaderPanel(QFrame):
             d = QFileDialog.getExistingDirectory(self, "Select Output Folder", start_dir)
             if d:
                 self.folder_edit.setText(d)
-                settings.setValue("YouTubeDownloader/last_output_dir", d)
+                settings.setValue("UniversalDownloader/last_output_dir", d)
         
         browse_btn.clicked.connect(pick_folder)
         folder_row.addWidget(self.folder_edit, 1)
         folder_row.addWidget(browse_btn)
         folder_layout.addLayout(folder_row)
         layout.addWidget(folder_group)
+
+        # Browser Cookies Selection
+        cookie_group = QFrame()
+        cookie_group.setObjectName("ytModernGroup")
+        cookie_layout = QVBoxLayout(cookie_group)
+        cookie_layout.setContentsMargins(12, 12, 12, 12)
+        cookie_layout.setSpacing(5)
+        
+        cookie_title = QLabel("COOKIES (LOGIN BYPASS)")
+        cookie_title.setStyleSheet("color: #FF5B06; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
+        cookie_layout.addWidget(cookie_title)
+        
+        cookie_desc = QLabel("Bypass age-restrictions or private videos by using your browser session.")
+        cookie_desc.setStyleSheet("color: #888; font-size: 10px;")
+        cookie_desc.setWordWrap(True)
+        cookie_layout.addWidget(cookie_desc)
+        
+        self.cookie_combo = QComboBox()
+        self.cookie_combo.addItems(["None", "Edge", "Chrome", "Firefox", "Brave", "Opera", "Vivaldi", "Safari"])
+        self.cookie_combo.setCursor(Qt.PointingHandCursor)
+        self.cookie_combo.setMinimumHeight(35)
+        self.cookie_combo.setStyleSheet("""
+            QComboBox {
+                background-color: rgba(255,255,255,0.05);
+                border: 1px solid rgba(255,255,255,0.1);
+                border-radius: 4px;
+                padding: 5px 10px;
+                color: white;
+            }
+            QComboBox:hover {
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 25px;
+            }
+            QComboBox::down-arrow {
+                image: url('""" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "chevron-down.svg").replace("\\", "/") + """');
+                width: 14px;
+                height: 14px;
+            }
+        """)
+        
+        try:
+            from PySide6.QtGui import QPalette, QColor
+            view = self.cookie_combo.view()
+            view.setAutoFillBackground(True)
+            pal = view.palette()
+            pal.setColor(QPalette.Base, QColor(15, 15, 25))
+            pal.setColor(QPalette.Text, QColor(224, 224, 224))
+            view.setPalette(pal)
+            view.setStyleSheet("""
+                QAbstractItemView {
+                    background-color: rgba(15, 15, 25, 0.98);
+                    border: 1px solid rgba(255,255,255,0.12);
+                    color: #e0e0e0;
+                    selection-background-color: rgba(255, 91, 6, 0.35);
+                    selection-color: #ffffff;
+                    outline: 0;
+                }
+                QAbstractItemView::item {
+                    padding: 6px 8px;
+                    background: transparent;
+                }
+                QAbstractItemView::item:hover {
+                    background: rgba(255, 91, 6, 0.22);
+                    color: #ffffff;
+                }
+            """)
+        except Exception:
+            pass
+        
+        saved_browser = settings.value("UniversalDownloader/browser_cookies", "None", type=str)
+        idx = self.cookie_combo.findText(saved_browser)
+        if idx >= 0:
+            self.cookie_combo.setCurrentIndex(idx)
+            
+        def on_browser_changed(text):
+            settings.setValue("UniversalDownloader/browser_cookies", text)
+            
+        self.cookie_combo.currentTextChanged.connect(on_browser_changed)
+        cookie_layout.addWidget(self.cookie_combo)
+        layout.addWidget(cookie_group)
 
         # Progress Section
         self.progress_bar = QProgressBar()
@@ -1020,7 +1117,7 @@ class YouTubeDownloaderPanel(QFrame):
             self._meta_anim_timer.start(500)
 
         fmt = 'audio' if self.rb_audio.isChecked() else 'video'
-        worker = MetadataWorker(url, fmt, self.quality_combo.currentIndex())
+        worker = MetadataWorker(url, fmt, self.quality_combo.currentIndex(), self.cookie_combo.currentText())
         self._size_worker = worker
         
         def on_meta(d):
@@ -1103,7 +1200,7 @@ class YouTubeDownloaderPanel(QFrame):
         self.progress_bar.setValue(0)
         
         self._cleanup_worker('_worker')
-        worker = DownloadWorker(url, out_dir, fmt, self.quality_combo.currentIndex())
+        worker = DownloadWorker(url, out_dir, fmt, self.quality_combo.currentIndex(), self.cookie_combo.currentText())
         self._worker = worker
         worker.progress.connect(self.progress_bar.setValue)
         worker.status.connect(lambda s: self.status_lbl.setText(s[-100:]))
@@ -2685,6 +2782,8 @@ class PlaylistTable(QWidget):
         
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
+        self.tree.setDropIndicatorShown(True)
+        self.tree.setDragDropMode(QAbstractItemView.InternalMove)
         
         # --- Rubber Band Setup ---
         from PySide6.QtWidgets import QRubberBand
@@ -5489,11 +5588,11 @@ class MusicPanelWidget(QWidget):
         self.main_splitter.addWidget(self.stack)
 
         # YouTube Panel (Initially Hidden)
-        self.yt_panel = YouTubeDownloaderPanel(self)
-        self.yt_panel.hide()
-        self.yt_panel.closeRequested.connect(self._toggle_yt_panel)
-        self.yt_panel.downloadFinished.connect(self._on_yt_download_finished)
-        self.main_splitter.addWidget(self.yt_panel)
+        self.dl_panel = UniversalDownloaderPanel(self)
+        self.dl_panel.hide()
+        self.dl_panel.closeRequested.connect(self._toggle_yt_panel)
+        self.dl_panel.downloadFinished.connect(self._on_yt_download_finished)
+        self.main_splitter.addWidget(self.dl_panel)
 
         # Keep main content dominant when splitter moves
         # Index 0: Sidebar, Index 1: Stack, Index 2: YT Panel
@@ -5559,11 +5658,11 @@ class MusicPanelWidget(QWidget):
         min_w = 240
         max_w = max(min_w, int(total_w * 0.5))
 
-        self.yt_panel.setMinimumWidth(min_w)
-        self.yt_panel.setMaximumWidth(max_w)
+        self.dl_panel.setMinimumWidth(min_w)
+        self.dl_panel.setMaximumWidth(max_w)
 
         # If visible and currently wider than max, pull it back via splitter sizes.
-        if hasattr(self, 'main_splitter') and self.yt_panel.isVisible():
+        if hasattr(self, 'main_splitter') and self.dl_panel.isVisible():
             sizes = self.main_splitter.sizes()
             if len(sizes) >= 3:
                 if sizes[2] > max_w:
@@ -5964,11 +6063,11 @@ class MusicPanelWidget(QWidget):
         
         tools_menu.addSeparator()
         
-        # YouTube Downloader
-        self.action_download_yt = QAction("YouTube Downloader", self)
-        self.action_download_yt.setShortcut("Ctrl+U")
-        self.action_download_yt.triggered.connect(self._toggle_yt_panel)
-        tools_menu.addAction(self.action_download_yt)
+        # Universal Downloader
+        self.action_download_universal = QAction("Universal Downloader", self)
+        self.action_download_universal.setShortcut("Ctrl+U")
+        self.action_download_universal.triggered.connect(self._toggle_yt_panel)
+        tools_menu.addAction(self.action_download_universal)
         
         tools_menu.addSeparator()
         
@@ -6447,8 +6546,8 @@ class MusicPanelWidget(QWidget):
     
     def _toggle_yt_panel(self):
         """Toggle the integrated YouTube downloader sidebar."""
-        if self.yt_panel.isVisible():
-            self.yt_panel.hide()
+        if self.dl_panel.isVisible():
+            self.dl_panel.hide()
             if hasattr(self, 'main_splitter'):
                 # Collapse YT panel, preserve sidebar
                 current_sizes = self.main_splitter.sizes()
@@ -6456,22 +6555,22 @@ class MusicPanelWidget(QWidget):
                 total = sum(current_sizes)
                 self.main_splitter.setSizes([sidebar_size, max(1, total - sidebar_size), 0])
         else:
-            self.yt_panel.show()
+            self.dl_panel.show()
             self._update_yt_panel_constraints()
             if hasattr(self, 'main_splitter'):
                 current_sizes = self.main_splitter.sizes()
                 sidebar_size = current_sizes[0] if len(current_sizes) > 0 else 200
-                max_w = self.yt_panel.maximumWidth()
-                desired = min(max_w, max(self.yt_panel.minimumWidth(), int(getattr(self, '_yt_last_width', 320) or 320)))
+                max_w = self.dl_panel.maximumWidth()
+                desired = min(max_w, max(self.dl_panel.minimumWidth(), int(getattr(self, '_yt_last_width', 320) or 320)))
                 total = max(1, self.width())
                 self.main_splitter.setSizes([sidebar_size, max(1, total - sidebar_size - desired), desired])
-            self.yt_panel.url_edit.setFocus()
+            self.dl_panel.url_edit.setFocus()
             # If paste buffer has a YT link, auto-fill it
             from PySide6.QtWidgets import QApplication
             clipboard = QApplication.clipboard()
             text = clipboard.text().strip()
-            if 'youtube.com' in text or 'youtu.be' in text:
-                self.yt_panel.set_url(text)
+            if text.startswith('http://') or text.startswith('https://'):
+                self.dl_panel.set_url(text)
 
     def _on_yt_download_finished(self, dest_path):
         """Handle track after integrated download completion."""
@@ -6480,7 +6579,7 @@ class MusicPanelWidget(QWidget):
             track = _PW.build_track_meta(dest_path) if hasattr(_PW, 'build_track_meta') else {
                 'path': dest_path,
                 'title': os.path.splitext(os.path.basename(dest_path))[0],
-                'artist': 'YouTube',
+                'artist': 'Downloaded',
                 'duration': 0,
                 'is_online': False,
                 'mtime': os.path.getmtime(dest_path),
@@ -6489,7 +6588,7 @@ class MusicPanelWidget(QWidget):
                 self._playlist = []
             self._playlist.append(track)
             self.table.set_tracks(self._playlist)
-            print(f"[YouTube DL] Added to playlist: {os.path.basename(dest_path)}")
+            print(f"[Universal DL] Added to playlist: {os.path.basename(dest_path)}")
 
     def _rescan_folder(self):
         """Rescan current music folder."""
@@ -7134,7 +7233,7 @@ class MusicPanelWidget(QWidget):
     def _show_load_url_dialog(self):
         """Show input dialog for stream URL."""
         from PySide6.QtWidgets import QInputDialog
-        url, ok = QInputDialog.getText(self, "Open Stream", "Enter stream URL (YouTube, SoundCloud, etc.):")
+        url, ok = QInputDialog.getText(self, "Open Stream", "Enter stream URL (YouTube, SoundCloud, Spotify, etc):")
         if ok and url.strip():
             url = url.strip()
             
@@ -7332,6 +7431,13 @@ class MusicPanelWidget(QWidget):
                     'no_warnings': True,
                     'extract_flat': False
                 }
+                
+                from PySide6.QtCore import QSettings
+                settings = QSettings("TDD131", "HELXAID")
+                saved_browser = settings.value("UniversalDownloader/browser_cookies", "None", type=str)
+                if saved_browser.lower() != 'none':
+                    ydl_opts['cookiesfrombrowser'] = (saved_browser.lower(),)
+                    
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                     if 'entries' in info:
@@ -8101,6 +8207,13 @@ class MusicPanelWidget(QWidget):
             
             if hasattr(self, 'stream_loading'):
                 ydl_opts['logger'] = YtLogger(self.stream_loading)
+                
+            from PySide6.QtCore import QSettings
+            settings = QSettings("TDD131", "HELXAID")
+            saved_browser = settings.value("UniversalDownloader/browser_cookies", "None", type=str)
+            if saved_browser.lower() != 'none':
+                ydl_opts['cookiesfrombrowser'] = (saved_browser.lower(),)
+            
             
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:

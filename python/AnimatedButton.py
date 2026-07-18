@@ -8,7 +8,7 @@ Features:
 """
 from PySide6.QtWidgets import QPushButton
 from PySide6.QtCore import QSize, QTimer, Property, QPropertyAnimation, QEasingCurve, Qt, QRectF, Signal
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QIcon
 
 
 class AnimatedButton(QPushButton):
@@ -34,6 +34,9 @@ class AnimatedButton(QPushButton):
         self._current_scale = 1.0
         # Whether the press/release bounce animation is enabled (default True)
         self._click_animation_enabled = True
+        
+        # Force hover fill animation even if button has an icon
+        self._force_hover_fill = False
     
     def setHoverGradient(self, colors):
         """Set custom gradient colors for hover effect.
@@ -58,16 +61,20 @@ class AnimatedButton(QPushButton):
         """
         self._click_animation_enabled = enabled
         
+    def setForceHoverFill(self, enabled: bool):
+        """Force the sliding fill hover animation even if the button has an icon."""
+        self._force_hover_fill = enabled
+        
     def enterEvent(self, event):
         """Mouse enters button - start fill animation."""
-        # Check if this is a text-only button
-        if self.icon().isNull():
+        # Check if this is a text-only button or force fill is enabled
+        if self.icon().isNull() or self._force_hover_fill:
             self._animate_fill(1.0)
         super().enterEvent(event)
     
     def leaveEvent(self, event):
         """Mouse leaves button - reverse fill animation."""
-        if self.icon().isNull():
+        if self.icon().isNull() or self._force_hover_fill:
             self._animate_fill(0.0)
         super().leaveEvent(event)
     
@@ -95,8 +102,8 @@ class AnimatedButton(QPushButton):
     
     def paintEvent(self, event):
         """Custom paint for sliding fill effect on text buttons."""
-        # Only custom paint for text buttons
-        if not self.icon().isNull():
+        # Only custom paint for text buttons unless forced
+        if not self.icon().isNull() and not self._force_hover_fill:
             super().paintEvent(event)
             return
         
@@ -152,9 +159,28 @@ class AnimatedButton(QPushButton):
         text_b = int(255 * (1 - self._fill_progress) + 0 * self._fill_progress)
         text_color = QColor(text_r, text_g, text_b)
         
-        painter.setPen(text_color)
-        painter.setFont(self.font())
-        painter.drawText(rect, Qt.AlignCenter, self.text())
+        if not self.text():
+            # If no text but has an icon and forced fill, draw the icon
+            if not self.icon().isNull():
+                icon = self.icon()
+                # Determine which state/mode to use. We can just use the button's standard painting for the icon
+                # by rendering the icon pixmap centered
+                icon_size = self.iconSize()
+                if icon_size.width() == 0:
+                    icon_size = QSize(20, 20)
+                
+                # Check if we should draw active or normal state based on hover
+                mode = QIcon.Active if self._fill_progress > 0.5 else QIcon.Normal
+                pixmap = icon.pixmap(icon_size, mode, QIcon.On)
+                
+                # Center the icon
+                x = int((rect.width() - icon_size.width()) / 2)
+                y = int((rect.height() - icon_size.height()) / 2)
+                painter.drawPixmap(x, y, pixmap)
+        else:
+            painter.setPen(text_color)
+            painter.setFont(self.font())
+            painter.drawText(rect, Qt.AlignCenter, self.text())
         
         painter.end()
     

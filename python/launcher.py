@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDesktopServices, QLinearGradient, QImage, QFont, QFontMetrics, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread
-from integrations.cpu_controller import is_uxtu_installed, is_ryzenadj_available, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
+from integrations.cpu_controller import is_uxtu_installed, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
 from AnimatedButton import AnimatedButton, AnimatedCheckBox
 from macro_system.integration.hardware_manager import get_hardware_manager
 from DebugConsoleWidget import get_debug_console, toggle_debug_console
@@ -3067,6 +3067,7 @@ class AudioPlayerSidebar(QWidget):
             "Select Media Folder",
             ""
         )
+        
         if folder:
             self.load_folder(folder)
     
@@ -3764,6 +3765,462 @@ class BackgroundProcessor(QThread):
 # ----------------------------------------------------------
 # Main Launcher UI
 # ----------------------------------------------------------
+class DraggableFloatingPanel(QFrame):
+    """An in-app draggable floating panel used as a modern alternative to QMessageBox."""
+    def __init__(self, title, message, parent=None):
+        super().__init__(parent)
+        from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QGraphicsOpacityEffect
+        
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("FloatingPanel")
+        
+        import os
+        close_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "close-icon.svg").replace('\\', '/')
+        close_icon_hover_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "close-icon-hover.svg").replace('\\', '/')
+
+        self.setStyleSheet(f'''
+            QFrame#FloatingPanel {{
+                background-color: rgba(35, 35, 35, 255);
+                border: 1px solid transparent;
+                border-radius: 12px;
+            }}
+            QWidget#TitleBar {{
+                background-color: rgba(0, 0, 0, 100);
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+            }}
+            QLabel#Title {{
+                color: #FFFFFF;
+                font-size: 14px;
+                font-weight: bold;
+                font-family: 'Inter', sans-serif;
+            }}
+            QLabel#Message {{
+                color: #E0E0E0;
+                font-size: 13px;
+                font-family: 'Inter', sans-serif;
+            }}
+            QPushButton#CloseBtn {{
+                background: transparent;
+                border: none;
+                image: url({close_icon_path});
+            }}
+            QPushButton#CloseBtn:hover {{
+                image: url({close_icon_hover_path});
+            }}
+            QPushButton#OkBtn {{
+                background-color: rgba(255, 91, 6, 40);
+                border: 1px solid #FF5B06;
+                border-radius: 6px;
+                color: white;
+                font-family: 'Inter', sans-serif;
+                font-size: 13px;
+                padding: 6px 20px;
+            }}
+            QPushButton#OkBtn:hover {{
+                background-color: rgba(255, 91, 6, 80);
+            }}
+        ''')
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Title Bar
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("TitleBar")
+        title_layout = QHBoxLayout(self.title_bar)
+        title_layout.setContentsMargins(15, 8, 15, 8)
+        
+        self.title_label = QLabel(title)
+        self.title_label.setObjectName("Title")
+        
+        self.close_btn = QPushButton()
+        self.close_btn.setObjectName("CloseBtn")
+        self.close_btn.setFixedSize(20, 20)
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        self.close_btn.clicked.connect(self.close_panel)
+        
+        title_layout.addWidget(self.title_label)
+        title_layout.addStretch()
+        title_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter)
+        layout.addWidget(self.title_bar)
+
+        # Content Area
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+        content_layout.setSpacing(20)
+
+        self.msg_label = QLabel(message)
+        self.msg_label.setObjectName("Message")
+        self.msg_label.setWordWrap(True)
+        content_layout.addWidget(self.msg_label)
+
+        # Button row
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.setObjectName("OkBtn")
+        self.ok_btn.clicked.connect(self.close_panel)
+        btn_layout.addWidget(self.ok_btn)
+        content_layout.addLayout(btn_layout)
+
+        layout.addWidget(content_widget)
+        
+        self.setFixedSize(450, 220)
+
+        # Dragging variables
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+        
+        # Animation
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.anim.setDuration(250)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.anim.start()
+
+    def close_panel(self):
+        from PySide6.QtCore import QPropertyAnimation
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.finished.connect(self.deleteLater)
+        self.anim.start()
+
+    def mousePressEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        from PySide6.QtCore import Qt, QPoint
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+            event.accept()
+
+class HelxailInfoWizard(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QGraphicsOpacityEffect
+        
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("WizardPanel")
+        
+        import os
+        close_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "close-icon.svg").replace('\\', '/')
+        close_icon_hover_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "close-icon-hover.svg").replace('\\', '/')
+
+        self.setStyleSheet(f'''
+            QFrame#WizardPanel {{
+                background-color: rgba(28, 28, 28, 250);
+                border: 1px solid transparent;
+                border-radius: 12px;
+            }}
+            QWidget#TitleBar {{
+                background-color: rgba(0, 0, 0, 100);
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+            }}
+            QLabel#Title {{
+                color: #FFFFFF;
+                font-size: 14px;
+                font-weight: bold;
+                font-family: 'Orbitron';
+            }}
+            QLabel#StepTitle {{
+                color: #FF5B06;
+                font-size: 16px;
+                font-weight: bold;
+                font-family: 'Orbitron';
+                margin-top: 10px;
+            }}
+            QLabel#StepDesc {{
+                color: #E0E0E0;
+                font-size: 13px;
+                font-family: 'Orbitron';
+                margin-top: 5px;
+            }}
+            QPushButton#CloseBtn {{
+                background: transparent;
+                border: none;
+                image: url({close_icon_path});
+            }}
+            QPushButton#CloseBtn:hover {{
+                image: url({close_icon_hover_path});
+            }}
+            QPushButton.WizardBtn {{
+                background-color: rgba(255, 91, 6, 40);
+                border: 1px solid #FF5B06;
+                border-radius: 6px;
+                color: white;
+                font-family: 'Orbitron';
+                font-size: 13px;
+                padding: 6px 20px;
+            }}
+            QPushButton.WizardBtn:hover {{ background-color: rgba(255, 91, 6, 80); }}
+            QPushButton.WizardBtn:disabled {{
+                background-color: rgba(100, 100, 100, 40);
+                border: 1px solid #666666;
+                color: #999999;
+            }}
+        ''')
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("TitleBar")
+        title_layout = QHBoxLayout(self.title_bar)
+        title_layout.setContentsMargins(15, 8, 15, 8)
+        self.title_label = QLabel("HELXAIL First-Time Guide")
+        self.title_label.setObjectName("Title")
+        self.close_btn = QPushButton()
+        self.close_btn.setObjectName("CloseBtn")
+        self.close_btn.setFixedSize(20, 20)
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        self.close_btn.clicked.connect(self.close_panel)
+        title_layout.addWidget(self.title_label)
+        title_layout.addStretch()
+        title_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter)
+        layout.addWidget(self.title_bar)
+
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(20, 15, 20, 20)
+        
+        self.step_title = QLabel()
+        self.step_title.setObjectName("StepTitle")
+        self.step_title.setWordWrap(True)
+        content_layout.addWidget(self.step_title)
+        
+        self.step_desc = QLabel()
+        self.step_desc.setObjectName("StepDesc")
+        self.step_desc.setWordWrap(True)
+        self.step_desc.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.step_desc.setTextFormat(Qt.RichText)
+        self.step_desc.linkActivated.connect(self._handle_link)
+        
+        from smooth_scroll import SmoothScrollArea
+        self.desc_scroll = SmoothScrollArea()
+        self.desc_scroll.setWidgetResizable(True)
+        self.desc_scroll.setFrameShape(QFrame.NoFrame)
+        self.desc_scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical {
+                background: rgba(0, 0, 0, 0.2);
+                width: 8px;
+                border-radius: 4px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 91, 6, 0.4);
+                border-radius: 4px;
+                min-height: 30px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 91, 6, 0.7);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+                height: 0;
+            }
+        """)
+        self.desc_scroll.setWidget(self.step_desc)
+        content_layout.addWidget(self.desc_scroll, 1)
+        
+        btn_layout = QHBoxLayout()
+        self.prev_btn = QPushButton("Previous")
+        self.prev_btn.setProperty("class", "WizardBtn")
+        self.prev_btn.clicked.connect(self.prev_step)
+        
+        self.next_btn = QPushButton("Next")
+        self.next_btn.setProperty("class", "WizardBtn")
+        self.next_btn.clicked.connect(self.next_step)
+        
+        btn_layout.addWidget(self.prev_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.next_btn)
+        content_layout.addLayout(btn_layout)
+        
+        layout.addWidget(content_widget)
+        
+        import os
+        setting_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "setting-icon.png").replace('\\', '/')
+        
+        self.steps = [
+            {
+                "title": "Step 1: Disable Memory Integrity",
+                "desc": "Windows 11 blocks the RyzenAdj driver (inpoutx64.sys) by default. You MUST disable 'Memory Integrity' (Core Isolation) in Windows Settings and restart your PC for CPU Control to work."
+            },
+            {
+                "title": "Step 2: Close Other Tuning Apps",
+                "desc": "Apps like UXTU, Ryzen Controller, or AATU will compete for hardware access and cause silent driver crashes (like PawnIO.sys). Please close them completely before applying HELXAIL settings."
+            },
+            {
+                "title": "Step 3: Install Background Service",
+                "desc": f"Click the <a href='open_settings' title='Click to see Tutorials!' style='color: #FFFFFF; text-decoration: none; font-weight: bold;'>Settings</a> ( <img src='{setting_icon_path}' width='14' height='14'> ) icon on the bottom left sidebar, then click 'Enable' under the Background Service section. This unlocks the 'Zero-UAC' feature, allowing HELXAIL to adjust your CPU wattage automatically in the background without annoying Yes/No popups!"
+            },
+            {
+                "title": "Step 4: Enable Service & Save",
+                "desc": "Inside the Quick Settings, scroll down to 'Background Service'. Click 'Install Service' and check the 'Enable Zero-UAC Background Service' box. Finally, hit 'Save'. You're all set!"
+            }
+        ]
+        self.current_step = 0
+        self.update_ui()
+        
+        self._is_dragging = False
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.anim.setDuration(200)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        
+    def _handle_link(self, link):
+        if link == 'open_settings':
+            launcher = self.window()
+            if not hasattr(launcher, 'settings_nav_btn') or not hasattr(launcher, 'show_tutorial_overlay'):
+                return
+            
+            wizard_ref = self  # capture self safely
+
+            def on_service_group_ready(dialog, service_group):
+                """Step 2 spotlight — highlight Zero-UAC panel inside the dialog."""
+                def on_service_clicked():
+                    try:
+                        wizard_ref.next_step()
+                    except RuntimeError:
+                        pass
+                
+                from SpotlightOverlay import SpotlightOverlay
+                from PySide6.QtCore import QTimer
+                existing = getattr(launcher, '_spotlight_overlay', None)
+                if existing:
+                    try:
+                        existing.fade_out()
+                    except Exception:
+                        pass
+                    launcher._spotlight_overlay = None
+                
+                # Spotlight lives inside the dialog (so it appears on top)
+                overlay = SpotlightOverlay(
+                    parent=dialog,
+                    target_widget=service_group,
+                    on_target_clicked=on_service_clicked,
+                    instruction_text="Enable Zero-UAC Mode here!\nClick 'Enable' to install the background service."
+                )
+                launcher._spotlight_overlay = overlay
+                overlay.show_with_fade_in()
+
+            def on_settings_clicked():
+                """Step 1 completed — open settings in tutorial mode."""
+                try:
+                    launcher.open_quick_settings(on_tutorial_ready=on_service_group_ready)
+                except Exception as e:
+                    print(f"[Tutorial] Error in step 1 callback: {e}")
+
+            launcher.show_tutorial_overlay(
+                launcher.settings_nav_btn,
+                on_settings_clicked,
+                instruction_text="Click here to open\nQuick Settings!",
+                auto_click_target=False
+            )
+
+    def update_ui(self):
+        step = self.steps[self.current_step]
+        self.step_title.setText(step["title"])
+        self.step_desc.setText(step["desc"])
+        self.title_label.setText(f"HELXAIL Guide ({self.current_step + 1}/{len(self.steps)})")
+        
+        # Set tooltip for step 3 (the clickable Settings link step)
+        if self.current_step == 2:
+            self.step_desc.setToolTip("Click 'Settings' to see Tutorial!")
+        else:
+            self.step_desc.setToolTip("")
+        
+        self.prev_btn.setEnabled(self.current_step > 0)
+        if self.current_step == len(self.steps) - 1:
+            self.next_btn.setText("Finish")
+        else:
+            self.next_btn.setText("Next")
+            
+        self.prev_btn.style().unpolish(self.prev_btn)
+        self.prev_btn.style().polish(self.prev_btn)
+
+    def next_step(self):
+        if self.current_step < len(self.steps) - 1:
+            self.current_step += 1
+            self.update_ui()
+        else:
+            self.close_panel()
+            
+    def prev_step(self):
+        if self.current_step > 0:
+            self.current_step -= 1
+            self.update_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.anim.start()
+
+    def close_panel(self):
+        from PySide6.QtCore import QPropertyAnimation
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.finished.connect(self.deleteLater)
+        self.anim.start()
+
+    def mousePressEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        from PySide6.QtCore import Qt, QPoint
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+            event.accept()
+
 class GameLauncher(QWidget):
     # Class-level icon cache to avoid reloading same icons
     _icon_cache = {}
@@ -4303,9 +4760,9 @@ class GameLauncher(QWidget):
         # Check if UXTU is installed
         self.uxtu_installed = is_uxtu_installed()
         
-        # CPU button always enabled - shows download prompt if RyzenAdj not available
-        if not is_ryzenadj_available():
-            self.cpu_nav_btn.setToolTip("HELXAIL - CPU Control (Click to install RyzenAdj)")
+        # CPU button always enabled - shows download prompt if UXTU not available
+        if not self.uxtu_installed:
+            self.cpu_nav_btn.setToolTip("HELXAIL - CPU Control (Click to install UXTU)")
         else:
             self.cpu_nav_btn.setToolTip("HELXAIL - CPU Control")
         
@@ -4526,7 +4983,7 @@ class GameLauncher(QWidget):
         # Get the directory of the current script
         script_dir = os.path.dirname(os.path.abspath(__file__))
         up_arrow_path = os.path.join(script_dir, 'UI Icons', 'up-arrow.png').replace('\\', '/')
-        down_arrow_path = os.path.join(script_dir, 'UI Icons', 'down-arrow.png').replace('\\', '/')
+        down_arrow_path = os.path.join(script_dir, 'UI Icons', 'down-arrow-triangle.svg').replace('\\', '/')
 
         # Spin box for icon size
         self.size_spin = QSpinBox()
@@ -5640,29 +6097,23 @@ class GameLauncher(QWidget):
             if hasattr(self, 'music_panel') and hasattr(self.music_panel, 'refresh_playlist_stats'):
                 self.music_panel.refresh_playlist_stats()
         
-        # Check for RyzenAdj when switching to CPU panel
-        if index == 2:  # CPU Controller panel
-            try:
-                from integrations.cpu_controller import is_ryzenadj_available
-                from integrations.tools_downloader import ensure_ryzenadj
+        # Check for UXTU when switching to CPU panel
+        if hasattr(self, 'content_stack') and hasattr(self, 'cpu_panel'):
+            if self.content_stack.currentWidget() == self.cpu_panel:
                 
-                # Check if RyzenAdj is available now
-                ryzenadj_available = is_ryzenadj_available()
+                # Check if UXTU is available now
+                uxtu_available = self.uxtu_installed
                 
-                # Check if panel needs reload (status changed)
-                panel_needs_reload = hasattr(self, '_cpu_panel_has_ryzenadj') and self._cpu_panel_has_ryzenadj != ryzenadj_available
+                # If panel state doesn't match current availability, we need to reload it
+                panel_needs_reload = hasattr(self, '_cpu_panel_has_uxtu') and self._cpu_panel_has_uxtu != uxtu_available
                 
                 if panel_needs_reload:
-                    # Reload the panel with updated RyzenAdj status
+                    # Reload the panel with updated UXTU status
                     self._reload_cpu_panel()
-                    self._cpu_panel_has_ryzenadj = ryzenadj_available
-                    return  # Already switched in _reload_cpu_panel
-                
-                # Track current panel state
-                self._cpu_panel_has_ryzenadj = ryzenadj_available
-                
-            except ImportError:
-                pass
+                    self._cpu_panel_has_uxtu = uxtu_available
+                else:
+                    # First time init
+                    self._cpu_panel_has_uxtu = uxtu_available
         
         # Update sidebar button styles to show active state
         buttons = [self.home_btn, self.music_nav_btn, self.cpu_nav_btn, self.crosshair_nav_btn, self.macro_nav_btn, self.hardware_nav_btn, self.wincustom_nav_btn]
@@ -6239,8 +6690,8 @@ Stylesheet Selector:
         # Always clear tracking dict on setup to avoid dangling C++ object references
         self._cpu_collapsible_groups = {}
         
-        # Check if RyzenAdj is available - if not, show download prompt
-        if not is_ryzenadj_available():
+        # Check if UXTU is available - if not, show download prompt
+        if not self.uxtu_installed:
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
             
@@ -6260,18 +6711,18 @@ Stylesheet Selector:
             icon_label.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(icon_label)
             
-            title = QLabel("RyzenAdj Required")
+            title = QLabel("UXTU Required")
             title.setStyleSheet("color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
             title.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(title)
             
-            desc = QLabel("CPU Control requires RyzenAdj for parameter tuning.\nClick below to download and install it automatically.")
+            desc = QLabel("CPU Control requires Universal x86 Tuning Utility (UXTU) for parameter tuning.\nClick below to download the official installer.")
             desc.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
             desc.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(desc)
             # Auto-download button
             def do_download():
-                """Start RyzenAdj download in a background QThread.
+                """Start UXTU download in a background QThread.
 
                 Spawning the download in a QThread keeps the main thread
                 free so the UI never becomes "not responding" during the
@@ -6281,8 +6732,8 @@ Stylesheet Selector:
                 from PySide6.QtWidgets import QProgressDialog, QMessageBox
                 from PySide6.QtCore import QThread, Signal as QSignal, QMetaObject, Qt as Qt2
 
-                class _RyzenDownloadWorker(QThread):
-                    """Background thread that downloads and extracts RyzenAdj.
+                class _UxtuDownloadWorker(QThread):
+                    """Background thread that downloads UXTU.
 
                     Signals:
                         progress_update(int, int): (downloaded_bytes, total_bytes)
@@ -6292,27 +6743,27 @@ Stylesheet Selector:
                     finished        = QSignal(bool, str)
 
                     def run(self):
-                        from integrations.tools_downloader import download_ryzenadj
+                        from integrations.tools_downloader import download_and_install_uxtu
 
                         def on_progress(downloaded: int, total: int):
                             # Emit from worker thread — Qt will deliver to main thread
                             self.progress_update.emit(downloaded, total)
 
-                        success, error = download_ryzenadj(on_progress)
+                        success, error = download_and_install_uxtu(on_progress)
                         self.finished.emit(success, error or "")
 
                 # Progress dialog displayed on the main thread
-                progress = QProgressDialog("Downloading RyzenAdj...", "Cancel", 0, 100, self)
-                progress.setWindowTitle("Installing RyzenAdj")
+                progress = QProgressDialog("Downloading UXTU Installer...", "Cancel", 0, 100, self)
+                progress.setWindowTitle("Installing UXTU")
                 progress.setWindowModality(Qt.WindowModal)
                 progress.setMinimumDuration(0)
                 progress.setAutoClose(False)
                 progress.setAutoReset(False)
                 progress.show()
 
-                worker = _RyzenDownloadWorker()
+                worker = _UxtuDownloadWorker()
                 # Keep a reference so it is not garbage-collected mid-download
-                self._ryzen_download_worker = worker
+                self._uxtu_download_worker = worker
 
                 def on_progress(downloaded: int, total: int):
                     """Forward download progress to the QProgressDialog (main thread)."""
@@ -6323,23 +6774,31 @@ Stylesheet Selector:
                         pct = int((downloaded / total) * 100)
                         progress.setValue(pct)
                         progress.setLabelText(
-                            f"Downloading... {downloaded // 1024} KB / {total // 1024} KB"
+                            f"Downloading... {downloaded // 1024 // 1024} MB / {total // 1024 // 1024} MB"
                         )
 
                 def on_finished(success: bool, error: str):
                     """Called on main thread when the worker thread exits."""
                     progress.close()
                     if success:
-                        QMessageBox.information(
-                            self, "Download Complete",
-                            "RyzenAdj installed successfully!\n\nReloading CPU Controller..."
+                        msg = (
+                            "The official UXTU installer has been launched.\n\n"
+                            "IMPORTANT: After installation, you MUST open UXTU manually at least once and click 'Install Driver' (PawnIO) when prompted.\n\n"
+                            "Once the driver is installed, restart HELXAID to use the CPU Controller."
                         )
-                        # Rebuild the CPU panel live so it shows the full interface
-                        self._reload_cpu_panel()
+                        self._uxtu_floating_panel = DraggableFloatingPanel("UXTU Installer - HELXAID", msg, self)
+                        # Center it
+                        rect = self.rect()
+                        self._uxtu_floating_panel.move(
+                            rect.width() // 2 - self._uxtu_floating_panel.width() // 2,
+                            rect.height() // 2 - self._uxtu_floating_panel.height() // 2
+                        )
+                        self._uxtu_floating_panel.raise_()
+                        self._uxtu_floating_panel.show()
                     else:
                         QMessageBox.critical(
                             self, "Download Failed",
-                            f"Failed to install RyzenAdj:\n{error}"
+                            f"Failed to download UXTU:\n{error}"
                         )
 
                 worker.progress_update.connect(on_progress)
@@ -6367,11 +6826,11 @@ Stylesheet Selector:
             container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
             
             try:
-                from integrations.tools_downloader import RYZENADJ_DIR
-                install_path = RYZENADJ_DIR
+                from integrations.cpu_controller import DEFAULT_UXTU_PATH
+                install_path = os.path.dirname(DEFAULT_UXTU_PATH)
             except ImportError:
-                install_path = "%APPDATA%\\HELXAID\\tools\\ryzenadj"
-            instructions = QLabel(f"Will be installed to:\n{install_path}")
+                install_path = "C:\\Program Files\\JamesCJ60\\Universal x86 Tuning Utility\\"
+            instructions = QLabel(f"Installs to:\n{install_path}")
             instructions.setStyleSheet("font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
@@ -6416,7 +6875,7 @@ Stylesheet Selector:
         header_layout.addStretch()
         
         # Status badge
-        if self.uxtu_installed or is_ryzenadj_available():
+        if self.uxtu_installed:
             status_text, status_style = "● CONNECTED", "background: rgba(76, 175, 80, 0.15); color: #4CAF50; border: 1px solid rgba(76, 175, 80, 0.3); border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
         else:
             status_text, status_style = "● OFFLINE", "background: rgba(244, 67, 54, 0.15); color: #f44336; border: 1px solid rgba(244, 67, 54, 0.3); border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
@@ -6425,6 +6884,45 @@ Stylesheet Selector:
         status_badge.setObjectName("cpuStatusBadge")
         status_badge.setStyleSheet(status_style)
         header_layout.addWidget(status_badge, 0, Qt.AlignVCenter)
+        
+        # Info button
+        info_btn = QPushButton()
+        info_btn.setObjectName("cpuInfoBtn")
+        info_btn.setFixedSize(40, 40)
+        info_btn.setCursor(Qt.PointingHandCursor)
+        info_btn.setToolTip("How to use HELXAIL")
+        
+        info_icon_path = os.path.join(os.path.dirname(__file__), "UI Icons", "info-icon.svg")
+        if os.path.exists(info_icon_path):
+            info_btn.setIcon(QIcon(info_icon_path))
+            info_btn.setIconSize(QSize(24, 24))
+            info_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    border: none;
+                }
+                QPushButton:hover {
+                    background: rgba(255, 255, 255, 0.05);
+                    border-radius: 20px;
+                }
+            """)
+        else:
+            info_btn.setText("ℹ")
+            info_btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent;
+                    border: none;
+                    font-size: 24px;
+                    color: #FF5B06;
+                }
+                QPushButton:hover {
+                    background: rgba(255, 255, 255, 0.05);
+                    border-radius: 20px;
+                }
+            """)
+        
+        info_btn.clicked.connect(self._show_helxail_info_dialog)
+        header_layout.addWidget(info_btn, 0, Qt.AlignVCenter)
         
         # Settings button
         settings_btn = AnimatedButton("")
@@ -6517,7 +7015,7 @@ Stylesheet Selector:
         settings_btn.clicked.connect(self._open_cpu_settings)
         header_layout.addWidget(settings_btn, 0, Qt.AlignVCenter)
         
-        header_container.setStyleSheet("QWidget#headerCard { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(26, 26, 26, 0.9), stop:1 rgba(45, 45, 45, 0.6)); border-radius: 16px; border: 1px solid rgba(255, 91, 6, 0.3); }")
+        header_container.setStyleSheet("QWidget#headerCard { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(35, 35, 35, 0.9), stop:1 rgba(50, 50, 50, 0.7)); border-radius: 16px; border: none; }")
         layout.addWidget(header_container)
         
         # ===== PRESET CARD =====
@@ -6530,30 +7028,30 @@ Stylesheet Selector:
         preset_icon = QLabel("")
         preset_icon.setObjectName("cpuPresetIcon")
         preset_icon.setStyleSheet("font-size: 20px;")
-        preset_layout.addWidget(preset_icon)
+        preset_layout.addWidget(preset_icon, 0, Qt.AlignVCenter)
         
         preset_label = QLabel("Preset")
         preset_label.setObjectName("cpuPresetLabel")
         preset_label.setStyleSheet("color: #FDA903; font-size: 13px; font-weight: 500;")
-        preset_layout.addWidget(preset_label)
+        preset_layout.addWidget(preset_label, 0, Qt.AlignVCenter)
         
         self.preset_combo = QComboBox()
         self.preset_combo.setObjectName("cpuPresetCombo")
         self.preset_combo.setMinimumWidth(220)
         self.preset_combo.setFixedHeight(38)
         self.preset_combo.setEditable(True)
-        # Use down-arrow.png for dropdown icon
-        arrow_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow.png").replace("\\", "/")
+        # Use down-arrow-triangle.svg for dropdown icon
+        arrow_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
         self.preset_combo.setStyleSheet(f"""
-            QComboBox {{ background: rgba(26, 26, 26, 0.8); color: #e0e0e0; border: 1px solid rgba(255, 91, 6, 0.5); border-radius: 10px; padding: 8px 16px; font-size: 13px; }}
-            QComboBox:hover {{ border: 1px solid #FDA903; }}
+            QComboBox {{ background: rgba(40, 40, 40, 0.9); color: #e0e0e0; border: none; border-radius: 10px; padding: 8px 16px; font-size: 13px; }}
+            QComboBox:hover {{ background: rgba(55, 55, 55, 1.0); }}
             QComboBox::drop-down {{ border: none; width: 32px; }}
             QComboBox::down-arrow {{ image: url({arrow_icon_path}); width: 12px; height: 12px; }}
-            QComboBox QAbstractItemView {{ background: #1a1a1a; color: #e0e0e0; selection-background-color: #FF5B06; border: 1px solid #FF5B06; border-radius: 8px; }}
+            QComboBox QAbstractItemView {{ background: #1a1a1a; color: #e0e0e0; selection-background-color: #FF5B06; border: none; border-radius: 8px; }}
         """)
         self._refresh_preset_combo()
         self.preset_combo.currentTextChanged.connect(self._on_preset_selected)
-        preset_layout.addWidget(self.preset_combo, 1)
+        preset_layout.addWidget(self.preset_combo, 1, Qt.AlignVCenter)
         
         save_btn = AnimatedButton("Save")
         save_btn.setObjectName("cpuSavePresetButton")
@@ -6562,19 +7060,30 @@ Stylesheet Selector:
         save_btn.setHoverGradient(['#FF5B06', '#FDA903'])  # Orange theme
         save_btn.setStyleSheet("QPushButton { background: #FF5B06; color: #ffffff; border: none; border-radius: 10px; font-size: 12px; font-weight: 600; } QPushButton:hover { background: #FDA903; color: #1a1a1a; }")
         save_btn.clicked.connect(self._save_current_preset)
-        preset_layout.addWidget(save_btn)
+        preset_layout.addWidget(save_btn, 0, Qt.AlignVCenter)
         
-        del_btn = AnimatedButton("X")
+        del_btn = AnimatedButton("")
         del_btn.setObjectName("cpuDeletePresetButton")
         del_btn.setFixedSize(38, 38)
         del_btn.setCursor(Qt.PointingHandCursor)
         del_btn.setToolTip("Delete preset")
         del_btn.setHoverGradient(['#f44336', '#ff5252'])  # Red for delete
-        del_btn.setStyleSheet("QPushButton { background: transparent; color: #FDA903; border: 1px solid rgba(255, 91, 6, 0.5); border-radius: 10px; font-size: 14px; } QPushButton:hover { background: rgba(244, 67, 54, 0.2); border-color: #f44336; color: #f44336; }")
-        del_btn.clicked.connect(self._delete_current_preset)
-        preset_layout.addWidget(del_btn)
+        del_btn.setForceHoverFill(True)
         
-        preset_card.setStyleSheet("QWidget#presetCard { background: rgba(26, 26, 26, 0.5); border-radius: 14px; border: 1px solid rgba(255, 91, 6, 0.3); }")
+        trash_icon_white = os.path.join(SCRIPT_DIR, "UI Icons", "trash-icon-white.svg").replace("\\", "/")
+        trash_icon_black = os.path.join(SCRIPT_DIR, "UI Icons", "trash-icon-black.svg").replace("\\", "/")
+        
+        trash_qicon = QIcon()
+        trash_qicon.addPixmap(QPixmap(trash_icon_white), QIcon.Normal, QIcon.On)
+        trash_qicon.addPixmap(QPixmap(trash_icon_black), QIcon.Active, QIcon.On)
+        
+        del_btn.setIcon(trash_qicon)
+        del_btn.setIconSize(QSize(18, 18))
+        del_btn.setStyleSheet("QPushButton { background: rgba(40, 40, 40, 0.8); border: none; border-radius: 10px; }")
+        del_btn.clicked.connect(self._delete_current_preset)
+        preset_layout.addWidget(del_btn, 0, Qt.AlignVCenter)
+        
+        preset_card.setStyleSheet("QWidget#presetCard { background: rgba(30, 30, 30, 0.8); border-radius: 14px; border: none; }")
         layout.addWidget(preset_card)
         
         # ===== SLIDERS SECTION =====
@@ -6585,10 +7094,28 @@ Stylesheet Selector:
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)  # Always show scrollbar
         scroll.setStyleSheet("""
             QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical { background: rgba(26, 26, 26, 0.3); width: 8px; border-radius: 4px; }
-            QScrollBar::handle:vertical { background: #FF5B06; border-radius: 4px; min-height: 30px; }
-            QScrollBar::handle:vertical:hover { background: #FDA903; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 16px;
+                border-radius: 8px;
+                margin: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06);
+                border-radius: 7px;
+                min-height: 40px;
+                border: 2px solid rgba(253, 169, 3, 0.8);
+            }
+            QScrollBar::handle:vertical:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903);
+                border: 2px solid #FFFF00;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px; background: none; border: none;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
         """)
         
         sliders_widget = QWidget()
@@ -6634,7 +7161,7 @@ Stylesheet Selector:
         self.boost_profile_combo.setObjectName("cpuBoostProfileCombo")
         self.boost_profile_combo.addItems(["Auto", "Eco", "Balance", "Performance", "Max"])
         self.boost_profile_combo.setFixedSize(120, 32)
-        arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow.png").replace("\\", "/")
+        arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
         self.boost_profile_combo.setStyleSheet(f"""
             QComboBox {{
                 background: rgba(50, 54, 62, 0.9);
@@ -6901,26 +7428,22 @@ Stylesheet Selector:
             
             header_layout.addStretch()
             
-            # Chevron arrow (using icon with rotation)
-            from PySide6.QtGui import QPixmap, QTransform
-            chevron = QLabel()
+            # Chevron arrow (using SVG for sharpness)
+            from PySide6.QtSvgWidgets import QSvgWidget
+            chevron = QSvgWidget()
             chevron.setObjectName(f"cpuChevron_{group_id}")
             chevron.setFixedSize(16, 16)
-            chevron_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow.png")
-            chevron_pixmap = QPixmap(chevron_icon_path)
-            if not chevron_pixmap.isNull():
-                chevron_pixmap = chevron_pixmap.scaled(16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            # Store original pixmap for rotation
-            chevron.setProperty("original_pixmap", chevron_pixmap)
-            # Initially rotated -90 for collapsed (pointing right)
+            
+            down_svg = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg")
+            right_svg = os.path.join(SCRIPT_DIR, "UI Icons", "right-arrow-triangle.svg")
+            chevron.setProperty("down_svg", down_svg)
+            chevron.setProperty("right_svg", right_svg)
+            
             if idx == 0:
-                # First group expanded - pointing down (0 rotation)
-                chevron.setPixmap(chevron_pixmap)
+                chevron.load(down_svg)
             else:
-                # Other groups collapsed - pointing right (-90 rotation)
-                transform = QTransform().rotate(-90)
-                rotated = chevron_pixmap.transformed(transform, Qt.SmoothTransformation)
-                chevron.setPixmap(rotated)
+                chevron.load(right_svg)
+            
             chevron.setStyleSheet("background: transparent;")
             header_layout.addWidget(chevron)
             
@@ -6974,30 +7497,17 @@ Stylesheet Selector:
                 control_row.setSpacing(12)
                 
                 # Enable/disable checkbox (placed BEFORE spinbox)
-                from PySide6.QtWidgets import QCheckBox
-                enable_cb = QCheckBox()
+                from AnimatedButton import AnimatedCheckBox
+                enable_cb = AnimatedCheckBox("")
                 enable_cb.setObjectName(f"cpuSliderCheck_{key}")
                 # Get enabled state from settings (default True for existing, False for new)
                 enabled_settings = self.cpu_settings.profile.get("enabled_settings", {})
                 is_checked = enabled_settings.get(key, key not in ["soc_tdc", "soc_edc", "igpu_clock"])
                 enable_cb.setChecked(is_checked)
+                # Need to manually update progress so animation starts correctly if checked initially
+                if is_checked:
+                    enable_cb._progress = 1.0
                 enable_cb.setFixedSize(24, 24)
-                enable_cb.setStyleSheet("""
-                    QCheckBox::indicator { 
-                        width: 18px; height: 18px; 
-                        border: 2px solid #555; 
-                        border-radius: 4px; 
-                        background: #2a2a2a; 
-                    }
-                    QCheckBox::indicator:hover { 
-                        border-color: #FF5B06; 
-                    }
-                    QCheckBox::indicator:checked { 
-                        background: #FF5B06; 
-                        border-color: #FF5B06; 
-                        image: url(:/qt-project.org/styles/commonstyle/images/checkbox_checked.png);
-                    }
-                """)
                 control_row.addWidget(enable_cb)
 
                 # Spinbox with custom arrow icons
@@ -7009,7 +7519,7 @@ Stylesheet Selector:
                 spinbox.setValue(current_value)
                 spinbox.setFixedSize(80, 32)
                 up_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "up-arrow.png").replace("\\", "/")
-                down_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow.png").replace("\\", "/")
+                down_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
                 spinbox.setStyleSheet(f"""
                     QSpinBox {{
                         background: rgba(30, 33, 40, 0.9);
@@ -7154,22 +7664,10 @@ Stylesheet Selector:
                         anim.start()
                         grp["anim"] = anim  # Keep reference
                         
-                        # Chevron animation (rotate to 0)
-                        if orig_pixmap:
-                            def animate_chevron(progress):
-                                angle = -90 + (90 * progress)  # -90 to 0
-                                transform = QTransform().rotate(angle)
-                                rotated = orig_pixmap.transformed(transform, Qt.SmoothTransformation)
-                                chevron_lbl.setPixmap(rotated)
-                            
-                            chevron_anim = QVariantAnimation()
-                            chevron_anim.setDuration(200)
-                            chevron_anim.setStartValue(0.0)
-                            chevron_anim.setEndValue(1.0)
-                            chevron_anim.valueChanged.connect(animate_chevron)
-                            from PySide6.QtCore import QAbstractAnimation
-                            chevron_anim.start(QAbstractAnimation.DeleteWhenStopped)
-                            grp["chevron_anim"] = chevron_anim
+                        # Chevron immediate update (down)
+                        down_svg = chevron_lbl.property("down_svg")
+                        if down_svg:
+                            chevron_lbl.load(down_svg)
                     else:
                         # COLLAPSE: Animate height, then hide
                         current_height = content_w.height()
@@ -7183,22 +7681,10 @@ Stylesheet Selector:
                         anim.start()
                         grp["anim"] = anim
                         
-                        # Chevron animation (rotate to -90)
-                        if orig_pixmap:
-                            def animate_chevron(progress):
-                                angle = 0 - (90 * progress)  # 0 to -90
-                                transform = QTransform().rotate(angle)
-                                rotated = orig_pixmap.transformed(transform, Qt.SmoothTransformation)
-                                chevron_lbl.setPixmap(rotated)
-                            
-                            chevron_anim = QVariantAnimation()
-                            chevron_anim.setDuration(150)
-                            chevron_anim.setStartValue(0.0)
-                            chevron_anim.setEndValue(1.0)
-                            chevron_anim.valueChanged.connect(animate_chevron)
-                            from PySide6.QtCore import QAbstractAnimation
-                            chevron_anim.start(QAbstractAnimation.DeleteWhenStopped)
-                            grp["chevron_anim"] = chevron_anim
+                        # Chevron immediate update (right)
+                        right_svg = chevron_lbl.property("right_svg")
+                        if right_svg:
+                            chevron_lbl.load(right_svg)
                 
                 return toggle
             
@@ -7252,7 +7738,11 @@ Stylesheet Selector:
             delattr(self, '_cpu_panel_insert_index')
     
     def _reload_cpu_panel(self):
-        """Reload the CPU panel after RyzenAdj installation."""
+        """Reload the CPU panel after UXTU installation."""
+        # Re-evaluate installation status
+        from integrations.cpu_controller import is_uxtu_installed
+        self.uxtu_installed = is_uxtu_installed()
+        
         # Get current panel index (should be 2)
         cpu_panel_index = self.content_stack.indexOf(self.cpu_panel)
         if cpu_panel_index < 0:
@@ -7375,12 +7865,10 @@ Stylesheet Selector:
                     # Hide content immediately (no animation for nav click)
                     content_w.setVisible(False)
                     
-                    # Rotate chevron to collapsed state (-90 degrees)
-                    orig_pixmap = chevron.property("original_pixmap")
-                    if orig_pixmap:
-                        transform = QTransform().rotate(-90)
-                        rotated = orig_pixmap.transformed(transform, Qt.SmoothTransformation)
-                        chevron.setPixmap(rotated)
+                    # Update chevron to collapsed state (right)
+                    right_svg = chevron.property("right_svg")
+                    if right_svg:
+                        chevron.load(right_svg)
         
         # Switch to CPU panel
         self.switch_panel(2)
@@ -7651,6 +8139,26 @@ Stylesheet Selector:
         
         return refresh_rates if refresh_rates else [60]
     
+    def _show_helxail_info_dialog(self):
+        """Show the HELXAIL first-time usage guide."""
+        if getattr(self, '_info_panel', None) is not None:
+            try:
+                self._info_panel.close()
+            except RuntimeError:
+                pass
+            
+        self._info_panel = HelxailInfoWizard(self)
+        self._info_panel.setFixedWidth(500)
+        self._info_panel.setFixedHeight(260)
+        
+        # Center it
+        rect = self.rect()
+        self._info_panel.move(
+            rect.width() // 2 - self._info_panel.width() // 2,
+            rect.height() // 2 - self._info_panel.height() // 2
+        )
+        self._info_panel.show()
+        
     def _open_cpu_settings(self):
         """Open CPU settings dialog."""
         dialog = QDialog(self)
@@ -8024,18 +8532,14 @@ Stylesheet Selector:
         
         Runs in background thread to avoid blocking UI during hardware writes or UAC elevation.
         """
-        # Check if any method is available
-        ryzenadj_ok = is_ryzenadj_available()
         uxtu_ok = self.uxtu_installed
         
-        if not ryzenadj_ok and not uxtu_ok:
+        if not uxtu_ok:
             QMessageBox.warning(
                 self,
                 "No CPU Control Available",
-                "Neither RyzenAdj nor UXTU was found.\n\n"
-                "To use CPU control:\n"
-                "1. Download ryzenadj.exe from GitHub\n"
-                "2. Place it in the 'assets' folder"
+                "UXTU is required to apply CPU settings.\n\n"
+                "Please install UXTU from the CPU Panel."
             )
             return
         
@@ -8057,7 +8561,6 @@ Stylesheet Selector:
         # This slot will execute on the main thread
         def show_result(success, error):
             if success:
-                method = "RyzenAdj" if ryzenadj_ok else "UXTU"
                 QMessageBox.information(
                     self,
                     "Settings Applied",
@@ -8074,10 +8577,9 @@ Stylesheet Selector:
         # Connect the signal to the handler callback
         self._cpu_apply_signals.finished.connect(show_result)
 
-        # Define the background worker
         def run_apply_background():
             print(f"[CPU] Applying settings in background thread...")
-            # Apply settings (RyzenAdj is primary, UXTU fallback)
+            # Apply settings via UXTU
             success, error = apply_settings_direct(profile)
             
             # Safely trigger UI update (PySide will automatically route this through the main event loop)
@@ -9446,7 +9948,26 @@ Stylesheet Selector:
             self.update_grid_size()
             self.refresh()
     
-    def open_quick_settings(self):
+    def show_tutorial_overlay(self, target_widget, on_click_callback=None, instruction_text="", auto_click_target=True):
+        try:
+            from SpotlightOverlay import SpotlightOverlay
+            existing = getattr(self, '_spotlight_overlay', None)
+            if existing:
+                try:
+                    existing.fade_out()
+                except Exception:
+                    pass
+                self._spotlight_overlay = None
+                
+            overlay = SpotlightOverlay(self, target_widget, on_click_callback, instruction_text, auto_click_target)
+            self._spotlight_overlay = overlay
+            overlay.show_with_fade_in()
+        except Exception as e:
+            print(f"[Tutorial] Error showing overlay: {e}")
+            import traceback
+            traceback.print_exc()
+            
+    def open_quick_settings(self, on_tutorial_ready=None):
         """Compact settings dialog opened from the navbar settings button.
         Only includes Background & Theme and System Settings.
         Display and Library are accessible from the full settings (top-bar gear icon).
@@ -9627,6 +10148,14 @@ Stylesheet Selector:
         # Initial status update
         self._update_service_ui_status()
 
+        # If called from tutorial mode, schedule a spotlight on the service_group
+        # after dialog is fully shown (QTimer lets the event loop render the dialog first)
+        if callable(on_tutorial_ready):
+            from PySide6.QtCore import QTimer as _QTimer
+            _captured_dialog = dialog
+            _captured_group = service_group
+            _QTimer.singleShot(200, lambda: on_tutorial_ready(_captured_dialog, _captured_group))
+
         # === Developer Mode Section ===
         # Placed at the very bottom before Ok/Cancel.
         # The Uninstall External Tools button is hidden behind this toggle
@@ -9760,34 +10289,25 @@ Stylesheet Selector:
     def uninstall_external_tools(self):
         """Remove external runtime tools from the system.
 
-        Dynamically resolves where each tool actually lives on this machine
-        by calling the same helper functions the rest of the code uses, so it
-        always targets the right location regardless of whether the tool was
         downloaded to AppData, a legacy assets folder, or a user-specified path.
+        For system-installed apps (like UXTU), it triggers their official uninstaller.
 
         Tools targeted:
-        - RyzenAdj: resolved via get_ryzenadj_path() from cpu_controller module
         - FFmpeg/FFprobe: resolved from 'ffprobe_path' in PlaylistWidget settings
-          (stored inside the main settings JSON under key 'ffprobe_path')
+        - UXTU (Universal x86 Tuning Utility): Triggers system MSI uninstaller and cleans leftovers.
 
         Only the tool files/folders are removed; user data is left intact.
         The button is gated behind Developer Mode to prevent accidental use.
         """
         import shutil
 
-        targets = []   # List of (absolute_path, display_name) to be deleted
+        targets = []   # List of (absolute_path_or_command, display_name) to be deleted
         seen_paths = set()
-
-        # ---- RyzenAdj ----
-        try:
-            from integrations.tools_downloader import RYZENADJ_DIR
-            if os.path.exists(RYZENADJ_DIR) and RYZENADJ_DIR not in seen_paths:
-                targets.append((RYZENADJ_DIR, f"RyzenAdj  ({RYZENADJ_DIR})"))
-                seen_paths.add(RYZENADJ_DIR)
-        except Exception as e:
-            print(f"[UninstallTools] Could not resolve RyzenAdj path: {e}")
-
-        # ---- LibreHardwareMonitor ----
+        
+        # ---- UXTU ----
+        from integrations.cpu_controller import is_uxtu_installed
+        if is_uxtu_installed():
+            targets.append(("SYSTEM_UNINSTALL_UXTU", "UXTU (Universal x86 Tuning Utility)"))
         try:
             from integrations.tools_downloader import LIBREHWMON_DIR
             if os.path.exists(LIBREHWMON_DIR) and LIBREHWMON_DIR not in seen_paths:
@@ -9841,6 +10361,41 @@ Stylesheet Selector:
         for path, label in targets:
             display_name = label.split("  ")[0]   # strip the parenthesised path for summary
             try:
+                if path == "SYSTEM_UNINSTALL_UXTU":
+                    import subprocess
+                    # Run WMI uninstall for UXTU MSI silently
+                    ps_cmd = "$app = Get-WmiObject -Class Win32_Product | Where-Object Name -match 'Universal x86 Tuning Utility'; if ($app) { $app.Uninstall() }"
+                    subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], creationflags=subprocess.CREATE_NO_WINDOW)
+                    
+                    # Revo-style cleanup: remove leftovers in Program Files, AppData, and Registry
+                    import shutil
+                    import glob
+                    
+                    # 1. Program Files
+                    uxtu_leftover = r"C:\Program Files\JamesCJ60\Universal x86 Tuning Utility"
+                    if os.path.exists(uxtu_leftover):
+                        shutil.rmtree(uxtu_leftover, ignore_errors=True)
+                        
+                    # 2. AppData Local
+                    local_appdata = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'JamesCJ60')
+                    if os.path.exists(local_appdata):
+                        shutil.rmtree(local_appdata, ignore_errors=True)
+                        
+                    # 3. Registry (HKCU\Software\JamesCJ60)
+                    ps_reg = "Remove-Item -Path 'HKCU:\\Software\\JamesCJ60' -Recurse -Force -ErrorAction SilentlyContinue"
+                    subprocess.run(['powershell', '-NoProfile', '-Command', ps_reg], creationflags=subprocess.CREATE_NO_WINDOW)
+                    
+                    # 4. Prefetch cache (requires Admin, ignores if fails)
+                    try:
+                        prefetch_files = glob.glob(r"C:\Windows\Prefetch\UNIVERSAL X86 TUNING UTILITY*.pf")
+                        for pf in prefetch_files:
+                            os.remove(pf)
+                    except Exception:
+                        pass
+                        
+                    removed.append(display_name)
+                    continue
+
                 if os.path.isdir(path):
                     shutil.rmtree(path)
                 else:
@@ -9864,9 +10419,8 @@ Stylesheet Selector:
 
         QMessageBox.information(self, "Uninstall Complete", msg.strip())
 
-        # Trigger live panel reload for CPU if RyzenAdj was removed,
-        # so the "RyzenAdj Not Found" state is shown immediately.
-        if any("RyzenAdj" in n for n in removed):
+        # Trigger live panel reload for CPU if UXTU was removed
+        if any("UXTU" in n for n in removed):
             self._reload_cpu_panel()
             
         # Trigger live panel reload for HELXTATS if LHM or HWiNFO was removed.
