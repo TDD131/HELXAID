@@ -297,21 +297,11 @@ def apply_ryzenadj(profile: dict) -> tuple:
             pipe_available = False
             
         if pipe_available:
-            handle = win32file.CreateFile(
-                pipe_name,
-                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                0, None,
-                win32file.OPEN_EXISTING,
-                0, None
-            )
-            
-            payload = json.dumps({"action": "apply_cpu", "profile": profile})
-            win32file.WriteFile(handle, payload.encode('utf-8'))
-            
-            hr, data = win32file.ReadFile(handle, 65536)
-            win32file.CloseHandle(handle)
-            
-            if hr == 0:
+            try:
+                payload = json.dumps({"action": "apply_cpu", "profile": profile})
+                # CallNamedPipe(pipeName, data, bufSize, timeOut_ms)
+                data = win32pipe.CallNamedPipe(pipe_name, payload.encode('utf-8'), 65536, 15000)
+                
                 response = json.loads(data.decode('utf-8'))
                 if response.get("status") == "success":
                     print("[CPU DEBUG] Applied via Helper Service (Zero-UAC)")
@@ -319,6 +309,9 @@ def apply_ryzenadj(profile: dict) -> tuple:
                 else:
                     print(f"[CPU DEBUG] Service returned error: {response.get('message')}")
                     return False, response.get('message')
+            except pywintypes.error as e:
+                print(f"[CPU DEBUG] CallNamedPipe failed: {e}")
+                # Fall through to UAC execution
     except Exception as e:
         print(f"[CPU DEBUG] Service IPC failed, falling back to UAC: {e}")
 

@@ -8380,6 +8380,7 @@ Stylesheet Selector:
                 if hasattr(self, 'cpu_sliders') and self.cpu_sliders:
                     for key, (slider, label, unit) in self.cpu_sliders.items():
                         profile[key] = slider.value()
+                    profile["enabled_settings"] = self.cpu_settings.profile.get("enabled_settings", {})
                 elif hasattr(self, 'cpu_settings'):
                     profile = self.cpu_settings.profile
                 else:
@@ -8547,6 +8548,7 @@ Stylesheet Selector:
         profile = {}
         for key, (slider, label, unit) in self.cpu_sliders.items():
             profile[key] = slider.value()
+        profile["enabled_settings"] = self.cpu_settings.profile.get("enabled_settings", {})
         
         # Define a single-use QObject with a custom Signal for thread-safe UI updates
         from PySide6.QtCore import QObject, Signal

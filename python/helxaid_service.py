@@ -88,7 +88,7 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
             os.path.join(base_dir, "assets", "ryzenadj.exe"),
             os.path.join(exe_dir, "assets", "ryzenadj.exe"),
             # AppData Fallback (from tools_downloader)
-            os.path.join(os.environ.get('LOCALAPPDATA', ''), "HELXAID", "tools", "ryzenadj.exe")
+            os.path.join(os.environ.get('APPDATA', ''), "HELXAID", "tools", "ryzenadj", "ryzenadj.exe")
         ]
         
         for p in paths_to_check:
@@ -173,17 +173,18 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                     timeout=10
                 )
 
-                # RyzenAdj OFTEN crashes with exit code -1073741819 (0xC0000005 Access Violation)
+                # RyzenAdj OFTEN crashes with exit code 0xC0000005 (Access Violation)
                 # AFTER successfully writing settings to SMU registers. This is a known ryzenadj
                 # behaviour — the crash happens during cleanup, not during the actual apply.
                 # We treat it as success if the error matches and stdout is empty (no error msg).
-                RYZENADJ_KNOWN_CRASH = -1073741819  # 0xC0000005
+                # Python's subprocess can return this as signed (-1073741819) or unsigned (3221225477).
+                KNOWN_CRASH_CODES = (-1073741819, 3221225477)
                 output = result.stdout.strip()
                 stderr  = result.stderr.strip()
 
                 if result.returncode == 0:
                     return {"status": "success", "message": "Applied successfully."}
-                elif result.returncode == RYZENADJ_KNOWN_CRASH and not stderr and not output:
+                elif result.returncode in KNOWN_CRASH_CODES and not stderr and not output:
                     # Known post-apply crash — settings were applied successfully
                     return {"status": "success", "message": "Applied (post-SMU crash suppressed)."}
                 elif output and ("successfully" in output.lower() or "smu" in output.lower()):
