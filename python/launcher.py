@@ -6082,8 +6082,50 @@ Stylesheet Selector:
         # Add to content stack (index 1 = music panel)
         self.content_stack.addWidget(self.music_panel)
         
-        # Initialize taskbar thumbnail toolbar reference (actual setup in showEvent)
+        # Initialize taskbar thumbnail toolbar reference
         self.taskbar_toolbar = None
+        if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar and not getattr(self, 'taskbar_toolbar', None):
+            try:
+                hwnd = int(self.winId())
+                self.taskbar_toolbar = TaskbarThumbnailToolbar(
+                    hwnd,
+                    on_prev=self._taskbar_prev,
+                    on_playpause=self._taskbar_playpause,
+                    on_next=self._taskbar_next
+                )
+                
+                self._taskbar_retry_count = 0
+                
+                # If running as Admin, allow Taskbar messages through UIPI
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+                    user32 = ctypes.windll.user32
+                    MSGFLT_ALLOW = 1
+                    
+                    ChangeWindowMessageFilterEx = user32.ChangeWindowMessageFilterEx
+                    ChangeWindowMessageFilterEx.argtypes = [
+                        wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p
+                    ]
+                    ChangeWindowMessageFilterEx.restype = wintypes.BOOL
+                    
+                    if hasattr(self, '_WM_TASKBARBUTTONCREATED') and self._WM_TASKBARBUTTONCREATED:
+                        ChangeWindowMessageFilterEx(hwnd, self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
+                    # Also allow WM_COMMAND for the buttons themselves
+                    ChangeWindowMessageFilterEx(hwnd, 0x0111, MSGFLT_ALLOW, None)
+                    
+                    proxy_hwnd = getattr(self, '_os_taskbar_proxy_hwnd', None)
+                    if proxy_hwnd and proxy_hwnd != hwnd:
+                        ChangeWindowMessageFilterEx(proxy_hwnd, 0x0111, MSGFLT_ALLOW, None)
+                except Exception as ex:
+                    print(f"[Taskbar DEBUG] ChangeWindowMessageFilterEx error: {ex}")
+                    
+                # If TaskbarButtonCreated already fired before music panel was opened, trigger it now
+                if getattr(self, '_os_taskbar_proxy_hwnd', None):
+                    self._exec_os_taskbar_init()
+                    
+            except Exception as e:
+                print(f"[Taskbar FATAL] Could not setup taskbar toolbar: {e}")
         
         # For backward compatibility with existing code that references audio_player
         self.audio_player = None  # Deprecated - use music_panel directly
@@ -11095,51 +11137,9 @@ First Played: {first_played_formatted}
         event.accept()
     
     def showEvent(self, event):
-        """Initialize taskbar thumbnail toolbar when window is shown."""
+        """Handle window shown event."""
         print(f"[Taskbar DEBUG] showEvent triggered for {self.__class__.__name__} [id={id(self)}]", flush=True)
         super().showEvent(event)
-        
-        # Setup taskbar toolbar after window is visible (needs valid HWND)
-        if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar and not getattr(self, 'taskbar_toolbar', None):
-            try:
-                hwnd = int(self.winId())
-                self.taskbar_toolbar = TaskbarThumbnailToolbar(
-                    hwnd,
-                    on_prev=self._taskbar_prev,
-                    on_playpause=self._taskbar_playpause,
-                    on_next=self._taskbar_next
-                )
-                
-                # Delay button addition to ensure window is fully initialized
-                # Use longer delay and retry mechanism for reliability
-                self._taskbar_retry_count = 0
-                
-                # If running as Admin, we must allow the Taskbar messages through UIPI
-                try:
-                    import ctypes
-                    from ctypes import wintypes
-                    user32 = ctypes.windll.user32
-                    MSGFLT_ALLOW = 1
-                    
-                    ChangeWindowMessageFilterEx = user32.ChangeWindowMessageFilterEx
-                    ChangeWindowMessageFilterEx.argtypes = [
-                        wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p
-                    ]
-                    ChangeWindowMessageFilterEx.restype = wintypes.BOOL
-                    
-                    hwnd = int(self.winId())
-                    if hasattr(self, '_WM_TASKBARBUTTONCREATED') and self._WM_TASKBARBUTTONCREATED:
-                        ChangeWindowMessageFilterEx(hwnd, self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
-                    # Also allow WM_COMMAND for the buttons themselves
-                    ChangeWindowMessageFilterEx(hwnd, 0x0111, MSGFLT_ALLOW, None)
-                    
-                    proxy_hwnd = getattr(self, '_os_taskbar_proxy_hwnd', None)
-                    if proxy_hwnd and proxy_hwnd != hwnd:
-                        ChangeWindowMessageFilterEx(proxy_hwnd, 0x0111, MSGFLT_ALLOW, None)
-                except Exception as ex:
-                    print(f"[Taskbar DEBUG] ChangeWindowMessageFilterEx error: {ex}")
-            except Exception as e:
-                print(f"[Taskbar FATAL] Could not setup taskbar toolbar: {e}")
                 
     def _on_taskbar_button_clicked(self, button_id):
         """Safely route taskbar button clicks directly to handler methods."""
