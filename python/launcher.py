@@ -7640,7 +7640,7 @@ Stylesheet Selector:
             # Click handler for header with animations
             def make_toggle(gid, content_w, chevron_lbl):
                 def toggle(event):
-                    from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QVariantAnimation
+                    from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QVariantAnimation, QAbstractAnimation
                     from PySide6.QtGui import QTransform
                     
                     grp = self._cpu_collapsible_groups[gid]
@@ -7661,7 +7661,7 @@ Stylesheet Selector:
                         anim.setStartValue(0)
                         anim.setEndValue(target_height + 50)  # Extra buffer
                         anim.setEasingCurve(QEasingCurve.OutCubic)
-                        anim.start()
+                        anim.start(QAbstractAnimation.DeleteWhenStopped)
                         grp["anim"] = anim  # Keep reference
                         
                         # Chevron immediate update (down)
@@ -7678,7 +7678,7 @@ Stylesheet Selector:
                         anim.setEndValue(0)
                         anim.setEasingCurve(QEasingCurve.InCubic)
                         anim.finished.connect(lambda: content_w.setVisible(False))
-                        anim.start()
+                        anim.start(QAbstractAnimation.DeleteWhenStopped)
                         grp["anim"] = anim
                         
                         # Chevron immediate update (right)
@@ -8239,13 +8239,28 @@ Stylesheet Selector:
         interval_label.setStyleSheet("color: #9DB2BF; font-size: 12px;")
         interval_layout.addWidget(interval_label)
         
-        interval_slider = QSlider(Qt.Horizontal)
+        interval_slider = NoScrollSlider(Qt.Horizontal)
         interval_slider.setObjectName("cpuReapplyIntervalSlider")
         # SAFETY: Minimum 300s (5 min) to prevent driver crashes from frequent RyzenAdj calls
         interval_slider.setRange(300, 1800)  # 5 min to 30 min
         interval_slider.setSingleStep(60)  # 1 minute steps
         interval_slider.setTickInterval(300)  # 5 minute ticks
         interval_slider.setTickPosition(QSlider.TicksBelow)
+        interval_slider.setFixedHeight(20)
+        interval_slider.setStyleSheet("""
+            QSlider { background: transparent; }
+            QSlider::groove:horizontal { height: 4px; background: rgba(60, 64, 72, 0.8); border-radius: 2px; }
+            QSlider::handle:horizontal { 
+                background: #FF5B06; 
+                width: 14px; 
+                height: 14px; 
+                margin: -5px 0; 
+                border-radius: 7px;
+                border: none;
+            }
+            QSlider::handle:horizontal:hover { background: #FF7B36; }
+            QSlider::sub-page:horizontal { background: rgba(255, 91, 6, 0.6); border-radius: 2px; }
+        """)
         
         # Get saved interval - enforce minimum 300s for safety
         saved_interval = 300  # Default 5 minutes
@@ -8275,7 +8290,7 @@ Stylesheet Selector:
         save_btn.setObjectName("cpuSettingsSaveButton")
         save_btn.setFixedSize(100, 40)
         save_btn.setCursor(Qt.PointingHandCursor)
-        save_btn.setHoverGradient(['#526D82', '#9DB2BF', '#DDE6ED'])
+        save_btn.setHoverGradient(['#FF5B06', '#FDA903'])
         save_btn.clicked.connect(lambda: self._save_cpu_settings(auto_apply_cb.isChecked(), keep_applied_cb.isChecked(), interval_slider.value(), dialog))
         btn_layout.addWidget(save_btn)
         
@@ -8283,7 +8298,7 @@ Stylesheet Selector:
         close_btn.setObjectName("cpuSettingsCloseButton")
         close_btn.setFixedSize(100, 40)
         close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setHoverGradient(['#526D82', '#9DB2BF', '#DDE6ED'])
+        close_btn.setHoverGradient(['#FF5B06', '#FDA903'])
         close_btn.clicked.connect(dialog.close)
         btn_layout.addWidget(close_btn)
         

@@ -629,6 +629,8 @@ class UniversalDownloaderPanel(QFrame):
         super().closeEvent(event)
 
     def _setup_ui(self):
+        self.setMinimumWidth(320)
+        self.setMaximumWidth(360)
         # Master layout for the panel frame
         master_layout = QVBoxLayout(self)
         master_layout.setContentsMargins(0, 0, 0, 0)
@@ -649,7 +651,7 @@ class UniversalDownloaderPanel(QFrame):
 
         # Header with close button
         header_row = QHBoxLayout()
-        title = QLabel("UNIVERSAL DOWNLOADER")
+        title = QLabel("UNIVERSAL DOWNLOADER (BETA)")
         title.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 900; color: #FF5B06; letter-spacing: 1px;")
         title.setWordWrap(True)
         title.setMinimumWidth(10)
@@ -5269,10 +5271,10 @@ class MusicPanelWidget(QWidget):
                             for btn in buttons:
                                 btn.setGraphicsEffect(None)
                             self._transitioning = False
+                    from PySide6.QtCore import QAbstractAnimation
                     for anim in fade_in_anims:
                         anim.finished.connect(on_fade_in_done)
-                        from PySide6.QtCore import QAbstractAnimation
-                    anim.start(QAbstractAnimation.DeleteWhenStopped)
+                        anim.start(QAbstractAnimation.DeleteWhenStopped)
 
                 for anim in fade_out_anims:
                     anim.finished.connect(on_fade_out_done)
@@ -6064,7 +6066,7 @@ class MusicPanelWidget(QWidget):
         tools_menu.addSeparator()
         
         # Universal Downloader
-        self.action_download_universal = QAction("Universal Downloader", self)
+        self.action_download_universal = QAction("Universal Downloader (Beta)", self)
         self.action_download_universal.setShortcut("Ctrl+U")
         self.action_download_universal.triggered.connect(self._toggle_yt_panel)
         tools_menu.addAction(self.action_download_universal)
