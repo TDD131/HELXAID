@@ -11,6 +11,7 @@ from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import Qt, Signal, Property, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRect
 from PySide6.QtGui import QColor, QPixmap, QIcon, QCursor, QPainter, QScreen, QPen, QBrush
 from CrosshairOverlay import CrosshairOverlay
+from AnimatedButton import AnimatedCheckBox
 import os
 import json
 import threading
@@ -656,9 +657,9 @@ class CrosshairWidget(QWidget):
         color_layout.addWidget(self.main_color_btn, 0, 1)
         
         # Outline
-        self.outline_check = QCheckBox("Outline")
+        self.outline_check = AnimatedCheckBox("Outline")
         self.outline_check.setChecked(True)
-        self.outline_check.stateChanged.connect(lambda s: self._update_setting("outline_enabled", bool(s)))
+        self.outline_check.toggled.connect(lambda s: self._update_setting("outline_enabled", bool(s)))
         color_layout.addWidget(self.outline_check, 1, 0)
         
         self.outline_color_btn = ColorButton("#000000")
@@ -733,9 +734,9 @@ class CrosshairWidget(QWidget):
         dot_group.setStyleSheet(self._group_style())
         dot_layout = QGridLayout(dot_group)
         
-        self.dot_check = QCheckBox("Show Center Dot")
+        self.dot_check = AnimatedCheckBox("Show Center Dot")
         self.dot_check.setChecked(True)
-        self.dot_check.stateChanged.connect(lambda s: self._update_setting("dot_enabled", bool(s)))
+        self.dot_check.toggled.connect(lambda s: self._update_setting("dot_enabled", bool(s)))
         dot_layout.addWidget(self.dot_check, 0, 0, 1, 2)
         
         dot_layout.addWidget(QLabel("Dot Size:"), 1, 0)

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QObject
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QLinearGradient
+from AnimatedButton import AnimatedCheckBox
 
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1269,9 +1270,9 @@ class WindowsCustomPanel(QWidget):
         controls_layout.addLayout(info_row)
         
         # Lock on app exit checkbox
-        self._lock_on_exit_cb = QCheckBox("Lock workstation when HELXAID exits")
+        self._lock_on_exit_cb = AnimatedCheckBox("Lock workstation when HELXAID exits")
         self._lock_on_exit_cb.setChecked(self._config["lock_screen"]["lock_on_exit"])
-        self._lock_on_exit_cb.stateChanged.connect(self._on_lock_exit_changed)
+        self._lock_on_exit_cb.toggled.connect(self._on_lock_exit_changed)
         controls_layout.addWidget(self._lock_on_exit_cb)
         
         controls_widget = QWidget()
@@ -1503,9 +1504,9 @@ class WindowsCustomPanel(QWidget):
         controls_layout.addLayout(pause_date_row)
         
         # --- Disable Auto-Restart ---
-        self._no_restart_cb = QCheckBox("Disable automatic restart after updates")
+        self._no_restart_cb = AnimatedCheckBox("Disable automatic restart after updates")
         self._no_restart_cb.setChecked(self._config["windows_update"]["disable_auto_restart"])
-        self._no_restart_cb.stateChanged.connect(self._on_auto_restart_changed)
+        self._no_restart_cb.toggled.connect(self._on_auto_restart_changed)
         controls_layout.addWidget(self._no_restart_cb)
         
         # --- Active Hours ---
