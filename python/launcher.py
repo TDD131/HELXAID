@@ -7015,7 +7015,7 @@ Stylesheet Selector:
         settings_btn.clicked.connect(self._open_cpu_settings)
         header_layout.addWidget(settings_btn, 0, Qt.AlignVCenter)
         
-        header_container.setStyleSheet("QWidget#headerCard { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(35, 35, 35, 0.9), stop:1 rgba(50, 50, 50, 0.7)); border-radius: 16px; border: none; }")
+        header_container.setStyleSheet("QWidget#headerCard { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(26, 26, 26, 0.9), stop:1 rgba(45, 45, 45, 0.6)); border-radius: 16px; border: 1px solid rgba(255, 91, 6, 0.3); }")
         layout.addWidget(header_container)
         
         # ===== PRESET CARD =====
@@ -7043,11 +7043,11 @@ Stylesheet Selector:
         # Use down-arrow-triangle.svg for dropdown icon
         arrow_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
         self.preset_combo.setStyleSheet(f"""
-            QComboBox {{ background: rgba(40, 40, 40, 0.9); color: #e0e0e0; border: none; border-radius: 10px; padding: 8px 16px; font-size: 13px; }}
-            QComboBox:hover {{ background: rgba(55, 55, 55, 1.0); }}
-            QComboBox::drop-down {{ border: none; width: 32px; }}
+            QComboBox {{ background: rgba(255, 255, 255, 0.1); color: #e0e0e0; border: none; border-radius: 10px; padding: 8px 16px; font-size: 13px; }}
+            QComboBox:hover {{ background: rgba(255, 255, 255, 0.2); }}
+            QComboBox::drop-down {{ border: none; width: 32px; background: transparent; }}
             QComboBox::down-arrow {{ image: url({arrow_icon_path}); width: 12px; height: 12px; }}
-            QComboBox QAbstractItemView {{ background: #1a1a1a; color: #e0e0e0; selection-background-color: #FF5B06; border: none; border-radius: 8px; }}
+            QComboBox QAbstractItemView {{ background: #1a1a1a; color: #e0e0e0; selection-background-color: rgba(255, 91, 6, 0.2); border: none; border-radius: 8px; }}
         """)
         self._refresh_preset_combo()
         self.preset_combo.currentTextChanged.connect(self._on_preset_selected)
@@ -7164,19 +7164,21 @@ Stylesheet Selector:
         arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
         self.boost_profile_combo.setStyleSheet(f"""
             QComboBox {{
-                background: rgba(50, 54, 62, 0.9);
+                background: rgba(255, 255, 255, 0.1);
                 color: #e0e0e0;
-                border: 1px solid rgba(80, 80, 80, 0.4);
-                border-radius: 6px;
-                padding: 6px 12px;
+                border: none;
+                border-radius: 10px;
+                padding: 10px 14px;
                 font-size: 13px;
+                font-weight: 500;
             }}
             QComboBox:hover {{
-                border-color: rgba(255, 91, 6, 0.5);
+                background: rgba(255, 255, 255, 0.2);
             }}
             QComboBox::drop-down {{
                 border: none;
                 width: 24px;
+                background: transparent;
             }}
             QComboBox::down-arrow {{
                 image: url({arrow_path});
@@ -7186,8 +7188,8 @@ Stylesheet Selector:
             QComboBox QAbstractItemView {{
                 background: #1a1a1a;
                 color: #e0e0e0;
-                selection-background-color: #FF5B06;
-                border: 1px solid rgba(80, 80, 80, 0.4);
+                selection-background-color: rgba(255, 91, 6, 0.2);
+                border: none;
                 border-radius: 6px;
             }}
         """)
@@ -7196,9 +7198,9 @@ Stylesheet Selector:
         
         boost_container.setStyleSheet("""
             QWidget#cpuBoostProfile {
-                background: rgba(40, 44, 52, 0.9);
-                border: 1px solid rgba(80, 80, 80, 0.3);
-                border-radius: 8px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
             }
             QWidget#cpuBoostProfile:hover {
                 border-color: rgba(255, 91, 6, 0.4);
@@ -7245,19 +7247,21 @@ Stylesheet Selector:
         self.refresh_rate_combo.setFixedSize(140, 32)
         self.refresh_rate_combo.setStyleSheet(f"""
             QComboBox {{
-                background: rgba(50, 54, 62, 0.9);
+                background: rgba(255, 255, 255, 0.1);
                 color: #e0e0e0;
-                border: 1px solid rgba(80, 80, 80, 0.4);
-                border-radius: 6px;
-                padding: 6px 12px;
+                border: none;
+                border-radius: 10px;
+                padding: 10px 14px;
                 font-size: 13px;
+                font-weight: 500;
             }}
             QComboBox:hover {{
-                border-color: rgba(255, 91, 6, 0.5);
+                background: rgba(255, 255, 255, 0.2);
             }}
             QComboBox::drop-down {{
                 border: none;
                 width: 24px;
+                background: transparent;
             }}
             QComboBox::down-arrow {{
                 image: url({arrow_path});
@@ -7267,8 +7271,8 @@ Stylesheet Selector:
             QComboBox QAbstractItemView {{
                 background: #1a1a1a;
                 color: #e0e0e0;
-                selection-background-color: #FF5B06;
-                border: 1px solid rgba(80, 80, 80, 0.4);
+                selection-background-color: rgba(255, 91, 6, 0.2);
+                border: none;
                 border-radius: 6px;
             }}
         """)
@@ -7277,9 +7281,9 @@ Stylesheet Selector:
         
         refresh_container.setStyleSheet("""
             QWidget#cpuRefreshRate {
-                background: rgba(40, 44, 52, 0.9);
-                border: 1px solid rgba(80, 80, 80, 0.3);
-                border-radius: 8px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
             }
             QWidget#cpuRefreshRate:hover {
                 border-color: rgba(255, 91, 6, 0.4);
@@ -7322,19 +7326,21 @@ Stylesheet Selector:
         self.power_mode_combo.setFixedSize(160, 32)
         self.power_mode_combo.setStyleSheet(f"""
             QComboBox {{
-                background: rgba(50, 54, 62, 0.9);
+                background: rgba(255, 255, 255, 0.1);
                 color: #e0e0e0;
-                border: 1px solid rgba(80, 80, 80, 0.4);
-                border-radius: 6px;
-                padding: 6px 12px;
+                border: none;
+                border-radius: 10px;
+                padding: 10px 14px;
                 font-size: 13px;
+                font-weight: 500;
             }}
             QComboBox:hover {{
-                border-color: rgba(255, 91, 6, 0.5);
+                background: rgba(255, 255, 255, 0.2);
             }}
             QComboBox::drop-down {{
                 border: none;
                 width: 24px;
+                background: transparent;
             }}
             QComboBox::down-arrow {{
                 image: url({arrow_path});
@@ -7344,8 +7350,8 @@ Stylesheet Selector:
             QComboBox QAbstractItemView {{
                 background: #1a1a1a;
                 color: #e0e0e0;
-                selection-background-color: #FF5B06;
-                border: 1px solid rgba(80, 80, 80, 0.4);
+                selection-background-color: rgba(255, 91, 6, 0.2);
+                border: none;
                 border-radius: 6px;
             }}
         """)
@@ -7354,9 +7360,9 @@ Stylesheet Selector:
         
         power_mode_container.setStyleSheet("""
             QWidget#cpuPowerMode {
-                background: rgba(40, 44, 52, 0.9);
-                border: 1px solid rgba(80, 80, 80, 0.3);
-                border-radius: 8px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
             }
             QWidget#cpuPowerMode:hover {
                 border-color: rgba(255, 91, 6, 0.4);
@@ -7449,12 +7455,11 @@ Stylesheet Selector:
             
             header_widget.setStyleSheet(f"""
                 QWidget#cpuGroupHeader_{group_id} {{
-                    background: rgba(40, 44, 52, 0.9);
-                    border: 1px solid rgba(80, 80, 80, 0.3);
-                    border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.04);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 14px;
                 }}
                 QWidget#cpuGroupHeader_{group_id}:hover {{
-                    background: rgba(50, 54, 62, 0.95);
                     border-color: rgba(255, 91, 6, 0.4);
                 }}
             """)
@@ -7465,10 +7470,10 @@ Stylesheet Selector:
             content_widget.setObjectName(f"cpuGroupContent_{group_id}")
             content_widget.setStyleSheet(f"""
                 QWidget#cpuGroupContent_{group_id} {{
-                    background: rgba(35, 38, 45, 0.6);
-                    border: 1px solid rgba(80, 80, 80, 0.2);
+                    background: rgba(255, 255, 255, 0.02);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
                     border-top: none;
-                    border-radius: 0 0 8px 8px;
+                    border-radius: 0 0 14px 14px;
                 }}
             """)
             content_layout = QVBoxLayout(content_widget)

@@ -565,13 +565,18 @@ class CrosshairWidget(QWidget):
         header_layout = QHBoxLayout(header_container)
         header_layout.setContentsMargins(24, 20, 24, 20)
         
-        header_icon = QLabel("")
-        header_icon.setStyleSheet("font-size: 32px;")
-        header_layout.addWidget(header_icon)
+        title_section = QVBoxLayout()
+        title_section.setSpacing(4)
         
         header_text = QLabel("HELXAIR")
-        header_text.setStyleSheet("font-size: 26px; font-weight: bold; color: #FF5B06;")
-        header_layout.addWidget(header_text)
+        header_text.setStyleSheet("font-size: 28px; font-weight: 600; color: #DDE6ED; letter-spacing: 1px;")
+        title_section.addWidget(header_text)
+        
+        subtitle = QLabel("Custom Crosshair Overlay")
+        subtitle.setStyleSheet("font-size: 12px; color: #9DB2BF; letter-spacing: 0.5px;")
+        title_section.addWidget(subtitle)
+        
+        header_layout.addLayout(title_section)
         header_layout.addStretch()
         
         header_container.setStyleSheet("""
