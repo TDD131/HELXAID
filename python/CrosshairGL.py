@@ -1,3 +1,4 @@
+# pyright: reportUndefinedVariable=false
 """
 CrosshairGL - GPU-accelerated crosshair overlay using OpenGL.
 
@@ -10,8 +11,17 @@ from PySide6.QtGui import QSurfaceFormat
 import math
 
 try:
-    from OpenGL.GL import *
-    from OpenGL.GLU import *
+    from OpenGL.GL import (  # type: ignore
+        glViewport, glMatrixMode, glLoadIdentity, glOrtho, glClear,
+        glTranslatef, glRotatef, glBegin, glVertex2f, glEnd, glColor4f,
+        glLineWidth, glEnable, glBlendFunc, glHint, glClearColor,
+        GL_PROJECTION, GL_MODELVIEW, GL_COLOR_BUFFER_BIT, GL_BLEND,
+        GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_LINE_SMOOTH,
+        GL_LINE_SMOOTH_HINT, GL_NICEST, GL_POINT_SMOOTH, GL_POINT_SMOOTH_HINT,
+        GL_POLYGON_SMOOTH, GL_POLYGON_SMOOTH_HINT, GL_TRIANGLE_FAN, GL_LINES,
+        GL_LINE_LOOP
+    )
+    from OpenGL.GLU import *  # type: ignore
     OPENGL_AVAILABLE = True
 except ImportError:
     OPENGL_AVAILABLE = False
@@ -123,19 +133,23 @@ class CrosshairGL(QOpenGLWidget):
         Called once when the widget is first shown.
         """
         # Enable blending for transparency
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glEnable(GL_BLEND)  # type: ignore
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)  # type: ignore
         
         # Enable line smoothing (anti-aliasing)
-        glEnable(GL_LINE_SMOOTH)
-        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)
+        glEnable(GL_LINE_SMOOTH)  # type: ignore
+        glHint(GL_LINE_SMOOTH_HINT, GL_NICEST)  # type: ignore
         
         # Enable point smoothing for dots
-        glEnable(GL_POINT_SMOOTH)
-        glHint(GL_POINT_SMOOTH_HINT, GL_NICEST)
+        glEnable(GL_POINT_SMOOTH)  # type: ignore
+        glHint(GL_POINT_SMOOTH_HINT, GL_NICEST)  # type: ignore
+        
+        # Enable polygon smoothing for filled circles (triangle fan)
+        glEnable(GL_POLYGON_SMOOTH)  # type: ignore
+        glHint(GL_POLYGON_SMOOTH_HINT, GL_NICEST)  # type: ignore
         
         # Transparent clear color
-        glClearColor(0.0, 0.0, 0.0, 0.0)
+        glClearColor(0.0, 0.0, 0.0, 0.0)  # type: ignore
         
         print("[CrosshairGL] OpenGL initialized")
     
@@ -153,7 +167,8 @@ class CrosshairGL(QOpenGLWidget):
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
         # Y-axis flipped to match Qt coordinate system (0,0 at top-left)
-        glOrtho(0, w, h, 0, -1, 1)
+        # Use self.width() and self.height() for logical coordinates matching DPI scale
+        glOrtho(0, self.width(), self.height(), 0, -1, 1)
         
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
@@ -192,12 +207,20 @@ class CrosshairGL(QOpenGLWidget):
         if self.dot_enabled and self.shape != "dot":
             self._draw_center_dot()
     
+    def _get_center(self, size: int) -> tuple:
+        """
+        Get crisp center coordinates based on size (odd/even).
+        Odd sizes need a 0.5px shift to align perfectly with pixel centers.
+        """
+        offset = 0.5 if size % 2 != 0 else 0.0
+        return self.cx + offset, self.cy + offset
+
     def _draw_dot(self):
         """
         Draw a filled circle (dot) crosshair.
         Uses GL_TRIANGLE_FAN for smooth circle rendering.
         """
-        cx, cy = self.cx, self.cy
+        cx, cy = self._get_center(self.dot_size)
         radius = self.dot_size / 2
         segments = 32  # More segments = smoother circle
         
@@ -214,7 +237,7 @@ class CrosshairGL(QOpenGLWidget):
     
     def _draw_center_dot(self):
         """Draw a small center dot."""
-        cx, cy = self.cx, self.cy
+        cx, cy = self._get_center(self.dot_size)
         radius = self.dot_size / 2
         segments = 24
         
@@ -243,7 +266,7 @@ class CrosshairGL(QOpenGLWidget):
         """
         Draw a + shaped crosshair with 4 lines.
         """
-        cx, cy = self.cx, self.cy
+        cx, cy = self._get_center(self.thickness)
         size = self.size
         gap = self.gap
         
@@ -287,7 +310,7 @@ class CrosshairGL(QOpenGLWidget):
         Draw a circle (ring) crosshair.
         Uses GL_LINE_LOOP for smooth ring rendering.
         """
-        cx, cy = self.cx, self.cy
+        cx, cy = self._get_center(self.thickness)
         radius = self.size
         segments = 48  # More segments for smooth circle
         
@@ -323,7 +346,7 @@ class CrosshairGL(QOpenGLWidget):
         """
         Draw a T-shaped crosshair (no top line).
         """
-        cx, cy = self.cx, self.cy
+        cx, cy = self._get_center(self.thickness)
         size = self.size
         gap = self.gap
         

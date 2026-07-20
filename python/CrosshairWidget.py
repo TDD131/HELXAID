@@ -303,8 +303,9 @@ class AnimatedComboBox(QComboBox):
         
         # Load both arrow images
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        self._down_pixmap = QPixmap(os.path.join(script_dir, "down-arrow.png"))
-        self._up_pixmap = QPixmap(os.path.join(script_dir, "up-arrow.png"))
+        ui_icons_dir = os.path.join(script_dir, "UI Icons")
+        self._down_pixmap = QPixmap(os.path.join(ui_icons_dir, "down-arrow-triangle.svg"))
+        self._up_pixmap = QPixmap(os.path.join(ui_icons_dir, "up-arrow-triangle.svg"))
         
         # Custom arrow label
         self._arrow_label = QLabel(self)
@@ -648,6 +649,13 @@ class CrosshairWidget(QWidget):
         self.custom_img_btn.hide()
         shape_layout.addWidget(self.custom_img_btn)
         
+        # Custom image smooth toggle (anti-aliasing)
+        self.custom_smooth_check = AnimatedCheckBox("Smooth Image (Anti-Aliasing)")
+        self.custom_smooth_check.setChecked(True)
+        self.custom_smooth_check.toggled.connect(lambda s: self._update_setting("custom_antialiasing", bool(s)))
+        self.custom_smooth_check.hide()
+        shape_layout.addWidget(self.custom_smooth_check)
+        
         scroll_layout.addWidget(shape_group)
         
         # === COLOR SECTION ===
@@ -687,6 +695,8 @@ class CrosshairWidget(QWidget):
         self.size_slider.valueChanged.connect(lambda v: self._update_setting("size", v))
         size_layout.addWidget(self.size_slider, 0, 1)
         self.size_label = QLabel("20")
+        self.size_label.setFixedWidth(35)
+        self.size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.size_slider.valueChanged.connect(lambda v: self.size_label.setText(str(v)))
         size_layout.addWidget(self.size_label, 0, 2)
         
@@ -699,6 +709,8 @@ class CrosshairWidget(QWidget):
         self.thickness_slider.valueChanged.connect(lambda v: self._update_setting("thickness", v))
         size_layout.addWidget(self.thickness_slider, 1, 1)
         self.thickness_label = QLabel("2")
+        self.thickness_label.setFixedWidth(35)
+        self.thickness_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.thickness_slider.valueChanged.connect(lambda v: self.thickness_label.setText(str(v)))
         size_layout.addWidget(self.thickness_label, 1, 2)
         
@@ -711,6 +723,8 @@ class CrosshairWidget(QWidget):
         self.gap_slider.valueChanged.connect(lambda v: self._update_setting("gap", v))
         size_layout.addWidget(self.gap_slider, 2, 1)
         self.gap_label = QLabel("4")
+        self.gap_label.setFixedWidth(35)
+        self.gap_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.gap_slider.valueChanged.connect(lambda v: self.gap_label.setText(str(v)))
         size_layout.addWidget(self.gap_label, 2, 2)
         
@@ -729,6 +743,8 @@ class CrosshairWidget(QWidget):
         self.opacity_slider.valueChanged.connect(lambda v: self._update_setting("opacity", v))
         opacity_layout.addWidget(self.opacity_slider)
         self.opacity_label = QLabel("100%")
+        self.opacity_label.setFixedWidth(40)
+        self.opacity_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.opacity_slider.valueChanged.connect(lambda v: self.opacity_label.setText(f"{v}%"))
         opacity_layout.addWidget(self.opacity_label)
         
@@ -751,6 +767,11 @@ class CrosshairWidget(QWidget):
         self.dot_size_slider.setStyleSheet(self._slider_style())
         self.dot_size_slider.valueChanged.connect(lambda v: self._update_setting("dot_size", v))
         dot_layout.addWidget(self.dot_size_slider, 1, 1)
+        self.dot_size_label = QLabel("4")
+        self.dot_size_label.setFixedWidth(35)
+        self.dot_size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.dot_size_slider.valueChanged.connect(lambda v: self.dot_size_label.setText(str(v)))
+        dot_layout.addWidget(self.dot_size_label, 1, 2)
         
         scroll_layout.addWidget(dot_group)
         
@@ -836,6 +857,8 @@ class CrosshairWidget(QWidget):
         self.rotation_slider.valueChanged.connect(lambda v: self._update_setting("rotation", v))
         pos_layout.addWidget(self.rotation_slider, 2, 1, 1, 2)
         self.rotation_label = QLabel("0°")
+        self.rotation_label.setFixedWidth(35)
+        self.rotation_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.rotation_slider.valueChanged.connect(lambda v: self.rotation_label.setText(f"{v}°"))
         pos_layout.addWidget(self.rotation_label, 2, 3)
         
@@ -909,6 +932,7 @@ class CrosshairWidget(QWidget):
         shape = shape_map.get(shape_text, "cross")
         self._update_setting("shape", shape)
         self.custom_img_btn.setVisible(shape == "custom")
+        self.custom_smooth_check.setVisible(shape == "custom")
     
     def _load_custom_image(self):
         """Load a custom crosshair image."""
@@ -942,6 +966,7 @@ class CrosshairWidget(QWidget):
         
         self.dot_check.setChecked(s.get("dot_enabled", True))
         self.dot_size_slider.setValue(s.get("dot_size", 4))
+        self.custom_smooth_check.setChecked(s.get("custom_antialiasing", True))
         
         self._offset_x = s.get("offset_x", 0)
         self._offset_y = s.get("offset_y", 0)

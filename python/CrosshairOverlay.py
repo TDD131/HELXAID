@@ -7,6 +7,7 @@ Supports GPU-accelerated OpenGL rendering with automatic QPainter fallback.
 from PySide6.QtWidgets import QWidget, QApplication, QVBoxLayout
 from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPixmap
+from PySide6.QtCore import QRectF, QPointF
 import json
 import os
 
@@ -53,6 +54,7 @@ class CrosshairOverlay(QWidget):
             "offset_y": 0,  # Y offset from center
             "rotation": 0,  # Rotation in degrees
             "custom_image": None,  # Path to custom image
+            "custom_antialiasing": True,  # Smooth scaling for custom image
             "custom_colors": [],  # User-saved custom colors from color picker
         }
         
@@ -153,18 +155,20 @@ class CrosshairOverlay(QWidget):
             return
         
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.Antialiasing, True)
         
-        # Calculate center with offset
-        center_x = self.screen_width // 2 + self.settings.get("offset_x", 0)
-        center_y = self.screen_height // 2 + self.settings.get("offset_y", 0)
+        # Use integer center for pixel-perfect fillRect rendering.
+        # Both odd and even thicknesses are perfectly centered with fillRect
+        # because we control exact pixel rectangles (no sub-pixel AA).
+        cx = self.screen_width // 2 + self.settings.get("offset_x", 0)
+        cy = self.screen_height // 2 + self.settings.get("offset_y", 0)
         
         # Apply rotation
         rotation = self.settings.get("rotation", 0)
         if rotation != 0:
-            painter.translate(center_x, center_y)
+            painter.translate(cx, cy)
             painter.rotate(rotation)
-            painter.translate(-center_x, -center_y)
+            painter.translate(-cx, -cy)
         
         # Get settings
         color = QColor(self.settings.get("color", "#00FF00"))
@@ -184,113 +188,112 @@ class CrosshairOverlay(QWidget):
         
         # Draw based on shape
         if shape == "custom" and self.settings.get("custom_image"):
-            self._draw_custom_image(painter, center_x, center_y, size)
+            self._draw_custom_image(painter, cx, cy, size)
         elif shape == "dot":
-            self._draw_dot(painter, center_x, center_y, color, outline_enabled, outline_color, outline_thickness, opacity)
+            self._draw_dot(painter, cx, cy, color, outline_enabled, outline_color, outline_thickness, opacity)
         elif shape == "cross":
-            self._draw_cross(painter, center_x, center_y, color, size, thickness, gap, outline_enabled, outline_color, outline_thickness)
+            self._draw_cross(painter, cx, cy, color, size, thickness, gap, outline_enabled, outline_color, outline_thickness)
         elif shape == "circle":
-            self._draw_circle(painter, center_x, center_y, color, size, thickness, outline_enabled, outline_color, outline_thickness)
+            self._draw_circle(painter, cx, cy, color, size, thickness, outline_enabled, outline_color, outline_thickness)
         elif shape == "t-shape":
-            self._draw_t_shape(painter, center_x, center_y, color, size, thickness, gap, outline_enabled, outline_color, outline_thickness)
+            self._draw_t_shape(painter, cx, cy, color, size, thickness, gap, outline_enabled, outline_color, outline_thickness)
         
-        # Draw center dot if enabled
+        # Draw center dot if enabled (uses QRectF + AA for smooth circle)
         if self.settings.get("dot_enabled", True) and shape != "dot":
             dot_size = self.settings.get("dot_size", 4)
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(color))
-            painter.drawEllipse(
-                center_x - dot_size // 2,
-                center_y - dot_size // 2,
+            half = dot_size / 2.0
+            painter.drawEllipse(QRectF(
+                cx - half,
+                cy - half,
                 dot_size,
                 dot_size
-            )
+            ))
     
     def _draw_dot(self, painter, cx, cy, color, outline, outline_color, outline_thick, opacity):
         """Draw a dot crosshair."""
         dot_size = self.settings.get("dot_size", 6)
         
         if outline:
+            total = dot_size + outline_thick * 2
+            half = total / 2.0
             painter.setPen(Qt.NoPen)
             painter.setBrush(QBrush(outline_color))
-            painter.drawEllipse(
-                cx - (dot_size + outline_thick*2) // 2,
-                cy - (dot_size + outline_thick*2) // 2,
-                dot_size + outline_thick*2,
-                dot_size + outline_thick*2
-            )
+            painter.drawEllipse(QRectF(
+                cx - half, cy - half,
+                total, total
+            ))
         
+        half = dot_size / 2.0
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(color))
-        painter.drawEllipse(
-            cx - dot_size // 2,
-            cy - dot_size // 2,
-            dot_size,
-            dot_size
-        )
+        painter.drawEllipse(QRectF(
+            cx - half, cy - half,
+            dot_size, dot_size
+        ))
     
     def _draw_cross(self, painter, cx, cy, color, size, thickness, gap, outline, outline_color, outline_thick):
-        """Draw a cross (+) crosshair."""
-        pen = QPen(color, thickness)
+        """Draw a cross (+) crosshair using fillRect for pixel-perfect rendering."""
+        ht = thickness // 2  # half thickness
         
-        # Draw outline first
         if outline:
-            outline_pen = QPen(outline_color, thickness + outline_thick * 2)
-            painter.setPen(outline_pen)
+            ot = outline_thick
+            oht = (thickness + ot * 2) // 2  # half of outline total width
             # Top
-            painter.drawLine(cx, cy - gap - size, cx, cy - gap)
+            painter.fillRect(cx - oht, cy - gap - size - ot, thickness + ot*2, size + ot, outline_color)
             # Bottom
-            painter.drawLine(cx, cy + gap, cx, cy + gap + size)
+            painter.fillRect(cx - oht, cy + gap, thickness + ot*2, size + ot, outline_color)
             # Left
-            painter.drawLine(cx - gap - size, cy, cx - gap, cy)
+            painter.fillRect(cx - gap - size - ot, cy - oht, size + ot, thickness + ot*2, outline_color)
             # Right
-            painter.drawLine(cx + gap, cy, cx + gap + size, cy)
+            painter.fillRect(cx + gap, cy - oht, size + ot, thickness + ot*2, outline_color)
         
-        # Draw main lines
-        painter.setPen(pen)
+        # Main lines (fillRect = exact pixel control, always crisp)
         # Top
-        painter.drawLine(cx, cy - gap - size, cx, cy - gap)
+        painter.fillRect(cx - ht, cy - gap - size, thickness, size, color)
         # Bottom
-        painter.drawLine(cx, cy + gap, cx, cy + gap + size)
+        painter.fillRect(cx - ht, cy + gap, thickness, size, color)
         # Left
-        painter.drawLine(cx - gap - size, cy, cx - gap, cy)
+        painter.fillRect(cx - gap - size, cy - ht, size, thickness, color)
         # Right
-        painter.drawLine(cx + gap, cy, cx + gap + size, cy)
+        painter.fillRect(cx + gap, cy - ht, size, thickness, color)
     
     def _draw_circle(self, painter, cx, cy, color, size, thickness, outline, outline_color, outline_thick):
-        """Draw a circle crosshair."""
+        """Draw a circle crosshair (uses AA for smooth curves)."""
+        rect = QRectF(cx - size, cy - size, size * 2, size * 2)
         if outline:
             outline_pen = QPen(outline_color, thickness + outline_thick * 2)
             painter.setPen(outline_pen)
             painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(cx - size, cy - size, size * 2, size * 2)
+            painter.drawEllipse(rect)
         
         pen = QPen(color, thickness)
         painter.setPen(pen)
         painter.setBrush(Qt.NoBrush)
-        painter.drawEllipse(cx - size, cy - size, size * 2, size * 2)
+        painter.drawEllipse(rect)
     
     def _draw_t_shape(self, painter, cx, cy, color, size, thickness, gap, outline, outline_color, outline_thick):
-        """Draw a T-shape crosshair (no top line)."""
-        pen = QPen(color, thickness)
+        """Draw a T-shape crosshair using fillRect for pixel-perfect rendering."""
+        ht = thickness // 2  # half thickness
         
         if outline:
-            outline_pen = QPen(outline_color, thickness + outline_thick * 2)
-            painter.setPen(outline_pen)
+            ot = outline_thick
+            oht = (thickness + ot * 2) // 2
             # Bottom
-            painter.drawLine(cx, cy + gap, cx, cy + gap + size)
+            painter.fillRect(cx - oht, cy + gap, thickness + ot*2, size + ot, outline_color)
             # Left
-            painter.drawLine(cx - gap - size, cy, cx - gap, cy)
+            painter.fillRect(cx - gap - size - ot, cy - oht, size + ot, thickness + ot*2, outline_color)
             # Right
-            painter.drawLine(cx + gap, cy, cx + gap + size, cy)
+            painter.fillRect(cx + gap, cy - oht, size + ot, thickness + ot*2, outline_color)
         
-        painter.setPen(pen)
+        # Main lines
         # Bottom
-        painter.drawLine(cx, cy + gap, cx, cy + gap + size)
+        painter.fillRect(cx - ht, cy + gap, thickness, size, color)
         # Left
-        painter.drawLine(cx - gap - size, cy, cx - gap, cy)
+        painter.fillRect(cx - gap - size, cy - ht, size, thickness, color)
         # Right
-        painter.drawLine(cx + gap, cy, cx + gap + size, cy)
+        painter.fillRect(cx + gap, cy - ht, size, thickness, color)
     
     def _draw_custom_image(self, painter, cx, cy, size):
         """Draw a custom image crosshair."""
@@ -303,7 +306,9 @@ class CrosshairOverlay(QWidget):
             return
         
         # Scale to size
-        scaled = pixmap.scaled(size * 2, size * 2, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        smooth = self.settings.get("custom_antialiasing", True)
+        transform_mode = Qt.SmoothTransformation if smooth else Qt.FastTransformation
+        scaled = pixmap.scaled(size * 2, size * 2, Qt.KeepAspectRatio, transform_mode)
         
         # Apply opacity
         opacity = self.settings.get("opacity", 100) / 100.0

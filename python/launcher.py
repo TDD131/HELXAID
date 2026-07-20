@@ -29,7 +29,7 @@ import re
 import time
 import threading
 import urllib.request
-import psutil  # For background game detection
+# psutil is lazy-imported inside functions that use it to save ~5-15MB at startup
 import urllib.parse
 from datetime import datetime
 from PySide6.QtWidgets import (
@@ -45,7 +45,6 @@ from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDeskt
 from PySide6.QtCore import Qt, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread
 from integrations.cpu_controller import is_uxtu_installed, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
 from AnimatedButton import AnimatedButton, AnimatedCheckBox
-from macro_system.integration.hardware_manager import get_hardware_manager
 from DebugConsoleWidget import get_debug_console, toggle_debug_console
 
 # Native C++ extensions for performance (with Python fallback)
@@ -4219,7 +4218,41 @@ class HelxailInfoWizard(QFrame):
         from PySide6.QtCore import Qt
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
-            event.accept()
+            event.accept()
+
+def apply_custom_titlebar(widget, color_hex):
+    """Apply Windows 11 custom title bar color and Windows 10 dark mode."""
+    import sys
+    if sys.platform != "win32":
+        return
+        
+    try:
+        import ctypes
+        hwnd = int(widget.winId())
+        set_window_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        
+        # 1. Enable base immersive dark mode
+        rendering_policy = ctypes.c_int(1)
+        result = set_window_attribute(hwnd, 20, ctypes.byref(rendering_policy), ctypes.sizeof(rendering_policy))
+        if result != 0:
+            set_window_attribute(hwnd, 19, ctypes.byref(rendering_policy), ctypes.sizeof(rendering_policy))
+            
+        # 2. Apply Custom Exact Color (Windows 11 ONLY)
+        if color_hex:
+            color_hex = color_hex.lstrip('#')
+            if len(color_hex) == 6:
+                r = color_hex[0:2]
+                g = color_hex[2:4]
+                b = color_hex[4:6]
+                bgr_hex = f"0x00{b}{g}{r}"
+                bg_color = ctypes.c_int(int(bgr_hex, 16))
+                set_window_attribute(hwnd, 35, ctypes.byref(bg_color), ctypes.sizeof(bg_color))
+                
+                # Text color (light grey)
+                text_color = ctypes.c_int(0x00E0E0E0)
+                set_window_attribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+    except Exception as e:
+        print(f"[Theme] Failed to apply custom title bar: {e}")
 
 class GameLauncher(QWidget):
     # Class-level icon cache to avoid reloading same icons
@@ -4228,6 +4261,10 @@ class GameLauncher(QWidget):
     
     taskbar_button_clicked = Signal(int)
     
+    def _apply_dark_titlebar(self):
+        """Apply Windows 10/11 immersive dark mode and custom title bar colors."""
+        apply_custom_titlebar(self, "#1d1d1d")
+
     def _cleanup_memory(self):
         """Periodic memory cleanup to prevent RAM growth."""
         # Limit icon cache size
@@ -4275,134 +4312,72 @@ class GameLauncher(QWidget):
         self._setup_deferred_button_animations()
 
     def _setup_deferred_button_animations(self):
-        """Setup rotation animations for settings buttons after UI is visible."""
+        """Setup rotation animations for settings buttons after UI is visible.
+        ponytail: live rotation per tick instead of pre-rendering 60 frames (~3.7MB saved)
+        """
         from PySide6.QtGui import QTransform, QPainter
-        
-        # Sidebar settings button animation
-        if hasattr(self, '_settings_nav_pixmap') and not self._settings_nav_anim_setup:
-            _s_pix = self._settings_nav_pixmap
-            _anim_size = 80
-            _anim_pix = _s_pix.scaled(_anim_size, _anim_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            _frames = []
-            for _i in range(60):
-                _angle = -6 * _i
-                _rot = _anim_pix.transformed(QTransform().rotate(_angle), Qt.SmoothTransformation)
-                _canvas = QPixmap(_anim_size, _anim_size)
-                _canvas.fill(Qt.transparent)
-                _p = QPainter(_canvas)
-                _p.drawPixmap((_anim_size - _rot.width()) // 2, (_anim_size - _rot.height()) // 2, _rot)
-                _p.end()
-                _frames.append(QIcon(_canvas))
-            
-            self.settings_nav_btn._rot_frames = _frames
-            self.settings_nav_btn._rot_index = 0
-            self.settings_nav_btn._rot_timer = QTimer()
-            self.settings_nav_btn._rot_current_interval = 80
-            self.settings_nav_btn._rot_timer.setInterval(80)
-            self.settings_nav_btn._rot_hovering = False
-            
-            def _nav_settings_tick():
-                self.settings_nav_btn._rot_index = (self.settings_nav_btn._rot_index + 1) % len(_frames)
-                self.settings_nav_btn.setIcon(_frames[self.settings_nav_btn._rot_index])
-                
-                if self.settings_nav_btn._rot_hovering:
-                    self.settings_nav_btn._rot_current_interval = max(1, self.settings_nav_btn._rot_current_interval * 0.995)
-                    self.settings_nav_btn._rot_timer.setInterval(int(self.settings_nav_btn._rot_current_interval))
-                else:
-                    self.settings_nav_btn._rot_current_interval *= 1.05
-                    if self.settings_nav_btn._rot_current_interval > 200:
-                        self.settings_nav_btn._rot_timer.stop()
-                        self.settings_nav_btn._rot_current_interval = 80
-                    else:
-                        self.settings_nav_btn._rot_timer.setInterval(int(self.settings_nav_btn._rot_current_interval))
-            
-            self.settings_nav_btn._rot_timer.timeout.connect(_nav_settings_tick)
-            
-            _orig_enter = self.settings_nav_btn.enterEvent
-            _orig_leave = self.settings_nav_btn.leaveEvent
-            
-            def _nav_settings_enter(ev):
-                self.settings_nav_btn._rot_hovering = True
-                if not self.settings_nav_btn._rot_timer.isActive():
-                    self.settings_nav_btn._rot_current_interval = 80
-                    self.settings_nav_btn._rot_timer.setInterval(80)
-                    self.settings_nav_btn._rot_timer.start()
-                _orig_enter(ev)
-            
-            def _nav_settings_leave(ev):
-                self.settings_nav_btn._rot_hovering = False
-                _orig_leave(ev)
-            
-            self.settings_nav_btn.enterEvent = _nav_settings_enter
-            self.settings_nav_btn.leaveEvent = _nav_settings_leave
-            self._settings_nav_anim_setup = True
-        
-        # Top-bar settings button animation
-        if hasattr(self, '_settings_btn_icon_path') and not self._settings_btn_anim_setup:
-            settings_icon_path = self._settings_btn_icon_path
-            anim_size = 96
-            settings_anim_pixmap = QPixmap(settings_icon_path).scaled(anim_size, anim_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            
-            num_frames = 60
-            settings_frames = []
-            for i in range(num_frames):
-                angle = -6 * i
-                transform = QTransform().rotate(angle)
-                rotated = settings_anim_pixmap.transformed(transform, Qt.SmoothTransformation)
-                
-                canvas = QPixmap(anim_size, anim_size)
+
+        # --- Helper: setup continuous spin animation on a button ---
+        def _setup_spin_anim(btn, src_pixmap, anim_size):
+            btn._rot_src = src_pixmap if src_pixmap.width() == anim_size and src_pixmap.height() == anim_size else src_pixmap.scaled(anim_size, anim_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            btn._rot_size = anim_size
+            btn._rot_angle = 0.0
+            btn._rot_timer = QTimer()
+            btn._rot_current_interval = 80
+            btn._rot_timer.setInterval(80)
+            btn._rot_hovering = False
+
+            def _tick():
+                btn._rot_angle = (btn._rot_angle - 6) % 360
+                rotated = btn._rot_src.transformed(QTransform().rotate(btn._rot_angle), Qt.SmoothTransformation)
+                canvas = QPixmap(btn._rot_size, btn._rot_size)
                 canvas.fill(Qt.transparent)
-                painter = QPainter(canvas)
-                x = (anim_size - rotated.width()) // 2
-                y = (anim_size - rotated.height()) // 2
-                painter.drawPixmap(x, y, rotated)
-                painter.end()
-                
-                settings_frames.append(QIcon(canvas))
-            
-            self.settings_btn._rot_frames = settings_frames
-            self.settings_btn._rot_index = 0
-            self.settings_btn._rot_timer = QTimer()
-            self.settings_btn._rot_current_interval = 80
-            self.settings_btn._rot_timer.setInterval(80)
-            self.settings_btn._rot_hovering = False
-            
-            def _animate_settings_continuous():
-                self.settings_btn._rot_index = (self.settings_btn._rot_index + 1) % len(settings_frames)
-                self.settings_btn.setIcon(settings_frames[self.settings_btn._rot_index])
-                
-                if self.settings_btn._rot_hovering:
-                    self.settings_btn._rot_current_interval = max(1, self.settings_btn._rot_current_interval * 0.995)
-                    self.settings_btn._rot_timer.setInterval(int(self.settings_btn._rot_current_interval))
+                p = QPainter(canvas)
+                p.drawPixmap((btn._rot_size - rotated.width()) // 2, (btn._rot_size - rotated.height()) // 2, rotated)
+                p.end()
+                btn.setIcon(QIcon(canvas))
+
+                if btn._rot_hovering:
+                    btn._rot_current_interval = max(1, btn._rot_current_interval * 0.995)
+                    btn._rot_timer.setInterval(int(btn._rot_current_interval))
                 else:
-                    self.settings_btn._rot_current_interval *= 1.05
-                    if self.settings_btn._rot_current_interval > 200:
-                        self.settings_btn._rot_timer.stop()
-                        self.settings_btn._rot_current_interval = 80
+                    btn._rot_current_interval *= 1.05
+                    if btn._rot_current_interval > 200:
+                        btn._rot_timer.stop()
+                        btn._rot_current_interval = 80
                     else:
-                        self.settings_btn._rot_timer.setInterval(int(self.settings_btn._rot_current_interval))
-            
-            self.settings_btn._rot_timer.timeout.connect(_animate_settings_continuous)
-            
-            original_enter = self.settings_btn.enterEvent
-            original_leave = self.settings_btn.leaveEvent
-            
-            def new_enter(event):
-                self.settings_btn._rot_hovering = True
-                if not self.settings_btn._rot_timer.isActive():
-                    self.settings_btn._rot_current_interval = 80
-                    self.settings_btn._rot_timer.setInterval(80)
-                    self.settings_btn._rot_timer.start()
-                original_enter(event)
-            
-            def new_leave(event):
-                self.settings_btn._rot_hovering = False
-                original_leave(event)
-            
-            self.settings_btn.enterEvent = new_enter
-            self.settings_btn.leaveEvent = new_leave
+                        btn._rot_timer.setInterval(int(btn._rot_current_interval))
+
+            btn._rot_timer.timeout.connect(_tick)
+
+            _orig_enter = btn.enterEvent
+            _orig_leave = btn.leaveEvent
+
+            def _enter(ev):
+                btn._rot_hovering = True
+                if not btn._rot_timer.isActive():
+                    btn._rot_current_interval = 80
+                    btn._rot_timer.setInterval(80)
+                    btn._rot_timer.start()
+                _orig_enter(ev)
+
+            def _leave(ev):
+                btn._rot_hovering = False
+                _orig_leave(ev)
+
+            btn.enterEvent = _enter
+            btn.leaveEvent = _leave
+
+        # Sidebar settings button animation
+        if hasattr(self, '_settings_nav_rot_src') and not self._settings_nav_anim_setup:
+            _setup_spin_anim(self.settings_nav_btn, self._settings_nav_rot_src, 80)
+            self._settings_nav_anim_setup = True
+
+        # Top-bar settings button animation
+        if hasattr(self, '_settings_btn_rot_src') and not self._settings_btn_anim_setup:
+            _setup_spin_anim(self.settings_btn, self._settings_btn_rot_src, 96)
             self._settings_btn_anim_setup = True
-            
+
         # Final debug delay before __init__ finishes
         self._debug_delay()
 
@@ -4476,6 +4451,7 @@ class GameLauncher(QWidget):
 
     def __init__(self, parent=None, config_manager=None, start_minimised=False, has_tray_icon=False):
         super().__init__(parent)
+        self.setObjectName("GameLauncherMain")
         self.taskbar_button_clicked.connect(self._on_taskbar_button_clicked)
         self.current_edit_game = None  # Store the game being edited
         self._game_text_color = "#e0e0e0"  # Default light text, updated by apply_theme
@@ -4563,14 +4539,8 @@ class GameLauncher(QWidget):
         except Exception as e:
             print(f"Warning: Could not set app user model ID: {e}")
             
-        # Initialize Hardware Manager (starts background thread)
-        try:
-            self.hw_manager = get_hardware_manager()
-            self.hw_manager.start_manager()
-            self._debug_delay()
-        except Exception as e:
-            print(f"[Launcher] Failed to start HardwareManager: {e}")
-            
+        self.hw_manager = None
+
         # Set window icon using both Qt and win32gui for proper taskbar display
         if hasattr(sys, '_MEIPASS'):
             base_path = sys._MEIPASS
@@ -4604,6 +4574,9 @@ class GameLauncher(QWidget):
         # Load saved window geometry and state
         is_frozen = getattr(sys, 'frozen', False)
         self.setWindowTitle("HELXAID" if is_frozen else "HELXAID (Run with VSCode)")
+        
+        # Apply dark mode title bar for Windows
+        self._apply_dark_titlebar()
         if self.settings.get("window_fullscreen", False):
             self.showFullScreen()
         else:
@@ -4635,9 +4608,7 @@ class GameLauncher(QWidget):
         self._enable_drag_drop_for_elevated()
         self._debug_delay()
         
-        # Apply theme (will use background image and auto-palette if set)
-        self.apply_theme()
-        # Re-apply after layout settles so background scales to final window size
+        # Apply after layout settles so background scales to final window size
         # (at this point the window geometry may not be restored yet)
         QTimer.singleShot(500, self.apply_theme)
 
@@ -4907,13 +4878,11 @@ class GameLauncher(QWidget):
         
         settings_nav_icon_path = os.path.join(script_dir, "UI Icons", "setting-icon.png")
         if os.path.exists(settings_nav_icon_path):
-            _s_pix = QPixmap(settings_nav_icon_path)
-            _s_scaled = _s_pix.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.settings_nav_btn.setIcon(QIcon(_s_scaled))
+            _settings_pixmap = QPixmap(settings_nav_icon_path)
+            self._settings_nav_rot_src = _settings_pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self._settings_btn_rot_src = _settings_pixmap.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.settings_nav_btn.setIcon(QIcon(self._settings_nav_rot_src))
             self.settings_nav_btn.setIconSize(QSize(40, 40))
-            
-            # Store pixmap for deferred animation setup (improves startup time)
-            self._settings_nav_pixmap = _s_pix
             self._settings_nav_anim_setup = False
         else:
             self.settings_nav_btn.setText("")
@@ -4982,7 +4951,7 @@ class GameLauncher(QWidget):
         
         # Get the directory of the current script
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        up_arrow_path = os.path.join(script_dir, 'UI Icons', 'up-arrow.png').replace('\\', '/')
+        up_arrow_path = os.path.join(script_dir, 'UI Icons', 'up-arrow-triangle.svg').replace('\\', '/')
         down_arrow_path = os.path.join(script_dir, 'UI Icons', 'down-arrow-triangle.svg').replace('\\', '/')
 
         # Spin box for icon size
@@ -5102,11 +5071,8 @@ class GameLauncher(QWidget):
         self.settings_btn.setObjectName("SettingsButton")
         self.settings_btn.setFixedSize(64, 64)
 
-        settings_icon_path = os.path.join(script_dir, "UI Icons", "setting-icon.png")
-        if os.path.exists(settings_icon_path):
-            settings_pixmap = QPixmap(settings_icon_path)
-            settings_scaled = settings_pixmap.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.settings_btn.setIcon(QIcon(settings_scaled))
+        if hasattr(self, '_settings_btn_rot_src'):
+            self.settings_btn.setIcon(QIcon(self._settings_btn_rot_src))
             self.settings_btn.setIconSize(QSize(48, 48))
         else:
             self.settings_btn.setText("Settings")
@@ -5127,12 +5093,7 @@ class GameLauncher(QWidget):
         self.settings_btn.setClickAnimation(False)
         
         # Setup continuous rotation animation while hovering (deferred for faster startup)
-        if os.path.exists(settings_icon_path):
-            # Store for deferred animation setup
-            self._settings_btn_icon_path = settings_icon_path
-            self._settings_btn_anim_setup = False
-        else:
-            self._settings_btn_anim_setup = False
+        self._settings_btn_anim_setup = False
 
         self.settings_btn.clicked.connect(self.open_settings)
         
@@ -5199,6 +5160,7 @@ class GameLauncher(QWidget):
             self.refresh_btn.setIcon(QIcon(refresh_scaled))
             self.refresh_btn.setIconSize(QSize(48, 48))
         else:
+            refresh_scaled = None
             self.refresh_btn.setText("⟳")
 
         self.refresh_btn.setStyleSheet("""
@@ -5219,66 +5181,51 @@ class GameLauncher(QWidget):
         self.refresh_btn.setClickAnimation(False)
         self.refresh_btn.setToolTip("Refresh Library")
         self.refresh_btn.clicked.connect(self.refresh)
-        
+
         # Setup 360-degree rotation animation with ease-out on hover
-        if os.path.exists(refresh_icon_path):
+        # ponytail: live rotation per tick instead of pre-rendering 61 frames (~2.2MB saved)
+        if refresh_scaled is not None:
             from PySide6.QtGui import QTransform, QPainter
-            
-            # Pre-scale pixmap to reasonable size for smooth animation
+
             anim_size = 96
-            refresh_anim_pixmap = QPixmap(refresh_icon_path).scaled(anim_size, anim_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            
-            # Create frames with ease-out timing (fast start, slow end)
-            # Using cubic ease-out: 1 - (1 - t)^3
-            num_frames = 60  # 60 frames for smooth 60fps animation
-            refresh_frames = []
-            for i in range(num_frames + 1):
-                t = i / num_frames  # 0 to 1
-                # Cubic ease-out
-                eased_t = 1 - pow(1 - t, 3)
-                angle = 360 * eased_t
-                
-                transform = QTransform().rotate(angle)
-                rotated = refresh_anim_pixmap.transformed(transform, Qt.SmoothTransformation)
-                
-                # Create canvas with fixed size and center the rotated icon
-                canvas = QPixmap(anim_size, anim_size)
-                canvas.fill(Qt.transparent)
-                painter = QPainter(canvas)
-                x = (anim_size - rotated.width()) // 2
-                y = (anim_size - rotated.height()) // 2
-                painter.drawPixmap(x, y, rotated)
-                painter.end()
-                
-                refresh_frames.append(QIcon(canvas))
-            
-            self.refresh_btn._rot_frames = refresh_frames
+            self.refresh_btn._rot_src = refresh_scaled
+            self.refresh_btn._rot_size = anim_size
             self.refresh_btn._rot_index = 0
+            self.refresh_btn._rot_num_frames = 60
             self.refresh_btn._rot_timer = QTimer()
-            self.refresh_btn._rot_timer.setInterval(17)  # ~1000ms / 60 frames = 17ms per frame (60fps)
+            self.refresh_btn._rot_timer.setInterval(17)
             self.refresh_btn._rot_animating = False
-            
+
             def _animate_refresh_frame():
-                if self.refresh_btn._rot_index < len(refresh_frames) - 1:
-                    self.refresh_btn._rot_index += 1
-                    self.refresh_btn.setIcon(refresh_frames[self.refresh_btn._rot_index])
+                btn = self.refresh_btn
+                if btn._rot_index < btn._rot_num_frames:
+                    btn._rot_index += 1
+                    t = btn._rot_index / btn._rot_num_frames
+                    angle = 360 * (1 - pow(1 - t, 3))  # cubic ease-out
+                    rotated = btn._rot_src.transformed(QTransform().rotate(angle), Qt.SmoothTransformation)
+                    canvas = QPixmap(btn._rot_size, btn._rot_size)
+                    canvas.fill(Qt.transparent)
+                    p = QPainter(canvas)
+                    p.drawPixmap((btn._rot_size - rotated.width()) // 2, (btn._rot_size - rotated.height()) // 2, rotated)
+                    p.end()
+                    btn.setIcon(QIcon(canvas))
                 else:
-                    self.refresh_btn._rot_timer.stop()
-                    self.refresh_btn._rot_animating = False
-                    self.refresh_btn._rot_index = 0
-                    self.refresh_btn.setIcon(refresh_frames[0])  # Reset to original
-            
+                    btn._rot_timer.stop()
+                    btn._rot_animating = False
+                    btn._rot_index = 0
+                    btn.setIcon(QIcon(btn._rot_src))
+
             self.refresh_btn._rot_timer.timeout.connect(_animate_refresh_frame)
-            
+
             original_enter = self.refresh_btn.enterEvent
-            
+
             def new_enter(event):
                 if not self.refresh_btn._rot_animating:
                     self.refresh_btn._rot_animating = True
                     self.refresh_btn._rot_index = 0
                     self.refresh_btn._rot_timer.start()
                 original_enter(event)
-            
+
             self.refresh_btn.enterEvent = new_enter
 
         # Add OMEN Command Center button
@@ -5588,8 +5535,8 @@ class GameLauncher(QWidget):
         self.update_grid_size()
         self.refresh()
         
-        # NOTE: apply_theme() is already called at init + QTimer.singleShot(500ms)
-        # No need for a 3rd call here — the delayed call handles post-layout re-apply
+        # NOTE: apply_theme() runs once via QTimer.singleShot(500ms)
+        # No need for another call here — the delayed call handles post-layout apply
         
         # NOTE: Music panel (HELXAIC) is lazy-loaded in switch_panel to save RAM!
 
@@ -5598,10 +5545,9 @@ class GameLauncher(QWidget):
             self.content_stack.currentChanged.connect(self._on_content_stack_changed)
         except Exception:
             pass
-        
-        # Setup CPU control panel (panel 2)
-        self._setup_cpu_panel()
-        
+
+        # NOTE: CPU panel is lazy-loaded in switch_panel to save RAM!
+
         # NOTE: Crosshair and Macro panels are lazy-loaded in switch_panel to save RAM!
         
         # NOTE: game_detection_timer (2s) already handles _scan_for_running_games
@@ -5691,11 +5637,23 @@ class GameLauncher(QWidget):
         """
         
         # Generate full stylesheet
+        # NOTE: Gradient background is scoped to the main window only (#GameLauncherMain)
+        # to prevent Qt from allocating a separate gradient buffer for every child widget.
+        # Child widgets inherit color/font but use transparent background.
         stylesheet = f"""
-            QWidget {{
+            QWidget#GameLauncherMain {{
                 {bg_style}
                 color: {text};
                 font-family: 'Orbitron', 'Segoe UI', Arial;
+            }}
+            QWidget#GameLauncherMain > QWidget {{
+                background: transparent;
+                color: {text};
+                font-family: 'Orbitron', 'Segoe UI', Arial;
+            }}
+            QWidget#ContentStack, QWidget#HomePanel, QWidget#cpuPanel, QWidget#musicPanel,
+            QWidget#crosshairPanel, QWidget#macroPanel, QWidget#hardwarePanel, QWidget#wincustomPanel {{
+                background: transparent;
             }}
             QPushButton {{
                 border: 1px solid {primary};
@@ -6053,7 +6011,11 @@ class GameLauncher(QWidget):
         # Lazy-load Music panel at index 1
         if index == 1 and not hasattr(self, 'music_panel'):
             self._setup_music_panel()
-            
+
+        # Lazy-load CPU panel at index 2
+        if index == 2 and not hasattr(self, 'cpu_panel'):
+            self._setup_cpu_panel()
+
         # Lazy-load Crosshair panel at index 3
         if index == 3 and not hasattr(self, 'crosshair_panel'):
             self._setup_crosshair_panel()
@@ -7523,7 +7485,7 @@ Stylesheet Selector:
                 spinbox.setMaximum(limits["max"])
                 spinbox.setValue(current_value)
                 spinbox.setFixedSize(80, 32)
-                up_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "up-arrow.png").replace("\\", "/")
+                up_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "up-arrow-triangle.svg").replace("\\", "/")
                 down_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
                 spinbox.setStyleSheet(f"""
                     QSpinBox {{
@@ -8167,6 +8129,7 @@ Stylesheet Selector:
     def _open_cpu_settings(self):
         """Open CPU settings dialog."""
         dialog = QDialog(self)
+        apply_custom_titlebar(dialog, "#0f0f0f")
         dialog.setWindowTitle("CPU Settings")
         dialog.setObjectName("cpuSettingsDialog")
         dialog.setMinimumWidth(350)
@@ -8439,6 +8402,10 @@ Stylesheet Selector:
     def _setup_macro_panel(self):
         """Setup the Macro settings panel."""
         try:
+            if self.hw_manager is None:
+                from macro_system.integration.hardware_manager import get_hardware_manager
+                self.hw_manager = get_hardware_manager()
+                self.hw_manager.start_manager()
             from MacroSettingsPanel import MacroSettingsPanel
             self.macro_panel = MacroSettingsPanel(self)
             self.content_stack.addWidget(self.macro_panel)
@@ -9909,6 +9876,7 @@ Stylesheet Selector:
         Background & System settings are in Quick Settings (navbar gear).
         """
         dialog = QDialog(self)
+        apply_custom_titlebar(dialog, "#010101")
         dialog.setWindowTitle("Settings")
         dialog.setMinimumWidth(500)
 
@@ -9960,10 +9928,16 @@ Stylesheet Selector:
         
         layout.addWidget(lib_group)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
-        layout.addWidget(button_box)
+        btn_layout = QHBoxLayout()
+        ok_btn = AnimatedButton("OK")
+        cancel_btn = AnimatedButton("Cancel")
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
 
         result = dialog.exec()
         if result == QDialog.Accepted:
@@ -10003,7 +9977,8 @@ Stylesheet Selector:
         Display and Library are accessible from the full settings (top-bar gear icon).
         """
         dialog = QDialog(self)
-        dialog.setWindowTitle("Quick Settings")
+        apply_custom_titlebar(dialog, "#010101")
+        dialog.setWindowTitle("Main Setting")
         dialog.setMinimumWidth(500)
 
         layout = QVBoxLayout(dialog)
@@ -10223,10 +10198,16 @@ Stylesheet Selector:
 
         layout.addWidget(dev_group)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
-        layout.addWidget(button_box)
+        btn_layout = QHBoxLayout()
+        ok_btn = AnimatedButton("OK")
+        cancel_btn = AnimatedButton("Cancel")
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
 
         orig_startup = is_startup_enabled()
         
@@ -10726,6 +10707,7 @@ Stylesheet Selector:
     def show_statistics_dashboard(self, parent_dialog=None):
         """Show game statistics dashboard."""
         dialog = QDialog(parent_dialog or self)
+        apply_custom_titlebar(dialog, "#010101")
         dialog.setWindowTitle("📊 Game Statistics")
         dialog.setMinimumSize(500, 400)
         
@@ -10989,6 +10971,7 @@ First Played: {first_played_formatted}
     def _show_game_more_info(self, game):
         """Show detailed info dialog for a game."""
         dialog = QDialog(self)
+        apply_custom_titlebar(dialog, "#1a1a1a")
         dialog.setWindowTitle(f"{game.get('name', 'Unknown')}")
         dialog.setMinimumWidth(450)
         dialog.setStyleSheet("background-color: #1a1a1a; color: #e0e0e0;")
@@ -12634,6 +12617,7 @@ First Played: {first_played_formatted}
         
         try:
             # Use psutil to find and kill the process
+            import psutil
             killed = False
             for proc in psutil.process_iter(['name', 'pid']):
                 try:
@@ -12983,6 +12967,7 @@ First Played: {first_played_formatted}
           - _process_ppid_cache: dict mapping pid -> ppid (for child-process tracking)
         """
         def _scan_loop():
+            import psutil
             while True:
                 try:
                     name_set = set()
@@ -13049,12 +13034,13 @@ First Played: {first_played_formatted}
     
     def _is_child_of_known_launcher(self, exe_name):
         """Check if the given process was spawned by a known platform launcher.
-        
+
         Walks up the process tree via cached ppid mapping. If any ancestor
         is in KNOWN_LAUNCHERS, returns True. This catches games launched via
         Steam, Epic, etc. even when the game exe itself isn't in the library.
         Limits traversal depth to 5 to avoid infinite loops.
         """
+        import psutil
         with self._process_cache_lock:
             # Find PIDs for this exe name
             target_pids = []
@@ -13178,6 +13164,7 @@ First Played: {first_played_formatted}
     
     def _get_window_titles_for_process(self, exe_name):
         """Get list of window titles for a specific process using win32gui."""
+        import psutil
         if not WINDOWS_API_AVAILABLE:
             return []
         
@@ -13425,7 +13412,16 @@ First Played: {first_played_formatted}
         google_found = self.scan_google_play_games(silent=True)
         
         if not steam_found and not google_found:
-            QMessageBox.information(self, "Universal Scan", "No new games found in Steam or Google Play Games.")
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Universal Scan")
+            msg.setText("No new games found in Steam or Google Play Games.")
+            msg.setIcon(QMessageBox.Information)
+            
+            ok_btn = AnimatedButton("OK")
+            msg.addButton(ok_btn, QMessageBox.AcceptRole)
+            
+            apply_custom_titlebar(msg, "#010101")
+            msg.exec()
 
     def scan_steam_libraries(self, silent=False):
         # Scan Steam libraries and let the user add games automatically.
@@ -13451,6 +13447,7 @@ First Played: {first_played_formatted}
 
         # Let user choose which Steam games to add
         dialog = QDialog(self)
+        apply_custom_titlebar(dialog, "#010101")
         dialog.setWindowTitle("Add Games from Steam")
         dialog.setMinimumWidth(500)
 
@@ -13459,19 +13456,18 @@ First Played: {first_played_formatted}
         layout.addWidget(info_label)
 
         # Optional helper checkbox to quickly select/deselect all detected games
-        select_all_cb = QCheckBox("Select All")
+        select_all_cb = AnimatedCheckBox("Select All")
         layout.addWidget(select_all_cb)
 
         list_widget = QWidget()
         list_layout = QVBoxLayout(list_widget)
         list_layout.setContentsMargins(5, 5, 5, 5)
-        list_layout.setSpacing(4)
+        list_layout.setSpacing(10)
 
         items = []
         for game in new_games:
-            cb = QCheckBox(game["name"])
+            cb = AnimatedCheckBox(game["name"])
             cb.setToolTip(game["exe"])
-            cb.setStyleSheet("QCheckBox { padding: 2px; }")
             list_layout.addWidget(cb)
             items.append((cb, game))
         
@@ -13484,20 +13480,21 @@ First Played: {first_played_formatted}
         scroll.setMaximumHeight(300)  # Limit height so dialog isn't too tall
         layout.addWidget(scroll)
 
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        layout.addWidget(button_box)
+        btn_layout = QHBoxLayout()
+        ok_btn = AnimatedButton("OK")
+        cancel_btn = AnimatedButton("Cancel")
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
 
         def any_selected():
             return any(cb.isChecked() for cb, _ in items)
 
-        ok_button = button_box.button(QDialogButtonBox.Ok)
-        if ok_button:
-            ok_button.setEnabled(False)
+        ok_btn.setEnabled(False)
 
         def update_ok():
-            btn = button_box.button(QDialogButtonBox.Ok)
-            if btn:
-                btn.setEnabled(any_selected())
+            ok_btn.setEnabled(any_selected())
 
         # When 'Select All' is toggled, check/uncheck all game checkboxes
         def on_select_all_toggled(checked: bool):
@@ -13513,8 +13510,8 @@ First Played: {first_played_formatted}
         for cb, _ in items:
             cb.stateChanged.connect(lambda _state, u=update_ok: u())
 
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
 
         result = dialog.exec()
         if result != QDialog.Accepted:
@@ -13550,6 +13547,7 @@ First Played: {first_played_formatted}
     def manage_game_folders(self):
         """Dialog to manage custom game folders to scan."""
         dialog = QDialog(self)
+        apply_custom_titlebar(dialog, "#1a1a1a")
         dialog.setWindowTitle("📁 Manage Local Game Folders")
         dialog.setMinimumWidth(500)
         dialog.setMinimumHeight(400)
@@ -13589,7 +13587,7 @@ First Played: {first_played_formatted}
         def add_folder():
             folder = QFileDialog.getExistingDirectory(
                 dialog, "Select Game Folder", "", 
-                QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog
+                QFileDialog.ShowDirsOnly
             )
             if folder:
                 watch_folders = self.settings.get("watch_folders", [])
@@ -13770,6 +13768,7 @@ First Played: {first_played_formatted}
         
         # Show selection dialog
         dialog = QDialog(self)
+        apply_custom_titlebar(dialog, "#010101")
         dialog.setWindowTitle("Select Games to Add")
         dialog.setMinimumWidth(500)
         dialog.setMinimumHeight(400)
@@ -13779,17 +13778,17 @@ First Played: {first_played_formatted}
         layout.addWidget(info_label)
         
         # Select All checkbox
-        select_all_cb = QCheckBox("Select All")
+        select_all_cb = AnimatedCheckBox("Select All")
         layout.addWidget(select_all_cb)
         
         list_widget = QWidget()
         list_layout = QVBoxLayout(list_widget)
         list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.setSpacing(2)  # Minimal spacing between items
+        list_layout.setSpacing(10)  # Minimal spacing between items
         
         items = []
         for game in games:
-            cb = QCheckBox(game["name"])
+            cb = AnimatedCheckBox(game["name"])
             cb.setToolTip(game["exe"])
             list_layout.addWidget(cb)
             items.append((cb, game))
@@ -13808,10 +13807,16 @@ First Played: {first_played_formatted}
         scroll.setWidget(list_widget)
         layout.addWidget(scroll)
         
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
-        layout.addWidget(button_box)
+        btn_layout = QHBoxLayout()
+        ok_btn = AnimatedButton("OK")
+        cancel_btn = AnimatedButton("Cancel")
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
         
         if dialog.exec() != QDialog.Accepted:
             return
@@ -13901,6 +13906,7 @@ First Played: {first_played_formatted}
         
         # Show selection dialog
         dialog = QDialog(self)
+        apply_custom_titlebar(dialog, "#010101")
         dialog.setWindowTitle("Select Google Play Games")
         dialog.setMinimumSize(500, 400)
         layout = QVBoxLayout(dialog)
@@ -13912,26 +13918,26 @@ First Played: {first_played_formatted}
         scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
+        list_layout = QVBoxLayout(scroll_widget)
         
         checkboxes = []
         for game_name, shortcut_path in found_games:
-            cb = QCheckBox(f"{game_name}")
+            cb = AnimatedCheckBox(f"{game_name}")
             cb.setChecked(True)
             cb.setProperty("game_data", (game_name, shortcut_path))
             checkboxes.append(cb)
-            scroll_layout.addWidget(cb)
+            list_layout.addWidget(cb)
         
-        scroll_layout.addStretch()
+        list_layout.addStretch()
         scroll.setWidget(scroll_widget)
         layout.addWidget(scroll)
         
         # Buttons
         btn_layout = QHBoxLayout()
-        select_all = QPushButton("Select All")
-        select_none = QPushButton("Select None")
-        ok_btn = QPushButton("Add Selected")
-        cancel_btn = QPushButton("Cancel")
+        select_all = AnimatedButton("Select All")
+        select_none = AnimatedButton("Select None")
+        ok_btn = AnimatedButton("OK")
+        cancel_btn = AnimatedButton("Cancel")
         
         btn_layout.addWidget(select_all)
         btn_layout.addWidget(select_none)
@@ -14698,6 +14704,7 @@ First Played: {first_played_formatted}
     def edit_game(self, game):
         # Create a new window for editing
         edit_dialog = QDialog(self)
+        apply_custom_titlebar(edit_dialog, "#010101")
         edit_dialog.setWindowTitle("Edit Game")
         edit_dialog.setMinimumWidth(500)
         
