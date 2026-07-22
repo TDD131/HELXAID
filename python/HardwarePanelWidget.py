@@ -324,11 +324,11 @@ class StatsCard(QFrame):
         layout.addWidget(self.content_widget, stretch=1)
     
     def _apply_style(self):
-        # Apply style without objectName dependency - use direct property
+        # Apply style matching Booster tab (rgba(30, 30, 30, 0.5)) with no border
         self.setProperty("class", "statsCard")
         self.setStyleSheet("""
-            QFrame {
-                background: rgba(28, 28, 32, 0.95);
+            QFrame#StatsCard {
+                background: rgba(30, 30, 30, 0.5);
                 border: none;
                 border-radius: 12px;
             }
@@ -483,6 +483,8 @@ class HardwarePanelWidget(QWidget):
         print("[Hardware] HardwarePanelWidget initialized")
     
     def _setup_ui(self):
+        self.setObjectName("hardwarePanelWidget")
+        self.setStyleSheet("QWidget#hardwarePanelWidget { background: transparent; }")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
@@ -586,9 +588,6 @@ class HardwarePanelWidget(QWidget):
         if hasattr(self, '_interval_container'):
             self._interval_container.setVisible(index in interval_visible_tabs)
         
-        # Reset chart histories when switching pages
-        self._reset_chart_histories()
-        
         # Resume timer after page switch is complete
         if was_active:
             self._update_timer.start(self.monitor.update_interval_ms)
@@ -673,7 +672,7 @@ class HardwarePanelWidget(QWidget):
         page = QWidget()
         page.setObjectName("ramPage")
         main_layout = QHBoxLayout(page)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(20)
         
         # ====== Left Side: Gauge + Controls ======
@@ -752,7 +751,8 @@ class HardwarePanelWidget(QWidget):
         right_panel.setStyleSheet("""
             QWidget#ramRightPanel {
                 background: rgba(30, 30, 30, 0.5);
-                border-radius: 8px;
+                border: none;
+                border-radius: 12px;
             }
         """)
         right_layout = QVBoxLayout(right_panel)
@@ -3865,7 +3865,7 @@ class HardwarePanelWidget(QWidget):
         ms_label.setStyleSheet("color: #888888; font-size: 11px; font-weight: 600; margin-left: 2px;")
         interval_layout.addWidget(ms_label)
         
-        header_layout.addWidget(self._interval_container)
+        header_layout.addWidget(self._interval_container, 0, Qt.AlignRight)
         
         return header
     
@@ -3875,10 +3875,11 @@ class HardwarePanelWidget(QWidget):
         scroll.setObjectName("overviewScrollArea")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.setStyleSheet("QScrollArea#overviewScrollArea, QWidget#overviewScrollArea > QWidget { background: transparent; border: none; }")
         
         content = QWidget()
         content.setObjectName("overviewContent")
+        content.setStyleSheet("QWidget#overviewContent { background: transparent; }")
         
         # Outer vertical layout to keep cards at natural height (no vertical stretch)
         outer_layout = QVBoxLayout(content)
@@ -3909,17 +3910,16 @@ class HardwarePanelWidget(QWidget):
         """Create the Quick Setup Booster section, mirroring the Booster tab layout."""
         container = QFrame()
         container.setObjectName("ramCleanerContainer")
-        container.setFixedWidth(240)
+        container.setFixedWidth(220)
         container.setStyleSheet("""
             QFrame#ramCleanerContainer {
-                background: rgba(24, 24, 28, 0.95);
+                background: transparent;
                 border: none;
-                border-radius: 16px;
             }
         """)
 
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(10, 20, 10, 20)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
         # Title - matches the Booster tab title style
@@ -3941,8 +3941,6 @@ class HardwarePanelWidget(QWidget):
         self.qs_items_label.setStyleSheet("color: #e0e0e0; font-size: 14px; background: transparent;")
         self.qs_items_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.qs_items_label)
-
-        layout.addSpacing(15)
 
         # MANUAL BOOST button - triggers full boost (not just RAM clean)
         self.clean_btn = QPushButton("MANUAL BOOST")
@@ -3976,18 +3974,22 @@ class HardwarePanelWidget(QWidget):
     def _create_stats_grid(self):
         """Create the stats grid with charts."""
         container = QWidget()
+        container.setObjectName("statsGridContainer")
+        container.setStyleSheet("QWidget#statsGridContainer { background: transparent; }")
         grid = QGridLayout(container)
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(12)
         
-        # Configure pyqtgraph
-        pg.setConfigOptions(antialias=True, background='#23262d', foreground='#888888')
+        # Configure pyqtgraph with transparent background
+        pg.setConfigOptions(antialias=True, background=None, foreground='#888888')
         
         # CPU Usage card with chart
         cpu_card = StatsCard("CPU Usage")
         cpu_card.setObjectName("cpuUsageCard")
         self.cpu_chart = pg.PlotWidget()
         self.cpu_chart.setObjectName("cpuChart")
+        self.cpu_chart.setBackground(None)
+        self.cpu_chart.setStyleSheet("background: transparent;")
         self.cpu_chart.setFixedHeight(100)
         self.cpu_chart.showGrid(x=False, y=True, alpha=0.3)
         self.cpu_chart.setYRange(-10, 100)  # Start at -10 to ensure values < 1 are visible
@@ -4028,6 +4030,8 @@ class HardwarePanelWidget(QWidget):
         ram_card.setObjectName("ramUsageCard")
         self.ram_chart = pg.PlotWidget()
         self.ram_chart.setObjectName("ramChart")
+        self.ram_chart.setBackground(None)
+        self.ram_chart.setStyleSheet("background: transparent;")
         self.ram_chart.setFixedHeight(100)
         self.ram_chart.showGrid(x=False, y=True, alpha=0.3)
         self.ram_chart.setYRange(-10, 100)  # Start at -10 to ensure values < 1 are visible
@@ -4141,6 +4145,8 @@ class HardwarePanelWidget(QWidget):
         # Disk usage chart - single line showing overall disk usage %
         self.disk_chart = pg.PlotWidget()
         self.disk_chart.setObjectName("diskChart")
+        self.disk_chart.setBackground(None)
+        self.disk_chart.setStyleSheet("background: transparent;")
         self.disk_chart.setFixedHeight(80)
         self.disk_chart.showGrid(x=False, y=True, alpha=0.3)
         self.disk_chart.setYRange(-10, 100)  # Start at -10 to ensure values < 1 are visible

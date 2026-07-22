@@ -4669,10 +4669,23 @@ class GameLauncher(QWidget):
         self.home_btn.setFixedSize(60, 60)
         self.home_btn.setToolTip("Home")
         self.home_btn.setCursor(Qt.PointingHandCursor)
-        icon_path = os.path.join(script_dir, "UI Icons", "game-icon.png")
-        if os.path.exists(icon_path):
-            self.home_btn.setIcon(QIcon(icon_path))
-            self.home_btn.setIconSize(QSize(48, 48))
+        # Helper for sidebar icon path lookup
+        def _get_sidebar_icon(filename):
+            sidebar_path = os.path.join(script_dir, "UI Sidebar Icons", filename)
+            if os.path.exists(sidebar_path):
+                return sidebar_path
+            fallback_path = os.path.join(script_dir, "UI Icons", filename)
+            if os.path.exists(fallback_path):
+                return fallback_path
+            return None
+
+        # Logo/Home button
+        icon_path = _get_sidebar_icon("game-icon.png")
+        if icon_path:
+            home_pixmap = QPixmap(icon_path)
+            home_scaled = home_pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.home_btn.setIcon(QIcon(home_scaled))
+            self.home_btn.setIconSize(QSize(64, 64))
         else:
             self.home_btn.setText("")
         self.home_btn.clicked.connect(lambda: self.switch_panel(0))
@@ -4687,8 +4700,8 @@ class GameLauncher(QWidget):
         self.music_nav_btn.setToolTip("HELXAIC - Music Player")
         self.music_nav_btn.setCursor(Qt.PointingHandCursor)
 
-        music_icon_path = os.path.join(script_dir, "UI Icons", "player-icon.png")
-        if os.path.exists(music_icon_path):
+        music_icon_path = _get_sidebar_icon("helxaic-icon.png") or _get_sidebar_icon("player-icon.png")
+        if music_icon_path:
             music_pixmap = QPixmap(music_icon_path)
             music_scaled = music_pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.music_nav_btn.setIcon(QIcon(music_scaled))
@@ -4707,9 +4720,9 @@ class GameLauncher(QWidget):
         self.cpu_nav_btn.setToolTip("HELXAIL - CPU Control")
         self.cpu_nav_btn.setCursor(Qt.PointingHandCursor)
         
-        # Load UXTU icon
-        uxtu_icon_path = os.path.join(script_dir, "UI Icons", "uxtu_icon.png")
-        if os.path.exists(uxtu_icon_path):
+        # Load CPU icon
+        uxtu_icon_path = _get_sidebar_icon("helxail-icon.png") or _get_sidebar_icon("uxtu-icon.png") or _get_sidebar_icon("uxtu_icon.png")
+        if uxtu_icon_path:
             uxtu_pixmap = QPixmap(uxtu_icon_path)
             uxtu_scaled = uxtu_pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.cpu_nav_btn.setIcon(QIcon(uxtu_scaled))
@@ -4750,8 +4763,8 @@ class GameLauncher(QWidget):
         self.crosshair_nav_btn.setCursor(Qt.PointingHandCursor)
         
         # Load crosshair icon
-        crosshair_icon_path = os.path.join(script_dir, "UI Icons", "crosshair_icon.png")
-        if os.path.exists(crosshair_icon_path):
+        crosshair_icon_path = _get_sidebar_icon("helxair-icon.png") or _get_sidebar_icon("crosshair_icon.png")
+        if crosshair_icon_path:
             crosshair_pixmap = QPixmap(crosshair_icon_path)
             crosshair_scaled = crosshair_pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.crosshair_nav_btn.setIcon(QIcon(crosshair_scaled))
@@ -4778,9 +4791,9 @@ class GameLauncher(QWidget):
         self.macro_nav_btn.setToolTip("HELXAIRO")
         self.macro_nav_btn.setCursor(Qt.PointingHandCursor)
         
-        # Load macro icon or use emoji fallback
-        macro_icon_path = os.path.join(script_dir, "UI Icons", "macro-icon.png")
-        if os.path.exists(macro_icon_path):
+        # Load macro icon
+        macro_icon_path = _get_sidebar_icon("helxairo-icon.png") or _get_sidebar_icon("macro-icon.png")
+        if macro_icon_path:
             macro_pixmap = QPixmap(macro_icon_path)
             macro_scaled = macro_pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.macro_nav_btn.setIcon(QIcon(macro_scaled))
@@ -4807,13 +4820,13 @@ class GameLauncher(QWidget):
         self.hardware_nav_btn.setToolTip("HELXTATS - Hardware Stats")
         self.hardware_nav_btn.setCursor(Qt.PointingHandCursor)
         
-        # Load hardware icon or use emoji fallback
-        hardware_icon_path = os.path.join(script_dir, "UI Icons", "hardware-icon.png")
-        if os.path.exists(hardware_icon_path):
+        # Load hardware icon
+        hardware_icon_path = _get_sidebar_icon("helxtats-icon.png") or _get_sidebar_icon("helxtats_icon.png")
+        if hardware_icon_path:
             hardware_pixmap = QPixmap(hardware_icon_path)
-            hardware_scaled = hardware_pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            hardware_scaled = hardware_pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.hardware_nav_btn.setIcon(QIcon(hardware_scaled))
-            self.hardware_nav_btn.setIconSize(QSize(40, 40))
+            self.hardware_nav_btn.setIconSize(QSize(64, 64))
         else:
             self.hardware_nav_btn.setText("")
         
@@ -11695,6 +11708,16 @@ First Played: {first_played_formatted}
             )
         except Exception as e:
             print(f"Error cleaning up hardware tools: {e}")
+            
+        # Check HELRCUS lock_on_exit setting
+        try:
+            from WindowsCustomPanel import _load_helrcus_config
+            cfg = _load_helrcus_config()
+            if cfg.get("lock_screen", {}).get("lock_on_exit", False):
+                import ctypes
+                ctypes.windll.user32.LockWorkStation()
+        except Exception as e:
+            print(f"[HELRCUS] Error executing lock_on_exit: {e}")
             
         # Save window geometry before closing
         if not self.isFullScreen():
