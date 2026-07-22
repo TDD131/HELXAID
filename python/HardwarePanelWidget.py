@@ -780,9 +780,6 @@ class HardwarePanelWidget(QWidget):
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 14px;
             }
-            QWidget#ramRightPanel:hover {
-                border-color: rgba(255, 91, 6, 0.4);
-            }
         """)
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)

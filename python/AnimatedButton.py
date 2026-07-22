@@ -372,8 +372,12 @@ class AnimatedCheckBox(QAbstractButton):
     def sizeHint(self):
         from PySide6.QtCore import QSize
         font_metrics = self.fontMetrics()
-        width = 18 + 8 + font_metrics.horizontalAdvance(self.text()) + 10
-        height = max(24, font_metrics.height())
+        lines = self.text().split("\n")
+        max_line_w = max([font_metrics.horizontalAdvance(line) for line in lines]) if lines else 0
+        line_count = len(lines)
+        text_height = line_count * font_metrics.height() + (line_count - 1) * 2
+        width = 18 + 8 + max_line_w + 10
+        height = max(24, text_height + 6)
         return QSize(int(width), int(height))
         
     def _update_anim(self, value):
@@ -392,7 +396,12 @@ class AnimatedCheckBox(QAbstractButton):
         p.setRenderHint(QPainter.Antialiasing)
         
         box_size = 18
-        box_rect = QRectF(0, (self.height() - box_size) / 2, box_size, box_size)
+        lines = self.text().split("\n")
+        if len(lines) > 1:
+            box_y = 2
+        else:
+            box_y = (self.height() - box_size) / 2
+        box_rect = QRectF(0, box_y, box_size, box_size)
 
         # HELXAID Orange Style
         bg_uncheck = QColor("#2a2a2a")
@@ -457,4 +466,4 @@ class AnimatedCheckBox(QAbstractButton):
         font = self.font()
         p.setFont(font)
         text_rect = QRect(int(box_size + 8), 0, int(self.width() - box_size - 8), int(self.height()))
-        p.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, self.text())
+        p.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, self.text())
