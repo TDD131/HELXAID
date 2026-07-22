@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QGraphicsDropShadowEffect, QProgressBar,
     QCheckBox
 )
+from AnimatedButton import AnimatedCheckBox
 from smooth_scroll import SmoothScrollArea, SmoothTableWidget
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot
 from PySide6.QtGui import (
@@ -147,6 +148,21 @@ class TimeAxisItem(pg.AxisItem):
                 strings.append(dt.strftime('%b %d'))
         return strings
 
+class NetRateAxisItem(pg.AxisItem):
+    """Custom Y-axis for network rate graphs to display human-readable byte rates."""
+    def tickStrings(self, values, scale, spacing):
+        strings = []
+        for v in values:
+            if v <= 0:
+                strings.append("0 B")
+            elif v >= 1024 ** 2:
+                strings.append(f"{v / (1024 ** 2):.1f} MB")
+            elif v >= 1024:
+                strings.append(f"{v / 1024:.0f} KB")
+            else:
+                strings.append(f"{int(v)} B")
+        return strings
+
 class NetworkDetailPanel(QWidget):
     """
     Expandable panel for per-process network history graph.
@@ -174,12 +190,17 @@ class NetworkDetailPanel(QWidget):
         layout.setContentsMargins(15, 10, 15, 10)
         layout.setSpacing(5)
         
-        self.chart = pg.PlotWidget()
+        left_axis = NetRateAxisItem(orientation='left')
+        left_axis.setWidth(55)
+        left_axis.setStyle(showValues=True)
+        left_axis.setTextPen(pg.mkPen('#888888'))
+
+        self.chart = pg.PlotWidget(axisItems={'left': left_axis})
         self.chart.setObjectName("netDetailChart")
         self.chart.setFixedHeight(100)
-        self.chart.showGrid(x=False, y=True, alpha=0.1)
+        self.chart.showGrid(x=False, y=True, alpha=0.15)
+        self.chart.showAxis('left')
         self.chart.hideAxis('bottom')
-        self.chart.getAxis('left').setWidth(40)
         self.chart.setMouseEnabled(x=False, y=False)
         self.chart.setMenuEnabled(False)
         
@@ -731,14 +752,14 @@ class HardwarePanelWidget(QWidget):
         left_layout.addStretch()
         
         # Notification checkboxes
-        self.notify_boost_cb = QCheckBox("Notify me when boosting")
+        self.notify_boost_cb = AnimatedCheckBox("Notify me when boosting")
         self.notify_boost_cb.setObjectName("notifyBoostCb")
         self.notify_boost_cb.setStyleSheet("color: #888888; font-size: 10px; background: transparent;")
         self.notify_boost_cb.setChecked(True)  # Default: ON
         self.notify_boost_cb.toggled.connect(self._save_booster_settings)
         left_layout.addWidget(self.notify_boost_cb)
         
-        self.auto_update_cb = QCheckBox("Auto update Boost settings\non profile change when\nBoost is active")
+        self.auto_update_cb = AnimatedCheckBox("Auto update Boost settings\non profile change when\nBoost is active")
         self.auto_update_cb.setObjectName("autoUpdateCb")
         self.auto_update_cb.setStyleSheet("color: #888888; font-size: 10px; background: transparent;")
         left_layout.addWidget(self.auto_update_cb)
@@ -1397,10 +1418,19 @@ class HardwarePanelWidget(QWidget):
                 CF_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
                 def _stop_service_direct(svc_name):
-                    # Stop a Windows service using 'sc stop' directly.
-                    # Parameters:
-                    #   svc_name: Windows service internal name (e.g. 'SysMain')
-                    # Returns: 'OK', 'ALREADY_STOPPED', 'ACCESS_DENIED', or 'FAIL'
+                    # 1. Attempt Zero-UAC Service IPC routing FIRST if service is running (instant 1ms!)
+                    try:
+                        from integrations.cpu_controller import is_service_running, send_service_command
+                        if is_service_running():
+                            res = send_service_command({"action": "manage_service", "service_name": svc_name, "command": "stop"})
+                            if res.get("status") == "success":
+                                is_already = res.get("message") == "ALREADY_STOPPED"
+                                return 'ALREADY_STOPPED' if is_already else 'OK'
+                            else:
+                                print(f"[Boost] Zero-UAC Service error for {svc_name}: {res.get('message')}")
+                    except Exception as e:
+                        print(f"[Boost] Zero-UAC Service exception for {svc_name}: {e}")
+
                     try:
                         # Pre-check state to detect already-stopped services
                         qr = subprocess.run(
@@ -1430,7 +1460,6 @@ class HardwarePanelWidget(QWidget):
                         if sr.returncode == 1062 or 'not been started' in combined:
                             return 'ALREADY_STOPPED'
 
-                        # Exit 5 or access-denied in output text
                         if (sr.returncode == 5
                                 or 'access is denied' in combined
                                 or 'access denied' in combined):
@@ -1449,7 +1478,10 @@ class HardwarePanelWidget(QWidget):
 
                     st = _stop_service_direct(svc_name)
                     ok = st in ('OK', 'ALREADY_STOPPED')
-                    print(f'[Boost] Service {repr(svc_name)} -> {st}')
+                    if st == 'ACCESS_DENIED':
+                        print(f"[Boost] Service {repr(svc_name)} -> ACCESS_DENIED (Zero-UAC Mode is OFF. Enable Zero-UAC in Settings to stop system services!)")
+                    else:
+                        print(f"[Boost] Service {repr(svc_name)} -> {st}")
 
                     if cat == 'essential':
                         if ok:
@@ -1865,13 +1897,9 @@ class HardwarePanelWidget(QWidget):
         select_layout.setContentsMargins(12, 0, 12, 0)
         select_layout.setSpacing(8)
         
-        self._essential_select_all = QCheckBox("Select all")
+        self._essential_select_all = AnimatedCheckBox("Select all")
         self._essential_select_all.setObjectName("essentialSelectAll")
-        self._essential_select_all.setStyleSheet("""
-            QCheckBox { color: #e0e0e0; font-size: 11px; background: transparent; }
-            QCheckBox::indicator { width: 14px; height: 14px; border: 2px solid #555; border-radius: 3px; background: #2a2a2a; }
-            QCheckBox::indicator:checked { background: #FF5B06; border-color: #FF5B06; }
-        """)
+        self._essential_select_all.setStyleSheet("color: #e0e0e0; font-size: 11px; background: transparent;")
         self._essential_select_all.toggled.connect(self._on_essential_select_all)
         select_layout.addWidget(self._essential_select_all)
         
@@ -1959,12 +1987,8 @@ class HardwarePanelWidget(QWidget):
             cb_layout.setContentsMargins(8, 0, 0, 0)
             cb_layout.setAlignment(Qt.AlignCenter)
             
-            cb = QCheckBox()
+            cb = AnimatedCheckBox()
             cb.setObjectName(f"essentialCheck_{idx}")
-            cb.setStyleSheet("""
-                QCheckBox::indicator { width: 16px; height: 16px; border: 2px solid #555; border-radius: 3px; background: #2a2a2a; }
-                QCheckBox::indicator:checked { background: #FF5B06; border-color: #FF5B06; }
-            """)
             cb.toggled.connect(self._update_essential_count)
             cb.toggled.connect(self._save_essential_states)
             cb.toggled.connect(self._update_total_items_count)
@@ -2410,13 +2434,9 @@ class HardwarePanelWidget(QWidget):
         select_layout.setContentsMargins(12, 0, 12, 0)
         select_layout.setSpacing(8)
         
-        self._processes_select_all = QCheckBox("Select all")
+        self._processes_select_all = AnimatedCheckBox("Select all")
         self._processes_select_all.setObjectName("processesSelectAll")
-        self._processes_select_all.setStyleSheet("""
-            QCheckBox { color: #e0e0e0; font-size: 11px; background: transparent; }
-            QCheckBox::indicator { width: 14px; height: 14px; border: 2px solid #555; border-radius: 3px; background: #2a2a2a; }
-            QCheckBox::indicator:checked { background: #FF5B06; border-color: #FF5B06; }
-        """)
+        self._processes_select_all.setStyleSheet("color: #e0e0e0; font-size: 11px; background: transparent;")
         self._processes_select_all.toggled.connect(self._on_processes_select_all)
         select_layout.addWidget(self._processes_select_all)
         
@@ -2794,12 +2814,8 @@ class HardwarePanelWidget(QWidget):
             cb_layout.setContentsMargins(8, 0, 0, 0)
             cb_layout.setAlignment(Qt.AlignCenter)
             
-            cb = QCheckBox()
+            cb = AnimatedCheckBox()
             cb.setObjectName(f"processCheck_{idx}")
-            cb.setStyleSheet("""
-                QCheckBox::indicator { width: 16px; height: 16px; border: 2px solid #555; border-radius: 3px; background: #2a2a2a; }
-                QCheckBox::indicator:checked { background: #FF5B06; border-color: #FF5B06; }
-            """)
             # Restore checked state if this process was checked before refresh
             if hasattr(self, '_checked_process_names') and proc['name'] in self._checked_process_names:
                 cb.setChecked(True)
@@ -2877,12 +2893,8 @@ class HardwarePanelWidget(QWidget):
             bl_layout.setContentsMargins(8, 0, 8, 0)
             bl_layout.setAlignment(Qt.AlignCenter)
             
-            bl_cb = QCheckBox()
+            bl_cb = AnimatedCheckBox()
             bl_cb.setObjectName(f"processBlacklist_{idx}")
-            bl_cb.setStyleSheet("""
-                QCheckBox::indicator { width: 16px; height: 16px; border: 2px solid #555; border-radius: 3px; background: #2a2a2a; }
-                QCheckBox::indicator:checked { background: #ff3333; border-color: #ff3333; }
-            """)
             bl_cb.setToolTip("Blacklist: Skip this process during boost")
             # Check if this process is in blacklist
             if proc['name'] in self._process_blacklist:
@@ -2963,13 +2975,9 @@ class HardwarePanelWidget(QWidget):
         select_layout.setContentsMargins(12, 0, 12, 0)
         select_layout.setSpacing(8)
         
-        select_all_cb = QCheckBox("Select all")
+        select_all_cb = AnimatedCheckBox("Select all")
         select_all_cb.setObjectName(f"{tab_id}SelectAll")
-        select_all_cb.setStyleSheet("""
-            QCheckBox { color: #e0e0e0; font-size: 11px; background: transparent; }
-            QCheckBox::indicator { width: 14px; height: 14px; border: 2px solid #555; border-radius: 3px; background: #2a2a2a; }
-            QCheckBox::indicator:checked { background: #FF5B06; border-color: #FF5B06; }
-        """)
+        select_all_cb.setStyleSheet("color: #e0e0e0; font-size: 11px; background: transparent;")
         if tab_id == "basic":
             self._basic_select_all = select_all_cb
             select_all_cb.setChecked(True)  # Default: all checked for basic
@@ -3070,12 +3078,8 @@ class HardwarePanelWidget(QWidget):
             cb_layout.setContentsMargins(8, 0, 0, 0)
             cb_layout.setAlignment(Qt.AlignCenter)
             
-            cb = QCheckBox()
+            cb = AnimatedCheckBox()
             cb.setObjectName(f"{tab_id}Check_{idx}")
-            cb.setStyleSheet("""
-                QCheckBox::indicator { width: 16px; height: 16px; border: 2px solid #555; border-radius: 3px; background: #2a2a2a; }
-                QCheckBox::indicator:checked { background: #FF5B06; border-color: #FF5B06; }
-            """)
             # Default: Basic tab = all checked, Advanced tab = all unchecked
             if tab_id == "basic":
                 cb.setChecked(True)
@@ -3371,43 +3375,89 @@ class HardwarePanelWidget(QWidget):
         ctrl_layout = QVBoxLayout()
         ctrl_layout.setSpacing(10)
 
-        common_style = """
-            QComboBox, QPushButton {
-                background-color: #252528;
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        arrow_icon_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+
+        combo_style = f"""
+            QComboBox {{
+                background-color: rgba(30, 30, 30, 0.85);
                 color: #e0e0e0;
-                border: 1px solid #333333;
+                border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 6px;
-                padding: 8px 14px;
+                padding: 6px 28px 6px 12px;
                 font-size: 12px;
-                font-weight: 500;
-            }
-            QPushButton:hover, QComboBox:hover { 
-                background-color: #2F1A13; 
-                border-color: #8C3A16; 
+                font-weight: 600;
+            }}
+            QComboBox:hover {{
+                background-color: rgba(40, 40, 40, 0.95);
+                border-color: #FF5B06;
                 color: #ffffff;
-            }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView {
-                background-color: #1A1A1A;
-                color: #AAAAAA;
-                border: 1px solid #333333;
-                selection-background-color: #FF5B06;
-                selection-color: #FFFFFF;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border: none;
+            }}
+            QComboBox::down-arrow {{
+                image: url('{arrow_icon_path}');
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #1a1a1a;
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                selection-background-color: rgba(255, 91, 6, 0.25);
+                selection-color: #FF5B06;
+                border-radius: 6px;
+                padding: 4px;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 28px;
+                padding: 4px 10px;
                 border-radius: 4px;
-            }
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: rgba(255, 91, 6, 0.15);
+                color: #ffffff;
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 91, 6, 0.25);
+                color: #FF5B06;
+            }}
         """
+
+        def _get_wifi_ssid() -> str:
+            try:
+                import subprocess, re
+                out = subprocess.check_output("netsh wlan show interfaces", shell=True, text=True, errors="ignore", timeout=2)
+                match = re.search(r"^\s*SSID\s*:\s*(.+)$", out, re.MULTILINE)
+                if match:
+                    ssid = match.group(1).strip()
+                    if ssid and not ssid.startswith("BSSID"):
+                        return ssid
+            except Exception:
+                pass
+            return ""
+
+        wifi_ssid = _get_wifi_ssid()
 
         adapter_combo = QComboBox()
         adapter_combo.setObjectName("netAdapterCombo")
         if active_nics:
             for nic_name in active_nics:
-                adapter_combo.addItem(f" {nic_name}")
+                display_label = nic_name
+                if ("wi-fi" in nic_name.lower() or "wlan" in nic_name.lower() or "wireless" in nic_name.lower()) and wifi_ssid:
+                    display_label = f"{nic_name} ({wifi_ssid})"
+                adapter_combo.addItem(f" {display_label}")
             if display_nic in active_nics:
                 adapter_combo.setCurrentIndex(active_nics.index(display_nic))
         else:
             adapter_combo.addItem(" No active adapter")
-        adapter_combo.setStyleSheet(common_style)
-        adapter_combo.setFixedWidth(200)
+        adapter_combo.setStyleSheet(combo_style)
+        adapter_combo.setFixedWidth(220)
 
         ctrl_layout.addWidget(adapter_combo, alignment=Qt.AlignRight)
         ctrl_layout.addStretch()
@@ -3429,26 +3479,8 @@ class HardwarePanelWidget(QWidget):
         self._net_time_filter.addItems(["3 Hours", "24 Hours", "7 Days", "30 Days", "Total History"])
         self._net_time_filter.setCurrentText("Total History")
         self._net_time_filter.setCursor(Qt.PointingHandCursor)
-        self._net_time_filter.setStyleSheet("""
-            QComboBox {
-                color: #FF5B06;
-                font-size: 11px;
-                font-weight: 600;
-                background: #1a1a1a;
-                border: none;
-            }
-            QComboBox::drop-down {
-                border: none;
-            }
-            QComboBox QAbstractItemView {
-                background-color: #1A1A1A;
-                color: #AAAAAA;
-                border: 1px solid #333333;
-                selection-background-color: #FF5B06;
-                selection-color: #FFFFFF;
-                font-weight: 600;
-            }
-        """)
+        self._net_time_filter.setStyleSheet(combo_style)
+        self._net_time_filter.setFixedWidth(140)
         filter_section.addWidget(self._net_time_filter)
         
         def on_time_filter_changed(text):
@@ -3479,12 +3511,49 @@ class HardwarePanelWidget(QWidget):
         self._net_list_layout.setSpacing(2)
 
         # Placeholder shown while waiting for first data tick
+        self._net_placeholder_widget = QWidget()
+        ph_layout = QVBoxLayout(self._net_placeholder_widget)
+        ph_layout.setContentsMargins(0, 40, 0, 40)
+        ph_layout.addStretch(1)
+        
         self._net_placeholder = QLabel("Monitoring... first update in 1 second")
         self._net_placeholder.setObjectName("netPlaceholder")
-        self._net_placeholder.setStyleSheet("color: #555555; font-size: 12px; background: transparent;")
+        self._net_placeholder.setStyleSheet("color: #666666; font-size: 13px; font-weight: 500; background: transparent;")
         self._net_placeholder.setAlignment(Qt.AlignCenter)
-        self._net_list_layout.addWidget(self._net_placeholder)
-        self._net_list_layout.addStretch()
+        ph_layout.addWidget(self._net_placeholder, alignment=Qt.AlignCenter)
+        ph_layout.addStretch(1)
+
+        # Centered guide widget shown when both Psutil is off and ETW is unavailable
+        self._net_disabled_guide_widget = QWidget()
+        guide_layout = QVBoxLayout(self._net_disabled_guide_widget)
+        guide_layout.setContentsMargins(20, 60, 20, 60)
+        guide_layout.addStretch(1)
+
+        guide_btn = QPushButton("Click here to turn on Psutil or Activate ETW to see Network History")
+        guide_btn.setObjectName("netDisabledGuideBtn")
+        guide_btn.setCursor(Qt.PointingHandCursor)
+        guide_btn.setStyleSheet("""
+            QPushButton#netDisabledGuideBtn {
+                background: transparent;
+                color: #a0a0a0;
+                border: none;
+                padding: 12px 20px;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            QPushButton#netDisabledGuideBtn:hover {
+                background: transparent;
+                border: none;
+                color: #ffffff;
+            }
+        """)
+        guide_btn.clicked.connect(self._open_settings_for_net)
+        guide_layout.addWidget(guide_btn, alignment=Qt.AlignCenter)
+        guide_layout.addStretch(1)
+        self._net_disabled_guide_widget.setVisible(False)
+
+        self._net_list_layout.addWidget(self._net_placeholder_widget)
+        self._net_list_layout.addWidget(self._net_disabled_guide_widget)
 
         # Dict: process name -> {'size_lbl': QLabel, 'prog': QProgressBar}
         self._net_rows = {}
@@ -3493,29 +3562,37 @@ class HardwarePanelWidget(QWidget):
         scroll_area.setWidget(self._net_list_widget)
         layout.addWidget(scroll_area, stretch=1)
 
-        # ---- 4. Start background monitor ------------------------------------
-        # Stop any previous monitor cleanly to avoid orphaned threads.
-        if hasattr(self, '_net_monitor') and self._net_monitor is not None:
-            try:
-                self._net_monitor.stop()
-                self._net_monitor.wait(1000)
-            except Exception:
-                pass
-
-        # Only create new NetworkMonitor if not already initialized in showEvent
-        if not hasattr(self, '_net_monitor_initialized'):
+        # Ensure NetworkMonitor instance exists and its signal is connected
+        if not hasattr(self, '_net_monitor') or self._net_monitor is None:
             self._net_monitor = NetworkMonitor(parent=None)
-            self._net_monitor.data_updated.connect(self._on_net_data_updated)
-            self._net_monitor.start()
             self._net_monitor_initialized = True
-            print("[Hardware] NetworkMonitor created in network page")
+
+        try:
+            self._net_monitor.data_updated.disconnect(self._on_net_data_updated)
+        except Exception:
+            pass
+        self._net_monitor.data_updated.connect(self._on_net_data_updated)
+
+        if not self._net_monitor.isRunning():
+            self._net_monitor.start()
+            print("[Hardware] NetworkMonitor started in network page")
         else:
-            print("[Hardware] Using existing NetworkMonitor from startup")
+            print("[Hardware] NetworkMonitor already running, connected signal")
 
         # Shutdown monitor when the page widget is destroyed
         page.destroyed.connect(lambda: self._stop_net_monitor())
 
         return page
+
+    def _open_settings_for_net(self):
+        """Helper to show Network Guide Wizard (matching HELXAIL guide) from network guide button."""
+        win = self.window()
+        if hasattr(win, '_show_network_info_dialog'):
+            win._show_network_info_dialog()
+        elif hasattr(win, 'open_settings_dialog'):
+            win.open_settings_dialog(highlight_target="psutil")
+        elif hasattr(self.parent(), 'open_settings_dialog'):
+            self.parent().open_settings_dialog(highlight_target="psutil")
 
     def _stop_net_monitor(self):
         """Stop the NetworkMonitor thread gracefully."""
@@ -3532,21 +3609,10 @@ class HardwarePanelWidget(QWidget):
             self._net_monitor_initialized = False  # Allow re-creation if panel is shown again
 
     def _on_net_data_updated(self, data):
-        """Receive live data from NetworkMonitor and refresh Network tab widgets.
-
-        Delivered on the main thread every second via queued signal connection.
-
-        Args:
-            data: dict with keys:
-                'session_bytes' (int) -- bytes this session on active NIC
-                'nic_name' (str)      -- active NIC display name
-                'processes' (list)    -- dicts with name/exe_path/rate_bytes/total_bytes
-        """
+        """Receive live data from NetworkMonitor and refresh Network tab widgets."""
         import os
         from PySide6.QtWidgets import QFileIconProvider
 
-        # Guard: widgets may be destroyed if user navigated to another tab
-        # or closed the panel. Accessing a deleted C++ QObject raises RuntimeError.
         if not hasattr(self, '_net_total_lbl') or self._net_total_lbl is None:
             return
         try:
@@ -3557,15 +3623,46 @@ class HardwarePanelWidget(QWidget):
         except RuntimeError:
             return
 
-        processes = data.get('processes', [])
-        if not processes:
-            return
+        monitoring_disabled = data.get('monitoring_disabled', False)
 
+        if monitoring_disabled:
+            try:
+                if hasattr(self, '_net_placeholder_widget') and self._net_placeholder_widget is not None:
+                    self._net_placeholder_widget.setVisible(False)
+                if hasattr(self, '_net_disabled_guide_widget') and self._net_disabled_guide_widget is not None:
+                    self._net_disabled_guide_widget.setVisible(True)
+            except RuntimeError:
+                pass
+
+            # Remove any process rows from layout
+            for name in list(self._net_rows.keys()):
+                try:
+                    row = self._net_rows.pop(name)
+                    self._net_list_layout.removeWidget(row['container'])
+                    row['container'].deleteLater()
+                except Exception:
+                    pass
+            return
+        else:
+            try:
+                if hasattr(self, '_net_disabled_guide_widget') and self._net_disabled_guide_widget is not None:
+                    self._net_disabled_guide_widget.setVisible(False)
+            except RuntimeError:
+                pass
+
+        processes = data.get('processes', [])
+
+        # Always hide loading placeholder once first data tick arrives
         try:
+            if hasattr(self, '_net_placeholder_widget') and self._net_placeholder_widget is not None:
+                self._net_placeholder_widget.setVisible(False)
             if hasattr(self, '_net_placeholder') and self._net_placeholder is not None:
                 self._net_placeholder.setVisible(False)
         except RuntimeError:
             pass
+
+        if not processes:
+            return
 
         max_total = max((p['total_bytes'] for p in processes), default=1) or 1
 
@@ -5217,11 +5314,36 @@ class HardwarePanelWidget(QWidget):
                     "No hardware monitor found.\nPlease install LibreHardwareMonitor or HWiNFO first.")
                 return
             
-            # Launch as admin using ShellExecuteW with 'runas' verb
             # For HWiNFO: Auto-enable Shared Memory Support in config
             if tool_name == "HWiNFO":
                 self._enable_hwinfo_shared_memory(exe_path)
             
+            # Attempt Zero-UAC launch via HelxaidHelperService (no UAC prompt!)
+            try:
+                from integrations.cpu_controller import is_service_running, send_service_command
+                if is_service_running():
+                    res = send_service_command({
+                        "action": "launch_tool",
+                        "exe_path": exe_path,
+                        "silent": silent_launch
+                    })
+                    if res.get("status") == "success":
+                        print(f"[Hardware] {tool_name} started via Zero-UAC Service (No UAC prompt!)")
+                        btn = getattr(self, 'start_monitor_btn', None) or getattr(self, 'install_monitor_btn', None)
+                        if btn:
+                            btn.setText("✓ Launched")
+                            btn.setStyleSheet("""
+                                QPushButton {
+                                    background: #22c55e; color: #1a1a2e; border: none; 
+                                    border-radius: 6px; font-size: 10px; font-weight: 600;
+                                }
+                            """)
+                            from PySide6.QtCore import QTimer
+                            QTimer.singleShot(3000, lambda: self._reset_monitor_btn(btn))
+                        return
+            except Exception as e:
+                print(f"[Hardware] Zero-UAC launch failed, fallback to UAC: {e}")
+
             # Determine window visibility (0: Hidden/Backend, 1: Normal)
             show_cmd = 0 if silent_launch else 1
             

@@ -112,7 +112,6 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 
                 # Auto-kill UXTU's PawnIO driver if it's running (to prevent RyzenAdj crash)
                 try:
-                    import subprocess
                     import time
                     res = subprocess.run(["sc.exe", "stop", "PawnIO"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                     if res.returncode == 0:
@@ -193,8 +192,106 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                     err_detail = stderr or output or "no output"
                     return {"status": "error", "message": f"RyzenAdj error {result.returncode}: {err_detail}"}
                     
+            elif action in ("launch_lhm", "launch_tool"):
+                exe_path = data.get("exe_path")
+                silent = data.get("silent", False)
+                if not exe_path or not os.path.exists(exe_path):
+                    return {"status": "error", "message": f"Executable path not found: {exe_path}"}
+                
+                exe_name = os.path.basename(exe_path)
+                try:
+                    import psutil
+                    for p in psutil.process_iter(['name']):
+                        if p.info.get('name', '').lower() == exe_name.lower():
+                            return {"status": "success", "message": f"{exe_name} is already running."}
+                except Exception:
+                    pass
+
+                flags = subprocess.CREATE_NO_WINDOW if silent else 0
+                proc = subprocess.Popen(
+                    [exe_path],
+                    cwd=os.path.dirname(exe_path),
+                    creationflags=flags
+                )
+                return {"status": "success", "message": f"Launched {exe_name} via Zero-UAC Service.", "pid": proc.pid}
+
+            elif action == "manage_service":
+                svc_name = data.get("service_name")
+                cmd_type = data.get("command", "stop")
+                if not svc_name:
+                    return {"status": "error", "message": "No service_name provided."}
+
+                try:
+                    qr = subprocess.run(
+                        ['sc.exe', 'query', svc_name],
+                        capture_output=True, text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=5
+                    )
+                    q_out = (qr.stdout or '').upper()
+
+                    if cmd_type == "stop":
+                        if 'STOPPED' in q_out and 'START_PENDING' not in q_out and 'STOP_PENDING' not in q_out:
+                            return {"status": "success", "message": "ALREADY_STOPPED"}
+                        
+                        # 1. Try Stop-Service -Force via PowerShell FIRST (handles dependent services like SstpSvc automatically)
+                        ps_res = subprocess.run(
+                            ['powershell.exe', '-NoProfile', '-Command', f"Stop-Service -Name '{svc_name}' -Force -ErrorAction SilentlyContinue"],
+                            capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=15
+                        )
+                        if ps_res.returncode == 0:
+                            return {"status": "success", "message": "OK"}
+
+                        # 2. Try net.exe stop <svc_name> /y
+                        sr = subprocess.run(
+                            ['net.exe', 'stop', svc_name, '/y'],
+                            capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=15
+                        )
+                        combined = ((sr.stdout or '') + (sr.stderr or '')).lower()
+                        if sr.returncode == 0 or 'not started' in combined or 'successfully' in combined or 'already' in combined or '1062' in combined:
+                            return {"status": "success", "message": "OK"}
+
+                        # 3. Fallback to sc.exe stop
+                        sr_sc = subprocess.run(
+                            ['sc.exe', 'stop', svc_name],
+                            capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=10
+                        )
+                        combined_sc = ((sr_sc.stdout or '') + (sr_sc.stderr or '')).lower()
+                        if sr_sc.returncode == 0 or sr_sc.returncode == 1062 or 'not been started' in combined_sc:
+                            return {"status": "success", "message": "OK"}
+
+                        return {"status": "error", "message": sr.stderr or sr.stdout or f"stop exit {sr.returncode}"}
+
+                    elif cmd_type == "start":
+                        if 'RUNNING' in q_out:
+                            return {"status": "success", "message": "ALREADY_RUNNING"}
+                        sr = subprocess.run(
+                            ['sc.exe', 'start', svc_name],
+                            capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=10
+                        )
+                        combined = ((sr.stdout or '') + (sr.stderr or '')).lower()
+                        if sr.returncode == 0 or sr.returncode == 1056 or 'already running' in combined:
+                            return {"status": "success", "message": "OK"}
+                        return {"status": "error", "message": sr.stderr or sr.stdout or f"sc exit {sr.returncode}"}
+                    else:
+                        return {"status": "error", "message": f"Unknown service command: {cmd_type}"}
+                except Exception as e:
+                    return {"status": "error", "message": str(e)}
+
             elif action == "ping":
                 return {"status": "success", "message": "pong"}
+
+            elif action == "restart":
+                def _do_exit():
+                    import time
+                    time.sleep(0.1)
+                    os._exit(0)
+                import threading
+                threading.Thread(target=_do_exit, daemon=True).start()
+                return {"status": "success", "message": "Restarting service..."}
                 
             else:
                 return {"status": "error", "message": "Unknown action."}

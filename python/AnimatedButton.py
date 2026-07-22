@@ -364,6 +364,11 @@ class AnimatedCheckBox(QAbstractButton):
         
         self.toggled.connect(self._on_toggled)
 
+    def setChecked(self, checked):
+        super().setChecked(checked)
+        self._progress = 1.0 if checked else 0.0
+        self.update()
+
     def sizeHint(self):
         from PySide6.QtCore import QSize
         font_metrics = self.fontMetrics()

@@ -395,6 +395,17 @@ class NetworkMonitor(QThread):
         except Exception as e:
             print(f"[NetworkMonitor] Baseline update error: {e}")
 
+    def _is_psutil_disabled(self) -> bool:
+        try:
+            settings_path = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID", "settings.json")
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return bool(data.get("turn_off_psutil", False))
+        except Exception:
+            pass
+        return False
+
     def run(self):
         self._running = True
 
@@ -468,6 +479,17 @@ class NetworkMonitor(QThread):
                                 self._etw_enabled = False
                         except Exception:
                             self._etw_enabled = False
+
+            if self._is_psutil_disabled() and not self._etw_enabled:
+                # Both Psutil and ETW are unavailable: signal monitoring disabled to UI
+                display_nic = self._pick_best_nic(prev_nic) if prev_nic else ""
+                self.data_updated.emit({
+                    'session_bytes': self._nic_baseline_total + self._nic_live_bytes,
+                    'nic_name': display_nic,
+                    'processes': [],
+                    'monitoring_disabled': True
+                })
+                continue
 
             curr_nic = psutil.net_io_counters(pernic=True)
             nic_delta = self._compute_nic_delta(prev_nic, curr_nic)
@@ -573,43 +595,59 @@ class NetworkMonitor(QThread):
                         except Exception:
                             pass
                         self._etw_enabled = False
-                        self._etw_retry_counter = 0
+
+            # Fast batch process mapping
+            proc_info_map = {}
+            if not self._is_psutil_disabled():
+                try:
+                    for proc in psutil.process_iter(['pid', 'name', 'exe']):
+                        try:
+                            pinfo = proc.info
+                            pid = pinfo.get('pid')
+                            if pid:
+                                name = pinfo.get('name') or f"PID {pid}"
+                                exe = pinfo.get('exe') or ''
+                                proc_info_map[pid] = (name, exe)
+                                if exe:
+                                    self._exe_cache[name.lower()] = exe
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
+                except Exception:
+                    pass
 
             pid_conn_count: dict[int, int] = collections.Counter()
-            try:
-                for conn in psutil.net_connections(kind='inet'):
-                    pid = conn.pid
-                    is_udp = conn.type == socket.SOCK_DGRAM
-                    state = (conn.status or '').upper()
+            if not self._is_psutil_disabled():
+                try:
+                    for conn in psutil.net_connections(kind='inet'):
+                        pid = conn.pid
+                        is_udp = conn.type == socket.SOCK_DGRAM
+                        state = (conn.status or '').upper()
 
-                    if not is_udp and state not in self.TRAFFIC_STATES:
-                        continue
+                        if not is_udp and state not in self.TRAFFIC_STATES:
+                            continue
 
-                    if pid is not None and pid > 0:
+                        if pid is not None and pid > 0:
+                            pid_conn_count[pid] += 1
+                        elif pid == 0:
+                            pid_conn_count[4] += 1
+                except Exception:
+                    pass
+
+            # Fallback if net_connections was restricted/empty: poll top running processes
+            if not pid_conn_count and proc_info_map:
+                for pid, (pname, pexe) in proc_info_map.items():
+                    if pname.lower() in ('chrome.exe', 'msedge.exe', 'firefox.exe', 'discord.exe', 'steam.exe', 'python.exe', 'system'):
+                        pid_conn_count[pid] += 5
+                    else:
                         pid_conn_count[pid] += 1
-                    elif pid == 0:
-                        pid_conn_count[4] += 1
-            except Exception:
-                pass
 
             total_conns = sum(pid_conn_count.values()) or 1
 
             name_conn_count: dict[str, int] = collections.Counter()
             for pid, count in pid_conn_count.items():
-                try:
-                    proc = psutil.Process(pid)
-                    name = proc.name()
-                    if not name:
-                        name = f"PID {pid}"
-                    try:
-                        exe = proc.exe()
-                        if exe:
-                            self._exe_cache[name.lower()] = exe
-                    except (psutil.AccessDenied, OSError):
-                        pass
-                except psutil.NoSuchProcess:
-                    continue
-                except psutil.AccessDenied:
+                if pid in proc_info_map:
+                    name = proc_info_map[pid][0]
+                else:
                     name = f"PID {pid}"
                 name_conn_count[name] += count
 

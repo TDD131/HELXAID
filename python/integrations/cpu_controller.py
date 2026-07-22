@@ -273,6 +273,44 @@ def is_pawnio_running() -> bool:
     except Exception:
         return False
 
+def send_service_command(payload_dict: dict) -> dict:
+    """Send JSON payload to HelxaidHelperService over named pipe."""
+    try:
+        import win32pipe
+        import pywintypes
+        pipe_name = r'\\.\pipe\HelxaidCpuPipe'
+        try:
+            win32pipe.WaitNamedPipe(pipe_name, 100)
+        except pywintypes.error:
+            return {"status": "error", "message": "Service pipe not available"}
+
+        payload_bytes = json.dumps(payload_dict).encode('utf-8')
+        data = win32pipe.CallNamedPipe(pipe_name, payload_bytes, 65536, 15000)
+        res = json.loads(data.decode('utf-8'))
+        
+        # Self-healing: If background service process has older code in memory, automatically trigger self-restart
+        if res.get("status") == "error":
+            err_msg = str(res.get("message", ""))
+            if "Unknown action" in err_msg or "local variable" in err_msg or "UnboundLocalError" in err_msg:
+                print(f"[Service IPC] Detected outdated service code ({err_msg}). Auto-restarting background service...")
+                try:
+                    restart_bytes = json.dumps({"action": "restart"}).encode('utf-8')
+                    win32pipe.CallNamedPipe(pipe_name, restart_bytes, 65536, 1000)
+                except Exception:
+                    pass
+                import time
+                time.sleep(1.0)
+                # Retry original command once on fresh service instance
+                try:
+                    win32pipe.WaitNamedPipe(pipe_name, 2000)
+                    retry_data = win32pipe.CallNamedPipe(pipe_name, payload_bytes, 65536, 15000)
+                    return json.loads(retry_data.decode('utf-8'))
+                except Exception as retry_err:
+                    print(f"[Service IPC] Auto-retry after restart failed: {retry_err}")
+        return res
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 def apply_ryzenadj(profile: dict) -> tuple:
     """
     Apply CPU settings using RyzenAdj CLI.

@@ -4103,23 +4103,16 @@ class HelxailInfoWizard(QFrame):
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
         
     def _handle_link(self, link):
-        if link == 'open_settings':
+        if link in ('open_settings', 'open_settings_psutil'):
             launcher = self.window()
             if not hasattr(launcher, 'settings_nav_btn') or not hasattr(launcher, 'show_tutorial_overlay'):
                 return
             
             wizard_ref = self  # capture self safely
 
-            def on_service_group_ready(dialog, service_group):
-                """Step 2 spotlight — highlight Zero-UAC panel inside the dialog."""
-                def on_service_clicked():
-                    try:
-                        wizard_ref.next_step()
-                    except RuntimeError:
-                        pass
-                
+            def on_dev_or_service_ready(dialog, target_group):
+                """Spotlight — highlight target panel inside the dialog."""
                 from SpotlightOverlay import SpotlightOverlay
-                from PySide6.QtCore import QTimer
                 existing = getattr(launcher, '_spotlight_overlay', None)
                 if existing:
                     try:
@@ -4128,27 +4121,30 @@ class HelxailInfoWizard(QFrame):
                         pass
                     launcher._spotlight_overlay = None
                 
-                # Spotlight lives inside the dialog (so it appears on top)
                 overlay = SpotlightOverlay(
                     parent=dialog,
-                    target_widget=service_group,
-                    on_target_clicked=on_service_clicked,
-                    instruction_text="Enable Zero-UAC Mode here!\nClick 'Enable' to install the background service."
+                    target_widget=target_group,
+                    on_target_clicked=lambda: None,
+                    instruction_text="Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring." if link == 'open_settings_psutil' else "Enable Zero-UAC Mode here!\nClick 'Enable' to install the background service."
                 )
                 launcher._spotlight_overlay = overlay
                 overlay.show_with_fade_in()
 
             def on_settings_clicked():
-                """Step 1 completed — open settings in tutorial mode."""
+                """Open settings in tutorial mode."""
                 try:
-                    launcher.open_quick_settings(on_tutorial_ready=on_service_group_ready)
+                    target = "psutil" if link == 'open_settings_psutil' else None
+                    launcher.open_quick_settings(
+                        on_tutorial_ready=on_dev_or_service_ready if link != 'open_settings_psutil' else None,
+                        highlight_target=target
+                    )
                 except Exception as e:
-                    print(f"[Tutorial] Error in step 1 callback: {e}")
+                    print(f"[Tutorial] Error in step callback: {e}")
 
             launcher.show_tutorial_overlay(
                 launcher.settings_nav_btn,
                 on_settings_clicked,
-                instruction_text="Click here to open\nQuick Settings!",
+                instruction_text="Click here to open\nMain Setting!",
                 auto_click_target=False
             )
 
@@ -4172,6 +4168,30 @@ class HelxailInfoWizard(QFrame):
             
         self.prev_btn.style().unpolish(self.prev_btn)
         self.prev_btn.style().polish(self.prev_btn)
+
+
+class NetworkInfoWizard(HelxailInfoWizard):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        import os
+        setting_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "setting-icon.png").replace('\\', '/')
+        self.steps = [
+            {
+                "title": "Step 1: Enable Network Monitoring",
+                "desc": f"Click the <a href='open_settings_psutil' title='Click to see Spotlight Tutorial!' style='color: #FFFFFF; text-decoration: none; font-weight: bold;'>Settings</a> ( <img src='{setting_icon_path}' width='14' height='14'> ) icon on the bottom left sidebar, then uncheck <b>'Turn off Psutil'</b> under the Developer section. Alternatively, launch HELXAID as Administrator to enable ETW kernel network monitoring."
+            }
+        ]
+        self.current_step = 0
+        self.update_ui()
+
+    def update_ui(self):
+        step = self.steps[self.current_step]
+        self.step_title.setText(step["title"])
+        self.step_desc.setText(step["desc"])
+        self.title_label.setText(f"Network Guide ({self.current_step + 1}/{len(self.steps)})")
+        self.step_desc.setToolTip("Click 'Settings' to see Spotlight Tutorial!")
+        self.prev_btn.setEnabled(False)
+        self.next_btn.setText("Finish")
 
     def next_step(self):
         if self.current_step < len(self.steps) - 1:
@@ -8138,6 +8158,25 @@ Stylesheet Selector:
             rect.height() // 2 - self._info_panel.height() // 2
         )
         self._info_panel.show()
+
+    def _show_network_info_dialog(self):
+        """Show the Network usage guide wizard matching HELXAIL guide style."""
+        if getattr(self, '_info_panel', None) is not None:
+            try:
+                self._info_panel.close()
+            except RuntimeError:
+                pass
+
+        self._info_panel = NetworkInfoWizard(self)
+        self._info_panel.setFixedWidth(500)
+        self._info_panel.setFixedHeight(260)
+
+        rect = self.rect()
+        self._info_panel.move(
+            rect.width() // 2 - self._info_panel.width() // 2,
+            rect.height() // 2 - self._info_panel.height() // 2
+        )
+        self._info_panel.show()
         
     def _open_cpu_settings(self):
         """Open CPU settings dialog."""
@@ -8488,7 +8527,8 @@ Stylesheet Selector:
                 exe_path = sys.executable
                 setup_args = "--run-service --setup"
             else:
-                exe_path = sys.executable
+                pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+                exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
                 script_path = os.path.abspath(sys.argv[0])
                 setup_args = f'"{script_path}" --run-service --setup'
                 
@@ -8511,7 +8551,8 @@ Stylesheet Selector:
                 exe_path = sys.executable
                 remove_args = "--run-service --teardown"
             else:
-                exe_path = sys.executable
+                pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+                exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
                 script_path = os.path.abspath(sys.argv[0])
                 remove_args = f'"{script_path}" --run-service --teardown'
                 
@@ -9836,7 +9877,7 @@ Stylesheet Selector:
         # Ensure button is visible
         new_btn.setFocus()
     
-    def _create_card(self, title, icon_name=""):
+    def _create_card(self, title, icon_name="", with_separator=True):
         """Creates a styled card group widget with an SVG icon + title header. Returns (group, content_layout)."""
         import os
         group = QGroupBox()
@@ -9871,11 +9912,12 @@ Stylesheet Selector:
         header_row.addStretch()
         outer.addLayout(header_row)
 
-        # Separator line
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border: none; max-height: 1px;")
-        outer.addWidget(sep)
+        # Separator line (optional)
+        if with_separator:
+            sep = QFrame()
+            sep.setFrameShape(QFrame.HLine)
+            sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border: none; max-height: 1px;")
+            outer.addWidget(sep)
 
         # Content layout
         card_layout = QVBoxLayout()
@@ -9983,8 +10025,12 @@ Stylesheet Selector:
             print(f"[Tutorial] Error showing overlay: {e}")
             import traceback
             traceback.print_exc()
-            
-    def open_quick_settings(self, on_tutorial_ready=None):
+
+    def open_settings_dialog(self, on_tutorial_ready=None, highlight_target=None):
+        """Alias for open_quick_settings with optional tutorial highlight target."""
+        return self.open_quick_settings(on_tutorial_ready=on_tutorial_ready, highlight_target=highlight_target)
+
+    def open_quick_settings(self, on_tutorial_ready=None, highlight_target=None):
         """Compact settings dialog opened from the navbar settings button.
         Only includes Background & Theme and System Settings.
         Display and Library are accessible from the full settings (top-bar gear icon).
@@ -9992,115 +10038,142 @@ Stylesheet Selector:
         dialog = QDialog(self)
         apply_custom_titlebar(dialog, "#010101")
         dialog.setWindowTitle("Main Setting")
-        dialog.setMinimumWidth(500)
+        dialog.setMinimumWidth(520)
+        dialog.setFixedHeight(540)
 
-        layout = QVBoxLayout(dialog)
+        main_layout = QVBoxLayout(dialog)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+
+        scroll_area = SmoothScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { background: #1a1a1a; width: 6px; }
+            QScrollBar::handle:vertical { background: #444; border-radius: 3px; }
+        """)
+
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(scroll_content)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(12)
+
         create_card = self._create_card
 
-        # === Background Settings Group ===
-        bg_group, bg_layout = create_card("Background & Theme", icon_name="bg-theme-icon.svg")
+        # === Background & Theme Group ===
+        bg_group, bg_layout = create_card("Background & Theme", icon_name="theme-icon.svg")
         
-        # Background image
-        bg_image_layout = QHBoxLayout()
-        bg_image_label = QLabel("Background Image:")
-        self._qs_bg_path = QLineEdit(self.settings.get("background_image", ""))
+        # Background Image picker
+        bg_img_layout = QHBoxLayout()
+        bg_img_label = QLabel("Background Image:")
+        self._qs_bg_path = QLineEdit()
+        self._qs_bg_path.setText(self.settings.get("background_image", ""))
         self._qs_bg_path.setReadOnly(True)
         bg_browse_btn = AnimatedButton("Browse...")
         bg_browse_btn.clicked.connect(lambda: self._browse_qs_bg())
         bg_clear_btn = AnimatedButton("Clear")
         bg_clear_btn.clicked.connect(lambda: self._qs_bg_path.setText(""))
-        bg_image_layout.addWidget(bg_image_label)
-        bg_image_layout.addWidget(self._qs_bg_path)
-        bg_image_layout.addWidget(bg_browse_btn)
-        bg_image_layout.addWidget(bg_clear_btn)
-        bg_layout.addLayout(bg_image_layout)
         
-        # Background mode
+        bg_img_layout.addWidget(bg_img_label)
+        bg_img_layout.addWidget(self._qs_bg_path)
+        bg_img_layout.addWidget(bg_browse_btn)
+        bg_img_layout.addWidget(bg_clear_btn)
+        bg_layout.addLayout(bg_img_layout)
+        
+        # Background Mode
         bg_mode_layout = QHBoxLayout()
-        bg_mode_label = QLabel("Position Mode:")
+        bg_mode_label = QLabel("Display Mode:")
         self._qs_bg_mode = QComboBox()
-        self._qs_bg_mode.addItems(["fill", "fit", "stretch", "tile", "center", "span"])
-        current_mode = self.settings.get("background_mode", "fill")
-        idx = self._qs_bg_mode.findText(current_mode)
-        if idx >= 0:
-            self._qs_bg_mode.setCurrentIndex(idx)
+        self._qs_bg_mode.addItems(["fill", "fit", "stretch", "center", "tile"])
+        self._qs_bg_mode.setCurrentText(self.settings.get("background_mode", "fill"))
         bg_mode_layout.addWidget(bg_mode_label)
         bg_mode_layout.addWidget(self._qs_bg_mode)
         bg_mode_layout.addStretch()
         bg_layout.addLayout(bg_mode_layout)
         
-        layout.addWidget(bg_group)
-
-        # === Display Settings Group ===
-        display_group, display_layout = create_card("Display", icon_name="display-icon.svg")
-        
-        # Resizable window
-        resizable_cb = AnimatedCheckBox("Allow window resizing")
-        resizable_cb.setChecked(self.settings.get("resizable_window", True))
-        display_layout.addWidget(resizable_cb)
-        
-        # Fullscreen mode
-        fullscreen_cb = AnimatedCheckBox("Fullscreen mode (F11)")
-        fullscreen_cb.setChecked(self.isFullScreen())
-        display_layout.addWidget(fullscreen_cb)
-        
-        # Window Opacity
+        # Window Opacity Slider
         opacity_layout = QHBoxLayout()
         opacity_label = QLabel("Window Opacity:")
         opacity_slider = QSlider(Qt.Horizontal)
         opacity_slider.setRange(20, 100)  # 20% to 100%
-        opacity_slider.setValue(int(self.settings.get("window_opacity", 1.0) * 100))
+        current_opacity = int(self.settings.get("window_opacity", 1.0) * 100)
+        opacity_slider.setValue(current_opacity)
+        opacity_val_label = QLabel(f"{current_opacity}%")
+        opacity_val_label.setFixedWidth(40)
+        opacity_slider.valueChanged.connect(lambda v: opacity_val_label.setText(f"{v}%"))
+        
         opacity_layout.addWidget(opacity_label)
         opacity_layout.addWidget(opacity_slider)
-        opacity_layout.addStretch()
-        display_layout.addLayout(opacity_layout)
+        opacity_layout.addWidget(opacity_val_label)
+        bg_layout.addLayout(opacity_layout)
         
-        layout.addWidget(display_group)
+        layout.addWidget(bg_group)
 
-        # === System Settings ===
-        confirm_exit_cb = AnimatedCheckBox("Ask for confirmation before exiting")
+        # === System Settings Group ===
+        sys_group, sys_layout = create_card("System Settings", icon_name="settings-icon.svg")
+        
+        confirm_exit_cb = AnimatedCheckBox("Confirm on exit")
         confirm_exit_cb.setChecked(self.confirm_on_exit)
-        layout.addWidget(confirm_exit_cb)
+        sys_layout.addWidget(confirm_exit_cb)
+        
+        check_daily_cb = AnimatedCheckBox("Check for updates daily on launch")
+        check_daily_cb.setChecked(self.settings.get("check_version_daily", True))
+        sys_layout.addWidget(check_daily_cb)
 
-        startup_cb = AnimatedCheckBox("Start on system boot")
+        resizable_cb = AnimatedCheckBox("Resizable Window")
+        resizable_cb.setChecked(self.settings.get("resizable_window", True))
+        sys_layout.addWidget(resizable_cb)
+
+        fullscreen_cb = AnimatedCheckBox("Full Screen Mode (F11)")
+        fullscreen_cb.setChecked(self.isFullScreen())
+        sys_layout.addWidget(fullscreen_cb)
+        
+        # Windows Startup Toggle
+        startup_cb = AnimatedCheckBox("Start with Windows")
         startup_cb.setChecked(is_startup_enabled())
-        layout.addWidget(startup_cb)
+        sys_layout.addWidget(startup_cb)
         
-        # Startup Delay Slider
+        # Startup Delay (Only enabled when startup is checked)
         delay_layout = QHBoxLayout()
-        delay_label = QLabel("Startup Delay (seconds):")
-        delay_label.setStyleSheet("color: #b3b3b3; font-size: 11px;")
+        delay_label = QLabel("Startup Delay:")
         delay_slider = QSlider(Qt.Horizontal)
-        delay_slider.setRange(0, 60)  # 0 to 60 seconds
-        delay_slider.setValue(int(self.settings.get("startup_delay", 0)))
+        delay_slider.setRange(0, 60) # 0 to 60 seconds
+        current_delay = self.settings.get("startup_delay", 0)
+        delay_slider.setValue(current_delay)
+        delay_val_label = QLabel(f"{current_delay}s")
+        delay_val_label.setFixedWidth(30)
         
-        delay_val_label = QLabel(f"{delay_slider.value()}s")
-        delay_val_label.setStyleSheet("color: white; font-weight: bold; font-size: 11px;")
         delay_slider.valueChanged.connect(lambda v: delay_val_label.setText(f"{v}s"))
+        delay_slider.setEnabled(startup_cb.isChecked())
+        delay_label.setEnabled(startup_cb.isChecked())
+        delay_val_label.setEnabled(startup_cb.isChecked())
+        
+        startup_cb.toggled.connect(delay_slider.setEnabled)
+        startup_cb.toggled.connect(delay_label.setEnabled)
+        startup_cb.toggled.connect(delay_val_label.setEnabled)
         
         delay_layout.addWidget(delay_label)
         delay_layout.addWidget(delay_slider)
         delay_layout.addWidget(delay_val_label)
-        layout.addLayout(delay_layout)
+        sys_layout.addLayout(delay_layout)
         
         start_minimised_cb = AnimatedCheckBox("Start minimised to tray")
         start_minimised_cb.setChecked(self.settings.get("start_minimised", False))
-        layout.addWidget(start_minimised_cb)
+        sys_layout.addWidget(start_minimised_cb)
         
         minimize_to_tray_cb = AnimatedCheckBox("Minimize to tray on minimize")
         minimize_to_tray_cb.setChecked(self.settings.get("minimize_to_tray", True))
-        layout.addWidget(minimize_to_tray_cb)
+        sys_layout.addWidget(minimize_to_tray_cb)
         
         init_overlay_cb = AnimatedCheckBox("Hide Initialize Panel")
         init_overlay_cb.setChecked(self.settings.get("hide_initialize_panel", True))
-        layout.addWidget(init_overlay_cb)
+        sys_layout.addWidget(init_overlay_cb)
 
         # Version label and Update button
         version_layout = QHBoxLayout()
         version_label = QLabel("Version - 4.14.1")
         version_label.setStyleSheet("color: #888888; font-size: 11px;")
-        version_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        version_label.setContentsMargins(0, 6, 0, 0)
         
         update_vbox = QVBoxLayout()
         update_vbox.setSpacing(4)
@@ -10121,20 +10194,21 @@ Stylesheet Selector:
         """)
         check_update_btn.clicked.connect(self.check_for_updates)
         
-        check_daily_cb = AnimatedCheckBox("Check Version Daily")
-        check_daily_cb.setStyleSheet("color: #888888; font-size: 10px;")
-        check_daily_cb.setChecked(self.settings.get("check_version_daily", True))
+        self.update_status_label = QLabel()
+        self.update_status_label.setStyleSheet("color: #aaaaaa; font-size: 10px;")
+        self.update_status_label.setWordWrap(True)
         
         update_vbox.addWidget(check_update_btn)
-        update_vbox.addWidget(check_daily_cb)
+        update_vbox.addWidget(self.update_status_label)
         
         version_layout.addWidget(version_label)
-        version_layout.addLayout(update_vbox)
         version_layout.addStretch()
-        layout.addLayout(version_layout)
+        version_layout.addLayout(update_vbox)
+        sys_layout.addLayout(version_layout)
+        
+        layout.addWidget(sys_group)
 
-        # === Service Settings Group ===
-        from integrations.cpu_controller import is_service_running
+        # === Background Service Settings Group ===
         service_group, service_layout = create_card("Zero-UAC Mode (CPU)", icon_name="sparkle-icon.svg")
         service_layout.setSpacing(6)
         
@@ -10161,6 +10235,11 @@ Stylesheet Selector:
         service_inner_layout.addWidget(self.uninstall_service_btn)
         
         service_layout.addLayout(service_inner_layout)
+
+        init_zero_uac_cb = AnimatedCheckBox("Auto-enable Zero-UAC on launch")
+        init_zero_uac_cb.setChecked(self.settings.get("init_zero_uac_in_panel", False))
+        service_layout.addWidget(init_zero_uac_cb)
+
         layout.addWidget(service_group)
         
         # Initial status update
@@ -10178,7 +10257,7 @@ Stylesheet Selector:
         # Placed at the very bottom before Ok/Cancel.
         # The Uninstall External Tools button is hidden behind this toggle
         # to prevent accidental removal of critical runtime dependencies.
-        dev_group, dev_layout = create_card("Developer", icon_name="developer-icon.svg")
+        dev_group, dev_layout = create_card("Developer", icon_name="developer-icon.svg", with_separator=False)
         dev_layout.setSpacing(6)
 
         # Toggle for enabling developer-only controls
@@ -10186,6 +10265,12 @@ Stylesheet Selector:
         dev_mode_cb.setChecked(self.settings.get("developer_mode", False))
         dev_mode_cb.setStyleSheet("color: #b3b3b3; font-size: 11px;")
         dev_layout.addWidget(dev_mode_cb)
+
+        # Horizontal separator line under Developer Mode toggle
+        dev_sep = QFrame()
+        dev_sep.setFrameShape(QFrame.HLine)
+        dev_sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border: none; max-height: 1px;")
+        dev_layout.addWidget(dev_sep)
 
         # Danger button: only enabled when Developer Mode is active.
         # Removes external runtime tools (RyzenAdj, FFprobe) from the system.
@@ -10209,7 +10294,68 @@ Stylesheet Selector:
         # Wire toggle so button enables/disables reactively without reopening dialog
         dev_mode_cb.toggled.connect(uninstall_tools_btn.setEnabled)
 
+        # Toggle for turning off Psutil fallback scanning
+        turn_off_psutil_cb = AnimatedCheckBox("Turn off Psutil")
+        turn_off_psutil_cb.setChecked(self.settings.get("turn_off_psutil", False))
+        turn_off_psutil_cb.setStyleSheet("color: #b3b3b3; font-size: 11px;")
+        dev_layout.addWidget(turn_off_psutil_cb)
+
         layout.addWidget(dev_group)
+
+        # Smart spotlight tutorial logic requested by Network Guide
+        if highlight_target in ("dev_group", "net", "psutil"):
+            from PySide6.QtCore import QTimer as _QTimer
+            from integrations.cpu_controller import is_service_running
+
+            # Conditional tutorial branching:
+            # 1. Zero-UAC off -> spotlight Zero-UAC (service_group)
+            # 2. Zero-UAC on, Developer Mode off -> spotlight Developer Mode toggle (dev_mode_cb)
+            # 3. Zero-UAC on, Developer Mode on -> spotlight Turn off Psutil toggle (turn_off_psutil_cb)
+            if not is_service_running():
+                target_w = service_group
+                msg_text = "Enable Zero-UAC Mode here!\nClick 'Enable' to install background service and unlock ETW network monitoring."
+            elif not self.settings.get("developer_mode", False):
+                target_w = dev_mode_cb
+                msg_text = "Enable Developer Mode here!\nCheck 'Developer Mode' to reveal 'Turn off Psutil' setting."
+            else:
+                target_w = turn_off_psutil_cb
+                msg_text = "Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring."
+
+            def spotlight_smart_target(dlg, widget_to_spotlight, msg):
+                try:
+                    from SpotlightOverlay import SpotlightOverlay
+                    existing = getattr(self, '_spotlight_overlay', None)
+                    if existing:
+                        try:
+                            existing.fade_out()
+                        except Exception:
+                            pass
+
+                    def on_widget_clicked():
+                        # Auto-advance tutorial: if user clicked Developer Mode, target Turn off Psutil next!
+                        if widget_to_spotlight == dev_mode_cb:
+                            _QTimer.singleShot(300, lambda: spotlight_smart_target(
+                                dlg,
+                                turn_off_psutil_cb,
+                                "Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring."
+                            ))
+
+                    overlay = SpotlightOverlay(
+                        dlg,
+                        target_widget=widget_to_spotlight,
+                        on_target_clicked=on_widget_clicked,
+                        instruction_text=msg,
+                        auto_click_target=True
+                    )
+                    self._spotlight_overlay = overlay
+                    overlay.show_with_fade_in()
+                except Exception as e:
+                    print(f"[Spotlight] Error creating spotlight overlay: {e}")
+
+            _QTimer.singleShot(250, lambda: spotlight_smart_target(dialog, target_w, msg_text))
+
+        scroll_area.setWidget(scroll_content)
+        main_layout.addWidget(scroll_area, 1)
 
         btn_layout = QHBoxLayout()
         ok_btn = AnimatedButton("OK")
@@ -10217,7 +10363,7 @@ Stylesheet Selector:
         btn_layout.addStretch()
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
+        main_layout.addLayout(btn_layout)
 
         ok_btn.clicked.connect(dialog.accept)
         cancel_btn.clicked.connect(dialog.reject)
@@ -10236,7 +10382,9 @@ Stylesheet Selector:
             new_resize = resizable_cb.isChecked()
             new_full = fullscreen_cb.isChecked()
             new_opacity = opacity_slider.value() / 100.0
+            new_init_zero_uac = init_zero_uac_cb.isChecked()
             new_dev = dev_mode_cb.isChecked()
+            new_psutil = turn_off_psutil_cb.isChecked()
             new_check = check_daily_cb.isChecked()
             new_startup = startup_cb.isChecked()
             new_delay = delay_slider.value()
@@ -10247,11 +10395,13 @@ Stylesheet Selector:
                 new_start_min == self.settings.get("start_minimised", False) and
                 new_min_tray == self.settings.get("minimize_to_tray", True) and
                 new_hide_init == self.settings.get("hide_initialize_panel", True) and
+                new_init_zero_uac == self.settings.get("init_zero_uac_in_panel", False) and
                 new_confirm == self.confirm_on_exit and
                 new_resize == self.settings.get("resizable_window", True) and
                 new_full == self.isFullScreen() and
                 abs(new_opacity - self.settings.get("window_opacity", 1.0)) < 0.01 and
                 new_dev == self.settings.get("developer_mode", False) and
+                new_psutil == self.settings.get("turn_off_psutil", False) and
                 new_check == self.settings.get("check_version_daily", True) and
                 new_startup == orig_startup and
                 new_delay == self.settings.get("startup_delay", 0)):
@@ -10270,11 +10420,13 @@ Stylesheet Selector:
             self.settings["start_minimised"] = new_start_min
             self.settings["minimize_to_tray"] = new_min_tray
             self.settings["hide_initialize_panel"] = new_hide_init
+            self.settings["init_zero_uac_in_panel"] = new_init_zero_uac
             self.settings["confirm_on_exit"] = new_confirm
             self.settings["resizable_window"] = new_resize
             self.settings["window_fullscreen"] = new_full
             self.settings["window_opacity"] = new_opacity
             self.settings["developer_mode"] = new_dev
+            self.settings["turn_off_psutil"] = new_psutil
             self.settings["check_version_daily"] = new_check
             self.settings["startup_delay"] = new_delay
             save_settings(self.settings)
@@ -15213,6 +15365,19 @@ if __name__ == "__main__":
     from PySide6.QtGui import QPixmap, QPainter, QColor, QFont as QFontGui
     from PySide6.QtCore import Qt, QTimer
     
+    # Load bundled Orbitron font FIRST so LoadingSplash can render with Orbitron font
+    from PySide6.QtGui import QFont, QFontDatabase
+    fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+    orbitron_loaded = False
+    if os.path.exists(fonts_dir):
+        for font_file in os.listdir(fonts_dir):
+            if font_file.endswith('.ttf') or font_file.endswith('.otf'):
+                font_path = os.path.join(fonts_dir, font_file)
+                font_id = QFontDatabase.addApplicationFont(font_path)
+                if font_id >= 0:
+                    orbitron_loaded = True
+                    print(f"[Font] Loaded: {font_file}")
+
     # Create splash screen
     class LoadingSplash(QSplashScreen):
         def __init__(self):
@@ -15234,17 +15399,17 @@ if __name__ == "__main__":
             # Draw accent line
             painter.fillRect(0, 0, 400, 3, QColor("#FF5B06"))
             
-            # Draw title
+            # Draw title with Orbitron Bold
             title_font = QFontGui("Orbitron", 24, QFontGui.Bold)
             painter.setFont(title_font)
             painter.setPen(QColor("#FF5B06"))
             painter.drawText(0, 60, 400, 50, Qt.AlignCenter, "HELXAID")
             
-            # Draw subtitle
-            sub_font = QFontGui("Segoe UI", 10)
+            # Draw subtitle with Orbitron
+            sub_font = QFontGui("Orbitron", 9, QFontGui.Normal)
             painter.setFont(sub_font)
             painter.setPen(QColor("#888888"))
-            painter.drawText(0, 100, 400, 30, Qt.AlignCenter, "Game Launcher, Music Player and utilities")
+            painter.drawText(0, 100, 400, 30, Qt.AlignCenter, "Game Launcher, Music Player & Utilities")
             
             # Draw loading text placeholder
             painter.setPen(QColor("#666666"))
@@ -15276,9 +15441,9 @@ if __name__ == "__main__":
             progress_width = int((self.progress / 100) * bar_width)
             painter.fillRect(bar_x, bar_y, progress_width, bar_height, QColor("#FF5B06"))
             
-            # Status text
+            # Status text with Orbitron font
             painter.setPen(QColor("#888888"))
-            font = QFontGui("Segoe UI", 9)
+            font = QFontGui("Orbitron", 9)
             painter.setFont(font)
             painter.drawText(0, 185, 400, 30, Qt.AlignCenter, self.status_text)
         
@@ -15317,19 +15482,6 @@ if __name__ == "__main__":
     splash.setProgress(10, "Loading fonts...")
     app.processEvents()
     
-    # Load bundled Orbitron font
-    from PySide6.QtGui import QFont, QFontDatabase
-    fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
-    orbitron_loaded = False
-    if os.path.exists(fonts_dir):
-        for font_file in os.listdir(fonts_dir):
-            if font_file.endswith('.ttf') or font_file.endswith('.otf'):
-                font_path = os.path.join(fonts_dir, font_file)
-                font_id = QFontDatabase.addApplicationFont(font_path)
-                if font_id >= 0:
-                    orbitron_loaded = True
-                    print(f"[Font] Loaded: {font_file}")
-    
     splash.setProgress(30, "Loading configuration...")
     app.processEvents()
     
@@ -15342,6 +15494,24 @@ if __name__ == "__main__":
     
     splash.setProgress(50, "Initializing launcher...")
     app.processEvents()
+
+    # Check if Zero-UAC should be initialized in Software Initialize Panel
+    try:
+        if _s.get("init_zero_uac_in_panel", False):
+            splash.setProgress(70, "Initializing Zero-UAC Service...")
+            app.processEvents()
+            import ctypes
+            if getattr(sys, 'frozen', False):
+                exe_path = sys.executable
+                setup_args = "--run-service --setup"
+            else:
+                pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+                exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
+                script_path = os.path.abspath(sys.argv[0])
+                setup_args = f'"{script_path}" --run-service --setup'
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
+    except Exception as e:
+        print(f"[Init] Zero-UAC panel init error: {e}")
     
     # Exclude this process from RivaTuner/MSI Afterburner OSD overlay.
     # RTSS hooks per-process via D3D injection. Writing its profile
