@@ -682,13 +682,42 @@ class EssentialOptimizations:
         
         Returns dict with 'success' key.
         """
+        CF_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+
+        # 1. Pre-check if wuauserv is ALREADY stopped (requires no admin privileges!)
+        try:
+            qr = subprocess.run(
+                ['sc', 'query', 'wuauserv'],
+                capture_output=True, text=True,
+                creationflags=CF_NO_WINDOW, timeout=10
+            )
+            q_out = (qr.stdout or '').upper()
+            if 'STOPPED' in q_out and 'START_PENDING' not in q_out and 'STOP_PENDING' not in q_out:
+                self._updates_disabled = True
+                print("[EssentialOpt] Windows Update already stopped")
+                return {"success": True}
+        except Exception:
+            pass
+
+        # 2. Try Zero-UAC Service IPC FIRST if active
+        try:
+            from integrations.cpu_controller import is_service_running, send_service_command
+            if is_service_running():
+                res = send_service_command({"action": "manage_service", "service_name": "wuauserv", "command": "stop"})
+                if res.get("status") == "success":
+                    self._updates_disabled = True
+                    print("[EssentialOpt] Windows Update stopped via Zero-UAC Service")
+                    return {"success": True}
+        except Exception as e:
+            print(f"[EssentialOpt] Zero-UAC Exception for Windows Update: {e}")
+
         try:
             # Stop Windows Update service
             result = subprocess.run(
                 ["net", "stop", "wuauserv"],
                 capture_output=True,
                 timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=CF_NO_WINDOW
             )
             
             if result.returncode == 0 or b"is not started" in result.stderr:
@@ -707,6 +736,16 @@ class EssentialOptimizations:
     
     def enable_updates(self) -> dict:
         """Re-enable Windows Update service."""
+        try:
+            from integrations.cpu_controller import is_service_running, send_service_command
+            if is_service_running():
+                send_service_command({"action": "manage_service", "service_name": "wuauserv", "command": "start"})
+                self._updates_disabled = False
+                print("[EssentialOpt] Windows Update started via Zero-UAC Service")
+                return {"success": True}
+        except Exception:
+            pass
+
         try:
             result = subprocess.run(
                 ["net", "start", "wuauserv"],
@@ -832,12 +871,41 @@ class EssentialOptimizations:
         
         Returns dict with 'success' key.
         """
+        CF_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+
+        # 1. Pre-check if LanmanServer is ALREADY stopped (requires no admin privileges!)
+        try:
+            qr = subprocess.run(
+                ['sc', 'query', 'LanmanServer'],
+                capture_output=True, text=True,
+                creationflags=CF_NO_WINDOW, timeout=10
+            )
+            q_out = (qr.stdout or '').upper()
+            if 'STOPPED' in q_out and 'START_PENDING' not in q_out and 'STOP_PENDING' not in q_out:
+                self._file_sharing_disabled = True
+                print("[EssentialOpt] File Sharing already stopped")
+                return {"success": True}
+        except Exception:
+            pass
+
+        # 2. Try Zero-UAC Service IPC if active
+        try:
+            from integrations.cpu_controller import is_service_running, send_service_command
+            if is_service_running():
+                res = send_service_command({"action": "manage_service", "service_name": "LanmanServer", "command": "stop"})
+                if res.get("status") == "success":
+                    self._file_sharing_disabled = True
+                    print("[EssentialOpt] File Sharing stopped via Zero-UAC Service")
+                    return {"success": True}
+        except Exception as e:
+            print(f"[EssentialOpt] Zero-UAC Exception for File Sharing: {e}")
+
         try:
             result = subprocess.run(
                 ["net", "stop", "LanmanServer"],
                 capture_output=True,
                 timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=CF_NO_WINDOW
             )
             
             if result.returncode == 0 or b"is not started" in result.stderr:
@@ -858,6 +926,16 @@ class EssentialOptimizations:
     
     def enable_file_sharing(self) -> dict:
         """Re-enable File Sharing service."""
+        try:
+            from integrations.cpu_controller import is_service_running, send_service_command
+            if is_service_running():
+                send_service_command({"action": "manage_service", "service_name": "LanmanServer", "command": "start"})
+                self._file_sharing_disabled = False
+                print("[EssentialOpt] File Sharing started via Zero-UAC Service")
+                return {"success": True}
+        except Exception:
+            pass
+
         try:
             subprocess.run(
                 ["net", "start", "LanmanServer"],

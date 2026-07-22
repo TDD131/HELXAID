@@ -14726,8 +14726,15 @@ First Played: {first_played_formatted}
             if not os.path.exists(settings_path):
                 return
             
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
+            try:
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+            except json.JSONDecodeError as e:
+                print(f"[Booster] Corrupt JSON detected in launcher ({e}). Skipping auto-booster.")
+                return
+            except Exception as e:
+                print(f"[Booster] Error reading booster_settings.json: {e}")
+                return
             
             selected = settings.get("essential_optimizations", [])
             

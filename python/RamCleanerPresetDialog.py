@@ -145,7 +145,7 @@ ADVANCED_SERVICES = [
 TAB_DESCRIPTIONS = [
     "Essential items for CPU and memory optimization for overall performance boost.",
     "Selected background processes will be automatically closed during Boost. We recommend only selecting the ones you are familiar with.",
-    "Basic Windows Services that can be safely turned off to free up system resources while gaming.",
+    "Basic Windows Services that will be started to ensure optimal system performance while gaming.",
     "Advanced Windows Services. Terminating these may disrupt normal operation of your PC."
 ]
 

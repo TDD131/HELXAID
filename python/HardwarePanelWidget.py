@@ -447,7 +447,7 @@ class HardwarePanelWidget(QWidget):
     """
     
     # Signal to handle cross-thread updates back to GUI (must be defined at class level)
-    boost_completed_signal = Signal(dict, str, str, int)
+    boost_completed_signal = Signal(dict, str, str, int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -484,8 +484,9 @@ class HardwarePanelWidget(QWidget):
         self._processes_refresh_counter = 0
         self._services_refresh_counter = 0
         
-        # Boost thread lock to prevent overlapping cycles
+        # Boost thread lock and generation tracking to prevent overlapping cycles and stale signals
         self._boost_lock = threading.Lock()
+        self._boost_generation_id = 0
         
         # Auto-scroll control per chart - pauses when user manually scrolls, resumes when head is visible
         self._chart_auto_scroll = {
@@ -901,23 +902,57 @@ class HardwarePanelWidget(QWidget):
                     }
                 """)
     
-    def _save_custom_preset(self):
-        """Save all selections across the 4 tabs into booster_settings.json."""
-        import json
-        import os
+    def _save_booster_json_safe(self, settings_dict: dict) -> bool:
+        """Atomically save dictionary to booster_settings.json using temporary file."""
+        import os, json
         from launcher import APPDATA_DIR
-        from RamCleanerPresetDialog import ESSENTIAL_OPTIMIZATIONS
         
         settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
+        temp_path = settings_path + ".tmp"
         
-        # Read current settings
-        settings = {}
-        if os.path.exists(settings_path):
+        try:
+            os.makedirs(APPDATA_DIR, exist_ok=True)
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                json.dump(settings_dict, f, indent=4)
+            os.replace(temp_path, settings_path)
+            return True
+        except Exception as e:
+            print(f"[Booster] Atomic save failed: {e}")
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+            return False
+
+    def _load_booster_json_safe(self) -> dict:
+        """Safely load dictionary from booster_settings.json with corruption recovery."""
+        import os, json
+        from launcher import APPDATA_DIR
+        
+        settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
+        if not os.path.exists(settings_path):
+            return {}
+            
+        try:
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"[Booster] Corrupt JSON detected ({e}). Backing up file.")
             try:
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
-            except:
+                os.replace(settings_path, settings_path + ".corrupted")
+            except Exception:
                 pass
+            return {}
+        except Exception as e:
+            print(f"[Booster] Error reading booster settings: {e}")
+            return {}
+
+    def _save_custom_preset(self):
+        """Save all selections across the 4 tabs into booster_settings.json."""
+        from RamCleanerPresetDialog import ESSENTIAL_OPTIMIZATIONS
+        
+        settings = self._load_booster_json_safe()
                 
         # 1. Essential
         if hasattr(self, '_essential_checks'):
@@ -951,26 +986,15 @@ class HardwarePanelWidget(QWidget):
                     selected.append(self._advanced_service_data[i]["name"])
             settings["advanced_services_to_stop"] = selected
             
-        try:
-            with open(settings_path, 'w', encoding='utf-8') as f:
-                json.dump(settings, f, indent=4)
+        if self._save_booster_json_safe(settings):
             print("[Booster] Custom preset auto-saved.")
-        except Exception as e:
-            print(f"[Booster] Error saving custom preset: {e}")
 
     def _load_custom_preset_settings(self):
         """Load processes and services checked states from booster_settings.json."""
-        import json
-        import os
-        from launcher import APPDATA_DIR
-        
-        settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
-        if not os.path.exists(settings_path):
-            return
-            
         try:
-            with open(settings_path, 'r', encoding='utf-8') as f:
-                settings = json.load(f)
+            settings = self._load_booster_json_safe()
+            if not settings:
+                return
                 
             # Note: Essential tab already loads its own state via _load_essential_states
             
@@ -1018,6 +1042,7 @@ class HardwarePanelWidget(QWidget):
         if getattr(self, '_is_boosting', False):
             print("[Boost] Stop requested by user")
             self._boost_cancel_requested = True
+            self._boost_generation_id += 1
             if self.manual_boost_btn:
                 self.manual_boost_btn.setText("STOPPING...")
             if self.clean_btn:
@@ -1034,9 +1059,10 @@ class HardwarePanelWidget(QWidget):
         
         print("[Boost] Manual boost triggered - starting background thread")
         
-        # Set boosting state
+        # Set boosting state and generation counter
         self._is_boosting = True
         self._boost_cancel_requested = False
+        self._boost_generation_id += 1
         self._boost_cycle_count = 0
         
         # Change button to STOP mode with animated gradient
@@ -1111,7 +1137,8 @@ class HardwarePanelWidget(QWidget):
     def _execute_boost_cycle(self):
         """Collect UI state and run one boost cycle in a background thread."""
         self._boost_cycle_count = getattr(self, '_boost_cycle_count', 0) + 1
-        print(f"[Boost] Starting cycle #{self._boost_cycle_count}")
+        current_gen = getattr(self, '_boost_generation_id', 0)
+        print(f"[Boost] Starting cycle #{self._boost_cycle_count} (gen #{current_gen})")
         
         # 1. Essential optimizations (always handled by _get_selected_optimizations)
         boost_data = {
@@ -1125,15 +1152,7 @@ class HardwarePanelWidget(QWidget):
         config_settings = {}
         need_config = not (self._process_checks and self._basic_service_checks and self._advanced_service_checks)
         if need_config:
-            try:
-                import json
-                from launcher import APPDATA_DIR
-                settings_path = os.path.join(APPDATA_DIR, "booster_settings.json")
-                if os.path.exists(settings_path):
-                    with open(settings_path, 'r', encoding='utf-8') as f:
-                        config_settings = json.load(f)
-            except Exception:
-                pass
+            config_settings = self._load_booster_json_safe()
 
         # 2. Processes
         if self._process_checks and getattr(self, '_process_data', None):
@@ -1172,7 +1191,7 @@ class HardwarePanelWidget(QWidget):
         
         # Run in background thread
         import threading
-        self._boost_thread = threading.Thread(target=self._run_boost_worker, args=(boost_data,), daemon=True)
+        self._boost_thread = threading.Thread(target=self._run_boost_worker, args=(boost_data, current_gen), daemon=True)
         self._boost_thread.start()
     
     def _show_boost_overlay(self, show: bool):
@@ -1282,7 +1301,7 @@ class HardwarePanelWidget(QWidget):
                 }}
             """)
     
-    def _run_boost_worker(self, boost_data):
+    def _run_boost_worker(self, boost_data, generation_id=0):
         """Worker function that runs in background thread."""
         import os
         import psutil
@@ -1291,7 +1310,7 @@ class HardwarePanelWidget(QWidget):
         results = {
             'essential': {'success': 0, 'total': 0, 'items': []},
             'processes': {'closed': 0, 'failed': 0, 'items': []},
-            'basic_services': {'stopped': 0, 'failed': 0, 'items': []},
+            'basic_services': {'started': 0, 'failed': 0, 'items': []},
             'advanced_services': {'stopped': 0, 'failed': 0, 'items': []}
         }
         
@@ -1300,20 +1319,17 @@ class HardwarePanelWidget(QWidget):
         
         try:
             # Check cancel before each major step
-            if getattr(self, '_boost_cancel_requested', False):
+            if getattr(self, '_boost_cancel_requested', False) or generation_id != getattr(self, '_boost_generation_id', 0):
                 cancelled = True
                 raise Exception("Cancelled by user")
             
             # ========== 1. ESSENTIAL TAB ==========
-            # Track services that failed in essentials due to needing admin.
-            # These will be routed through the scheduled task batch later.
             _essential_needs_elevation = []
             
             selected_essential = boost_data.get('selected_essential', [])
             if selected_essential:
                 any_selected = True
                 results['essential']['total'] = len(selected_essential)
-                # Call essential optimizations (these are usually registry changes, fast)
                 try:
                     essential_results = self._apply_essential_optimizations()
                     for name, result in essential_results.items():
@@ -1321,10 +1337,8 @@ class HardwarePanelWidget(QWidget):
                             results['essential']['success'] += 1
                             results['essential']['items'].append(f"V {name}")
                         else:
-                            # Check if it failed because admin is needed (service stop)
                             err = result.get('error', '')
                             if 'admin' in str(err).lower() or 'denied' in str(err).lower():
-                                # Route through scheduled task instead of marking as failed
                                 if 'file_sharing' in name or 'file sharing' in name.lower():
                                     _essential_needs_elevation.append({
                                         'name': 'LanmanServer',
@@ -1340,6 +1354,10 @@ class HardwarePanelWidget(QWidget):
                     print(f"[Boost] Essential error: {e}")
             
             # ========== 2. PROCESSES TAB ==========
+            if getattr(self, '_boost_cancel_requested', False) or generation_id != getattr(self, '_boost_generation_id', 0):
+                cancelled = True
+                raise Exception("Cancelled by user")
+
             process_data = boost_data.get('process_data', [])
             if process_data:
                 any_selected = True
@@ -1387,13 +1405,11 @@ class HardwarePanelWidget(QWidget):
                             results['processes']['items'].append(f"✗ {proc_info['name']} (access denied)")
                             print(f"[Boost] Failed to close {proc_info['name']}")
             
-            # ========== 3 & 4. SERVICES (BASIC + ADVANCED) — DIRECT SC STOP ==========
-            # Stop services directly via subprocess 'sc stop'.
-            # This is far more reliable than the old VBS->CMD->schtasks approach,
-            # which silently failed because:
-            #   1. The SYSTEM scheduled task required UAC to create
-            #   2. The log file was never written, so status_map was always empty
-            #   3. All 13 basic services ended up as '0 stopped / 13 failed'
+            # ========== 3 & 4. SERVICES (BASIC = START, ADVANCED = STOP) ==========
+            if getattr(self, '_boost_cancel_requested', False) or generation_id != getattr(self, '_boost_generation_id', 0):
+                cancelled = True
+                raise Exception("Cancelled by user")
+
             all_services = []
 
             for ess_svc in _essential_needs_elevation:
@@ -1406,52 +1422,38 @@ class HardwarePanelWidget(QWidget):
                 any_selected = True
                 all_services.append(('advanced', svc))
 
-            try:
-                _basic_n = len(boost_data.get('basic_service_data', []) or [])
-                _adv_n = len(boost_data.get('advanced_service_data', []) or [])
-                _esssvc_n = len(_essential_needs_elevation or [])
-                print(f'[Boost] Services selected: essential={_esssvc_n}, basic={_basic_n}, advanced={_adv_n}')
-            except Exception:
-                pass
-
             if all_services:
-                # 'sc stop' return codes:
-                #   0    - STOP control accepted
-                #   1062 - Service was not started (already stopped)
-                #   5    - Access denied (app not running as admin)
-                #   else - Other failure
                 CF_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
 
-                def _stop_service_direct(svc_name):
-                    # 1. Attempt Zero-UAC Service IPC routing FIRST if service is running (instant 1ms!)
+                def _manage_service_direct(svc_name, action="stop"):
                     try:
                         from integrations.cpu_controller import is_service_running, send_service_command
                         if is_service_running():
-                            res = send_service_command({"action": "manage_service", "service_name": svc_name, "command": "stop"})
+                            res = send_service_command({"action": "manage_service", "service_name": svc_name, "command": action})
                             if res.get("status") == "success":
-                                is_already = res.get("message") == "ALREADY_STOPPED"
-                                return 'ALREADY_STOPPED' if is_already else 'OK'
-                            else:
-                                print(f"[Boost] Zero-UAC Service error for {svc_name}: {res.get('message')}")
+                                msg = res.get("message", "")
+                                if msg in ("ALREADY_STOPPED", "ALREADY_RUNNING"):
+                                    return msg
+                                return 'OK'
                     except Exception as e:
                         print(f"[Boost] Zero-UAC Service exception for {svc_name}: {e}")
 
                     try:
-                        # Pre-check state to detect already-stopped services
                         qr = subprocess.run(
                             ['sc', 'query', svc_name],
                             capture_output=True, text=True,
                             creationflags=CF_NO_WINDOW, timeout=10
                         )
                         q_out = (qr.stdout or '').upper()
-                        if ('STOPPED' in q_out
-                                and 'START_PENDING' not in q_out
-                                and 'STOP_PENDING' not in q_out):
-                            return 'ALREADY_STOPPED'
+                        if action == "stop":
+                            if 'STOPPED' in q_out and 'START_PENDING' not in q_out and 'STOP_PENDING' not in q_out:
+                                return 'ALREADY_STOPPED'
+                        else:
+                            if 'RUNNING' in q_out and 'START_PENDING' not in q_out and 'STOP_PENDING' not in q_out:
+                                return 'ALREADY_RUNNING'
 
-                        # Send STOP control to the service
                         sr = subprocess.run(
-                            ['sc', 'stop', svc_name],
+                            ['sc', action, svc_name],
                             capture_output=True, text=True,
                             creationflags=CF_NO_WINDOW, timeout=15
                         )
@@ -1461,13 +1463,14 @@ class HardwarePanelWidget(QWidget):
 
                         combined = ((sr.stdout or '') + (sr.stderr or '')).lower()
 
-                        # Exit 1062: service has not been started
-                        if sr.returncode == 1062 or 'not been started' in combined:
+                        if action == "stop" and (sr.returncode == 1062 or 'not been started' in combined):
                             return 'ALREADY_STOPPED'
+                        elif action == "start" and (sr.returncode == 1056 or 'already running' in combined):
+                            return 'ALREADY_RUNNING'
+                        elif action == "start" and (sr.returncode == 1058 or 'disabled' in combined):
+                            return 'DISABLED'
 
-                        if (sr.returncode == 5
-                                or 'access is denied' in combined
-                                or 'access denied' in combined):
+                        if sr.returncode == 5 or 'access is denied' in combined or 'access denied' in combined:
                             return 'ACCESS_DENIED'
 
                         return 'FAIL'
@@ -1481,12 +1484,9 @@ class HardwarePanelWidget(QWidget):
                     svc_name = svc['name']
                     display  = svc.get('display', svc_name)
 
-                    st = _stop_service_direct(svc_name)
-                    ok = st in ('OK', 'ALREADY_STOPPED')
-                    if st == 'ACCESS_DENIED':
-                        print(f"[Boost] Service {repr(svc_name)} -> ACCESS_DENIED (Zero-UAC Mode is OFF. Enable Zero-UAC in Settings to stop system services!)")
-                    else:
-                        print(f"[Boost] Service {repr(svc_name)} -> {st}")
+                    act = 'start' if cat == 'basic' else 'stop'
+                    st = _manage_service_direct(svc_name, action=act)
+                    ok = st in ('OK', 'ALREADY_STOPPED', 'ALREADY_RUNNING')
 
                     if cat == 'essential':
                         if ok:
@@ -1495,25 +1495,26 @@ class HardwarePanelWidget(QWidget):
                         else:
                             reason = 'access denied' if st == 'ACCESS_DENIED' else 'failed'
                             results['essential']['items'].append(f'X {display} ({reason})')
-                    else:
-                        key = 'basic_services' if cat == 'basic' else 'advanced_services'
+                    elif cat == 'basic':
                         if ok:
-                            results[key]['stopped'] += 1
-                            results[key]['items'].append(f'V {display}')
+                            results['basic_services']['started'] += 1
+                            results['basic_services']['items'].append(f'V {display}')
                         else:
-                            results[key]['failed'] += 1
+                            reason = 'disabled' if st == 'DISABLED' else ('access denied' if st == 'ACCESS_DENIED' else 'failed')
+                            results['basic_services']['items'].append(f'X {display} ({reason})')
+                    else: # advanced
+                        if ok:
+                            results['advanced_services']['stopped'] += 1
+                            results['advanced_services']['items'].append(f'V {display}')
+                        else:
                             reason = 'access denied' if st == 'ACCESS_DENIED' else 'failed'
-                            results[key]['items'].append(f'X {display} ({reason})')
-
-            else:
-                print('[Boost] No services selected; skipping services boost step')
+                            results['advanced_services']['items'].append(f'X {display} ({reason})')
 
             # ========== SHOW RESULTS ==========
             if not any_selected:
-                # Schedule UI update in main thread
                 from PySide6.QtCore import QTimer
                 QTimer.singleShot(0, lambda: self._boost_complete(None, "No Items Selected", 
-                    "Please select at least one item from any tab\n(Essential, Processes, Basic, or Advanced)."))
+                    "Please select at least one item from any tab\n(Essential, Processes, Basic, or Advanced).", 0, generation_id))
                 return
             
             # Build summary message
@@ -1526,9 +1527,9 @@ class HardwarePanelWidget(QWidget):
             if proc_total > 0:
                 msg_parts.append(f"⚡ Processes closed: {results['processes']['closed']}/{proc_total}")
             
-            basic_total = results['basic_services']['stopped'] + results['basic_services']['failed']
+            basic_total = results['basic_services']['started'] + results['basic_services']['failed']
             if basic_total > 0:
-                msg_parts.append(f"📦 Basic services stopped: {results['basic_services']['stopped']}/{basic_total}")
+                msg_parts.append(f"📦 Basic services started: {results['basic_services']['started']}/{basic_total}")
             
             adv_total = results['advanced_services']['stopped'] + results['advanced_services']['failed']
             if adv_total > 0:
@@ -1536,7 +1537,6 @@ class HardwarePanelWidget(QWidget):
             
             summary = "\n".join(msg_parts)
             
-            # Check for any failures
             total_failed = (
                 (results['essential']['total'] - results['essential']['success']) +
                 results['processes']['failed'] +
@@ -1547,31 +1547,30 @@ class HardwarePanelWidget(QWidget):
             print(f"[Boost] Complete - {summary}")
             
             # Schedule UI update in main thread safely using Signal
-            self.boost_completed_signal.emit(results, summary, "", total_failed)
+            self.boost_completed_signal.emit(results, summary, "", total_failed, generation_id)
                 
         except Exception as e:
             print(f"[Boost] Error: {e}")
-            self.boost_completed_signal.emit({}, "", str(e), 0)
+            self.boost_completed_signal.emit({}, "", str(e), 0, generation_id)
         finally:
-            # Release boost lock so next reapply cycle can proceed
+            # Release boost lock safely
             try:
-                self._boost_lock.release()
+                if self._boost_lock.locked():
+                    self._boost_lock.release()
             except RuntimeError:
-                pass  # Lock wasn't held (first manual boost, not from reapply)
+                pass
     
-    @Slot(dict, str, str, int)
-    def _boost_complete_safe(self, results, summary, error, total_failed):
+    @Slot(dict, str, str, int, int)
+    def _boost_complete_safe(self, results, summary, error, total_failed, generation_id=0):
         """Wrapper strictly for cross-thread calls"""
-        self._boost_complete(results, summary, error, total_failed)
+        self._boost_complete(results, summary, error, total_failed, generation_id)
         
-    def _boost_complete(self, results, summary, error, total_failed=0):
-        """Called in main thread after a single boost cycle completes.
-        
-        In recurring mode (reapply timer active), this does NOT reset
-        the boost state. It only logs results and sends notifications.
-        Full reset only happens when user clicks Stop Boost (cancel path)
-        or when an unrecoverable error occurs.
-        """
+    def _boost_complete(self, results, summary, error, total_failed=0, generation_id=0):
+        """Called in main thread after a single boost cycle completes."""
+        if generation_id != getattr(self, '_boost_generation_id', 0):
+            print(f"[Boost] Discarding stale completion signal from generation #{generation_id} (current #{getattr(self, '_boost_generation_id', 0)})")
+            return
+
         cycle = getattr(self, '_boost_cycle_count', 1)
         print(f"[Boost] Cycle #{cycle} complete - error={error}, summary={summary}")
         
@@ -1596,75 +1595,75 @@ class HardwarePanelWidget(QWidget):
             return
         
         # -- Success path: log results, send notification, but keep boost active --
-        
-        # Show tray notification on the first boost cycle only (to avoid spam).
-        # Uses a multi-strategy approach to find tray_icon because self.window()
-        # may not directly return the GameLauncher window when nested in tab widgets.
         if cycle == 1:
-            try:
-                from PySide6.QtWidgets import QSystemTrayIcon, QApplication
-                from PySide6.QtGui import QIcon
+            # Check if user enabled notifications
+            should_notify = True
+            if hasattr(self, 'notify_boost_cb'):
+                should_notify = self.notify_boost_cb.isChecked()
+                
+            if should_notify:
+                try:
+                    from PySide6.QtWidgets import QSystemTrayIcon, QApplication
+                    from PySide6.QtGui import QIcon
 
-                tray = None
+                    tray = None
+                    main_window = self.window()
+                    if hasattr(main_window, 'tray_icon') and main_window.tray_icon:
+                        tray = main_window.tray_icon
 
-                # Strategy 1: look on the direct parent window
-                main_window = self.window()
-                print(f"[Boost] self.window() = {main_window.__class__.__name__}, has tray_icon = {hasattr(main_window, 'tray_icon')}")
-                if hasattr(main_window, 'tray_icon') and main_window.tray_icon:
-                    tray = main_window.tray_icon
+                    if tray is None:
+                        for widget in QApplication.topLevelWidgets():
+                            if hasattr(widget, 'tray_icon') and widget.tray_icon:
+                                tray = widget.tray_icon
+                                break
 
-                # Strategy 2: scan all top-level widgets for one that has tray_icon
-                if tray is None:
-                    for widget in QApplication.topLevelWidgets():
-                        if hasattr(widget, 'tray_icon') and widget.tray_icon:
-                            tray = widget.tray_icon
-                            print(f"[Boost] Found tray_icon on {widget.__class__.__name__}")
-                            break
+                    if tray is None:
+                        if not hasattr(self, '_boost_temp_tray') or self._boost_temp_tray is None:
+                            self._boost_temp_tray = QSystemTrayIcon(self)
+                            app_icon = QApplication.windowIcon()
+                            if not app_icon.isNull():
+                                self._boost_temp_tray.setIcon(app_icon)
+                            else:
+                                import os
+                                ui_icons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons")
+                                icon_path = os.path.join(ui_icons_dir, "helxtats-icon.png")
+                                if not os.path.exists(icon_path):
+                                    icon_path = os.path.join(ui_icons_dir, "helxtats_icon.png")
+                                if os.path.exists(icon_path):
+                                    self._boost_temp_tray.setIcon(QIcon(icon_path))
+                        self._boost_temp_tray.show()
+                        tray = self._boost_temp_tray
 
-                # Strategy 3: create a temporary QSystemTrayIcon for this notification only
-                if tray is None:
-                    print("[Boost] No tray_icon found on any window, creating temporary one")
-                    tray = QSystemTrayIcon()
-                    # Use app icon or a blank icon
-                    app_icon = QApplication.windowIcon()
-                    if not app_icon.isNull():
-                        tray.setIcon(app_icon)
-                    else:
-                        tray.setIcon(QIcon())
+                    notif_msg = summary if summary else "Optimizations applied."
+                    icon_type = QSystemTrayIcon.Information if total_failed == 0 else QSystemTrayIcon.Warning
+                    
                     tray.show()
-                    _temp_tray = tray  # keep alive for duration of message
-                else:
-                    _temp_tray = None
+                    tray.showMessage("Boosting...", notif_msg, icon_type, 5000)
+                    print(f"[Boost] Windows Native Notification sent: 'Boosting...' | {notif_msg}")
 
-                notif_msg = summary if summary else "Optimizations applied."
-                if total_failed == 0:
-                    tray.showMessage("Boosting...", notif_msg, tray.icon(), 5000)
-                else:
-                    tray.showMessage("Boosting... (warnings)", notif_msg, tray.icon(), 5000)
-                print(f"[Boost] Notification sent: 'Boosting...' | {notif_msg}")
-
-            except Exception as e:
-                print(f"[Boost] Notification error: {e}")
+                except Exception as e:
+                    print(f"[Boost] Windows Native Notification error: {e}")
         
         # Refresh processes list after closing some
-        if results and results['processes']['closed'] > 0:
+        if results and results.get('processes', {}).get('closed', 0) > 0:
             self._populate_processes_tab()
         
-        # Refresh service status labels after stopping services
-        if results and (results['basic_services']['stopped'] > 0 or results['advanced_services']['stopped'] > 0):
+        # Refresh service status labels after starting/stopping services
+        if results and (results.get('basic_services', {}).get('started', 0) > 0 or results.get('advanced_services', {}).get('stopped', 0) > 0):
             try:
                 self._refresh_service_statuses()
             except Exception as e:
                 print(f"[Boost] Service status refresh error: {e}")
         
         print(f"[Boost] Cycle #{cycle} done. Next reapply in 60s (boost stays active).")
-    
+        
+        print(f"[Boost] Cycle #{cycle} done. Next reapply in 60s (boost stays active).")
 
     def _full_boost_reset(self):
-
         """Fully reset boost state: stop timers, hide overlay, reset button."""
         self._is_boosting = False
         self._boost_cancel_requested = False
+        self._boost_generation_id += 1
         
         # Stop reapply timer
         if hasattr(self, '_boost_reapply_timer') and self._boost_reapply_timer:
@@ -1700,7 +1699,6 @@ class HardwarePanelWidget(QWidget):
                 print("[Boost] Button reset to MANUAL BOOST")
                 
             if self.clean_btn:
-                # Reset Quick Setup boost button back to idle MANUAL BOOST dark style
                 self.clean_btn.setText("MANUAL BOOST")
                 self.clean_btn.setEnabled(True)
                 self.clean_btn.setStyleSheet("""
@@ -1719,6 +1717,16 @@ class HardwarePanelWidget(QWidget):
                 """)
         except Exception as e:
             print(f"[Boost] Error resetting button: {e}")
+
+    def closeEvent(self, event):
+        """Cleanup boost threads, timers, and signals on widget closure."""
+        try:
+            self._full_boost_reset()
+            if hasattr(self, '_update_timer') and self._update_timer:
+                self._update_timer.stop()
+        except Exception as e:
+            print(f"[Hardware] Error during closeEvent: {e}")
+        super().closeEvent(event)
     
     # ============================================
     # EMBEDDED RAM TAB METHODS
@@ -1771,7 +1779,7 @@ class HardwarePanelWidget(QWidget):
         descriptions = [
             "Essential items for CPU and memory optimization.",
             "Background processes that can be closed to free RAM.",
-            "Basic Windows Services that can be safely stopped.",
+            "Basic Windows Services that will be started to optimize performance for gaming.",
             "Advanced Windows Services. Use with caution."
         ]
         self._ram_tab_desc.setText(descriptions[index])
