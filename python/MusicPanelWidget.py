@@ -2421,7 +2421,7 @@ class PlaylistHeader(QFrame):
                 color: #ffffff;
                 font-size: 32px;
                 font-weight: bold;
-                font-family: 'Orbitron', 'Segoe UI', sans-serif;
+                font-family: 'Orbitron', sans-serif;
             }
             
             QLabel#playlistStats {
@@ -3001,7 +3001,7 @@ class PlaylistTable(QWidget):
             painter.drawRoundedRect(1, 1, 198, 34, 6, 6)
             
             painter.setPen(QColor("#ffffff"))
-            font = QFont("Segoe UI", 9, QFont.Bold)
+            font = QFont("Orbitron", 9, QFont.Bold)
             painter.setFont(font)
             painter.drawText(0, 0, 200, 36, Qt.AlignCenter, text)
             painter.end()
@@ -3055,9 +3055,11 @@ class PlaylistTable(QWidget):
                 border: none;
                 color: #e0e0e0;
                 outline: none;
+                font-family: 'Orbitron', sans-serif;
             }
             QTreeWidget QHeaderView {
                 background: transparent;
+                font-family: 'Orbitron', sans-serif;
             }
             QTreeWidget::viewport {
                 background: transparent;
@@ -3065,6 +3067,7 @@ class PlaylistTable(QWidget):
             QTreeWidget::item {
                 padding: 8px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                font-family: 'Orbitron', sans-serif;
             }
             QTreeWidget::item:hover {
                 background: rgba(255, 255, 255, 0.05);
@@ -3077,6 +3080,7 @@ class PlaylistTable(QWidget):
                 color: #888888;
                 font-size: 12px;
                 font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
                 border: none;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.08);
                 border-right: 1px solid rgba(255, 255, 255, 0.1);
@@ -4332,7 +4336,7 @@ class StreamLoadingOverlayWidget(QFrame):
             QPlainTextEdit {
                 background-color: rgba(0, 0, 0, 0.4);
                 color: #00FF00;
-                font-family: Consolas, 'Courier New', monospace;
+                font-family: 'Orbitron', monospace;
                 font-size: 10px;
                 border: none;
                 border-radius: 4px;

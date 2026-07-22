@@ -114,7 +114,7 @@ class CircularGauge(QWidget):
         
         # Center text - percentage
         painter.setPen(QColor("#ffffff"))
-        percent_font = QFont("Segoe UI", int(size * 0.18), QFont.Bold)
+        percent_font = QFont("Orbitron", int(size * 0.18), QFont.Bold)
         painter.setFont(percent_font)
         percent_text = f"{int(self._value)}%"
         painter.drawText(self.rect(), Qt.AlignCenter, percent_text)
@@ -122,7 +122,7 @@ class CircularGauge(QWidget):
         # Subtitle below percentage
         if self._subtitle:
             painter.setPen(QColor("#888888"))
-            sub_font = QFont("Segoe UI", int(size * 0.05))
+            sub_font = QFont("Orbitron", int(size * 0.05))
             painter.setFont(sub_font)
             sub_rect = self.rect()
             sub_rect.moveTop(int(size * 0.15))
@@ -413,7 +413,7 @@ class ProgressBarWidget(QWidget):
         
         # Text overlay - left side (drive letter + percent)
         painter.setPen(QColor("#ffffff"))
-        font = QFont("Segoe UI", 10)
+        font = QFont("Orbitron", 10)
         painter.setFont(font)
         
         left_text = self._label
@@ -4097,7 +4097,7 @@ class HardwarePanelWidget(QWidget):
         self.cpu_curve = self.cpu_chart.plot(pen=pg.mkPen('#FF5B06', width=2))
         # Text label at leading edge showing current value
         self.cpu_leading_text = pg.TextItem(text='0%', color='#FF5B06', anchor=(0, 0.5))
-        self.cpu_leading_text.setFont(QFont('Segoe UI', 9, QFont.Bold))
+        self.cpu_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
         self.cpu_chart.addItem(self.cpu_leading_text)
         # Lock Y-axis to 0-100 even when View All is triggered
         self.cpu_chart.sigRangeChanged.connect(lambda: self._enforce_chart_y_range(self.cpu_chart, -10, 100))
@@ -4139,7 +4139,7 @@ class HardwarePanelWidget(QWidget):
         self.ram_curve = self.ram_chart.plot(pen=pg.mkPen('#FDA903', width=2))
         # Text label at leading edge showing current value
         self.ram_leading_text = pg.TextItem(text='0%', color='#FDA903', anchor=(0, 0.5))
-        self.ram_leading_text.setFont(QFont('Segoe UI', 9, QFont.Bold))
+        self.ram_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
         self.ram_chart.addItem(self.ram_leading_text)
         # Lock Y-axis to 0-100 even when View All is triggered
         self.ram_chart.sigRangeChanged.connect(lambda: self._enforce_chart_y_range(self.ram_chart, -10, 100))
@@ -4255,7 +4255,7 @@ class HardwarePanelWidget(QWidget):
         self.disk_usage_curve = self.disk_chart.plot(pen=pg.mkPen('#f97316', width=2), name='Usage')
         # Text label at leading edge showing current value
         self.disk_leading_text = pg.TextItem(text='0%', color='#f97316', anchor=(0, 0.5))
-        self.disk_leading_text.setFont(QFont('Segoe UI', 9, QFont.Bold))
+        self.disk_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
         self.disk_chart.addItem(self.disk_leading_text)
         # Lock Y-axis to 0-100 even when View All is triggered
         self.disk_chart.sigRangeChanged.connect(lambda: self._enforce_chart_y_range(self.disk_chart, -10, 100))

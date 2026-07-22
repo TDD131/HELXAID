@@ -290,7 +290,7 @@ class MediaLibraryPage(QWidget):
             painter.drawRoundedRect(1, 1, 198, 34, 6, 6)
             
             painter.setPen(QColor("#ffffff"))
-            font = QFont("Segoe UI", 9, QFont.Bold)
+            font = QFont("Orbitron", 9, QFont.Bold)
             painter.setFont(font)
             painter.drawText(0, 0, 200, 36, Qt.AlignCenter, text)
             painter.end()

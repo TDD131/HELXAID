@@ -23,19 +23,19 @@ class HelxailInfoWizard(QFrame):
                 color: #FFFFFF;
                 font-size: 14px;
                 font-weight: bold;
-                font-family: 'Inter', sans-serif;
+                font-family: 'Orbitron', sans-serif;
             }
             QLabel#StepTitle {
                 color: #FF5B06;
                 font-size: 16px;
                 font-weight: bold;
-                font-family: 'Inter', sans-serif;
+                font-family: 'Orbitron', sans-serif;
                 margin-top: 10px;
             }
             QLabel#StepDesc {
                 color: #E0E0E0;
                 font-size: 13px;
-                font-family: 'Inter', sans-serif;
+                font-family: 'Orbitron', sans-serif;
                 margin-top: 5px;
             }
             QPushButton#CloseBtn {
@@ -51,7 +51,7 @@ class HelxailInfoWizard(QFrame):
                 border: 1px solid #FF5B06;
                 border-radius: 6px;
                 color: white;
-                font-family: 'Inter', sans-serif;
+                font-family: 'Orbitron', sans-serif;
                 font-size: 13px;
                 padding: 6px 20px;
             }

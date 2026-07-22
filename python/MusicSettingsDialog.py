@@ -26,7 +26,7 @@ class MusicSettingsDialog(QDialog):
             }
             QLabel {
                 color: #ffffff;
-                font-family: "Segoe UI", sans-serif;
+                font-family: 'Orbitron', sans-serif;
                 font-size: 14px;
                 font-weight: 500;
             }

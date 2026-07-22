@@ -135,7 +135,7 @@ class MacroSettingsDialog(QDialog):
                 color: #e0e0e0;
                 border: 1px solid #333;
                 border-radius: 5px;
-                font-family: Consolas, monospace;
+                font-family: 'Orbitron', monospace;
             }
         """)
         
@@ -145,7 +145,7 @@ class MacroSettingsDialog(QDialog):
         
         # Header
         header = QLabel("Macro Settings")
-        header.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        header.setFont(QFont("Orbitron", 18, QFont.Bold))
         header.setStyleSheet("color: #FF5B06; padding: 10px 0;")
         layout.addWidget(header)
         

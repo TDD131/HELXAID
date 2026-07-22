@@ -537,7 +537,7 @@ class MacroSettingsPanel(QWidget):
         header_layout = QHBoxLayout()
         
         header = QLabel("HELXAIRO")
-        header.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        header.setFont(QFont("Orbitron", 24, QFont.Bold))
         header.setStyleSheet("color: #FF5B06; padding: 0;")
         header_layout.addWidget(header)
         
@@ -1849,7 +1849,7 @@ class MacroSettingsPanel(QWidget):
         # Left Column: Macro list
         col1 = QVBoxLayout()
         col1_lbl = QLabel("Macro list")
-        col1_lbl.setStyleSheet("color: #e0e0e0; font-family: Segoe UI; font-size: 13px;")
+        col1_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col1.addWidget(col1_lbl)
 
         self.editor_macro_list = QListWidget()
@@ -1887,7 +1887,7 @@ class MacroSettingsPanel(QWidget):
         # Middle Column: List of keys
         col2 = QVBoxLayout()
         col2_lbl = QLabel("List of keys")
-        col2_lbl.setStyleSheet("color: #e0e0e0; font-family: Segoe UI; font-size: 13px;")
+        col2_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col2.addWidget(col2_lbl)
 
         self.editor_keys_list = QListWidget()
@@ -1941,7 +1941,7 @@ class MacroSettingsPanel(QWidget):
         col3.addSpacing(15)
 
         _radio_style = """
-            QRadioButton { color: #e0e0e0; font-family: Segoe UI; font-size: 13px; spacing: 8px; }
+            QRadioButton { color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px; spacing: 8px; }
             QRadioButton::indicator { width: 14px; height: 14px; border-radius: 7px; background: #2a2d35; border: none; }
             QRadioButton::indicator:checked { background: #FF5B06; border: none; }
         """
@@ -1996,7 +1996,7 @@ class MacroSettingsPanel(QWidget):
 
         # Insert Command
         lbl_insert = QLabel("Insert command")
-        lbl_insert.setStyleSheet("color: #e0e0e0; font-family: Segoe UI; font-size: 13px;")
+        lbl_insert.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col3.addWidget(lbl_insert)
 
         self.combo_insert_cmd = QComboBox()
@@ -2409,7 +2409,7 @@ class MacroSettingsPanel(QWidget):
         settings_layout.setSpacing(15)
         
         settings_header = QLabel("Settings")
-        settings_header.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        settings_header.setFont(QFont("Orbitron", 16, QFont.Bold))
         settings_header.setStyleSheet("color: #FF5B06;")
         settings_layout.addWidget(settings_header)
         
@@ -3871,13 +3871,13 @@ class MacroSettingsPanel(QWidget):
         layout.setSpacing(4)
         
         value_label = QLabel(value)
-        value_label.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        value_label.setFont(QFont("Orbitron", 24, QFont.Bold))
         value_label.setStyleSheet("color: #FF5B06;")
         value_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(value_label)
         
         title_label = QLabel(title)
-        title_label.setFont(QFont("Segoe UI", 10))
+        title_label.setFont(QFont("Orbitron", 10))
         title_label.setStyleSheet("color: #888;")
         title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)

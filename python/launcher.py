@@ -2840,6 +2840,7 @@ class AudioPlayerSidebar(QWidget):
             QLabel {
                 font-size: 12px;
                 font-weight: 600;
+                font-family: 'Orbitron', sans-serif;
                 color: #FFFFFF;
                 background: transparent;
             }
@@ -2851,6 +2852,7 @@ class AudioPlayerSidebar(QWidget):
             QLabel {
                 color: #b3b3b3;
                 font-size: 10px;
+                font-family: 'Orbitron', sans-serif;
                 background: transparent;
             }
         """)
@@ -3794,12 +3796,12 @@ class DraggableFloatingPanel(QFrame):
                 color: #FFFFFF;
                 font-size: 14px;
                 font-weight: bold;
-                font-family: 'Inter', sans-serif;
+                font-family: 'Orbitron', sans-serif;
             }}
             QLabel#Message {{
                 color: #E0E0E0;
                 font-size: 13px;
-                font-family: 'Inter', sans-serif;
+                font-family: 'Orbitron', sans-serif;
             }}
             QPushButton#CloseBtn {{
                 background: transparent;
@@ -3814,7 +3816,7 @@ class DraggableFloatingPanel(QFrame):
                 border: 1px solid #FF5B06;
                 border-radius: 6px;
                 color: white;
-                font-family: 'Inter', sans-serif;
+                font-family: 'Orbitron', sans-serif;
                 font-size: 13px;
                 padding: 6px 20px;
             }}
@@ -4597,15 +4599,13 @@ class GameLauncher(QWidget):
         
         # Apply dark mode title bar for Windows
         self._apply_dark_titlebar()
-        if self.settings.get("window_fullscreen", False):
-            self.showFullScreen()
-        else:
-            # Try to restore geometry
-            geometry = self.settings.get("window_geometry")
-            if geometry and len(geometry) == 4:
-                # geometry is a list [x, y, w, h]
-                self.move(geometry[0], geometry[1])
-                self.resize(geometry[2], geometry[3])
+        
+        # Try to restore geometry
+        geometry = self.settings.get("window_geometry")
+        if geometry and len(geometry) == 4:
+            # geometry is a list [x, y, w, h]
+            self.move(geometry[0], geometry[1])
+            self.resize(geometry[2], geometry[3])
                 
         # Apply resizable window setting from settings AFTER restoring geometry
         is_resizable = self.settings.get("resizable_window", True)
@@ -5677,12 +5677,12 @@ class GameLauncher(QWidget):
             QWidget#GameLauncherMain {{
                 {bg_style}
                 color: {text};
-                font-family: 'Orbitron', 'Segoe UI', Arial;
+                font-family: 'Orbitron', sans-serif;
             }}
             QWidget#GameLauncherMain > QWidget {{
                 background: transparent;
                 color: {text};
-                font-family: 'Orbitron', 'Segoe UI', Arial;
+                font-family: 'Orbitron', sans-serif;
             }}
             QWidget#ContentStack, QWidget#HomePanel, QWidget#cpuPanel, QWidget#musicPanel,
             QWidget#crosshairPanel, QWidget#macroPanel, QWidget#hardwarePanel, QWidget#wincustomPanel {{
@@ -11821,14 +11821,20 @@ First Played: {first_played_formatted}
 
     def closeEvent(self, event):
         if self.confirm_on_exit:
-            reply = QMessageBox.question(
-                self,
-                "Exit",
-                "Are you sure you want to exit?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if reply != QMessageBox.Yes:
+            msg = QMessageBox(self)
+            apply_custom_titlebar(msg, "#010101")
+            msg.setWindowTitle("Exit - HELXAID")
+            msg.setText("Are you sure you want to exit?")
+            msg.setIcon(QMessageBox.Question)
+            
+            yes_btn = AnimatedButton("Yes")
+            no_btn = AnimatedButton("No")
+            msg.addButton(yes_btn, QMessageBox.YesRole)
+            msg.addButton(no_btn, QMessageBox.NoRole)
+            msg.setDefaultButton(no_btn)
+            
+            msg.exec()
+            if msg.clickedButton() != yes_btn:
                 event.ignore()
                 return
         
@@ -11871,7 +11877,8 @@ First Played: {first_played_formatted}
         except Exception as e:
             print(f"[HELRCUS] Error executing lock_on_exit: {e}")
             
-        # Save window geometry before closing
+        # Save window geometry & fullscreen state before closing
+        self.settings["window_fullscreen"] = self.isFullScreen()
         if not self.isFullScreen():
             self.settings["window_geometry"] = [self.x(), self.y(), self.width(), self.height()]
         save_settings(self.settings)
@@ -15485,12 +15492,46 @@ if __name__ == "__main__":
     splash.setProgress(30, "Loading configuration...")
     app.processEvents()
     
-    # Set default application font (Orbitron if loaded, else Segoe UI fallback)
-    if orbitron_loaded:
-        default_font = QFont("Orbitron", 10)
-    else:
-        default_font = QFont("Segoe UI", 10)
+    # Set default application font (Orbitron)
+    default_font = QFont("Orbitron", 9)
     app.setFont(default_font)
+    app.setStyleSheet("""
+        * {
+            font-family: 'Orbitron', sans-serif;
+        }
+        QMessageBox {
+            background-color: #121212;
+            color: #ffffff;
+        }
+        QMessageBox QLabel {
+            color: #e0e0e0;
+            font-size: 13px;
+        }
+        QMessageBox QPushButton {
+            background-color: rgba(255, 255, 255, 0.08);
+            color: #ffffff;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 20px;
+            font-weight: bold;
+            font-size: 12px;
+            min-width: 65px;
+        }
+        QMessageBox QPushButton:hover {
+            background-color: rgba(255, 255, 255, 0.16);
+        }
+        QMessageBox QPushButton:pressed {
+            background-color: rgba(255, 255, 255, 0.25);
+        }
+        QMessageBox QPushButton[default="true"] {
+            background-color: #FF5B06;
+            color: #ffffff;
+            border: none;
+        }
+        QMessageBox QPushButton[default="true"]:hover {
+            background-color: #ff7328;
+        }
+    """)
     
     splash.setProgress(50, "Initializing launcher...")
     app.processEvents()
@@ -15551,6 +15592,9 @@ if __name__ == "__main__":
         
         # Close splash and show main window
         splash.finish(w)
-        w.show()
+        if w.settings.get("window_fullscreen", False):
+            w.showFullScreen()
+        else:
+            w.show()
     
     sys.exit(app.exec())

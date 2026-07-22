@@ -79,7 +79,7 @@ class DebugConsoleWidget(QWidget):
             self.console.document().setMaximumBlockCount(5000)
         except Exception:
             pass
-        self.console.setFont(QFont("Consolas", 9))
+        self.console.setFont(QFont("Orbitron", 9))
         self.console.setStyleSheet("""
             QTextEdit {
                 background: #1e1e1e;

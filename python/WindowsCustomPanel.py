@@ -389,6 +389,7 @@ class FeatureCard(QFrame):
             color: #e0e0e0; 
             font-size: 16px; 
             font-weight: bold; 
+            font-family: 'Orbitron';
             background: transparent;
         """)
         title_container.addWidget(self.title_label)
