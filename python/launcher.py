@@ -3753,8 +3753,7 @@ class BackgroundProcessor(QThread):
                         if y < h * 0.4:
                             brightness_values.append(lum)  # Double weight for upper area
                             
-                    # Yield the Python GIL after every row to prevent stuttering
-                    time.sleep(0.001)
+                    pass
                 
                 if brightness_values:
                     avg_brightness = sum(brightness_values) / len(brightness_values)
@@ -5625,13 +5624,6 @@ class GameLauncher(QWidget):
             
         # Re-apply theme to lock in the colors and scaled image
         self.apply_theme()
-        
-        # If UI has already been rendered, we should force a visual refresh of the grid texts
-        if hasattr(self, 'grid'):
-            # Only refresh if it won't cause a massive stutter, maybe just update grid items directly?
-            # A full refresh() might be too heavy if done async during init. We'll use a timer to defer it slightly.
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(50, self.refresh)
 
     def apply_theme(self):
         """Apply theme colors and background image"""
@@ -5644,8 +5636,8 @@ class GameLauncher(QWidget):
         
         primary = colors.get("primary", "#FF5B06")
         secondary = colors.get("secondary", "#FDA903")
-        bg_dark = colors.get("background_dark", "#010101")
-        bg_light = colors.get("background_light", "#1D1D1C")
+        bg_dark = colors.get("background_dark", "#0a0a0c")
+        bg_light = colors.get("background_light", "#1c1c24")
         text = colors.get("text", "#e0e0e0")
         
         # If no background image, use white font for better visibility on dark theme
@@ -5685,7 +5677,8 @@ class GameLauncher(QWidget):
                 font-family: 'Orbitron', sans-serif;
             }}
             QWidget#ContentStack, QWidget#HomePanel, QWidget#cpuPanel, QWidget#musicPanel,
-            QWidget#crosshairPanel, QWidget#macroPanel, QWidget#hardwarePanel, QWidget#wincustomPanel {{
+            QWidget#crosshairPanel, QWidget#macroPanel, QWidget#hardwarePanel, QWidget#wincustomPanel,
+            QScrollArea, QScrollArea > QWidget, QWidget#gamesScrollArea, QWidget#gamesContainer {{
                 background: transparent;
             }}
             QPushButton {{
@@ -5775,17 +5768,18 @@ class GameLauncher(QWidget):
                 background: none;
             }}
             QSlider::groove:horizontal {{
-                height: 6px;
+                height: 4px;
                 background: {hex_to_rgba(bg_light, 0.7)};
-                border-radius: 3px;
+                border-radius: 2px;
             }}
             QSlider::handle:horizontal {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 {primary}, stop:1 {secondary});
-                width: 20px;
-                margin: -7px 0;
-                border-radius: 10px;
-                border: 2px solid {hex_to_rgba(secondary, 0.5)};
+                width: 14px;
+                height: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+                border: none;
             }}
             QSlider::handle:horizontal:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -5831,9 +5825,74 @@ class GameLauncher(QWidget):
         self.setStyleSheet(stylesheet)
         
         # Apply background image to games container only
-        bg_image = self.settings.get("background_image", "")
-        if not globals().get('ENABLE_BACKGROUND', True):
-            bg_image = ""
+        if not hasattr(self, '_bg_brightness_cache'):
+            self._bg_brightness_cache = {}
+
+        # Instant fast-path brightness calculation (0ms delay on frame 1)
+        if bg_image and os.path.exists(bg_image) and bg_image not in self._bg_brightness_cache:
+            try:
+                from PySide6.QtGui import QImage
+                from PySide6.QtCore import Qt
+                test_img = QImage(bg_image)
+                if not test_img.isNull():
+                    small = test_img.scaled(30, 30, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+                    total_lum = 0
+                    count = small.width() * small.height()
+                    for y in range(small.height()):
+                        for x in range(small.width()):
+                            rgb = small.pixel(x, y)
+                            r = (rgb >> 16) & 0xFF
+                            g = (rgb >> 8) & 0xFF
+                            b = rgb & 0xFF
+                            total_lum += 0.299 * r + 0.587 * g + 0.114 * b
+                    if count > 0:
+                        avg_b = total_lum / count
+                        t_color = "#FFFFFF"
+                        opac = 0.25 if avg_b > 140 else 0.50
+                        self._bg_brightness_cache[bg_image] = (avg_b, t_color, opac, True)
+            except Exception:
+                pass
+
+        # Check background brightness for adaptive glass card styling
+        is_bright_bg = False
+        if bg_image and bg_image in self._bg_brightness_cache:
+            avg_bright = self._bg_brightness_cache[bg_image][0]
+            if avg_bright > 140:
+                is_bright_bg = True
+
+        if is_bright_bg:
+            # For bright wallpaper: dark semi-transparent glass for high text contrast
+            card_bg = "rgba(0, 0, 0, 0.45)"
+            card_border = "rgba(255, 255, 255, 0.12)"
+        else:
+            # For dark wallpaper or default gradient: HELXAIL white glass card style
+            card_bg = "rgba(255, 255, 255, 0.04)"
+            card_border = "rgba(255, 255, 255, 0.08)"
+
+        recently_played_style = f"""
+            QWidget#recentlyPlayedWidget {{
+                background: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 14px;
+                padding: 8px;
+            }}
+            QWidget#recentlyPlayedWidget:hover {{
+                border-color: rgba(255, 91, 6, 0.4);
+            }}
+        """
+
+        sort_bar_style = f"""
+            QWidget#sortBar {{
+                background: {card_bg};
+                border: 1px solid {card_border};
+                border-radius: 14px;
+                padding: 0 8px;
+            }}
+            QWidget#sortBar:hover {{
+                border-color: rgba(255, 91, 6, 0.4);
+            }}
+        """
+        
         if bg_image and os.path.exists(bg_image):
             # Get the background mode
             mode = self.settings.get("background_mode", "fill")
@@ -5942,25 +6001,8 @@ class GameLauncher(QWidget):
                         }}
                     """
                     
-                # Style for recently played section - semi-transparent, no border
-                recently_played_style = """
-                    QWidget#recentlyPlayedWidget {
-                        background: rgba(0, 0, 0, 0.5);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 8px;
-                    }
-                """
                 
-                # Style for sort bar - semi-transparent, no border
-                sort_bar_style = """
-                    QWidget#sortBar {
-                        background: rgba(0, 0, 0, 0.5);
-                        border: none;
-                        border-radius: 12px;
-                        padding: 0 8px;
-                    }
-                """
+
                 
                 # Apply to games container
                 if hasattr(self, 'games_container'):
@@ -5991,11 +6033,11 @@ class GameLauncher(QWidget):
             self._title_bg_opacity = 0  # No opacity needed
             
             if hasattr(self, 'games_container'):
-                self.games_container.setStyleSheet("")
+                self.games_container.setStyleSheet("background: transparent;")
             if hasattr(self, 'recently_played_widget'):
-                self.recently_played_widget.setStyleSheet("")
+                self.recently_played_widget.setStyleSheet(recently_played_style)
             if hasattr(self, 'sort_bar'):
-                self.sort_bar.setStyleSheet("")
+                self.sort_bar.setStyleSheet(sort_bar_style)
             
             # Apply white text color to sortBar labels when no background image
             label_style = f"font-size: 13px; color: {self._sortbar_label_color}; background: transparent;"
@@ -7440,10 +7482,7 @@ Stylesheet Selector:
             chevron.setProperty("down_svg", down_svg)
             chevron.setProperty("right_svg", right_svg)
             
-            if idx == 0:
-                chevron.load(down_svg)
-            else:
-                chevron.load(right_svg)
+            chevron.load(right_svg)
             
             chevron.setStyleSheet("background: transparent;")
             header_layout.addWidget(chevron)
@@ -7634,7 +7673,7 @@ Stylesheet Selector:
             # Store references
             self._cpu_collapsible_groups[group_id] = {
                 "header": header_widget, "content": content_widget, "chevron": chevron,
-                "expanded": idx == 0, "title": title
+                "expanded": False, "title": title
             }
             
             # Click handler for header with animations
@@ -7690,9 +7729,8 @@ Stylesheet Selector:
             
             header_widget.mousePressEvent = make_toggle(group_id, content_widget, chevron)
             
-            # Collapse non-first groups (chevron already set above)
-            if idx > 0:
-                content_widget.setVisible(False)
+            # Collapse all groups by default
+            content_widget.setVisible(False)
             
             sliders_layout.addWidget(group_container)
         
@@ -10049,8 +10087,26 @@ Stylesheet Selector:
         scroll_area.setFrameShape(QFrame.NoFrame)
         scroll_area.setStyleSheet("""
             QScrollArea { background: transparent; border: none; }
-            QScrollBar:vertical { background: #1a1a1a; width: 6px; }
-            QScrollBar::handle:vertical { background: #444; border-radius: 3px; }
+            QScrollBar:vertical {
+                background: rgba(0, 0, 0, 0.3);
+                width: 8px;
+                border-radius: 4px;
+                margin: 2px 0px 2px 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #FF5B06;
+                border-radius: 4px;
+                min-height: 35px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #FF7B36;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px; background: none; border: none;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
         """)
 
         scroll_content = QWidget()

@@ -871,10 +871,10 @@ class MacroSettingsPanel(QWidget):
         self._debounce_slider.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: none;
-                height: 6px;
+                height: 4px;
                 background: #2a2d35;
-                margin: 2px 0;
-                border-radius: 3px;
+                margin: 0px;
+                border-radius: 2px;
             }
             QSlider::handle:horizontal {
                 background: #FF5B06;
@@ -886,7 +886,7 @@ class MacroSettingsPanel(QWidget):
             }
             QSlider::sub-page:horizontal {
                 background: #FF5B06;
-                border-radius: 3px;
+                border-radius: 2px;
             }
         """)
         self._debounce_slider.setCursor(Qt.PointingHandCursor)
@@ -1175,10 +1175,10 @@ class MacroSettingsPanel(QWidget):
         self._dpi_slider.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: none;
-                height: 6px;
+                height: 4px;
                 background: #2a2d35;
-                margin: 2px 0;
-                border-radius: 3px;
+                margin: 0px;
+                border-radius: 2px;
             }
             QSlider::handle:horizontal {
                 background: #FF5B06;
@@ -1190,7 +1190,7 @@ class MacroSettingsPanel(QWidget):
             }
             QSlider::sub-page:horizontal {
                 background: #FF5B06;
-                border-radius: 3px;
+                border-radius: 2px;
             }
         """)
         self._dpi_slider.valueChanged.connect(self._on_dpi_slider_changed)
@@ -1646,10 +1646,10 @@ class MacroSettingsPanel(QWidget):
         self._brightness_slider.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: none;
-                height: 6px;
+                height: 4px;
                 background: #2a2d35;
-                margin: 2px 0;
-                border-radius: 3px;
+                margin: 0px;
+                border-radius: 2px;
             }
             QSlider::groove:horizontal:disabled {
                 background: #202020;
@@ -1669,7 +1669,7 @@ class MacroSettingsPanel(QWidget):
             }
             QSlider::sub-page:horizontal {
                 background: #FF5B06;
-                border-radius: 3px;
+                border-radius: 2px;
             }
             QSlider::sub-page:horizontal:disabled {
                 background: #404040;
@@ -1700,10 +1700,10 @@ class MacroSettingsPanel(QWidget):
         self._speed_slider.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: none;
-                height: 6px;
+                height: 4px;
                 background: #2a2d35;
-                margin: 2px 0;
-                border-radius: 3px;
+                margin: 0px;
+                border-radius: 2px;
             }
             QSlider::groove:horizontal:disabled {
                 background: #202020;
@@ -1723,7 +1723,7 @@ class MacroSettingsPanel(QWidget):
             }
             QSlider::sub-page:horizontal {
                 background: #FF5B06;
-                border-radius: 3px;
+                border-radius: 2px;
             }
             QSlider::sub-page:horizontal:disabled {
                 background: #404040;

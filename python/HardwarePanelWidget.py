@@ -112,20 +112,22 @@ class CircularGauge(QWidget):
             painter.setPen(gradient_pen)
             painter.drawArc(rect, 225 * 16, sweep)
         
-        # Center text - percentage
+        # Center text - percentage (shifted slightly upward to align with 270-degree arc)
+        y_offset = int(-size * 0.07)
+        percent_rect = self.rect().translated(0, y_offset)
+        
         painter.setPen(QColor("#ffffff"))
-        percent_font = QFont("Orbitron", int(size * 0.18), QFont.Bold)
+        percent_font = QFont("Orbitron", int(size * 0.13), QFont.Bold)
         painter.setFont(percent_font)
         percent_text = f"{int(self._value)}%"
-        painter.drawText(self.rect(), Qt.AlignCenter, percent_text)
+        painter.drawText(percent_rect, Qt.AlignCenter, percent_text)
         
         # Subtitle below percentage
         if self._subtitle:
             painter.setPen(QColor("#888888"))
             sub_font = QFont("Orbitron", int(size * 0.05))
             painter.setFont(sub_font)
-            sub_rect = self.rect()
-            sub_rect.moveTop(int(size * 0.15))
+            sub_rect = percent_rect.translated(0, int(size * 0.14))
             painter.drawText(sub_rect, Qt.AlignCenter, self._subtitle)
         
         painter.end()
@@ -345,13 +347,16 @@ class StatsCard(QFrame):
         layout.addWidget(self.content_widget, stretch=1)
     
     def _apply_style(self):
-        # Apply style matching Booster tab (rgba(30, 30, 30, 0.5)) with no border
+        # Apply style matching HELXAIL card style (rgba(255, 255, 255, 0.04)) with 1px border and hover effect
         self.setProperty("class", "statsCard")
         self.setStyleSheet("""
-            QFrame#StatsCard {
-                background: rgba(30, 30, 30, 0.5);
-                border: none;
-                border-radius: 12px;
+            QFrame[class="statsCard"], QFrame#StatsCard, QFrame#cpuUsageCard, QFrame#ramUsageCard, QFrame#networkUsageCard, QFrame#diskHealthCard {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QFrame[class="statsCard"]:hover, QFrame#StatsCard:hover, QFrame#cpuUsageCard:hover, QFrame#ramUsageCard:hover, QFrame#networkUsageCard:hover, QFrame#diskHealthCard:hover {
+                border-color: rgba(255, 91, 6, 0.4);
             }
         """)
     
@@ -771,9 +776,12 @@ class HardwarePanelWidget(QWidget):
         right_panel.setObjectName("ramRightPanel")
         right_panel.setStyleSheet("""
             QWidget#ramRightPanel {
-                background: rgba(30, 30, 30, 0.5);
-                border: none;
-                border-radius: 12px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#ramRightPanel:hover {
+                border-color: rgba(255, 91, 6, 0.4);
             }
         """)
         right_layout = QVBoxLayout(right_panel)
