@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
     QFrame, QStackedWidget, QSizePolicy, QAbstractItemView,
     QScrollArea, QLineEdit, QSpinBox, QSpacerItem,
     QDialog, QComboBox, QRadioButton, QButtonGroup, QCheckBox,
-    QProgressBar, QGroupBox, QSplitter, QApplication, QToolButton
+    QProgressBar, QGroupBox, QSplitter, QApplication, QToolButton,
+    QStyledItemDelegate, QStyle
 )
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import (
@@ -2773,7 +2774,9 @@ class PlaylistTable(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection) # Allow multiple delete
         self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tree.setSortingEnabled(False)  # We handle sorting manually
-        self.tree.setFocusPolicy(Qt.NoFocus)
+        self.tree.setFocusPolicy(Qt.ClickFocus)
+        from MediaLibraryPage import NoFocusDelegate
+        self.tree.setItemDelegate(NoFocusDelegate(self.tree))
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._show_context_menu)
         self.tree.setUniformRowHeights(True)
@@ -2786,7 +2789,19 @@ class PlaylistTable(QWidget):
         self.tree.setAcceptDrops(True)
         self.tree.setDropIndicatorShown(True)
         self.tree.setDragDropMode(QAbstractItemView.InternalMove)
-        
+        orig_playlist_keyPressEvent = self.tree.keyPressEvent
+        def _playlist_keyPressEvent(event):
+            if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+                self.select_all()
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Delete:
+                self._on_delete_selected()
+                event.accept()
+                return
+            orig_playlist_keyPressEvent(event)
+        self.tree.keyPressEvent = _playlist_keyPressEvent
+
         # --- Rubber Band Setup ---
         from PySide6.QtWidgets import QRubberBand
         from PySide6.QtCore import QRect
@@ -2819,6 +2834,7 @@ class PlaylistTable(QWidget):
 
         def _tree_mousePressEvent(event):
             if event.button() == Qt.LeftButton:
+                self.tree._click_start_pos = event.pos()
                 item = self.tree.itemAt(event.pos())
                 column = self.tree.columnAt(event.pos().x())
                 
@@ -2859,6 +2875,7 @@ class PlaylistTable(QWidget):
                     
                     if not item and not (event.modifiers() & Qt.ControlModifier):
                         self.tree.clearSelection()
+                        self._update_item_selection_styles()
                         
                     orig_mousePressEvent(event)
                     return
@@ -2933,16 +2950,32 @@ class PlaylistTable(QWidget):
                             
                 for i in range(self.tree.topLevelItemCount()):
                     check_item(self.tree.topLevelItem(i))
+                self._update_item_selection_styles()
                 return
             orig_mouseMoveEvent(event)
             
         def _tree_mouseReleaseEvent(event):
-            if getattr(self.tree, '_rubber_band_active', False):
-                self.tree._rubber_band.hide()
-                self.tree._rubber_band_active = False
-                self.tree._rubber_band_origin = None
-                if getattr(self.tree, '_rubber_band_dragged', False):
-                    return
+            if event.button() == Qt.LeftButton:
+                if getattr(self.tree, '_rubber_band_active', False):
+                    self.tree._rubber_band.hide()
+                    self.tree._rubber_band_active = False
+                    self.tree._rubber_band_origin = None
+                    if getattr(self.tree, '_rubber_band_dragged', False):
+                        self._update_item_selection_styles()
+                        return
+                else:
+                    click_pos = getattr(self.tree, '_click_start_pos', None)
+                    if click_pos and (event.pos() - click_pos).manhattanLength() < 5:
+                        if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
+                            item = self.tree.itemAt(event.pos())
+                            if item:
+                                self.tree.clearSelection()
+                                item.setSelected(True)
+                                self.tree.setCurrentItem(item)
+                            else:
+                                self.tree.clearSelection()
+                            self._update_item_selection_styles()
+                            return
             orig_mouseReleaseEvent(event)
             
         self.tree.mousePressEvent = _tree_mousePressEvent
@@ -3055,7 +3088,12 @@ class PlaylistTable(QWidget):
                 border: none;
                 color: #e0e0e0;
                 outline: none;
+                outline: 0;
                 font-family: 'Orbitron', sans-serif;
+            }
+            QTreeWidget:focus {
+                outline: none;
+                border: none;
             }
             QTreeWidget QHeaderView {
                 background: transparent;
@@ -3067,13 +3105,27 @@ class PlaylistTable(QWidget):
             QTreeWidget::item {
                 padding: 8px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                border-top: none;
+                border-left: none;
+                border-right: none;
+                outline: none;
                 font-family: 'Orbitron', sans-serif;
+            }
+            QTreeWidget::item:focus {
+                outline: none;
+                border-top: none;
+                border-left: none;
+                border-right: none;
             }
             QTreeWidget::item:hover {
                 background: rgba(255, 255, 255, 0.05);
             }
             QTreeWidget::item:selected {
-                background: rgba(255, 91, 6, 0.15);
+                background: rgba(255, 91, 6, 0.45);
+                outline: none;
+                border-top: none;
+                border-left: none;
+                border-right: none;
             }
             QHeaderView::section {
                 background: transparent;
@@ -3194,16 +3246,50 @@ class PlaylistTable(QWidget):
         if not selected_items:
             return
             
-        orig_indices = []
+        orig_indices = set()
         for item in selected_items:
             orig_idx = item.data(0, Qt.UserRole)
             if orig_idx is not None and isinstance(orig_idx, int):
-                orig_indices.append(orig_idx)
+                orig_indices.add(orig_idx)
+            elif orig_idx == "folder":
+                for i in range(item.childCount()):
+                    c_idx = item.child(i).data(0, Qt.UserRole)
+                    if isinstance(c_idx, int):
+                        orig_indices.add(c_idx)
                 
         if orig_indices:
             # Sort in reverse to delete correctly from list
-            orig_indices.sort(reverse=True)
-            self.deleteSelected.emit(orig_indices)
+            sorted_indices = sorted(list(orig_indices), reverse=True)
+            self.deleteSelected.emit(sorted_indices)
+
+    def select_all(self):
+        self.tree.setUpdatesEnabled(False)
+        try:
+            def _select_recursive(item):
+                item.setSelected(True)
+                for c in range(item.childCount()):
+                    _select_recursive(item.child(c))
+
+            for i in range(self.tree.topLevelItemCount()):
+                _select_recursive(self.tree.topLevelItem(i))
+
+            self._update_item_selection_styles()
+        finally:
+            self.tree.setUpdatesEnabled(True)
+            self.tree.viewport().update()
+
+    def _update_item_selection_styles(self):
+        from PySide6.QtGui import QColor
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            if item.data(0, Qt.UserRole) == "folder":
+                if item.isSelected():
+                    for c in range(4):
+                        item.setBackground(c, QColor(255, 91, 6, 120))
+                else:
+                    for c in range(4):
+                        item.setBackground(c, QColor(40, 40, 45, 180))
+        self.tree.viewport().update()
     
     def set_tracks(self, tracks: list):
         self._tracks = tracks
@@ -3346,6 +3432,8 @@ class PlaylistTable(QWidget):
         for group, folder_item in created_folders.items():
             folder_item.setExpanded(expanded_states.get(group, False))
             
+        self.tree.clearSelection()
+        self._update_item_selection_styles()
         self.tree.setUpdatesEnabled(True)
             
     def highlight_playing(self, index: int):
@@ -5832,6 +5920,7 @@ class MusicPanelWidget(QWidget):
         from PySide6.QtGui import QKeySequence, QShortcut
         # Shortcut for Ctrl+A (Select All Tracks)
         self.sc_select_all = QShortcut(QKeySequence("Ctrl+A"), self)
+        self.sc_select_all.setContext(Qt.WidgetWithChildrenShortcut)
         self.sc_select_all.activated.connect(self._on_select_all_tracks)
         
         self.player_bar.seekChanged.connect(self._seek)
@@ -5870,8 +5959,14 @@ class MusicPanelWidget(QWidget):
         if isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)):
             fw.selectAll()
         else:
-            if hasattr(self, 'table') and hasattr(self.table, 'tree'):
-                self.table.tree.selectAll()
+            if hasattr(self, 'stack'):
+                idx = self.stack.currentIndex()
+                if idx == 0 and hasattr(self, 'table'):
+                    self.table.select_all()
+                elif idx == 1 and hasattr(self, 'media_lib_page'):
+                    self.media_lib_page.select_all()
+            elif hasattr(self, 'table'):
+                self.table.select_all()
                 
     def _on_player_error(self, error, error_string):
         """Handle media player errors."""

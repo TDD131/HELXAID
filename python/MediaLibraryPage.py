@@ -4,10 +4,17 @@ import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
     QTreeWidget, QTreeWidgetItem, QHeaderView, QLineEdit,
-    QFileDialog, QAbstractItemView, QApplication
+    QFileDialog, QAbstractItemView, QApplication, QStyledItemDelegate, QStyle
 )
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QThread, QObject, QEvent
 from PySide6.QtGui import QCursor, QColor, QIcon, QFont, QKeySequence, QShortcut
+
+class NoFocusDelegate(QStyledItemDelegate):
+    """Custom delegate to suppress Qt's default dotted focus rectangle outline."""
+    def paint(self, painter, option, index):
+        if option.state & QStyle.State_HasFocus:
+            option.state = option.state ^ QStyle.State_HasFocus
+        super().paint(painter, option, index)
 
 # Try to import mutagen for metadata
 try:
@@ -45,14 +52,53 @@ class MediaLibraryPage(QWidget):
         QTimer.singleShot(100, self.load_library)
 
     def _setup_shortcuts(self):
-        # Ctrl+O : Add File
-        QShortcut(QKeySequence("Ctrl+O"), self, activated=self._add_single_file)
-        # Ctrl+Shift+O : Add Folder
-        QShortcut(QKeySequence("Ctrl+Shift+O"), self, activated=self._add_single_folder)
-        # Ctrl+K, Ctrl+O (holding Ctrl) : Add Multiple Files
-        QShortcut(QKeySequence("Ctrl+K, Ctrl+O"), self, activated=self._add_multiple_files)
-        # Ctrl+Shift+K, O (or Ctrl+K, Shift+O) : Add Multiple Folders
-        QShortcut(QKeySequence("Ctrl+K, Shift+O"), self, activated=self._add_multiple_folders)
+        sc_file = QShortcut(QKeySequence("Ctrl+O"), self, activated=self._add_single_file)
+        sc_file.setContext(Qt.WidgetWithChildrenShortcut)
+        sc_folder = QShortcut(QKeySequence("Ctrl+Shift+O"), self, activated=self._add_single_folder)
+        sc_folder.setContext(Qt.WidgetWithChildrenShortcut)
+        sc_mfiles = QShortcut(QKeySequence("Ctrl+K, Ctrl+O"), self, activated=self._add_multiple_files)
+        sc_mfiles.setContext(Qt.WidgetWithChildrenShortcut)
+        sc_mfold = QShortcut(QKeySequence("Ctrl+K, Shift+O"), self, activated=self._add_multiple_folders)
+        sc_mfold.setContext(Qt.WidgetWithChildrenShortcut)
+        sc_all = QShortcut(QKeySequence("Ctrl+A"), self, activated=self._select_all_if_not_input)
+        sc_all.setContext(Qt.WidgetWithChildrenShortcut)
+        sc_del = QShortcut(QKeySequence("Delete"), self, activated=self._delete_selected_if_not_input)
+        sc_del.setContext(Qt.WidgetWithChildrenShortcut)
+
+    def _select_all_if_not_input(self):
+        from PySide6.QtWidgets import QApplication, QLineEdit
+        if not isinstance(QApplication.focusWidget(), QLineEdit):
+            self.select_all()
+
+    def select_all(self):
+        folders = getattr(self, '_all_folder_items', [])
+        tracks = getattr(self, '_all_track_items', [])
+        self.tree.setUpdatesEnabled(False)
+        try:
+            for folder_item in folders:
+                folder_item.setSelected(True)
+            for track_item in tracks:
+                track_item.setSelected(True)
+            self._update_item_selection_styles()
+        finally:
+            self.tree.setUpdatesEnabled(True)
+            self.tree.viewport().update()
+
+    def _update_item_selection_styles(self):
+        from PySide6.QtGui import QColor
+        for folder_item in getattr(self, '_all_folder_items', []):
+            if folder_item.isSelected():
+                for c in range(5):
+                    folder_item.setBackground(c, QColor(255, 91, 6, 120))
+            else:
+                for c in range(5):
+                    folder_item.setBackground(c, QColor(40, 40, 45, 180))
+        self.tree.viewport().update()
+
+    def _delete_selected_if_not_input(self):
+        from PySide6.QtWidgets import QApplication, QLineEdit
+        if not isinstance(QApplication.focusWidget(), QLineEdit):
+            self._on_delete_selected()
 
     def _setup_ui(self):
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -113,14 +159,21 @@ class MediaLibraryPage(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.setAlternatingRowColors(False)
         self.tree.setRootIsDecorated(False) # Turn off default expand arrow
-        self.tree.setItemsExpandable(False) # We will manually handle expansion on single click
-        self.tree.setFocusPolicy(Qt.NoFocus)
+        self.tree.setItemsExpandable(True)
+        self.tree.setFocusPolicy(Qt.ClickFocus)
+        self.tree.setItemDelegate(NoFocusDelegate(self.tree))
         self.tree.setStyleSheet("""
             QTreeWidget {
                 background: transparent;
                 background-color: transparent;
                 border: none;
                 color: #e0e0e0;
+                outline: none;
+                outline: 0;
+            }
+            QTreeWidget:focus {
+                outline: none;
+                border: none;
             }
             QTreeWidget QHeaderView {
                 background: transparent;
@@ -131,14 +184,31 @@ class MediaLibraryPage(QWidget):
             QTreeWidget::item {
                 padding: 8px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                outline: none;
+                border-top: none;
+                border-left: none;
+                border-right: none;
+            }
+            QTreeWidget::item:focus {
+                outline: none;
+                border-top: none;
+                border-left: none;
+                border-right: none;
             }
             QTreeWidget::item:hover {
                 background: rgba(255, 255, 255, 0.05);
             }
             QTreeWidget::item:selected {
-                background: rgba(255, 91, 6, 0.15);
+                background: rgba(255, 91, 6, 0.45);
+                color: #ffffff;
+                outline: none;
+                border-top: none;
+                border-left: none;
+                border-right: none;
             }
         """)
+        
+        self.tree.itemSelectionChanged.connect(self._update_item_selection_styles)
         
         # Force the tree to pass drag & drop events to the parent logic
         self.tree.setDragDropMode(QAbstractItemView.InternalMove)
@@ -146,6 +216,22 @@ class MediaLibraryPage(QWidget):
         self.tree.setAcceptDrops(True)
         self.tree.setDropIndicatorShown(True)
         
+        orig_tree_keyPressEvent = self.tree.keyPressEvent
+        def _tree_keyPressEvent(event):
+            print(f"[DEBUG MediaLibraryTree] keyPressEvent key={event.key()}, modifiers={event.modifiers()}")
+            if event.key() == Qt.Key_A and bool(event.modifiers() & Qt.ControlModifier):
+                print("[DEBUG MediaLibraryTree] Ctrl+A matched in tree.keyPressEvent!")
+                self.select_all()
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Delete:
+                print("[DEBUG MediaLibraryTree] Delete matched in tree.keyPressEvent!")
+                self._on_delete_selected()
+                event.accept()
+                return
+            orig_tree_keyPressEvent(event)
+        self.tree.keyPressEvent = _tree_keyPressEvent
+
         # --- Rubber Band Setup ---
         from PySide6.QtWidgets import QRubberBand
         from PySide6.QtCore import QRect
@@ -159,6 +245,7 @@ class MediaLibraryPage(QWidget):
         
         def _tree_mousePressEvent(event):
             if event.button() == Qt.LeftButton:
+                self.tree._click_start_pos = event.pos()
                 item = self.tree.itemAt(event.pos())
                 column = self.tree.columnAt(event.pos().x())
                 
@@ -199,6 +286,7 @@ class MediaLibraryPage(QWidget):
                     
                     if not item and not (event.modifiers() & Qt.ControlModifier):
                         self.tree.clearSelection()
+                        self._update_item_selection_styles()
                         
                     orig_mousePressEvent(event)
                     return
@@ -227,21 +315,48 @@ class MediaLibraryPage(QWidget):
                             
                 for i in range(self.tree.topLevelItemCount()):
                     check_item(self.tree.topLevelItem(i))
+                self._update_item_selection_styles()
                 return
             orig_mouseMoveEvent(event)
             
         def _tree_mouseReleaseEvent(event):
-            if getattr(self.tree, '_rubber_band_active', False):
-                self.tree._rubber_band.hide()
-                self.tree._rubber_band_active = False
-                self.tree._rubber_band_origin = None
-                if getattr(self.tree, '_rubber_band_dragged', False):
-                    return
+            if event.button() == Qt.LeftButton:
+                if getattr(self.tree, '_rubber_band_active', False):
+                    self.tree._rubber_band.hide()
+                    self.tree._rubber_band_active = False
+                    self.tree._rubber_band_origin = None
+                    if getattr(self.tree, '_rubber_band_dragged', False):
+                        self._update_item_selection_styles()
+                        return
+                else:
+                    click_pos = getattr(self.tree, '_click_start_pos', None)
+                    if click_pos and (event.pos() - click_pos).manhattanLength() < 5:
+                        if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
+                            item = self.tree.itemAt(event.pos())
+                            if item:
+                                self.tree.clearSelection()
+                                item.setSelected(True)
+                                self.tree.setCurrentItem(item)
+                            else:
+                                self.tree.clearSelection()
+                            self._update_item_selection_styles()
+                            return
             orig_mouseReleaseEvent(event)
             
+        orig_mouseDoubleClickEvent = self.tree.mouseDoubleClickEvent
+        def _tree_mouseDoubleClickEvent(event):
+            if event.button() == Qt.LeftButton:
+                item = self.tree.itemAt(event.pos())
+                if item and item.data(0, Qt.UserRole) == "folder":
+                    item.setExpanded(not item.isExpanded())
+                    event.accept()
+                    return
+            orig_mouseDoubleClickEvent(event)
+
         self.tree.mousePressEvent = _tree_mousePressEvent
         self.tree.mouseMoveEvent = _tree_mouseMoveEvent
         self.tree.mouseReleaseEvent = _tree_mouseReleaseEvent
+        self.tree.mouseDoubleClickEvent = _tree_mouseDoubleClickEvent
         # ------------------------
         
         self.tree.dragEnterEvent = self.dragEnterEvent
@@ -830,6 +945,8 @@ class MediaLibraryPage(QWidget):
         self.stats_label.setText(f"{total_tracks} tracks | {time_str} total | {total_folders} folder(s)")
         
         self._renumber_items()
+        self.tree.clearSelection()
+        self._update_item_selection_styles()
 
     def _on_item_double_clicked(self, item, column):
         role = item.data(0, Qt.UserRole)
@@ -888,6 +1005,17 @@ class MediaLibraryPage(QWidget):
         return tracks
         
     def _get_track_meta(self, path):
+        if not hasattr(self, '_meta_cache'):
+            self._meta_cache = {}
+            
+        try:
+            mtime = os.path.getmtime(path)
+        except Exception:
+            mtime = 0
+            
+        if path in self._meta_cache and self._meta_cache[path].get('mtime') == mtime:
+            return self._meta_cache[path]['meta']
+            
         title = os.path.splitext(os.path.basename(path))[0]
         artist = ""
         album = ""
@@ -944,10 +1072,12 @@ class MediaLibraryPage(QWidget):
             except Exception:
                 pass
                 
-        return {
+        res = {
             'path': path,
             'title': title,
             'artist': artist,
             'album': album,
             'duration': duration
         }
+        self._meta_cache[path] = {'mtime': mtime, 'meta': res}
+        return res

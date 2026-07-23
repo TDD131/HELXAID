@@ -2366,48 +2366,73 @@ def _cleanup_old_shortcut():
 
 def load_json():
     print(f"[Config] Loading from: {JSON_PATH}")
+    bak_path = JSON_PATH + ".bak"
+    
     # Create empty config.json if it doesn't exist (first launch)
     if not os.path.exists(JSON_PATH):
-        print(f"[Config] File not found, creating new empty config")
-        try:
-            with open(JSON_PATH, "w") as f:
-                json.dump([], f)
-            return []
-        except Exception as e:
-            print(f"Error creating config.json: {e}")
-            return []
+        if os.path.exists(bak_path):
+            print(f"[Config] Primary JSON not found, attempting recovery from backup: {bak_path}")
+            try:
+                import shutil
+                shutil.copy2(bak_path, JSON_PATH)
+            except Exception as e:
+                print(f"[Config] Backup restore failed: {e}")
+        else:
+            print(f"[Config] File not found, creating new empty config")
+            try:
+                with open(JSON_PATH, "w") as f:
+                    json.dump([], f)
+                return []
+            except Exception as e:
+                print(f"Error creating config.json: {e}")
+                return []
     
+    def _parse_and_migrate(raw_data):
+        if isinstance(raw_data, list):
+            games = raw_data
+        else:
+            games = raw_data.get("games", [])
+        
+        for game in games:
+            if "description" in game and "notes" not in game:
+                game["notes"] = game.pop("description")
+            game.setdefault("notes", "")
+            game.setdefault("category", "")
+            game.setdefault("tags", [])
+            game.setdefault("favorite", False)
+            game.setdefault("hidden", False)
+            game.setdefault("launch_options", "")
+            game.setdefault("play_time_seconds", 0)
+            game.setdefault("last_played", "")
+            game.setdefault("first_played", "")
+            game.setdefault("date_added", "")
+            game.setdefault("session_history", [])
+            game.setdefault("genre", "")
+            game.setdefault("developer", "")
+        return games
+
     try:
-        with open(JSON_PATH, "r") as f:
+        with open(JSON_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Check if data is a list (direct array of games) or a dict with "games" key
-            if isinstance(data, list):
-                games = data
-            else:
-                games = data.get("games", [])
-            
-            # Migrate: rename 'description' to 'notes' if needed
-            for game in games:
-                if "description" in game and "notes" not in game:
-                    game["notes"] = game.pop("description")
-                # Ensure new fields exist with defaults
-                game.setdefault("notes", "")
-                game.setdefault("category", "")
-                game.setdefault("tags", [])
-                game.setdefault("favorite", False)
-                game.setdefault("hidden", False)
-                game.setdefault("launch_options", "")
-                game.setdefault("play_time_seconds", 0)
-                game.setdefault("last_played", "")
-                game.setdefault("first_played", "")  # Track when game was first played
-                game.setdefault("date_added", "")
-                game.setdefault("session_history", [])  # List of {duration, date} for avg/longest
-                game.setdefault("genre", "")  # User-editable genre
-                game.setdefault("developer", "")  # User-editable developer
-            
-            return games
+            return _parse_and_migrate(data)
     except Exception as e:
-        print(f"Error loading JSON: {e}")
+        print(f"[Config] Primary JSON corrupt or unreadable: {e}")
+        if os.path.exists(bak_path):
+            print(f"[Config] Attempting auto-recovery from backup JSON: {bak_path}")
+            try:
+                with open(bak_path, "r", encoding="utf-8") as f_bak:
+                    bak_data = json.load(f_bak)
+                    recovered_games = _parse_and_migrate(bak_data)
+                    print(f"[Config] SUCCESS: Recovered {len(recovered_games)} games from backup!")
+                    # Restore primary file
+                    try:
+                        import shutil
+                        shutil.copy2(bak_path, JSON_PATH)
+                    except Exception:
+                        pass
+                    return recovered_games
+            except Exception as bak_err:
+                print(f"[Config] Backup recovery also failed: {bak_err}")
         return []
 
 
@@ -2511,14 +2536,23 @@ def save_json(data, force_save=False):
     if force_save and len(data) == 0:
         print(f"[Config] Force saving 0 games (user deleted all games)")
     
-    import time
+    import time, shutil
     tmp_path = JSON_PATH + f".tmp_{os.getpid()}"
+    bak_path = JSON_PATH + ".bak"
     
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            with open(tmp_path, "w") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
+            
+            # Create backup of current JSON before replacing
+            if os.path.exists(JSON_PATH) and os.path.getsize(JSON_PATH) > 0:
+                try:
+                    shutil.copy2(JSON_PATH, bak_path)
+                except Exception as bak_err:
+                    print(f"[Config] Minor backup warning: {bak_err}")
+            
             os.replace(tmp_path, JSON_PATH)
             print(f"[Config] Saved {len(data)} games")
             break
@@ -2528,7 +2562,6 @@ def save_json(data, force_save=False):
                 time.sleep(0.1)
             else:
                 print(f"[Config] Failed to save after {max_retries} attempts: {e}")
-                # Clean up temp file if possible
                 try:
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
@@ -2562,10 +2595,50 @@ class FadeToolTip(QLabel):
         self.animation.start()
         super().show()
 
-    def hide(self):
+    def hide(self): 
         self.animation.setDirection(QPropertyAnimation.Backward)
         self.animation.start()
         QTimer.singleShot(200, super().hide)
+
+
+def _brighten_icon_pixmap(icon):
+    """Create a black and white (grayscale) version of QIcon while preserving alpha transparency."""
+    if not icon or icon.isNull():
+        return icon
+    sizes = icon.availableSizes()
+    size = sizes[0] if sizes else QSize(64, 64)
+    pix = icon.pixmap(size)
+    if pix.isNull():
+        return icon
+    
+    img = pix.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+    w, h = img.width(), img.height()
+    if w <= 0 or h <= 0:
+        return icon
+        
+    raw = bytearray(img.constBits())
+    bpl = img.bytesPerLine()
+    
+    for y in range(h):
+        offset = y * bpl
+        for x in range(w):
+            idx = offset + x * 4
+            a = raw[idx + 3]
+            if a > 10:  # non-transparent pixel
+                b = raw[idx]
+                g = raw[idx + 1]
+                r = raw[idx + 2]
+                
+                # BT.601 Grayscale luminance formula
+                gray = int(0.299 * r + 0.587 * g + 0.114 * b)
+                gray = max(0, min(255, gray))
+                
+                raw[idx] = gray      # B
+                raw[idx + 1] = gray  # G
+                raw[idx + 2] = gray  # R
+    
+    result_img = QImage(bytes(raw), w, h, bpl, QImage.Format.Format_ARGB32)
+    return QIcon(QPixmap.fromImage(result_img.copy()))
 
 
 # ----------------------------------------------------------
@@ -2585,6 +2658,8 @@ class AnimatedGameButton(QPushButton):
         self.base_size = None
         self._original_style = ""
         self._is_selected = False
+        self._original_icon = None
+        self._bright_icon = None
     
     def _is_valid(self):
         """Check if this Qt object is still valid (not deleted)."""
@@ -2593,9 +2668,19 @@ class AnimatedGameButton(QPushButton):
             return isValid(self)
         except:
             return True  # Assume valid if we can't check
+            
+    def setIcon(self, icon):
+        """Override setIcon to store original icon and update brightened icon."""
+        self._original_icon = icon
+        self._bright_icon = None
+        if getattr(self, '_is_selected', False):
+            self._bright_icon = _brighten_icon_pixmap(icon)
+            super().setIcon(self._bright_icon)
+        else:
+            super().setIcon(icon)
     
     def setSelected(self, selected):
-        """Set the selected state of the button."""
+        """Set the selected state of the button, brightening the icon image directly."""
         # Safety check: don't operate on deleted objects
         if not self._is_valid():
             return
@@ -2608,24 +2693,36 @@ class AnimatedGameButton(QPushButton):
                 AnimatedGameButton._selected_button = None  # Clear first to prevent recursion issues
                 try:
                     if prev_btn._is_valid():
-                        prev_btn._is_selected = False  # Direct set to avoid recursion
-                        prev_btn.setStyleSheet("")
+                        prev_btn.setSelected(False)
                 except RuntimeError:
                     pass  # Button was deleted
                     
             AnimatedGameButton._selected_button = self
-            # Selected: stronger black-to-orange gradient
-            self.setStyleSheet("""
-                QPushButton {
-                    border: none;
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 rgba(0, 0, 0, 0.55), stop:1 rgba(255, 91, 6, 0.70));
-                }
-            """)
+            
+            # Brighten the image icon directly (without background color!)
+            if hasattr(self, '_original_icon') and self._original_icon:
+                if not getattr(self, '_bright_icon', None):
+                    self._bright_icon = _brighten_icon_pixmap(self._original_icon)
+                if self._bright_icon:
+                    super().setIcon(self._bright_icon)
+            
+            # Keep background transparent/clean (no background color added)
+            if hasattr(self, '_bg_image_style') and self._bg_image_style:
+                self.setStyleSheet(self._bg_image_style)
+            else:
+                self.setStyleSheet("QPushButton { background: transparent; border: none; }")
         else:
             if AnimatedGameButton._selected_button == self:
                 AnimatedGameButton._selected_button = None
-            self.setStyleSheet("")
+                
+            # Restore normal un-brightened icon image
+            if hasattr(self, '_original_icon') and self._original_icon:
+                super().setIcon(self._original_icon)
+                
+            if hasattr(self, '_bg_image_style') and self._bg_image_style:
+                self.setStyleSheet(self._bg_image_style)
+            else:
+                self.setStyleSheet("")
     
     # Simple hover animation using opacity effect instead of scale
     # (scale animation causes layout issues)
@@ -5131,6 +5228,31 @@ class GameLauncher(QWidget):
         
         # Add Game menu with options for scanning and managing libraries
         self.add_menu = QMenu(self)
+        self.add_menu.setObjectName("AddGameMenu")
+        self.add_menu.setStyleSheet("""
+            QMenu#AddGameMenu, QMenu {
+                background-color: #161622;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QMenu::item {
+                color: #e0e0e0;
+                padding: 6px 16px;
+                border-radius: 4px;
+                font-size: 12px;
+                background-color: transparent;
+            }
+            QMenu::item:selected, QMenu::item:hover {
+                background-color: #ff5b06;
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: rgba(255, 255, 255, 0.12);
+                margin: 4px 6px;
+            }
+        """)
         universal_scan_action = self.add_menu.addAction("Universal Scan")
         
         self.add_menu.addSeparator()
@@ -9814,9 +9936,11 @@ Stylesheet Selector:
             # (typically 30-50ms) while feeling instant for deliberate presses.
             COOLDOWN = 0.30
             
-            if event.type() == QEvent.KeyPress:
+            if event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride):
                 key = event.key()
                 modifiers = event.modifiers()
+                if key == Qt.Key_A and bool(modifiers & Qt.ControlModifier):
+                    print(f"[DEBUG eventFilter] Caught Ctrl+A event_type={event.type()}!")
                 
                 # F11 or Alt+Return: Toggle Fullscreen (Global)
                 if (key == Qt.Key_F11 and modifiers == Qt.NoModifier) or \
@@ -9838,7 +9962,7 @@ Stylesheet Selector:
                         if isinstance(focus_widget, QLineEdit):
                             return False
                         
-                        # === Arrow Seek Keys (no cooldown — hold to seek continuously) ===
+                        # === Arrow Seek & Volume Keys (no cooldown — hold continuously) ===
                         # Left Arrow: Rewind 5 seconds
                         if key == Qt.Key_Left:
                             current_pos = self.music_panel._player.position()
@@ -9851,6 +9975,18 @@ Stylesheet Selector:
                             duration = self.music_panel._player.duration()
                             new_pos = min(duration, current_pos + 5000)
                             self.music_panel._player.setPosition(new_pos)
+                            return True
+                        # Up Arrow: Volume Up 5%
+                        elif key == Qt.Key_Up:
+                            if hasattr(self.music_panel, 'player_bar') and hasattr(self.music_panel.player_bar, 'volume_slider'):
+                                current_vol = self.music_panel.player_bar.volume_slider.value()
+                                self.music_panel.player_bar.volume_slider.setValue(min(125, current_vol + 5))
+                            return True
+                        # Down Arrow: Volume Down 5%
+                        elif key == Qt.Key_Down:
+                            if hasattr(self.music_panel, 'player_bar') and hasattr(self.music_panel.player_bar, 'volume_slider'):
+                                current_vol = self.music_panel.player_bar.volume_slider.value()
+                                self.music_panel.player_bar.volume_slider.setValue(max(0, current_vol - 5))
                             return True
                         
                         # === Cooldown guard for discrete shortcuts ===
@@ -9887,6 +10023,36 @@ Stylesheet Selector:
                         elif key == Qt.Key_R:
                             self.music_panel.player_bar._toggle_shuffle()
                             return True
+                        # Ctrl + A: Select All (Playlist or Media Library)
+                        elif key == Qt.Key_A and bool(modifiers & Qt.ControlModifier):
+                            event.accept()
+                            print(f"[DEBUG Shortcut] Ctrl+A detected in launcher eventFilter! Stack index={getattr(self.music_panel.stack, 'currentIndex', lambda: -1)()}")
+                            if hasattr(self.music_panel, 'stack'):
+                                idx = self.music_panel.stack.currentIndex()
+                                if idx == 0 and hasattr(self.music_panel, 'table'):
+                                    print("[DEBUG Shortcut] Calling PlaylistTable.select_all()")
+                                    if hasattr(self.music_panel.table, 'select_all'):
+                                        self.music_panel.table.select_all()
+                                    else:
+                                        self.music_panel.table.tree.selectAll()
+                                    return True
+                                elif idx == 1 and hasattr(self.music_panel, 'media_lib_page'):
+                                    print("[DEBUG Shortcut] Calling MediaLibraryPage.select_all()")
+                                    if hasattr(self.music_panel.media_lib_page, 'select_all'):
+                                        self.music_panel.media_lib_page.select_all()
+                                    else:
+                                        self.music_panel.media_lib_page.tree.selectAll()
+                                    return True
+                        # Delete: Delete Selected Tracks (Playlist or Media Library)
+                        elif key == Qt.Key_Delete:
+                            if hasattr(self.music_panel, 'stack'):
+                                idx = self.music_panel.stack.currentIndex()
+                                if idx == 0 and hasattr(self.music_panel, 'table'):
+                                    self.music_panel.table._on_delete_selected()
+                                    return True
+                                elif idx == 1 and hasattr(self.music_panel, 'media_lib_page'):
+                                    self.music_panel.media_lib_page._on_delete_selected()
+                                    return True
             
             return False
         except Exception:
@@ -9903,14 +10069,14 @@ Stylesheet Selector:
         # Remove highlight from previous selection
         if 0 <= self.selected_game_index < len(self.game_buttons):
             old_btn, _ = self.game_buttons[self.selected_game_index]
-            old_btn.setStyleSheet(old_btn.styleSheet().replace("border: 3px solid #00FF00;", "border: 3px solid transparent;"))
+            if hasattr(old_btn, 'setSelected'):
+                old_btn.setSelected(False)
         
         # Add highlight to new selection
         self.selected_game_index = index
         new_btn, _ = self.game_buttons[index]
-        current_style = new_btn.styleSheet()
-        if "border: 3px solid transparent;" in current_style:
-            new_btn.setStyleSheet(current_style.replace("border: 3px solid transparent;", "border: 3px solid #00FF00;"))
+        if hasattr(new_btn, 'setSelected'):
+            new_btn.setSelected(True)
         
         # Ensure button is visible
         new_btn.setFocus()
@@ -14606,27 +14772,23 @@ First Played: {first_played_formatted}
                                     stderr=subprocess.DEVNULL,
                                     close_fds=True,
                                 )
-                                # Native UI Sync Barrier (Prevents thread freezing while waiting for Steam to initialize fully)
+                                # Native UI Sync Barrier (Non-blocking notification)
                                 msg = QMessageBox(self)
                                 msg.setObjectName("SteamLoginPromptDialog")
                                 msg.setIcon(QMessageBox.Information)
                                 msg.setWindowTitle("Steam Login Tracker")
-                                msg.setText("HELXAID is launching Steam in the background.\n\nPlease complete your profile login if prompted.\nClick OK only when Steam is fully ready.")
-                                msg.exec()
+                                msg.setText("HELXAID is launching Steam in the background.\n\nPlease complete your profile login if prompted.")
+                                msg.setStandardButtons(QMessageBox.Ok)
+                                msg.setWindowModality(Qt.NonModal)
+                                msg.show()
                             except Exception as e:
                                 print(f"[Pre-Launch] Steam spawn error: {e}")
                         else:
                             print("[Pre-Launch] Warning: Steam.exe missing.")
                 
                 try:
-                    kwargs = {}
-                    if hasattr(subprocess, "CREATE_NO_WINDOW"):
-                        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-                    output = subprocess.check_output(
-                        ["tasklist", "/FI", f"IMAGENAME eq {exe_name}"],
-                        **kwargs,
-                    ).decode(errors="ignore")
-                    if exe_name.lower() in output.lower() and "No tasks are running" not in output:
+                    # Fast in-memory process cache check (avoids heavy tasklist.exe CLI subprocess call)
+                    if self._is_process_running(exe_name):
                         QMessageBox.information(self, "Game already running", "Game already running!")
                         return
                 except Exception as e:
@@ -14870,7 +15032,8 @@ First Played: {first_played_formatted}
                         
                         # Clear current session tracking and hide End Game button
                         self.current_session = None
-                        self.end_game_btn.hide()
+                        from PySide6.QtCore import QMetaObject, Qt
+                        QMetaObject.invokeMethod(self.end_game_btn, "hide", Qt.QueuedConnection)
                         break
                 except Exception as e:
                     print(f"Play time tracking error: {e}")
@@ -14901,6 +15064,31 @@ First Played: {first_played_formatted}
 
     def show_context_menu(self, pos, game, button):
         menu = QMenu(self)
+        menu.setObjectName("GameContextMenu")
+        menu.setStyleSheet("""
+            QMenu#GameContextMenu, QMenu {
+                background-color: #161622;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QMenu::item {
+                color: #e0e0e0;
+                padding: 6px 16px;
+                border-radius: 4px;
+                font-size: 12px;
+                background-color: transparent;
+            }
+            QMenu::item:selected, QMenu::item:hover {
+                background-color: #ff5b06;
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: rgba(255, 255, 255, 0.12);
+                margin: 4px 6px;
+            }
+        """)
 
         # Favorite toggle
         is_favorite = game.get("favorite", False)
