@@ -5336,7 +5336,7 @@ class GameLauncher(QWidget):
         self.refresh_btn.setToolTip("Refresh Library")
         self.refresh_btn.clicked.connect(self.refresh)
 
-        # Setup 360-degree rotation animation with ease-out on hover
+        # Setup 360-degree rotation animation with ease-out on click
         # ponytail: live rotation per tick instead of pre-rendering 61 frames (~2.2MB saved)
         if refresh_scaled is not None:
             from PySide6.QtGui import QTransform, QPainter
@@ -5371,16 +5371,12 @@ class GameLauncher(QWidget):
 
             self.refresh_btn._rot_timer.timeout.connect(_animate_refresh_frame)
 
-            original_enter = self.refresh_btn.enterEvent
+            def _start_refresh_spin():
+                self.refresh_btn._rot_animating = True
+                self.refresh_btn._rot_index = 0
+                self.refresh_btn._rot_timer.start()
 
-            def new_enter(event):
-                if not self.refresh_btn._rot_animating:
-                    self.refresh_btn._rot_animating = True
-                    self.refresh_btn._rot_index = 0
-                    self.refresh_btn._rot_timer.start()
-                original_enter(event)
-
-            self.refresh_btn.enterEvent = new_enter
+            self.refresh_btn.clicked.connect(_start_refresh_spin)
 
         # Add OMEN Command Center button
         self.omen_btn = QPushButton()
@@ -9138,13 +9134,19 @@ Stylesheet Selector:
         return True
         
     def clear_grid(self):
-        """Clear all items from the grid"""
+        """Clear all items from the grid and release Qt C++ heap memory."""
         # Clear selected button reference to prevent stale references
         AnimatedGameButton._selected_button = None
-        for i in reversed(range(self.grid.count())):
-            item = self.grid.itemAt(i).widget()
-            if item:
-                item.setParent(None)
+        if hasattr(self, 'grid') and self.grid:
+            while self.grid.count() > 0:
+                item = self.grid.takeAt(0)
+                if item:
+                    w = item.widget()
+                    if w:
+                        w.setParent(None)
+                        w.deleteLater()
+        import gc
+        gc.collect()
     
     def populate_recently_played(self):
         """Populate the Recently Played section with last 5 played games."""
