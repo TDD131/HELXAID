@@ -4426,6 +4426,12 @@ class GameLauncher(QWidget):
             if time.time() - last_check > 86400: # 24 hours
                 self._check_for_updates_silent()
         
+        # Auto-scan local game folders configured by user at startup
+        try:
+            self.scan_local_folders(silent=True, auto_add=True)
+        except Exception as e:
+            print(f"[Startup] Local game folders auto-scan error: {e}")
+
         # Setup deferred button animations (improves startup time)
         self._setup_deferred_button_animations()
 
@@ -9317,6 +9323,12 @@ Stylesheet Selector:
                 row += 1
                 
     def refresh(self):
+        # Auto-scan local game folders when refreshing library
+        try:
+            self.scan_local_folders(silent=True, auto_add=True)
+        except Exception as e:
+            print(f"[Refresh] Error scanning local folders: {e}")
+
         # Reload data from config.json
         self.data = load_json()
         
@@ -14030,7 +14042,6 @@ First Played: {first_played_formatted}
         btn_layout.addWidget(scan_btn)
         layout.addLayout(btn_layout)
         
-        # Close button
         close_btn = AnimatedButton("Close")
         close_btn.setStyleSheet("background: #444; padding: 10px; border-radius: 5px;")
         close_btn.clicked.connect(dialog.accept)
@@ -14038,7 +14049,7 @@ First Played: {first_played_formatted}
         
         dialog.exec()
     
-    def scan_local_folders(self):
+    def scan_local_folders(self, silent=False, auto_add=False):
         """Scan user-added folders for games."""
         def get_pretty_game_name(exe_path, folder_name):
             import re
@@ -14113,10 +14124,39 @@ First Played: {first_played_formatted}
 
         watch_folders = self.settings.get("watch_folders", [])
         if not watch_folders:
-            QMessageBox.information(self, "Scan Local", 
-                "No folders configured.\n\nUse 'Manage Local Game Folders' to add folders first.")
-            return
+            if not silent:
+                QMessageBox.information(self, "Scan Local", 
+                    "No folders configured.\n\nUse 'Manage Local Game Folders' to add folders first.")
+            return False
         
+        # Clean up missing games previously scanned from watch_folders
+        removed_count = 0
+        games_to_remove = []
+        for g in list(self.data):
+            exe_path = g.get("exe", "")
+            if not exe_path:
+                continue
+            norm_exe = os.path.normcase(os.path.abspath(exe_path))
+            is_in_watch_folder = False
+            for wf in watch_folders:
+                norm_wf = os.path.normcase(os.path.abspath(wf))
+                try:
+                    if os.path.commonpath([norm_wf, norm_exe]) == norm_wf:
+                        is_in_watch_folder = True
+                        break
+                except Exception:
+                    pass
+            if is_in_watch_folder and not os.path.exists(exe_path):
+                games_to_remove.append(g)
+
+        if games_to_remove:
+            for g in games_to_remove:
+                if g in self.data:
+                    self.data.remove(g)
+            removed_count = len(games_to_remove)
+            save_json(self.data)
+            print(f"[Scan Local] Removed {removed_count} deleted game(s) from watched folders.")
+
         # Find games in watch folders
         games = []
         existing_exes = {os.path.normcase(g.get("exe", "")) for g in self.data if g.get("exe")}
@@ -14169,71 +14209,82 @@ First Played: {first_played_formatted}
                 print(f"Error scanning folder {folder} subdirectories: {e}")
         
         if not games:
-            QMessageBox.information(self, "Scan Local", "No new games found in watched folders.")
-            return
+            if removed_count > 0:
+                self.show_loading_and_refresh()
+                return True
+            if not silent:
+                QMessageBox.information(self, "Scan Local", "No new games found in watched folders.")
+            return False
         
-        # Show selection dialog
-        dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#010101")
-        dialog.setWindowTitle("Select Games to Add")
-        dialog.setMinimumWidth(500)
-        dialog.setMinimumHeight(400)
-        
-        layout = QVBoxLayout(dialog)
-        info_label = QLabel(f"Found {len(games)} games. Select which to add:")
-        layout.addWidget(info_label)
-        
-        # Select All checkbox
-        select_all_cb = AnimatedCheckBox("Select All")
-        layout.addWidget(select_all_cb)
-        
-        list_widget = QWidget()
-        list_layout = QVBoxLayout(list_widget)
-        list_layout.setContentsMargins(0, 0, 0, 0)
-        list_layout.setSpacing(10)  # Minimal spacing between items
-        
-        items = []
-        for game in games:
-            cb = AnimatedCheckBox(game["name"])
-            cb.setToolTip(game["exe"])
-            list_layout.addWidget(cb)
-            items.append((cb, game))
-        
-        list_layout.addStretch()  # Push items to top
-        
-        # Connect Select All to toggle all checkboxes
-        def toggle_all():
-            checked = select_all_cb.isChecked()
-            for cb, _ in items:
-                cb.setChecked(checked)
-        select_all_cb.clicked.connect(toggle_all)
-        
-        scroll = SmoothScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(list_widget)
-        layout.addWidget(scroll)
-        
-        btn_layout = QHBoxLayout()
-        ok_btn = AnimatedButton("OK")
-        cancel_btn = AnimatedButton("Cancel")
-        btn_layout.addStretch()
-        btn_layout.addWidget(ok_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-        
-        ok_btn.clicked.connect(dialog.accept)
-        cancel_btn.clicked.connect(dialog.reject)
-        
-        if dialog.exec() != QDialog.Accepted:
-            return
-        
+        selected_games = []
+        if auto_add or silent:
+            selected_games = games
+        else:
+            # Show selection dialog
+            dialog = QDialog(self)
+            apply_custom_titlebar(dialog, "#010101")
+            dialog.setWindowTitle("Select Games to Add")
+            dialog.setMinimumWidth(500)
+            dialog.setMinimumHeight(400)
+            
+            layout = QVBoxLayout(dialog)
+            info_label = QLabel(f"Found {len(games)} games. Select which to add:")
+            layout.addWidget(info_label)
+            
+            # Select All checkbox
+            select_all_cb = AnimatedCheckBox("Select All")
+            layout.addWidget(select_all_cb)
+            
+            list_widget = QWidget()
+            list_layout = QVBoxLayout(list_widget)
+            list_layout.setContentsMargins(0, 0, 0, 0)
+            list_layout.setSpacing(10)  # Minimal spacing between items
+            
+            items = []
+            for game in games:
+                cb = AnimatedCheckBox(game["name"])
+                cb.setChecked(True)
+                cb.setToolTip(game["exe"])
+                list_layout.addWidget(cb)
+                items.append((cb, game))
+            
+            list_layout.addStretch()  # Push items to top
+            
+            # Connect Select All to toggle all checkboxes
+            def toggle_all():
+                checked = select_all_cb.isChecked()
+                for cb, _ in items:
+                    cb.setChecked(checked)
+            select_all_cb.clicked.connect(toggle_all)
+            
+            scroll = SmoothScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(list_widget)
+            layout.addWidget(scroll)
+            
+            btn_layout = QHBoxLayout()
+            ok_btn = AnimatedButton("OK")
+            cancel_btn = AnimatedButton("Cancel")
+            btn_layout.addStretch()
+            btn_layout.addWidget(ok_btn)
+            btn_layout.addWidget(cancel_btn)
+            layout.addLayout(btn_layout)
+            
+            ok_btn.clicked.connect(dialog.accept)
+            cancel_btn.clicked.connect(dialog.reject)
+            
+            if dialog.exec() != QDialog.Accepted:
+                return False
+            
+            selected_games = [g for cb, g in items if cb.isChecked()]
+
+        if not selected_games:
+            return False
+
         # Add selected games immediately (without icons for now)
         added = 0
         games_to_extract_icons = []
-        for cb, g in items:
-            if not cb.isChecked():
-                continue
-            
+        for g in selected_games:
             exe_path = g["exe"]
             game_entry = {
                 "name": g["name"],
@@ -14268,8 +14319,8 @@ First Played: {first_played_formatted}
                 
                 # Start background thread
                 icon_thread = threading.Thread(target=extract_icons_background, daemon=True)
-                icon_thread = threading.Thread(target=extract_icons_background, daemon=True)
                 icon_thread.start()
+        return True
 
     def scan_google_play_games(self, silent=False):
         """Scan for games installed via Google Play Games on PC."""
