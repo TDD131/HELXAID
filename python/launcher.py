@@ -9138,13 +9138,19 @@ Stylesheet Selector:
         return True
         
     def clear_grid(self):
-        """Clear all items from the grid"""
+        """Clear all items from the grid and release Qt C++ heap memory."""
         # Clear selected button reference to prevent stale references
         AnimatedGameButton._selected_button = None
-        for i in reversed(range(self.grid.count())):
-            item = self.grid.itemAt(i).widget()
-            if item:
-                item.setParent(None)
+        if hasattr(self, 'grid') and self.grid:
+            while self.grid.count() > 0:
+                item = self.grid.takeAt(0)
+                if item:
+                    w = item.widget()
+                    if w:
+                        w.setParent(None)
+                        w.deleteLater()
+        import gc
+        gc.collect()
     
     def populate_recently_played(self):
         """Populate the Recently Played section with last 5 played games."""
