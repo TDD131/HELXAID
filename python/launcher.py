@@ -3862,6 +3862,79 @@ class BackgroundProcessor(QThread):
 # ----------------------------------------------------------
 # Main Launcher UI
 # ----------------------------------------------------------
+class FloatingLoadingPanel(QFrame):
+    """An in-app floating loading overlay widget parented to the main launcher window."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("FloatingLoadingPanel")
+        self.setStyleSheet("""
+            QFrame#FloatingLoadingPanel {
+                background-color: rgba(22, 22, 22, 245);
+                border: none;
+                border-radius: 10px;
+            }
+            QLabel#LoadingLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+            }
+            QProgressBar#LoadingBar {
+                border: none;
+                background-color: rgba(255, 255, 255, 0.1);
+                min-height: 2px;
+                max-height: 2px;
+                border-radius: 1px;
+                text-align: center;
+            }
+            QProgressBar#LoadingBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FF8C00);
+                border-radius: 1px;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 14, 20, 14)
+        layout.setSpacing(10)
+        
+        self.label = QLabel("Updating library...", self)
+        self.label.setObjectName("LoadingLabel")
+        self.label.setAlignment(Qt.AlignCenter)
+        
+        self.progress = QProgressBar(self)
+        self.progress.setObjectName("LoadingBar")
+        self.progress.setRange(0, 0)
+        self.progress.setFixedHeight(2)
+        self.progress.setTextVisible(False)
+        
+        layout.addWidget(self.label)
+        layout.addWidget(self.progress)
+        
+        self.adjustSize()
+        self.hide()
+
+    def show_centered(self):
+        self.show()
+        self.raise_()
+        self.ensurePolished()
+        if self.layout():
+            self.layout().activate()
+        self.adjustSize()
+        
+        def _reposition():
+            if self.parent():
+                parent_rect = self.parent().rect()
+                x = max(0, (parent_rect.width() - self.width()) // 2)
+                y = max(0, (parent_rect.height() - self.height()) // 2)
+                self.move(x, y)
+
+        _reposition()
+        QTimer.singleShot(0, _reposition)
+        QTimer.singleShot(50, _reposition)
+        QTimer.singleShot(150, _reposition)
+
 class DraggableFloatingPanel(QFrame):
     """An in-app draggable floating panel used as a modern alternative to QMessageBox."""
     def __init__(self, title, message, parent=None):
@@ -4426,11 +4499,11 @@ class GameLauncher(QWidget):
             if time.time() - last_check > 86400: # 24 hours
                 self._check_for_updates_silent()
         
-        # Auto-scan local game folders configured by user at startup
+        # Auto universal scan (Steam, Google Play Games, Local Folders) at startup
         try:
-            self.scan_local_folders(silent=True, auto_add=True)
+            self.universal_scan(silent=True, auto_add=True)
         except Exception as e:
-            print(f"[Startup] Local game folders auto-scan error: {e}")
+            print(f"[Startup] Universal auto-scan error: {e}")
 
         # Setup deferred button animations (improves startup time)
         self._setup_deferred_button_animations()
@@ -5355,32 +5428,33 @@ class GameLauncher(QWidget):
             self.refresh_btn._rot_timer = QTimer()
             self.refresh_btn._rot_timer.setInterval(17)
             self.refresh_btn._rot_animating = False
+            self.refresh_btn._rot_angle = 0
 
             def _animate_refresh_frame():
                 btn = self.refresh_btn
-                if btn._rot_index < btn._rot_num_frames:
-                    btn._rot_index += 1
-                    t = btn._rot_index / btn._rot_num_frames
-                    angle = 360 * (1 - pow(1 - t, 3))  # cubic ease-out
-                    rotated = btn._rot_src.transformed(QTransform().rotate(angle), Qt.SmoothTransformation)
-                    canvas = QPixmap(btn._rot_size, btn._rot_size)
-                    canvas.fill(Qt.transparent)
-                    p = QPainter(canvas)
-                    p.drawPixmap((btn._rot_size - rotated.width()) // 2, (btn._rot_size - rotated.height()) // 2, rotated)
-                    p.end()
-                    btn.setIcon(QIcon(canvas))
-                else:
+                if not hasattr(btn, '_rot_angle'):
+                    btn._rot_angle = 0
+                
+                btn._rot_angle = (btn._rot_angle + 6) % 360
+                
+                rotated = btn._rot_src.transformed(QTransform().rotate(btn._rot_angle), Qt.SmoothTransformation)
+                canvas = QPixmap(btn._rot_size, btn._rot_size)
+                canvas.fill(Qt.transparent)
+                p = QPainter(canvas)
+                p.drawPixmap((btn._rot_size - rotated.width()) // 2, (btn._rot_size - rotated.height()) // 2, rotated)
+                p.end()
+                btn.setIcon(QIcon(canvas))
+                
+                if not getattr(btn, '_rot_animating', False) and btn._rot_angle == 0:
                     btn._rot_timer.stop()
-                    btn._rot_animating = False
-                    btn._rot_index = 0
                     btn.setIcon(QIcon(btn._rot_src))
 
             self.refresh_btn._rot_timer.timeout.connect(_animate_refresh_frame)
 
             def _start_refresh_spin():
                 self.refresh_btn._rot_animating = True
-                self.refresh_btn._rot_index = 0
-                self.refresh_btn._rot_timer.start()
+                if not self.refresh_btn._rot_timer.isActive():
+                    self.refresh_btn._rot_timer.start()
 
             self.refresh_btn.clicked.connect(_start_refresh_spin)
 
@@ -9323,12 +9397,25 @@ Stylesheet Selector:
                 row += 1
                 
     def refresh(self):
-        # Auto-scan local game folders when refreshing library
-        try:
-            self.scan_local_folders(silent=True, auto_add=True)
-        except Exception as e:
-            print(f"[Refresh] Error scanning local folders: {e}")
+        """Public refresh handler triggered by Refresh button or menu with 5-second cooldown."""
+        import time
+        now = time.time()
+        if hasattr(self, '_last_refresh_time') and (now - self._last_refresh_time) < 5.0:
+            remaining = 5.0 - (now - self._last_refresh_time)
+            print(f"[Refresh] Cooldown active ({remaining:.1f}s remaining). Skipping refresh.")
+            return
+        
+        self._last_refresh_time = now
+        
+        # Temporarily disable refresh button to prevent click spamming
+        if hasattr(self, 'refresh_btn') and self.refresh_btn:
+            self.refresh_btn.setEnabled(False)
+            QTimer.singleShot(5000, lambda: self.refresh_btn.setEnabled(True) if hasattr(self, 'refresh_btn') and self.refresh_btn else None)
 
+        self.show_loading_and_refresh()
+
+    def refresh_grid_only(self):
+        """Reload data from disk and rebuild grid UI tiles."""
         # Reload data from config.json
         self.data = load_json()
         
@@ -12039,6 +12126,9 @@ First Played: {first_played_formatted}
         self._cached_bg_pixmap = None
         super().resizeEvent(event)
         
+        if hasattr(self, 'floating_loading_panel') and self.floating_loading_panel and self.floating_loading_panel.isVisible():
+            self.floating_loading_panel.show_centered()
+        
         # Debounce the grid reflow so it doesn't stutter during window dragging
         if not hasattr(self, '_resize_timer'):
             self._resize_timer = QTimer(self)
@@ -12125,6 +12215,8 @@ First Played: {first_played_formatted}
         """Handle window shown event."""
         print(f"[Taskbar DEBUG] showEvent triggered for {self.__class__.__name__} [id={id(self)}]", flush=True)
         super().showEvent(event)
+        if hasattr(self, 'floating_loading_panel') and self.floating_loading_panel and self.floating_loading_panel.isVisible():
+            self.floating_loading_panel.show_centered()
                 
     def _on_taskbar_button_clicked(self, button_id):
         """Safely route taskbar button clicks directly to handler methods."""
@@ -13824,24 +13916,28 @@ First Played: {first_played_formatted}
         # Make sure the button is visible after animation
         button.show()
 
-    def universal_scan(self):
-        """Universal scan combining Steam and Google Play Games."""
-        steam_found = self.scan_steam_libraries(silent=True)
-        google_found = self.scan_google_play_games(silent=True)
+    def universal_scan(self, silent=False, auto_add=False):
+        """Universal scan combining Steam, Google Play Games, and Local Folders."""
+        steam_found = self.scan_steam_libraries(silent=silent, auto_add=auto_add)
+        google_found = self.scan_google_play_games(silent=silent, auto_add=auto_add)
+        local_found = self.scan_local_folders(silent=silent, auto_add=auto_add)
         
-        if not steam_found and not google_found:
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Universal Scan")
-            msg.setText("No new games found in Steam or Google Play Games.")
-            msg.setIcon(QMessageBox.Information)
-            
-            ok_btn = AnimatedButton("OK")
-            msg.addButton(ok_btn, QMessageBox.AcceptRole)
-            
-            apply_custom_titlebar(msg, "#010101")
-            msg.exec()
+        if not steam_found and not google_found and not local_found:
+            if not silent:
+                msg = QMessageBox(self)
+                msg.setWindowTitle("Universal Scan")
+                msg.setText("No new games found in Steam, Google Play Games, or Local Folders.")
+                msg.setIcon(QMessageBox.Information)
+                
+                ok_btn = AnimatedButton("OK")
+                msg.addButton(ok_btn, QMessageBox.AcceptRole)
+                
+                apply_custom_titlebar(msg, "#010101")
+                msg.exec()
+            return False
+        return True
 
-    def scan_steam_libraries(self, silent=False):
+    def scan_steam_libraries(self, silent=False, auto_add=False):
         # Scan Steam libraries and let the user add games automatically.
         common_dirs = self._find_steam_common_dirs()
         if not common_dirs:
@@ -13863,79 +13959,84 @@ First Played: {first_played_formatted}
                 QMessageBox.information(self, "Steam Scan", "All detected Steam games are already in your library.")
             return False
 
-        # Let user choose which Steam games to add
-        dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#010101")
-        dialog.setWindowTitle("Add Games from Steam")
-        dialog.setMinimumWidth(500)
+        selected_games = []
+        if auto_add:
+            selected_games = new_games
+        else:
+            # Let user choose which Steam games to add
+            dialog = QDialog(self)
+            apply_custom_titlebar(dialog, "#010101")
+            dialog.setWindowTitle("Add Games from Steam")
+            dialog.setMinimumWidth(500)
 
-        layout = QVBoxLayout(dialog)
-        info_label = QLabel("Select the Steam games you want to add:")
-        layout.addWidget(info_label)
+            layout = QVBoxLayout(dialog)
+            info_label = QLabel("Select the Steam games you want to add:")
+            layout.addWidget(info_label)
 
-        # Optional helper checkbox to quickly select/deselect all detected games
-        select_all_cb = AnimatedCheckBox("Select All")
-        layout.addWidget(select_all_cb)
+            # Optional helper checkbox to quickly select/deselect all detected games
+            select_all_cb = AnimatedCheckBox("Select All")
+            layout.addWidget(select_all_cb)
 
-        list_widget = QWidget()
-        list_layout = QVBoxLayout(list_widget)
-        list_layout.setContentsMargins(5, 5, 5, 5)
-        list_layout.setSpacing(10)
+            list_widget = QWidget()
+            list_layout = QVBoxLayout(list_widget)
+            list_layout.setContentsMargins(5, 5, 5, 5)
+            list_layout.setSpacing(10)
 
-        items = []
-        for game in new_games:
-            cb = AnimatedCheckBox(game["name"])
-            cb.setToolTip(game["exe"])
-            list_layout.addWidget(cb)
-            items.append((cb, game))
-        
-        # Add stretch at end to push items to top
-        list_layout.addStretch()
+            items = []
+            for game in new_games:
+                cb = AnimatedCheckBox(game["name"])
+                cb.setToolTip(game["exe"])
+                list_layout.addWidget(cb)
+                items.append((cb, game))
+            
+            # Add stretch at end to push items to top
+            list_layout.addStretch()
 
-        scroll = SmoothScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(list_widget)
-        scroll.setMaximumHeight(300)  # Limit height so dialog isn't too tall
-        layout.addWidget(scroll)
+            scroll = SmoothScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(list_widget)
+            scroll.setMaximumHeight(300)  # Limit height so dialog isn't too tall
+            layout.addWidget(scroll)
 
-        btn_layout = QHBoxLayout()
-        ok_btn = AnimatedButton("OK")
-        cancel_btn = AnimatedButton("Cancel")
-        btn_layout.addStretch()
-        btn_layout.addWidget(ok_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
+            btn_layout = QHBoxLayout()
+            ok_btn = AnimatedButton("OK")
+            cancel_btn = AnimatedButton("Cancel")
+            btn_layout.addStretch()
+            btn_layout.addWidget(ok_btn)
+            btn_layout.addWidget(cancel_btn)
+            layout.addLayout(btn_layout)
 
-        def any_selected():
-            return any(cb.isChecked() for cb, _ in items)
+            def any_selected():
+                return any(cb.isChecked() for cb, _ in items)
 
-        ok_btn.setEnabled(False)
+            ok_btn.setEnabled(False)
 
-        def update_ok():
-            ok_btn.setEnabled(any_selected())
+            def update_ok():
+                ok_btn.setEnabled(any_selected())
 
-        # When 'Select All' is toggled, check/uncheck all game checkboxes
-        def on_select_all_toggled(checked: bool):
-            # Use click() so each checkbox fully updates its visual state
-            # and emits its own signals. Only click when the state differs.
+            # When 'Select All' is toggled, check/uncheck all game checkboxes
+            def on_select_all_toggled(checked: bool):
+                # Use click() so each checkbox fully updates its visual state
+                # and emits its own signals. Only click when the state differs.
+                for cb, _ in items:
+                    if cb.isChecked() != checked:
+                        cb.click()
+                update_ok()
+
+            select_all_cb.toggled.connect(on_select_all_toggled)
+
             for cb, _ in items:
-                if cb.isChecked() != checked:
-                    cb.click()
-            update_ok()
+                cb.stateChanged.connect(lambda _state, u=update_ok: u())
 
-        select_all_cb.toggled.connect(on_select_all_toggled)
+            ok_btn.clicked.connect(dialog.accept)
+            cancel_btn.clicked.connect(dialog.reject)
 
-        for cb, _ in items:
-            cb.stateChanged.connect(lambda _state, u=update_ok: u())
+            result = dialog.exec()
+            if result != QDialog.Accepted:
+                return False
 
-        ok_btn.clicked.connect(dialog.accept)
-        cancel_btn.clicked.connect(dialog.reject)
+            selected_games = [game for cb, game in items if cb.isChecked()]
 
-        result = dialog.exec()
-        if result != QDialog.Accepted:
-            return False
-
-        selected_games = [game for cb, game in items if cb.isChecked()]
         if not selected_games:
             return False
 
@@ -13959,7 +14060,10 @@ First Played: {first_played_formatted}
             })
 
         save_json(self.data)
-        self.show_loading_and_refresh()
+        if not silent:
+            self.show_loading_and_refresh()
+        else:
+            self.refresh_grid_only()
         return True
     
     def manage_game_folders(self):
@@ -14210,7 +14314,10 @@ First Played: {first_played_formatted}
         
         if not games:
             if removed_count > 0:
-                self.show_loading_and_refresh()
+                if not silent:
+                    self.show_loading_and_refresh()
+                else:
+                    self.refresh_grid_only()
                 return True
             if not silent:
                 QMessageBox.information(self, "Scan Local", "No new games found in watched folders.")
@@ -14298,7 +14405,8 @@ First Played: {first_played_formatted}
         
         if added > 0:
             save_json(self.data)
-            self.show_loading_and_refresh()
+            if not silent:
+                self.show_loading_and_refresh()
             
             # Extract icons in background thread to prevent freezing
             if WINDOWS_API_AVAILABLE and games_to_extract_icons:
@@ -14315,14 +14423,14 @@ First Played: {first_played_formatted}
                     save_json(self.data)
                     print("[Icon] All icons extracted, triggering UI refresh...")
                     # Schedule UI refresh on main thread
-                    QTimer.singleShot(100, self.show_loading_and_refresh)
+                    QTimer.singleShot(100, self.refresh_grid_only)
                 
                 # Start background thread
                 icon_thread = threading.Thread(target=extract_icons_background, daemon=True)
                 icon_thread.start()
         return True
 
-    def scan_google_play_games(self, silent=False):
+    def scan_google_play_games(self, silent=False, auto_add=False):
         """Scan for games installed via Google Play Games on PC."""
         # Google Play Games creates shortcuts in Start Menu
         gpg_shortcuts_dir = os.path.join(
@@ -14361,63 +14469,70 @@ First Played: {first_played_formatted}
                 )
             return False
         
-        # Show selection dialog
-        dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#010101")
-        dialog.setWindowTitle("Select Google Play Games")
-        dialog.setMinimumSize(500, 400)
-        layout = QVBoxLayout(dialog)
+        selected_tuples = []
+        if auto_add:
+            selected_tuples = found_games
+        else:
+            # Show selection dialog
+            dialog = QDialog(self)
+            apply_custom_titlebar(dialog, "#010101")
+            dialog.setWindowTitle("Select Google Play Games")
+            dialog.setMinimumSize(500, 400)
+            layout = QVBoxLayout(dialog)
+            
+            label = QLabel(f"Found {len(found_games)} game(s). Select games to add:")
+            layout.addWidget(label)
+            
+            # Scrollable checkbox list
+            scroll = SmoothScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll_widget = QWidget()
+            list_layout = QVBoxLayout(scroll_widget)
+            
+            checkboxes = []
+            for game_name, shortcut_path in found_games:
+                cb = AnimatedCheckBox(f"{game_name}")
+                cb.setChecked(True)
+                cb.setProperty("game_data", (game_name, shortcut_path))
+                checkboxes.append(cb)
+                list_layout.addWidget(cb)
+            
+            list_layout.addStretch()
+            scroll.setWidget(scroll_widget)
+            layout.addWidget(scroll)
+            
+            # Buttons
+            btn_layout = QHBoxLayout()
+            select_all = AnimatedButton("Select All")
+            select_none = AnimatedButton("Select None")
+            ok_btn = AnimatedButton("OK")
+            cancel_btn = AnimatedButton("Cancel")
+            
+            btn_layout.addWidget(select_all)
+            btn_layout.addWidget(select_none)
+            btn_layout.addStretch()
+            btn_layout.addWidget(ok_btn)
+            btn_layout.addWidget(cancel_btn)
+            layout.addLayout(btn_layout)
+            
+            select_all.clicked.connect(lambda: [cb.setChecked(True) for cb in checkboxes])
+            select_none.clicked.connect(lambda: [cb.setChecked(False) for cb in checkboxes])
+            ok_btn.clicked.connect(dialog.accept)
+            cancel_btn.clicked.connect(dialog.reject)
+            
+            if dialog.exec() != QDialog.Accepted:
+                return False
+            
+            selected_tuples = [cb.property("game_data") for cb in checkboxes if cb.isChecked()]
         
-        label = QLabel(f"Found {len(found_games)} game(s). Select games to add:")
-        layout.addWidget(label)
-        
-        # Scrollable checkbox list
-        scroll = SmoothScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_widget = QWidget()
-        list_layout = QVBoxLayout(scroll_widget)
-        
-        checkboxes = []
-        for game_name, shortcut_path in found_games:
-            cb = AnimatedCheckBox(f"{game_name}")
-            cb.setChecked(True)
-            cb.setProperty("game_data", (game_name, shortcut_path))
-            checkboxes.append(cb)
-            list_layout.addWidget(cb)
-        
-        list_layout.addStretch()
-        scroll.setWidget(scroll_widget)
-        layout.addWidget(scroll)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        select_all = AnimatedButton("Select All")
-        select_none = AnimatedButton("Select None")
-        ok_btn = AnimatedButton("OK")
-        cancel_btn = AnimatedButton("Cancel")
-        
-        btn_layout.addWidget(select_all)
-        btn_layout.addWidget(select_none)
-        btn_layout.addStretch()
-        btn_layout.addWidget(ok_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-        
-        select_all.clicked.connect(lambda: [cb.setChecked(True) for cb in checkboxes])
-        select_none.clicked.connect(lambda: [cb.setChecked(False) for cb in checkboxes])
-        ok_btn.clicked.connect(dialog.accept)
-        cancel_btn.clicked.connect(dialog.reject)
-        
-        if dialog.exec() != QDialog.Accepted:
+        if not selected_tuples:
             return False
-        
+
         # Add selected games
         added = 0
         games_without_icons = []
         
-        for cb in checkboxes:
-            if cb.isChecked():
-                game_name, shortcut_path = cb.property("game_data")
+        for game_name, shortcut_path in selected_tuples:
                 
                 # Try to extract icon
                 icon_path = ""
@@ -14463,11 +14578,14 @@ First Played: {first_played_formatted}
         
         if added > 0:
             save_json(self.data)
-            self.show_loading_and_refresh()
-            QMessageBox.information(self, "Success", f"Added {added} Google Play game(s)!")
+            if not silent:
+                self.show_loading_and_refresh()
+                QMessageBox.information(self, "Success", f"Added {added} Google Play game(s)!")
+            else:
+                self.refresh_grid_only()
             
             # Offer to search for icons for games without icons
-            if games_without_icons:
+            if games_without_icons and not silent:
                 reply = QMessageBox.question(
                     self, "Missing Icons",
                     f"{len(games_without_icons)} game(s) have no icon.\n\n"
@@ -14700,21 +14818,46 @@ First Played: {first_played_formatted}
         return best["path"]
 
     def show_loading_and_refresh(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Loading")
-        layout = QVBoxLayout(dialog)
-        label = QLabel("Updating library...")
-        progress = QProgressBar()
-        progress.setRange(0, 0)  # Indeterminate/busy mode
-        layout.addWidget(label)
-        layout.addWidget(progress)
+        if not hasattr(self, 'floating_loading_panel') or self.floating_loading_panel is None:
+            self.floating_loading_panel = FloatingLoadingPanel(self)
+        
+        self.floating_loading_panel.show_centered()
+        
+        # Keep refresh_btn spinning continuously while loading panel is active
+        if hasattr(self, 'refresh_btn') and hasattr(self.refresh_btn, '_rot_timer'):
+            self.refresh_btn._rot_animating = True
+            if not self.refresh_btn._rot_timer.isActive():
+                self.refresh_btn._rot_timer.start()
 
-        def finish():
-            self.refresh()
-            dialog.accept()
+        import time
+        start_time = time.time()
 
-        QTimer.singleShot(800, finish)
-        dialog.exec()
+        def _cleanup_and_hide():
+            if hasattr(self, 'floating_loading_panel') and self.floating_loading_panel:
+                self.floating_loading_panel.hide()
+            if hasattr(self, 'refresh_btn') and self.refresh_btn:
+                self.refresh_btn._rot_animating = False
+
+        def _do_scan_and_refresh():
+            try:
+                try:
+                    self.universal_scan(silent=True, auto_add=True)
+                except Exception as e:
+                    print(f"[Refresh] Universal scan error: {e}")
+                
+                try:
+                    self.refresh_grid_only()
+                except Exception as e:
+                    print(f"[Refresh] Grid refresh error: {e}")
+            finally:
+                # Ensure minimum appearance duration of 3 seconds (3000ms)
+                elapsed_ms = int((time.time() - start_time) * 1000)
+                remaining_ms = max(0, 3000 - elapsed_ms)
+                QTimer.singleShot(remaining_ms, _cleanup_and_hide)
+
+        # Hard safety fallback timer: force hide panel & stop button after max 4 seconds
+        QTimer.singleShot(4000, _cleanup_and_hide)
+        QTimer.singleShot(50, _do_scan_and_refresh)
 
     def _requires_steam(self, exe_path: str) -> bool:
         """Determines if the game is a Steam game (legit or cracked) by checking path and DLLs."""
@@ -15776,25 +15919,21 @@ if __name__ == "__main__":
     except:
         pass
 
-    if hide_initialize_panel:
+    splash = None
+    if not hide_initialize_panel:
         splash = LoadingSplash()
-        # Make the splash screen completely invisible so it acts as 
-        # a silent event sink while preventing Windows/Qt from ghosting
-        # the main GameLauncher window early.
-        splash.setWindowOpacity(0.0)
-        splash.setAttribute(Qt.WA_TransparentForMouseEvents)
+        apply_custom_titlebar(splash, "#121212")
         splash.show()
-    else:
-        splash = LoadingSplash()
-        splash.show()
-    app.processEvents()
-    
+        app.processEvents()
+
+    def update_splash(val, text):
+        if splash:
+            splash.setProgress(val, text)
+        app.processEvents()
+
     # Progress: Loading fonts
-    splash.setProgress(10, "Loading fonts...")
-    app.processEvents()
-    
-    splash.setProgress(30, "Loading configuration...")
-    app.processEvents()
+    update_splash(10, "Loading fonts...")
+    update_splash(30, "Loading configuration...")
     
     # Set default application font (Orbitron)
     default_font = QFont("Orbitron", 9)
@@ -15837,14 +15976,12 @@ if __name__ == "__main__":
         }
     """)
     
-    splash.setProgress(50, "Initializing launcher...")
-    app.processEvents()
+    update_splash(50, "Initializing launcher...")
 
     # Check if Zero-UAC should be initialized in Software Initialize Panel
     try:
         if _s.get("init_zero_uac_in_panel", False):
-            splash.setProgress(70, "Initializing Zero-UAC Service...")
-            app.processEvents()
+            update_splash(70, "Initializing Zero-UAC Service...")
             import ctypes
             if getattr(sys, 'frozen', False):
                 exe_path = sys.executable
@@ -15866,8 +16003,7 @@ if __name__ == "__main__":
     # Create main window
     w = GameLauncher()
     
-    splash.setProgress(90, "Almost ready...")
-    app.processEvents()
+    update_splash(90, "Almost ready...")
     
     # Check if we should start minimised (ONLY if it was launched from startup registry)
     start_min = ('--minimized' in sys.argv) and w.settings.get("start_minimised", False)
@@ -15876,9 +16012,9 @@ if __name__ == "__main__":
     
     if start_min:
         # Start hidden to tray (don't show main window)
-        splash.setProgress(100, "Starting minimized...")
-        app.processEvents()
-        splash.close()
+        update_splash(100, "Starting minimized...")
+        if splash:
+            splash.close()
         
         # Ensure tray icon is created and visible
         if hasattr(w, 'tray_icon') and w.tray_icon:
@@ -15891,11 +16027,12 @@ if __name__ == "__main__":
             )
         # Window stays hidden
     else:
-        splash.setProgress(100, "Ready!")
-        app.processEvents()
+        update_splash(100, "Ready!")
         
         # Close splash and show main window
-        splash.finish(w)
+        if splash:
+            splash.finish(w)
+        
         if w.settings.get("window_fullscreen", False):
             w.showFullScreen()
         else:
