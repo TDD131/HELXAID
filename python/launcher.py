@@ -4858,7 +4858,7 @@ class GameLauncher(QWidget):
         sidebar_layout.addStretch()
 
         # Logo/Home button
-        script_dir = os.path.dirname(os.path.abspath(__file__))
+        script_dir = SCRIPT_DIR
         self.home_btn = AnimatedButton()
         self.home_btn.setObjectName("NavHomeButton")
         self.home_btn.setFixedSize(60, 60)
@@ -5564,15 +5564,16 @@ class GameLauncher(QWidget):
         self.sort_bar = QWidget()
         self.sort_bar.setObjectName("sortBar")
         self.sort_bar.setFixedHeight(60)  # Taller to prevent button cutoff
+        
         sort_bar_layout = QHBoxLayout(self.sort_bar)
-        sort_bar_layout.setContentsMargins(15, 10, 15, 10)  # Extra top/bottom margin to center buttons vertically
+        sort_bar_layout.setContentsMargins(15, 10, 15, 10)
         sort_bar_layout.setSpacing(15)
         sort_bar_layout.setAlignment(Qt.AlignVCenter)
         
         # Sort label
-        self.sort_label = QLabel("Sort:")
+        self.sort_label = QLabel("Sort by:")
         self.sort_label.setObjectName("sortBarLabel")
-        self.sort_label.setStyleSheet("font-size: 13px; color: #888888;")
+        self.sort_label.setStyleSheet("font-size: 13px; color: #e0e0e0; font-weight: 500;")
         
         # Sort dropdown
         self.sort_combo = QComboBox()
@@ -5581,31 +5582,51 @@ class GameLauncher(QWidget):
         self.sort_combo.setFixedWidth(140)
         self.sort_combo.setFixedHeight(30)
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
+        
         self.sort_combo.setStyleSheet("""
             QComboBox {
-                background: rgba(30, 30, 30, 0.9);
-                border: 1px solid #FF5B06;
-                border-radius: 5px;
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
+                border-radius: 8px;
                 padding: 3px 10px;
                 color: #e0e0e0;
                 font-size: 12px;
+                font-weight: 500;
+            }
+            QComboBox:hover {
+                background: rgba(255, 255, 255, 0.2);
             }
             QComboBox::drop-down {
                 border: none;
                 width: 20px;
+                background: transparent;
             }
             QComboBox QAbstractItemView {
-                background: #1e1e1e;
-                border: 1px solid #FF5B06;
-                selection-background-color: #FF5B06;
+                background: #1e2128;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+                outline: 0px;
                 font-size: 12px;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 26px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {
+                 background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }
         """)
         
         # Filter dropdown (All / Games / Utilities)
         self.filter_label = QLabel("Filter:")
         self.filter_label.setObjectName("sortBarLabel")
-        self.filter_label.setStyleSheet("font-size: 13px; color: #888888;")
+        self.filter_label.setStyleSheet("font-size: 13px; color: #e0e0e0; font-weight: 500;")
         
         self.filter_combo = QComboBox()
         self.filter_combo.setObjectName("FilterComboBox")
@@ -5613,24 +5634,44 @@ class GameLauncher(QWidget):
         self.filter_combo.setFixedWidth(100)
         self.filter_combo.setFixedHeight(30)
         self.filter_combo.currentTextChanged.connect(self.on_filter_changed)
+        
         self.filter_combo.setStyleSheet("""
             QComboBox {
-                background: rgba(30, 30, 30, 0.9);
-                border: 1px solid #FF5B06;
-                border-radius: 5px;
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
+                border-radius: 8px;
                 padding: 3px 10px;
                 color: #e0e0e0;
                 font-size: 12px;
+                font-weight: 500;
+            }
+            QComboBox:hover {
+                background: rgba(255, 255, 255, 0.2);
             }
             QComboBox::drop-down {
                 border: none;
                 width: 20px;
+                background: transparent;
             }
             QComboBox QAbstractItemView {
-                background: #1e1e1e;
-                border: 1px solid #FF5B06;
-                selection-background-color: #FF5B06;
+                background: #1e2128;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+                outline: 0px;
                 font-size: 12px;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 26px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {
+                 background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }
         """)
         
@@ -6547,25 +6588,42 @@ Stylesheet Selector:
             QMessageBox.information(self, "Component Inspector", "No widget under cursor")
 
     def toggle_fullscreen(self):
-        """Toggle fullscreen mode."""
-        if self.isFullScreen():
-            self.showNormal()
-            self.settings["window_fullscreen"] = False
-            # Restore previous geometry if available
-            geometry = self.settings.get("window_geometry")
-            if geometry and len(geometry) == 4:
-                self.move(geometry[0], geometry[1])
-                self.resize(geometry[2], geometry[3])
-        else:
-            # Save normal geometry if available so we don't save maximized size
-            geom = self.normalGeometry()
-            if geom.width() > 0 and geom.height() > 0:
-                self.settings["window_geometry"] = [geom.x(), geom.y(), geom.width(), geom.height()]
+        """Toggle fullscreen mode with debouncing guard and transition lock."""
+        import time
+        from PySide6.QtCore import QTimer
+        now = time.monotonic()
+        if hasattr(self, '_last_fullscreen_toggle') and (now - self._last_fullscreen_toggle < 0.4):
+            return
+        self._last_fullscreen_toggle = now
+        self._is_toggling_fullscreen = True
+
+        try:
+            if self.isFullScreen():
+                self.showNormal()
+                self.settings["window_fullscreen"] = False
+                # Restore previous geometry if available
+                geometry = self.settings.get("window_geometry")
+                if geometry and len(geometry) == 4:
+                    self.move(geometry[0], geometry[1])
+                    self.resize(geometry[2], geometry[3])
+                # Re-apply resizable constraint if non-resizable
+                if not self.settings.get("resizable_window", True):
+                    self.setFixedSize(self.size())
             else:
-                self.settings["window_geometry"] = [self.x(), self.y(), self.width(), self.height()]
-            self.showFullScreen()
-            self.settings["window_fullscreen"] = True
-        save_settings(self.settings)
+                # Unlock maximum size before going fullscreen
+                self.setMaximumSize(16777215, 16777215)
+                # Save normal geometry if available so we don't save maximized size
+                geom = self.normalGeometry()
+                if geom.width() > 0 and geom.height() > 0:
+                    self.settings["window_geometry"] = [geom.x(), geom.y(), geom.width(), geom.height()]
+                else:
+                    self.settings["window_geometry"] = [self.x(), self.y(), self.width(), self.height()]
+                self.showFullScreen()
+                self.settings["window_fullscreen"] = True
+            save_settings(self.settings)
+        finally:
+            # Clear transition lock after OS window state animation completes
+            QTimer.singleShot(500, lambda: setattr(self, '_is_toggling_fullscreen', False))
     
     def _update_nav_gradient(self):
         """Update the gradient offset for animated nav button."""
@@ -7184,8 +7242,12 @@ Stylesheet Selector:
             from PySide6.QtGui import QPixmap, QTransform
             from PySide6.QtCore import QTimer
             
-            # Create icon frames for animation (0 to -45 degrees)
-            pixmap = QPixmap(icon_path)
+            # Load icon and scale down to button size (50x50) BEFORE frame generation to prevent ~800MB RAM leak
+            full_pixmap = QPixmap(icon_path)
+            target_size = QSize(50, 50)
+            pixmap = full_pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            del full_pixmap  # Immediately release 58.2MB raw bitmap buffer
+            
             original_size = pixmap.size()
             frames = []
             num_frames = 9  # 0, -5, -10, -15, -20, -25, -30, -35, -40, -45
@@ -7974,20 +8036,45 @@ Stylesheet Selector:
             delattr(self, '_cpu_panel_insert_index')
     
     def _reload_cpu_panel(self):
-        """Reload the CPU panel after UXTU installation."""
+        """Reload the CPU panel after UXTU installation with complete memory cleanup."""
         # Re-evaluate installation status
         from integrations.cpu_controller import is_uxtu_installed
         self.uxtu_installed = is_uxtu_installed()
         
+        # Stop active button rotation timers in existing CPU panel
+        if hasattr(self, 'cpu_panel') and self.cpu_panel:
+            for btn in self.cpu_panel.findChildren(QPushButton):
+                if hasattr(btn, '_rot_timer') and btn._rot_timer:
+                    btn._rot_timer.stop()
+                    btn._rot_timer = None
+                if hasattr(btn, '_rot_frames'):
+                    btn._rot_frames.clear()
+
+        # Stop CPU auto-reapply timer if active
+        if hasattr(self, '_stop_cpu_reapply_timer'):
+            self._stop_cpu_reapply_timer()
+
+        # Clear tracking dictionaries
+        self.cpu_sliders = {}
+        self._cpu_slider_checkboxes = {}
+        self._cpu_collapsible_groups = {}
+
         # Get current panel index (should be 2)
-        cpu_panel_index = self.content_stack.indexOf(self.cpu_panel)
+        cpu_panel_index = self.content_stack.indexOf(self.cpu_panel) if hasattr(self, 'cpu_panel') else 2
         if cpu_panel_index < 0:
             cpu_panel_index = 2  # Default CPU panel index
         
         # Remove old panel
-        self.content_stack.removeWidget(self.cpu_panel)
-        self.cpu_panel.deleteLater()
+        if hasattr(self, 'cpu_panel') and self.cpu_panel:
+            self.content_stack.removeWidget(self.cpu_panel)
+            self.cpu_panel.deleteLater()
         
+        # Flush global QPixmapCache & trigger Python GC
+        from PySide6.QtGui import QPixmapCache
+        import gc
+        QPixmapCache.clear()
+        gc.collect()
+
         # Set insert index for _setup_cpu_panel
         self._cpu_panel_insert_index = cpu_panel_index
         
@@ -9541,8 +9628,8 @@ Stylesheet Selector:
             icon_thumb_size = int(tile_size * 0.7)  # Icon takes more space now
             
             # Calculate fixed tile height to prevent overlap
-            # Height = icon + spacing + max label height
-            max_label_height = 50  # Slightly reduced to ensure fit
+            # Height = icon + spacing + max label height (72px supports up to 4 lines of wrapped text)
+            max_label_height = 72
             tile_height = icon_thumb_size + 4 + max_label_height
             
             # Create container widget for the entire game tile
@@ -9817,6 +9904,14 @@ Stylesheet Selector:
         self.search_query = text.strip().lower()
         self.refresh()
 
+    def _select_sort_option(self, text):
+        self.sort_combo.setText(text)
+        self.on_sort_changed(text)
+
+    def _select_filter_option(self, text):
+        self.filter_combo.setText(text)
+        self.on_filter_changed(text)
+
     def on_sort_changed(self, text):
         """Handle sort dropdown change."""
         self.refresh()
@@ -10043,9 +10138,11 @@ Stylesheet Selector:
                 if key == Qt.Key_A and bool(modifiers & Qt.ControlModifier):
                     print(f"[DEBUG eventFilter] Caught Ctrl+A event_type={event.type()}!")
                 
-                # F11 or Alt+Return: Toggle Fullscreen (Global)
-                if (key == Qt.Key_F11 and modifiers == Qt.NoModifier) or \
-                   (key == Qt.Key_Return and modifiers == Qt.AltModifier):
+                # F11 or Alt+Return: Toggle Fullscreen (Global, KeyPress only to avoid double-triggering with ShortcutOverride)
+                if event.type() == QEvent.KeyPress and (
+                    (key == Qt.Key_F11 and modifiers == Qt.NoModifier) or
+                    (key == Qt.Key_Return and modifiers == Qt.AltModifier)
+                ):
                     # Always allow F11 to toggle fullscreen. For Alt+Return, skip if in a text input
                     focus_widget = QApplication.focusWidget()
                     if key == Qt.Key_F11 or not isinstance(focus_widget, QLineEdit):
@@ -10758,12 +10855,10 @@ Stylesheet Selector:
             self.setWindowOpacity(self.settings["window_opacity"])
             
             # Apply fullscreen ONLY if the setting actually changed
-            is_currently_fullscreen = bool(self.windowState() & Qt.WindowFullScreen)
+            is_currently_fullscreen = bool(self.isFullScreen())
             wants_fullscreen = self.settings["window_fullscreen"]
-            if wants_fullscreen and not is_currently_fullscreen:
-                self.showFullScreen()
-            elif not wants_fullscreen and is_currently_fullscreen:
-                self.showNormal()
+            if wants_fullscreen != is_currently_fullscreen:
+                self.toggle_fullscreen()
                 
             # Apply resizable window setting
             if new_resize:
@@ -12712,7 +12807,7 @@ First Played: {first_played_formatted}
         from PySide6.QtCore import QEvent, QTimer
         if event.type() == QEvent.WindowStateChange:
             # Intercept maximize event to act like F11 (fullscreen)
-            if self.windowState() & Qt.WindowMaximized:
+            if self.windowState() == Qt.WindowMaximized and not self.isFullScreen() and not getattr(self, '_is_toggling_fullscreen', False):
                 QTimer.singleShot(0, self.toggle_fullscreen)
                 
             if self.windowState() & Qt.WindowMinimized:
@@ -15250,7 +15345,6 @@ First Played: {first_played_formatted}
                 "-Command",
                 f'Start-Process "shell:AppsFolder\\{app_id}"'
             ]
-            subprocess.Popen(cmd)
         except Exception as e:
             QMessageBox.warning(
                 self,
@@ -15258,12 +15352,18 @@ First Played: {first_played_formatted}
                 f"Gagal menjalankan OMEN Gaming Hub.\n\n{e}"
             )
 
+    def apply_qmenu_blur(self, menu):
+        """Apply translucent background and frameless window flags to QMenu."""
+        menu.setWindowFlags(menu.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        menu.setAttribute(Qt.WA_TranslucentBackground, True)
+
     def show_context_menu(self, pos, game, button):
         menu = QMenu(self)
         menu.setObjectName("GameContextMenu")
+        self.apply_qmenu_blur(menu)
         menu.setStyleSheet("""
             QMenu#GameContextMenu, QMenu {
-                background-color: #161622;
+                background: rgba(22, 25, 32, 0.65);
                 border: 1px solid rgba(255, 255, 255, 0.15);
                 border-radius: 8px;
                 padding: 6px;
@@ -15276,7 +15376,7 @@ First Played: {first_played_formatted}
                 background-color: transparent;
             }
             QMenu::item:selected, QMenu::item:hover {
-                background-color: #ff5b06;
+                background-color: rgba(255, 255, 255, 0.15);
                 color: #ffffff;
             }
             QMenu::separator {

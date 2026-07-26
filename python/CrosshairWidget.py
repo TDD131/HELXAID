@@ -5,11 +5,11 @@ Provides sliders, color pickers, and shape selectors for crosshair customization
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider,
     QComboBox, QCheckBox, QGroupBox, QColorDialog, QFileDialog,
-    QScrollArea, QFrame, QSpinBox, QGridLayout, QSystemTrayIcon, QApplication, QMenu
+    QScrollArea, QFrame, QSpinBox, QGridLayout, QSystemTrayIcon, QApplication, QMenu, QLineEdit
 )
 from smooth_scroll import SmoothScrollArea
-from PySide6.QtCore import Qt, Signal, Property, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRect
-from PySide6.QtGui import QColor, QPixmap, QIcon, QCursor, QPainter, QScreen, QPen, QBrush
+from PySide6.QtCore import Qt, Signal, Property, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRect, QSize
+from PySide6.QtGui import QColor, QPixmap, QIcon, QCursor, QPainter, QScreen, QPen, QBrush, QIntValidator
 from CrosshairOverlay import CrosshairOverlay
 from AnimatedButton import AnimatedCheckBox
 import os
@@ -314,6 +314,12 @@ class AnimatedComboBox(QComboBox):
         self._update_arrow_blend()
         
     def showPopup(self):
+        try:
+            popup = self.view().window()
+            popup.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+            popup.setAttribute(Qt.WA_TranslucentBackground, True)
+        except Exception:
+            pass
         super().showPopup()
         self._is_open = True
         self._animate_fade(1.0)  # Fade to up arrow
@@ -784,63 +790,83 @@ class CrosshairWidget(QWidget):
         
         # X Offset - inline layout
         pos_layout.addWidget(QLabel("X Offset:"), 0, 0, Qt.AlignVCenter)
-        self.x_offset_value = QLabel("0")
+        self.x_offset_value = QLineEdit("0")
+        self.x_offset_value.setValidator(QIntValidator(-500, 500, self))
         self.x_offset_value.setAlignment(Qt.AlignCenter)
         self.x_offset_value.setFixedHeight(40)
-        self.x_offset_value.setStyleSheet("""
-            QLabel {
-                background: rgba(30, 33, 40, 0.9);
-                border: 1px solid rgba(80, 80, 80, 0.4);
-                border-radius: 8px;
-                padding: 0px 10px;
-                color: #e0e0e0;
-                font-weight: 500;
-            }
-        """)
+        self.x_offset_value.setStyleSheet(self._offset_input_style())
+        self.x_offset_value.textChanged.connect(self._on_x_offset_edited)
+        self.x_offset_value.editingFinished.connect(self._on_x_offset_finished)
         pos_layout.addWidget(self.x_offset_value, 0, 1)
         
-        x_plus = QPushButton("+")
+        # X Plus (Right Arrow: +1px X)
+        x_plus = QPushButton()
+        x_plus.setToolTip("Increase X Offset (+1px Right)")
         x_plus.setMinimumSize(40, 40)
         x_plus.setMaximumWidth(40)
         x_plus.setStyleSheet(self._offset_btn_style())
+        right_icon = self._get_icon("forward-arrow-white.svg")
+        if right_icon:
+            x_plus.setIcon(right_icon)
+            x_plus.setIconSize(QSize(18, 18))
+        else:
+            x_plus.setText("+")
         x_plus.clicked.connect(lambda: self._change_offset("x", 1))
         pos_layout.addWidget(x_plus, 0, 2)
         
-        x_minus = QPushButton("-")
+        # X Minus (Left Arrow: -1px X)
+        x_minus = QPushButton()
+        x_minus.setToolTip("Decrease X Offset (-1px Left)")
         x_minus.setMinimumSize(40, 40)
         x_minus.setMaximumWidth(40)
         x_minus.setStyleSheet(self._offset_btn_style())
+        left_icon = self._get_icon("back-arrow-white.svg")
+        if left_icon:
+            x_minus.setIcon(left_icon)
+            x_minus.setIconSize(QSize(18, 18))
+        else:
+            x_minus.setText("-")
         x_minus.clicked.connect(lambda: self._change_offset("x", -1))
         pos_layout.addWidget(x_minus, 0, 3)
         
         # Y Offset - inline layout
         pos_layout.addWidget(QLabel("Y Offset:"), 1, 0, Qt.AlignVCenter)
-        self.y_offset_value = QLabel("0")
+        self.y_offset_value = QLineEdit("0")
+        self.y_offset_value.setValidator(QIntValidator(-500, 500, self))
         self.y_offset_value.setAlignment(Qt.AlignCenter)
         self.y_offset_value.setFixedHeight(40)
-        self.y_offset_value.setStyleSheet("""
-            QLabel {
-                background: rgba(30, 33, 40, 0.9);
-                border: 1px solid rgba(80, 80, 80, 0.4);
-                border-radius: 8px;
-                padding: 0px 10px;
-                color: #e0e0e0;
-                font-weight: 500;
-            }
-        """)
+        self.y_offset_value.setStyleSheet(self._offset_input_style())
+        self.y_offset_value.textChanged.connect(self._on_y_offset_edited)
+        self.y_offset_value.editingFinished.connect(self._on_y_offset_finished)
         pos_layout.addWidget(self.y_offset_value, 1, 1)
         
-        y_plus = QPushButton("+")
+        # Y Plus (Down Arrow: +1px Y)
+        y_plus = QPushButton()
+        y_plus.setToolTip("Increase Y Offset (+1px Down)")
         y_plus.setMinimumSize(40, 40)
         y_plus.setMaximumWidth(40)
         y_plus.setStyleSheet(self._offset_btn_style())
+        down_icon = self._get_icon("down-arrow-white.svg")
+        if down_icon:
+            y_plus.setIcon(down_icon)
+            y_plus.setIconSize(QSize(18, 18))
+        else:
+            y_plus.setText("+")
         y_plus.clicked.connect(lambda: self._change_offset("y", 1))
         pos_layout.addWidget(y_plus, 1, 2)
         
-        y_minus = QPushButton("-")
+        # Y Minus (Up Arrow: -1px Y)
+        y_minus = QPushButton()
+        y_minus.setToolTip("Decrease Y Offset (-1px Up)")
         y_minus.setMinimumSize(40, 40)
         y_minus.setMaximumWidth(40)
         y_minus.setStyleSheet(self._offset_btn_style())
+        up_icon = self._get_icon("up-arrow-white.svg")
+        if up_icon:
+            y_minus.setIcon(up_icon)
+            y_minus.setIconSize(QSize(18, 18))
+        else:
+            y_minus.setText("-")
         y_minus.clicked.connect(lambda: self._change_offset("y", -1))
         pos_layout.addWidget(y_minus, 1, 3)
         
@@ -909,6 +935,72 @@ class CrosshairWidget(QWidget):
             }
         """
     
+    def _offset_input_style(self):
+        return """
+            QLineEdit {
+                background: rgba(30, 33, 40, 0.9);
+                border: 1px solid rgba(80, 80, 80, 0.4);
+                border-radius: 8px;
+                padding: 0px 10px;
+                color: #e0e0e0;
+                font-weight: 500;
+                font-size: 14px;
+                selection-background-color: #ff5700;
+                selection-color: #ffffff;
+            }
+            QLineEdit:hover {
+                border: 1px solid rgba(120, 120, 120, 0.6);
+            }
+            QLineEdit:focus {
+                border: 1px solid #ff5700;
+                background: rgba(40, 45, 55, 0.95);
+            }
+        """
+
+    def _get_icon(self, filename):
+        import sys
+        base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        icon_path = os.path.join(base_dir, "UI Icons", filename)
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+        return None
+
+    def _on_x_offset_edited(self, text):
+        """Handle direct text input for X offset."""
+        text = text.strip()
+        if not text or text == "-":
+            return
+        try:
+            val = int(text)
+            clamped = max(-500, min(500, val))
+            if clamped != self._offset_x:
+                self._offset_x = clamped
+                self._update_setting("offset_x", self._offset_x)
+        except ValueError:
+            pass
+
+    def _on_y_offset_edited(self, text):
+        """Handle direct text input for Y offset."""
+        text = text.strip()
+        if not text or text == "-":
+            return
+        try:
+            val = int(text)
+            clamped = max(-500, min(500, val))
+            if clamped != self._offset_y:
+                self._offset_y = clamped
+                self._update_setting("offset_y", self._offset_y)
+        except ValueError:
+            pass
+
+    def _on_x_offset_finished(self):
+        """Format X offset text field when editing is complete."""
+        self.x_offset_value.setText(str(self._offset_x))
+
+    def _on_y_offset_finished(self):
+        """Format Y offset text field when editing is complete."""
+        self.y_offset_value.setText(str(self._offset_y))
+
     def _change_offset(self, axis, delta):
         """Change X or Y offset value."""
         if axis == "x":
@@ -1083,11 +1175,24 @@ class CrosshairWidget(QWidget):
                 height: 10px;
             }
             QComboBox QAbstractItemView {
-                background: #1a1a1a;
+                background: rgba(25, 28, 36, 0.85);
                 color: #e0e0e0;
-                selection-background-color: rgba(255, 91, 6, 0.2);
-                border: none;
+                border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
+                outline: 0px;
+                padding: 4px;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 28px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }
         """
     
@@ -1116,11 +1221,24 @@ class CrosshairWidget(QWidget):
                 height: 0px;
             }
             QComboBox QAbstractItemView {
-                background: #1a1a1a;
+                background: rgba(25, 28, 36, 0.85);
                 color: #e0e0e0;
-                selection-background-color: rgba(255, 91, 6, 0.2);
-                border: none;
+                border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
+                outline: 0px;
+                padding: 4px;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 28px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }
         """
     

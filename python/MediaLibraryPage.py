@@ -89,7 +89,7 @@ class MediaLibraryPage(QWidget):
         for folder_item in getattr(self, '_all_folder_items', []):
             if folder_item.isSelected():
                 for c in range(5):
-                    folder_item.setBackground(c, QColor(255, 91, 6, 120))
+                    folder_item.setBackground(c, QColor(255, 255, 255, 31))
             else:
                 for c in range(5):
                     folder_item.setBackground(c, QColor(40, 40, 45, 180))
@@ -199,7 +199,7 @@ class MediaLibraryPage(QWidget):
                 background: rgba(255, 255, 255, 0.05);
             }
             QTreeWidget::item:selected {
-                background: rgba(255, 91, 6, 0.45);
+                background: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
                 outline: none;
                 border-top: none;

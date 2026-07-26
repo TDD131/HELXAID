@@ -58,14 +58,24 @@ class MusicSettingsDialog(QDialog):
                 transform: rotate(45deg); /* Simple CSS arrow hack */
             }
             QComboBox QAbstractItemView {
-                background-color: #252525;
+                background-color: #1e2128;
                 color: #ffffff;
-                border: 1px solid #444;
+                border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
-                selection-background-color: #FF5B06;
-                selection-color: #ffffff;
-                padding: 5px;
+                padding: 4px;
                 outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 26px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #ff7b3b);

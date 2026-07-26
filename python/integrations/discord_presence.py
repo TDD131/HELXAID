@@ -26,7 +26,7 @@ class DiscordPresence:
     Usage:
         discord = DiscordPresence()
         discord.connect()
-        discord.update("Song Title", "Artist Name")
+        discord.update("Media Title", "Artist Name")
         discord.clear()
         discord.disconnect()
     """

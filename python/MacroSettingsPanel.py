@@ -701,23 +701,24 @@ class MacroSettingsPanel(QWidget):
                 margin-right: 8px;
             }
             QComboBox QAbstractItemView {
-                background: #2a2d35;
+                background: #1e2128;
                 color: #e0e0e0;
-                border: none;
-                selection-background-color: #FF5B06;
-                selection-color: white;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
                 outline: none;
             }
             QComboBox QAbstractItemView::item {
                 padding: 6px 12px;
-                min-height: 20px;
+                min-height: 24px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
             }
-            QComboBox QAbstractItemView::item:hover {
-                background: #3a3d45;
-            }
+            QComboBox QAbstractItemView::item:hover,
             QComboBox QAbstractItemView::item:selected {
-                background: #FF5B06;
-                color: white;
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }
         """
         
@@ -728,21 +729,25 @@ class MacroSettingsPanel(QWidget):
         # Menu style
         menu_style = """
             QMenu {
-                background: #2a2d35;
+                background: #1e2128;
                 color: #e0e0e0;
-                border: none;
-                padding: 5px;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 6px;
             }
             QMenu::item {
                 padding: 6px 25px 6px 20px;
-                border-radius: 3px;
+                border-radius: 4px;
+                background: transparent;
+                color: #e0e0e0;
             }
             QMenu::item:selected {
-                background: #FF5B06;
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }
             QMenu::separator {
                 height: 1px;
-                background: #4a4d55;
+                background: rgba(255, 255, 255, 0.1);
                 margin: 4px 10px;
             }
             QMenu::right-arrow {

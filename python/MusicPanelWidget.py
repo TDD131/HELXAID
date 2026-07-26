@@ -296,6 +296,16 @@ class MarqueeLabel(QLabel):
 
 # ---- Universal Downloader Classes ----
 
+def prepare_ytdlp_target(input_str: str) -> str:
+    """If input is not a URL, format as a ytsearch query for yt-dlp."""
+    s = (input_str or "").strip()
+    if not s:
+        return s
+    if s.startswith(('http://', 'https://', 'www.')) or '://' in s:
+        return s
+    return f"ytsearch1:{s}"
+
+
 class DownloadWorker(QThread):
     """
     Background worker for downloading YouTube content using yt-dlp.
@@ -310,7 +320,7 @@ class DownloadWorker(QThread):
 
     def __init__(self, url, out_dir, fmt, quality_idx, browser_cookies="None"):
         super().__init__()
-        self.url = url
+        self.url = prepare_ytdlp_target(url)
         self.out_dir = out_dir
         self.fmt = fmt
         self.quality_idx = quality_idx
@@ -348,6 +358,8 @@ class DownloadWorker(QThread):
         import subprocess
         import os
         import sys
+        
+        self.downloaded_path = None
         
         try:
             import yt_dlp as _yt_dlp_mod
@@ -400,6 +412,7 @@ class DownloadWorker(QThread):
                 startupinfo = STARTUPINFO()
                 startupinfo.dwFlags |= STARTF_USESHOWWINDOW
                 
+            print(f"[DEBUG DownloadWorker] Running command: {' '.join(cmd)}")
             self._proc = subprocess.Popen(
                 cmd, 
                 stdout=subprocess.PIPE, 
@@ -421,6 +434,17 @@ class DownloadWorker(QThread):
                 
                 self.status.emit(clean_line)
                 
+                # Parse output file path from yt-dlp stdout
+                if 'Destination:' in clean_line:
+                    p = clean_line.split('Destination:', 1)[1].strip()
+                    if p: self.downloaded_path = p
+                elif 'Merging formats into' in clean_line:
+                    p = clean_line.split('Merging formats into', 1)[1].strip().strip('"')
+                    if p: self.downloaded_path = p
+                elif 'has already been downloaded' in clean_line and '[download]' in clean_line:
+                    p = clean_line.replace('[download]', '').split('has already been downloaded')[0].strip()
+                    if p: self.downloaded_path = p
+                
                 # Parse progress percent
                 if '[download]' in clean_line and '%' in clean_line:
                     try:
@@ -440,7 +464,8 @@ class DownloadWorker(QThread):
             if self._is_cancelled:
                 self.error.emit("Download cancelled by user.")
             elif self._proc.returncode == 0:
-                self.finished.emit("Download successful!")
+                print(f"[DEBUG DownloadWorker] Finished successfully. Captured path: {self.downloaded_path}")
+                self.finished.emit(self.downloaded_path or "Download successful!")
             else:
                 err_msg = self._proc.stderr.read()
                 self.error.emit(err_msg or f"yt-dlp exited with code {self._proc.returncode}")
@@ -460,7 +485,7 @@ class MetadataWorker(QThread):
 
     def __init__(self, url, fmt, quality_idx, browser_cookies="None"):
         super().__init__()
-        self.url = url
+        self.url = prepare_ytdlp_target(url)
         self.fmt = fmt
         self.quality_idx = quality_idx
         self.browser_cookies = browser_cookies
@@ -556,6 +581,289 @@ class ImageLoader(QThread):
         except: pass
 
 
+class SpinningLoader(QWidget):
+    """Smooth animated spinning arc loading indicator for previews."""
+    def __init__(self, parent=None, size=36):
+        super().__init__(parent)
+        self._angle = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(25)
+        self._timer.timeout.connect(self._rotate)
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.hide()
+        
+    def start(self):
+        self._angle = 0
+        if not self._timer.isActive():
+            self._timer.start()
+        self.show()
+        if self.parentWidget():
+            self.raise_()
+
+    def stop(self):
+        self._timer.stop()
+        self.hide()
+
+    def _rotate(self):
+        self._angle = (self._angle + 10) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        from PySide6.QtGui import QPainter, QPen, QColor
+        from PySide6.QtCore import Qt, QRectF
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        
+        margin = 4
+        w = self.width() - margin * 2
+        rect = QRectF(margin, margin, w, w)
+        
+        # Track ring
+        pen_bg = QPen(QColor(255, 255, 255, 30), 3)
+        p.setPen(pen_bg)
+        p.drawEllipse(rect)
+        
+        # Rotating arc
+        pen_arc = QPen(QColor(255, 255, 255, 230), 3)
+        pen_arc.setCapStyle(Qt.RoundCap)
+        p.setPen(pen_arc)
+        
+        p.drawArc(rect, -int(self._angle * 16), -int(100 * 16))
+
+
+class PreviewCardFrame(QFrame):
+    """Container frame for full-card thumbnail with title overlay and spinning loader."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.thumb_lbl = None
+        self.overlay_widget = None
+        self.spinner = SpinningLoader(self, size=36)
+        self._on_resize_cb = None
+
+    def set_resize_callback(self, cb):
+        self._on_resize_cb = cb
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = self.width()
+        h = self.height()
+        if self.thumb_lbl:
+            self.thumb_lbl.setGeometry(0, 0, w, h)
+        if self.overlay_widget:
+            self.overlay_widget.setGeometry(0, 0, w, h)
+            self.overlay_widget.raise_()
+        if hasattr(self, 'spinner') and self.spinner:
+            sw = self.spinner.width()
+            sh = self.spinner.height()
+            self.spinner.setGeometry((w - sw) // 2, (h - sh) // 2, sw, sh)
+            if self.spinner.isVisible():
+                self.spinner.raise_()
+        if callable(self._on_resize_cb):
+            self._on_resize_cb()
+
+
+
+
+
+class ResponsiveAutoAddWidget(QWidget):
+    """
+    Responsive container for Auto-add options.
+    Dynamically switches between single-line layout (wide panels)
+    and multi-line layout (narrow panels) on resize.
+    """
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+        self._is_compact = None
+
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 2, 0, 2)
+        self.main_layout.setSpacing(2)
+
+        # Row 1 container
+        self.row1_container = QWidget()
+        self.row1_layout = QHBoxLayout(self.row1_container)
+        self.row1_layout.setContentsMargins(0, 0, 0, 0)
+        self.row1_layout.setSpacing(6)
+
+        # Row 2 container (for narrow panel mode)
+        self.row2_container = QWidget()
+        self.row2_layout = QHBoxLayout(self.row2_container)
+        self.row2_layout.setContentsMargins(22, 0, 0, 0)
+        self.row2_layout.setSpacing(0)
+
+        # Element 1: Toggle Checkbox
+        from AnimatedButton import AnimatedCheckBox
+        self.auto_add_cb = AnimatedCheckBox("Auto-add to")
+        self.auto_add_cb.setCursor(Qt.PointingHandCursor)
+        auto_add_enabled = self.settings.value("UniversalDownloader/auto_add_enabled", True, type=bool)
+        self.auto_add_cb.setChecked(auto_add_enabled)
+
+        # Element 2: Dropdown
+        self.auto_add_target_combo = QComboBox()
+        self.auto_add_target_combo.addItems(["Track Playlist", "Media Library"])
+        self.auto_add_target_combo.setCursor(Qt.PointingHandCursor)
+
+        saved_target = self.settings.value("UniversalDownloader/auto_add_target", "Track Playlist", type=str)
+        t_idx = self.auto_add_target_combo.findText(saved_target)
+        if t_idx >= 0:
+            self.auto_add_target_combo.setCurrentIndex(t_idx)
+
+        # Compact & Elegant Dropdown QSS Styling (HELXAIL Style)
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+        self.auto_add_target_combo.setFixedHeight(28)
+        self.auto_add_target_combo.setStyleSheet("""
+            QComboBox {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                color: #ffffff;
+                padding: 2px 22px 2px 8px;
+                font-size: 11px;
+                font-weight: 500;
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
+            }
+            QComboBox:hover {
+                background-color: rgba(255, 255, 255, 0.14);
+            }
+            QComboBox:disabled {
+                background-color: rgba(255, 255, 255, 0.02);
+                color: #555555;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border: none;
+                background: transparent;
+            }
+            QComboBox::down-arrow {
+                image: url('""" + icon_path + """');
+                width: 10px;
+                height: 10px;
+            }
+        """)
+
+        try:
+            from PySide6.QtGui import QPalette, QColor
+            view = self.auto_add_target_combo.view()
+            view.setAutoFillBackground(True)
+            pal = view.palette()
+            pal.setColor(QPalette.Base, QColor(18, 18, 26))
+            pal.setColor(QPalette.Text, QColor(255, 255, 255))
+            view.setPalette(pal)
+            view.setStyleSheet("""
+                QAbstractItemView {
+                    background-color: #1a1a1a;
+                    border: none;
+                    border-radius: 8px;
+                    color: #ffffff;
+                    font-size: 11px;
+                    font-weight: 500;
+                    font-family: 'Orbitron', 'Segoe UI', sans-serif;
+                    selection-background-color: rgba(255, 255, 255, 0.12);
+                    selection-color: #ffffff;
+                    outline: 0;
+                    padding: 4px;
+                }
+                QAbstractItemView::item {
+                    min-height: 28px;
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    background: transparent;
+                }
+                QAbstractItemView::item:hover,
+                QAbstractItemView::item:selected {
+                    background-color: rgba(255, 255, 255, 0.12);
+                    color: #ffffff;
+                }
+            """)
+        except Exception:
+            pass
+
+        # Element 3: Text Suffix
+        self.lbl_after = QLabel("after download")
+        self.lbl_after.setStyleSheet(f"color: {'#ffffff' if auto_add_enabled else '#555555'}; font-size: 11px; font-weight: normal; font-family: 'Orbitron', 'Segoe UI', sans-serif;")
+
+        self.auto_add_target_combo.setEnabled(auto_add_enabled)
+
+        def on_auto_add_toggled(checked):
+            self.auto_add_target_combo.setEnabled(checked)
+            self.lbl_after.setStyleSheet(f"color: {'#ffffff' if checked else '#555555'}; font-size: 11px; font-weight: normal; font-family: 'Orbitron', 'Segoe UI', sans-serif;")
+            self.settings.setValue("UniversalDownloader/auto_add_enabled", checked)
+
+        def on_target_changed(text):
+            self.settings.setValue("UniversalDownloader/auto_add_target", text)
+
+        self.auto_add_cb.toggled.connect(on_auto_add_toggled)
+        self.auto_add_target_combo.currentTextChanged.connect(on_target_changed)
+
+        self.main_layout.addWidget(self.row1_container)
+        self.main_layout.addWidget(self.row2_container)
+
+        # Apply initial layout based on current width (default to compact if small)
+        self._apply_layout(is_compact=(self.width() < 280 if self.width() > 0 else True))
+
+    def _apply_layout(self, is_compact: bool):
+        if self._is_compact == is_compact:
+            return
+        self._is_compact = is_compact
+
+        # Clear layouts safely
+        while self.row1_layout.count():
+            item = self.row1_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+
+        while self.row2_layout.count():
+            item = self.row2_layout.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+
+        if is_compact:
+            # Line 1: Checkbox + Dropdown
+            self.row1_layout.addWidget(self.auto_add_cb)
+            self.row1_layout.addWidget(self.auto_add_target_combo)
+            self.row1_layout.addStretch()
+
+            # Line 2: "after download" below (cleanly indented under checkbox text)
+            self.row2_layout.addWidget(self.lbl_after)
+            self.row2_layout.addStretch()
+            self.row2_container.show()
+        else:
+            # Line 1: Checkbox + Dropdown + "after download"
+            self.row1_layout.addWidget(self.auto_add_cb)
+            self.row1_layout.addWidget(self.auto_add_target_combo)
+            self.row1_layout.addWidget(self.lbl_after)
+            self.row1_layout.addStretch()
+
+            self.row2_container.hide()
+
+    def minimumSizeHint(self):
+        from PySide6.QtCore import QSize
+        return QSize(150, 30)
+
+    def sizeHint(self):
+        from PySide6.QtCore import QSize
+        return QSize(200, 32 if not self._is_compact else 54)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = self.width()
+        if w < 280:
+            self._apply_layout(is_compact=True)
+        else:
+            self._apply_layout(is_compact=False)
+
+
+class YtScrollContentWidget(QWidget):
+    """Custom content container with unconstrained minimum width to allow smooth splitter shrinking."""
+    def minimumSizeHint(self):
+        from PySide6.QtCore import QSize
+        return QSize(200, 100)
+
+
 class UniversalDownloaderPanel(QFrame):
     """
     Integrated YouTube downloader panel that replaces the floating dialog.
@@ -630,8 +938,8 @@ class UniversalDownloaderPanel(QFrame):
         super().closeEvent(event)
 
     def _setup_ui(self):
-        self.setMinimumWidth(320)
-        self.setMaximumWidth(360)
+        self.setMinimumWidth(350)
+        self.setMaximumWidth(450)
         # Master layout for the panel frame
         master_layout = QVBoxLayout(self)
         master_layout.setContentsMargins(0, 0, 0, 0)
@@ -644,16 +952,16 @@ class UniversalDownloaderPanel(QFrame):
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet("background: transparent; border: none;")
         
-        self.scroll_content = QWidget()
+        self.scroll_content = YtScrollContentWidget()
         self.scroll_content.setObjectName("ytScrollContent")
         layout = QVBoxLayout(self.scroll_content)
-        layout.setContentsMargins(15, 20, 15, 15)
-        layout.setSpacing(15)
+        layout.setContentsMargins(12, 16, 12, 12)
+        layout.setSpacing(12)
 
         # Header with close button
         header_row = QHBoxLayout()
         title = QLabel("UNIVERSAL DOWNLOADER (BETA)")
-        title.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 900; color: #FF5B06; letter-spacing: 1px;")
+        title.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 900; color: #ffffff; letter-spacing: 1px;")
         title.setWordWrap(True)
         title.setMinimumWidth(10)
         header_row.addWidget(title)
@@ -665,57 +973,70 @@ class UniversalDownloaderPanel(QFrame):
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setStyleSheet("""
             QPushButton { background: transparent; color: #888; border: none; font-size: 20px; font-weight: bold; }
-            QPushButton:hover { color: #FF5B06; }
+            QPushButton:hover { color: #ffffff; }
         """)
         close_btn.clicked.connect(self.closeRequested.emit)
-        header_row.addWidget(close_btn)
+        header_row.addWidget(close_btn, 0, Qt.AlignVCenter)
         layout.addLayout(header_row)
 
-        # URL input
-        url_lbl = QLabel("LINK VIDEO")
-        url_lbl.setStyleSheet("color: #FF5B06; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
+        # URL / Search input
+        url_lbl = QLabel("LINK OR MEDIA NAME")
+        url_lbl.setStyleSheet("color: #e0e0e0; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
         layout.addWidget(url_lbl)
         
         self.url_edit = QLineEdit()
-        self.url_edit.setPlaceholderText("https://... (YouTube, SoundCloud, Spotify, etc)")
+        self.url_edit.setPlaceholderText("Paste URL or type media name...")
         self.url_edit.setMinimumWidth(10)
         layout.addWidget(self.url_edit)
 
-        # ---- Preview Section (Thumbnail + Title) ----
-        self.preview_section = QFrame()
+        # ---- Preview Section (Thumbnail Card with Title Overlay) ----
+        self.preview_section = PreviewCardFrame(self)
         self.preview_section.setObjectName("ytPreviewSection")
+        self.preview_section.setFixedHeight(150)
         self.preview_section.setStyleSheet("""
             QFrame#ytPreviewSection {
-                background: rgba(0,0,0,0.2);
-                border: 1px solid rgba(255, 91, 6, 0.1);
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
             }
         """)
         self.preview_section.hide()
-        
-        preview_layout = QVBoxLayout(self.preview_section)
-        preview_layout.setContentsMargins(10, 10, 10, 10)
-        preview_layout.setSpacing(8)
 
-        # Image Container
-        self.thumb_container = QFrame()
-        self.thumb_container.setMinimumSize(160, 90) # 16:9 flexible
-        self.thumb_container.setStyleSheet("background: rgba(0,0,0,0.4); border-radius: 4px;")
-        
-        thumb_inner_layout = QVBoxLayout(self.thumb_container)
-        thumb_inner_layout.setContentsMargins(0,0,0,0)
-        
-        self.thumb_lbl = QLabel()
+        # Layer 0: Thumbnail Image (Filling full card background)
+        self.thumb_lbl = QLabel(self.preview_section)
         self.thumb_lbl.setAlignment(Qt.AlignCenter)
-        thumb_inner_layout.addWidget(self.thumb_lbl)
-        preview_layout.addWidget(self.thumb_container, 0, Qt.AlignCenter)
+        self.thumb_lbl.setStyleSheet("border-radius: 8px;")
+        self.preview_section.thumb_lbl = self.thumb_lbl
 
-        # Title below image
+        # Layer 1: Title Overlay at bottom with dark gradient (Created AFTER thumb_lbl to sit on top)
+        self.overlay_widget = QWidget(self.preview_section)
+        self.overlay_widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.preview_section.overlay_widget = self.overlay_widget
+
+        overlay_layout = QVBoxLayout(self.overlay_widget)
+        overlay_layout.setContentsMargins(0, 0, 0, 0)
+        overlay_layout.setSpacing(0)
+        overlay_layout.addStretch()
+
+        title_box = QFrame()
+        title_box.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 rgba(10, 10, 18, 0), stop:0.35 rgba(10, 10, 18, 0.8), stop:1 rgba(10, 10, 18, 0.98));
+                border-bottom-left-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }
+        """)
+        title_box_layout = QVBoxLayout(title_box)
+        title_box_layout.setContentsMargins(12, 10, 12, 10)
+
         self.title_lbl = QLabel("")
-        self.title_lbl.setStyleSheet("color: #FF5B06; font-size: 11px; font-weight: bold;")
+        self.title_lbl.setStyleSheet("color: #ffffff; font-size: 11px; font-weight: bold; font-family: 'Orbitron', sans-serif;")
         self.title_lbl.setWordWrap(True)
-        self.title_lbl.setAlignment(Qt.AlignCenter)
-        preview_layout.addWidget(self.title_lbl)
+        self.title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        title_box_layout.addWidget(self.title_lbl)
+
+        overlay_layout.addWidget(title_box)
+        self.preview_section.set_resize_callback(self._update_scaled_thumb)
         
         layout.addWidget(self.preview_section)
 
@@ -727,12 +1048,13 @@ class UniversalDownloaderPanel(QFrame):
         fmt_layout.setSpacing(10)
         
         fmt_title = QLabel("FORMAT & QUALITY")
-        fmt_title.setStyleSheet("color: #FF5B06; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
+        fmt_title.setStyleSheet("color: #e0e0e0; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
         fmt_layout.addWidget(fmt_title)
         
         rb_layout = QHBoxLayout()
-        self.rb_audio = QCheckBox("Audio (MP3)")
-        self.rb_video = QCheckBox("Video (MP4)")
+        from AnimatedButton import AnimatedCheckBox
+        self.rb_audio = AnimatedCheckBox("Audio (MP3)")
+        self.rb_video = AnimatedCheckBox("Video (MP4)")
         self.rb_audio.setChecked(True)
         self.rb_audio.setCursor(Qt.PointingHandCursor)
         self.rb_video.setCursor(Qt.PointingHandCursor)
@@ -749,32 +1071,68 @@ class UniversalDownloaderPanel(QFrame):
         
         self.quality_combo = QComboBox()
         self.quality_combo.setObjectName("ytQualityCombo")
+        self.quality_combo.setCursor(Qt.PointingHandCursor)
+        self.quality_combo.setMinimumHeight(34)
+        fmt_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+        self.quality_combo.setStyleSheet("""
+            QComboBox {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 8px;
+                padding: 4px 24px 4px 12px;
+                color: #ffffff;
+                font-size: 11px;
+                font-weight: 500;
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
+            }
+            QComboBox:hover {
+                background-color: rgba(255, 255, 255, 0.14);
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 22px;
+                border: none;
+                background: transparent;
+            }
+            QComboBox::down-arrow {
+                image: url('""" + fmt_icon_path + """');
+                width: 10px;
+                height: 10px;
+            }
+        """)
 
-        # Ensure the dropdown popup is opaque. The popup is a separate top-level
-        # view and may not reliably inherit the parent stylesheet.
         try:
             from PySide6.QtGui import QPalette, QColor
             view = self.quality_combo.view()
             view.setAutoFillBackground(True)
             pal = view.palette()
-            pal.setColor(QPalette.Base, QColor(15, 15, 25))
-            pal.setColor(QPalette.Text, QColor(224, 224, 224))
+            pal.setColor(QPalette.Base, QColor(18, 18, 26))
+            pal.setColor(QPalette.Text, QColor(255, 255, 255))
             view.setPalette(pal)
             view.setStyleSheet("""
                 QAbstractItemView {
-                    background-color: rgba(15, 15, 25, 0.98);
-                    border: 1px solid rgba(255,255,255,0.12);
-                    color: #e0e0e0;
-                    selection-background-color: rgba(255, 91, 6, 0.35);
+                    background-color: #1a1a1a;
+                    border: none;
+                    border-radius: 8px;
+                    color: #ffffff;
+                    font-size: 11px;
+                    font-weight: 500;
+                    font-family: 'Orbitron', 'Segoe UI', sans-serif;
+                    selection-background-color: rgba(255, 255, 255, 0.12);
                     selection-color: #ffffff;
                     outline: 0;
+                    padding: 4px;
                 }
                 QAbstractItemView::item {
-                    padding: 6px 8px;
+                    min-height: 28px;
+                    padding: 4px 10px;
+                    border-radius: 6px;
                     background: transparent;
                 }
-                QAbstractItemView::item:hover {
-                    background: rgba(255, 91, 6, 0.22);
+                QAbstractItemView::item:hover,
+                QAbstractItemView::item:selected {
+                    background-color: rgba(255, 255, 255, 0.12);
                     color: #ffffff;
                 }
             """)
@@ -812,7 +1170,7 @@ class UniversalDownloaderPanel(QFrame):
         folder_layout.setSpacing(10)
         
         folder_title = QLabel("SAVE DIRECTORY")
-        folder_title.setStyleSheet("color: #FF5B06; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
+        folder_title.setStyleSheet("color: #e0e0e0; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
         folder_layout.addWidget(folder_title)
         
         folder_row = QHBoxLayout()
@@ -838,8 +1196,8 @@ class UniversalDownloaderPanel(QFrame):
         browse_btn.setFixedSize(30, 30)
         browse_btn.setCursor(Qt.PointingHandCursor)
         browse_btn.setStyleSheet("""
-            QToolButton { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; }
-            QToolButton:hover { background: rgba(255, 91, 6, 0.2); border: 1px solid #FF5B06; }
+            QToolButton { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; }
+            QToolButton:hover { background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.2); }
         """)
         
         def pick_folder():
@@ -864,7 +1222,7 @@ class UniversalDownloaderPanel(QFrame):
         cookie_layout.setSpacing(5)
         
         cookie_title = QLabel("COOKIES (LOGIN BYPASS)")
-        cookie_title.setStyleSheet("color: #FF5B06; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
+        cookie_title.setStyleSheet("color: #e0e0e0; font-size: 10px; font-weight: bold; letter-spacing: 1px; font-family: 'Orbitron', sans-serif;")
         cookie_layout.addWidget(cookie_title)
         
         cookie_desc = QLabel("Bypass age-restrictions or private videos by using your browser session.")
@@ -875,26 +1233,33 @@ class UniversalDownloaderPanel(QFrame):
         self.cookie_combo = QComboBox()
         self.cookie_combo.addItems(["None", "Edge", "Chrome", "Firefox", "Brave", "Opera", "Vivaldi", "Safari"])
         self.cookie_combo.setCursor(Qt.PointingHandCursor)
-        self.cookie_combo.setMinimumHeight(35)
+        self.cookie_combo.setMinimumHeight(34)
+        cookie_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
         self.cookie_combo.setStyleSheet("""
             QComboBox {
-                background-color: rgba(255,255,255,0.05);
-                border: 1px solid rgba(255,255,255,0.1);
-                border-radius: 4px;
-                padding: 5px 10px;
-                color: white;
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 8px;
+                padding: 4px 24px 4px 12px;
+                color: #ffffff;
+                font-size: 11px;
+                font-weight: 500;
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
             }
             QComboBox:hover {
-                border: 1px solid rgba(255,255,255,0.2);
+                background-color: rgba(255, 255, 255, 0.14);
             }
             QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 22px;
                 border: none;
-                width: 25px;
+                background: transparent;
             }
             QComboBox::down-arrow {
-                image: url('""" + os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "chevron-down.svg").replace("\\", "/") + """');
-                width: 14px;
-                height: 14px;
+                image: url('""" + cookie_icon_path + """');
+                width: 10px;
+                height: 10px;
             }
         """)
         
@@ -903,24 +1268,32 @@ class UniversalDownloaderPanel(QFrame):
             view = self.cookie_combo.view()
             view.setAutoFillBackground(True)
             pal = view.palette()
-            pal.setColor(QPalette.Base, QColor(15, 15, 25))
-            pal.setColor(QPalette.Text, QColor(224, 224, 224))
+            pal.setColor(QPalette.Base, QColor(18, 18, 26))
+            pal.setColor(QPalette.Text, QColor(255, 255, 255))
             view.setPalette(pal)
             view.setStyleSheet("""
                 QAbstractItemView {
-                    background-color: rgba(15, 15, 25, 0.98);
-                    border: 1px solid rgba(255,255,255,0.12);
-                    color: #e0e0e0;
-                    selection-background-color: rgba(255, 91, 6, 0.35);
+                    background-color: #1a1a1a;
+                    border: none;
+                    border-radius: 8px;
+                    color: #ffffff;
+                    font-size: 11px;
+                    font-weight: 500;
+                    font-family: 'Orbitron', 'Segoe UI', sans-serif;
+                    selection-background-color: rgba(255, 255, 255, 0.12);
                     selection-color: #ffffff;
                     outline: 0;
+                    padding: 4px;
                 }
                 QAbstractItemView::item {
-                    padding: 6px 8px;
+                    min-height: 28px;
+                    padding: 4px 10px;
+                    border-radius: 6px;
                     background: transparent;
                 }
-                QAbstractItemView::item:hover {
-                    background: rgba(255, 91, 6, 0.22);
+                QAbstractItemView::item:hover,
+                QAbstractItemView::item:selected {
+                    background-color: rgba(255, 255, 255, 0.12);
                     color: #ffffff;
                 }
             """)
@@ -938,6 +1311,12 @@ class UniversalDownloaderPanel(QFrame):
         self.cookie_combo.currentTextChanged.connect(on_browser_changed)
         cookie_layout.addWidget(self.cookie_combo)
         layout.addWidget(cookie_group)
+
+        # Auto-add Option Responsive Row
+        self.auto_add_widget = ResponsiveAutoAddWidget(settings, self)
+        self.auto_add_cb = self.auto_add_widget.auto_add_cb
+        self.auto_add_target_combo = self.auto_add_widget.auto_add_target_combo
+        layout.addWidget(self.auto_add_widget)
 
         # Progress Section
         self.progress_bar = QProgressBar()
@@ -964,20 +1343,25 @@ class UniversalDownloaderPanel(QFrame):
         self.download_btn.setFixedHeight(40)
         self.download_btn.setStyleSheet("""
             QPushButton#ytPanelDownloadBtn {
-                background-color: #FF5B06;
+                background-color: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
-                border: none;
+                border: 1px solid rgba(255, 255, 255, 0.18);
                 border-radius: 8px;
-                padding: 12px;
+                padding: 10px 16px;
                 font-family: 'Orbitron', sans-serif;
-                font-weight: 900;
-                font-size: 14px;
+                font-weight: 700;
+                font-size: 13px;
                 letter-spacing: 1px;
             }
-            QPushButton#ytPanelDownloadBtn:hover { background-color: #FF7B26; }
-            QPushButton#ytPanelDownloadBtn:pressed { background-color: #E94F00; }
+            QPushButton#ytPanelDownloadBtn:hover {
+                background-color: rgba(255, 255, 255, 0.2);
+                border-color: rgba(255, 255, 255, 0.3);
+            }
+            QPushButton#ytPanelDownloadBtn:pressed {
+                background-color: rgba(255, 255, 255, 0.08);
+            }
             QPushButton#ytPanelDownloadBtn:focus { outline: 0; }
-            QPushButton#ytPanelDownloadBtn:disabled { background-color: #333; color: #666; }
+            QPushButton#ytPanelDownloadBtn:disabled { background-color: rgba(255, 255, 255, 0.03); color: #666; border-color: rgba(255,255,255,0.05); }
         """)
         self.download_btn.clicked.connect(self._start_download)
         layout.addWidget(self.download_btn)
@@ -999,24 +1383,24 @@ class UniversalDownloaderPanel(QFrame):
     def _apply_style(self):
         self.setStyleSheet("""
             QFrame#ytDownloaderPanel {
-                background: rgba(15, 15, 25, 0.95);
-                border-left: 1px solid rgba(255, 91, 6, 0.2);
+                background-color: transparent;
+                border-left: 1px solid rgba(255, 255, 255, 0.05);
             }
             QLabel { color: #e0e0e0; background: transparent; }
             QLineEdit {
-                background: rgba(255,255,255,0.06);
-                border: 1px solid rgba(255,255,255,0.1);
-                border-radius: 4px; padding: 6px; color: #fff; font-size: 12px;
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px; padding: 7px 10px; color: #fff; font-size: 12px;
             }
-            QLineEdit:focus { border-color: #FF5B06; }
+            QLineEdit:focus { border-color: rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.07); }
             QFrame#ytModernGroup {
                 background: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 91, 6, 0.15);
+                border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 8px;
             }
             
             QCheckBox {
-                color: #ccc;
+                color: #e0e0e0;
                 font-size: 11px;
                 font-weight: bold;
                 spacing: 6px;
@@ -1025,35 +1409,42 @@ class UniversalDownloaderPanel(QFrame):
                 width: 16px;
                 height: 16px;
                 border-radius: 4px;
-                border: 1px solid #777;
-                background: #2a2a2a;
+                border: 1px solid rgba(255, 255, 255, 0.25);
+                background: rgba(255, 255, 255, 0.05);
             }
             QCheckBox::indicator:hover {
-                border-color: #FF5B06;
+                border-color: rgba(255, 255, 255, 0.5);
+                background: rgba(255, 255, 255, 0.1);
             }
             QCheckBox::indicator:checked {
-                border: 1px solid #FF5B06;
-                background: #FF5B06;
+                border: 1px solid rgba(255, 255, 255, 0.8);
+                background: rgba(255, 255, 255, 0.2);
                 image: url(:/qt-project.org/styles/commonstyle/images/checkbox_checked.png);
             }
             QComboBox {
-                background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
-                border-radius: 4px; padding: 4px; color: #e0e0e0;
+                background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px; padding: 5px 10px; color: #e0e0e0;
+            }
+            QComboBox:hover {
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                background: rgba(255, 255, 255, 0.08);
             }
             QComboBox QAbstractItemView {
-                background: rgba(15, 15, 25, 0.98);
-                border: 1px solid rgba(255,255,255,0.12);
-                selection-background-color: rgba(255, 91, 6, 0.35);
-                selection-color: #ffffff;
+                background: #151519;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
                 outline: 0;
             }
             QComboBox QAbstractItemView::item {
                 padding: 6px 8px;
                 background: transparent;
                 color: #e0e0e0;
+                border-radius: 4px;
             }
-            QComboBox QAbstractItemView::item:hover {
-                background: rgba(255, 91, 6, 0.22);
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {
+                background-color: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
             }
             QRadioButton { color: #ccc; font-size: 12px; }
@@ -1061,49 +1452,58 @@ class UniversalDownloaderPanel(QFrame):
                 width: 14px;
                 height: 14px;
                 border-radius: 7px;
-                border: 2px solid rgba(255,255,255,0.35);
-                background: rgba(0,0,0,0.25);
+                border: 2px solid rgba(255, 255, 255, 0.35);
+                background: rgba(0, 0, 0, 0.25);
             }
             QRadioButton::indicator:hover {
-                border-color: rgba(255, 91, 6, 0.85);
+                border-color: rgba(255, 255, 255, 0.6);
             }
             QRadioButton::indicator:checked {
-                border-color: rgba(255, 91, 6, 0.95);
-                background: #FF5B06;
+                border-color: #ffffff;
+                background: rgba(255, 255, 255, 0.3);
             }
             QProgressBar {
-                border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;
-                background: rgba(0,0,0,0.4); text-align: center; color: #fff; height: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 4px;
+                background: rgba(0, 0, 0, 0.4); text-align: center; color: #fff; height: 16px;
             }
-            QProgressBar::chunk { background: #FF5B06; border-radius: 3px; }
+            QProgressBar::chunk { background: rgba(255, 255, 255, 0.25); border-radius: 3px; }
             QPushButton#ytPanelDownloadBtn {
-                background-color: #FF5B06;
+                background-color: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
-                border: 1px solid rgba(255, 91, 6, 0.55);
-                border-radius: 6px;
-                padding: 8px 12px;
-                font-weight: bold;
+                border: 1px solid rgba(255, 255, 255, 0.18);
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-family: 'Orbitron', sans-serif;
+                font-weight: 700;
                 font-size: 13px;
+                letter-spacing: 1px;
             }
-            QPushButton#ytPanelDownloadBtn:hover { background-color: #FF7B26; }
-            QPushButton#ytPanelDownloadBtn:pressed { background-color: #E94F00; }
+            QPushButton#ytPanelDownloadBtn:hover {
+                background-color: rgba(255, 255, 255, 0.2);
+                border-color: rgba(255, 255, 255, 0.3);
+            }
+            QPushButton#ytPanelDownloadBtn:pressed {
+                background-color: rgba(255, 255, 255, 0.08);
+            }
             QPushButton#ytPanelDownloadBtn:focus { outline: 0; }
-            QPushButton#ytPanelDownloadBtn:disabled { background-color: #333; color: #666; border-color: rgba(255,255,255,0.08); }
+            QPushButton#ytPanelDownloadBtn:disabled { background-color: rgba(255, 255, 255, 0.03); color: #666; border-color: rgba(255,255,255,0.05); }
         """)
 
     def _update_size_estimate(self):
         url = self.url_edit.text().strip()
         
-        # Basic validation to avoid yt-dlp noise on random text
-        # Must have at least one dot and look like a potential link
-        if not url or len(url) < 8 or '.' not in url:
+        # Basic validation: must have at least 2 characters
+        if not url or len(url) < 2:
             if hasattr(self, '_meta_anim_timer'):
                 self._meta_anim_timer.stop()
             self.size_lbl.setText("Ready")
             self.size_lbl.setStyleSheet("color: #888; font-size: 11px;")
+            if hasattr(self.preview_section, 'spinner'):
+                self.preview_section.spinner.stop()
             self.preview_section.hide()
             self.thumb_lbl.clear()
             self.title_lbl.clear()
+            self._raw_thumb_pixmap = None
             self._cleanup_worker('_size_worker')
             self._cleanup_worker('_img_worker')
             return
@@ -1113,7 +1513,16 @@ class UniversalDownloaderPanel(QFrame):
         
         # Clear UI for fresh fetch
         self.thumb_lbl.clear()
+        self._raw_thumb_pixmap = None
         self.title_lbl.setText("Resolving link...")
+        self.preview_section.show()
+        if hasattr(self.preview_section, 'spinner'):
+            self.preview_section.spinner.start()
+        if hasattr(self, 'overlay_widget') and self.overlay_widget:
+            self.overlay_widget.raise_()
+        if hasattr(self.preview_section, 'spinner'):
+            self.preview_section.spinner.raise_()
+
         self._meta_anim_dots = 0
         self.size_lbl.setText("Fetching Metadata")
         if hasattr(self, '_meta_anim_timer'):
@@ -1132,6 +1541,8 @@ class UniversalDownloaderPanel(QFrame):
                 self.size_lbl.setText(f"Est. Size: {d.get('size', 'Unknown')}")
                 self.title_lbl.setText(d.get('title', ''))
                 self.preview_section.show()
+                if hasattr(self, 'overlay_widget') and self.overlay_widget:
+                    self.overlay_widget.raise_()
                 
                 # Fetch thumbnail if available
                 thumb_url = d.get('thumb_url')
@@ -1143,6 +1554,9 @@ class UniversalDownloaderPanel(QFrame):
                     img_worker.loaded.connect(self._on_thumb_loaded)
                     img_worker.finished.connect(img_worker.deleteLater)
                     img_worker.start()
+                else:
+                    if hasattr(self.preview_section, 'spinner'):
+                        self.preview_section.spinner.stop()
             except RuntimeError:
                 pass
 
@@ -1152,6 +1566,8 @@ class UniversalDownloaderPanel(QFrame):
             if hasattr(self, '_meta_anim_timer'):
                 self._meta_anim_timer.stop()
             self.size_lbl.setText("Meta: Failed")
+            if hasattr(self.preview_section, 'spinner'):
+                self.preview_section.spinner.stop()
             
         worker.error.connect(on_error)
         worker.start()
@@ -1167,23 +1583,51 @@ class UniversalDownloaderPanel(QFrame):
         self.size_lbl.setText(f"Fetching Metadata{dots}")
 
     def _on_thumb_loaded(self, data):
-        """Update thumbnail label with downloaded preview image."""
+        """Update thumbnail label with downloaded preview image filling full panel."""
+        if hasattr(self.preview_section, 'spinner'):
+            self.preview_section.spinner.stop()
         if not data:
             return
             
-        # Verify the widget still exists and is visible before updating
         try:
-            if not self.isVisible() or self.thumb_lbl.isHidden():
+            if not self.isVisible():
                 return
                 
             pixmap = QPixmap()
             if pixmap.loadFromData(data):
-                # Scale to fit while maintaining aspect ratio
-                scaled = pixmap.scaled(self.thumb_lbl.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.thumb_lbl.setPixmap(scaled)
+                self._raw_thumb_pixmap = pixmap
+                self._update_scaled_thumb()
         except (RuntimeError, AttributeError):
-            # Panel or label may have been destroyed
             pass
+
+    def _update_scaled_thumb(self):
+        if not getattr(self, '_raw_thumb_pixmap', None) or self._raw_thumb_pixmap.isNull():
+            return
+        card_w = self.preview_section.width()
+        card_h = self.preview_section.height()
+        if card_w > 10 and card_h > 10:
+            scaled = self._raw_thumb_pixmap.scaled(card_w, card_h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            crop_x = max(0, (scaled.width() - card_w) // 2)
+            crop_y = max(0, (scaled.height() - card_h) // 2)
+            cropped = scaled.copy(crop_x, crop_y, card_w, card_h)
+
+            from PySide6.QtGui import QPainter, QPainterPath
+            rounded = QPixmap(card_w, card_h)
+            rounded.fill(Qt.transparent)
+            p = QPainter(rounded)
+            p.setRenderHint(QPainter.Antialiasing)
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, card_w, card_h, 8, 8)
+            p.setClipPath(path)
+            p.drawPixmap(0, 0, cropped)
+            p.end()
+
+            self.thumb_lbl.setPixmap(rounded)
+        else:
+            self.thumb_lbl.setPixmap(self._raw_thumb_pixmap)
+
+        if hasattr(self, 'overlay_widget') and self.overlay_widget:
+            self.overlay_widget.raise_()
 
     def _start_download(self):
         url = self.url_edit.text().strip()
@@ -1210,7 +1654,20 @@ class UniversalDownloaderPanel(QFrame):
         
         def on_done(msg):
             self._reset_ui()
-            self.downloadFinished.emit(msg)
+            dest_file = msg
+            print(f"[DEBUG UniversalDownloaderPanel] on_done received: {msg}")
+            if not dest_file or not os.path.isfile(dest_file):
+                try:
+                    files = [os.path.join(out_dir, f) for f in os.listdir(out_dir)]
+                    media_files = [f for f in files if os.path.isfile(f) and f.lower().endswith(('.mp3', '.m4a', '.wav', '.flac', '.ogg', '.mp4', '.webm'))]
+                    if media_files:
+                        dest_file = max(media_files, key=os.path.getmtime)
+                        print(f"[DEBUG UniversalDownloaderPanel] Resolved file via directory scan: {dest_file}")
+                except Exception as ex:
+                    print(f"[DEBUG UniversalDownloaderPanel] Directory scan error: {ex}")
+            
+            print(f"[DEBUG UniversalDownloaderPanel] Emitting downloadFinished with: {dest_file}")
+            self.downloadFinished.emit(dest_file)
             self.status_lbl.setText("Done!")
             self._cleanup_worker('_worker')
         
@@ -3121,7 +3578,7 @@ class PlaylistTable(QWidget):
                 background: rgba(255, 255, 255, 0.05);
             }
             QTreeWidget::item:selected {
-                background: rgba(255, 91, 6, 0.45);
+                background: rgba(255, 255, 255, 0.12);
                 outline: none;
                 border-top: none;
                 border-left: none;
@@ -3285,7 +3742,7 @@ class PlaylistTable(QWidget):
             if item.data(0, Qt.UserRole) == "folder":
                 if item.isSelected():
                     for c in range(4):
-                        item.setBackground(c, QColor(255, 91, 6, 120))
+                        item.setBackground(c, QColor(255, 255, 255, 31))
                 else:
                     for c in range(4):
                         item.setBackground(c, QColor(40, 40, 45, 180))
@@ -4306,7 +4763,7 @@ class FloatingUrlInputWidget(QFrame):
         input_layout.setSpacing(10)
         
         self.input_field = QLineEdit(self)
-        self.input_field.setPlaceholderText("Type song name or paste URL")
+        self.input_field.setPlaceholderText("Type media name or paste URL")
         self.input_field.setFixedHeight(30)
         
         self.btn_play = QPushButton("Search", self)
@@ -4365,7 +4822,7 @@ class FloatingUrlInputWidget(QFrame):
         url = self.input_field.text().strip()
         if url:
             if "spotify.com" in url.lower():
-                self.error_label.setText("Spotify DRM Restricted. Type song name instead.")
+                self.error_label.setText("Spotify DRM Restricted. Type media name instead.")
                 self.error_label.show()
                 self.setStyleSheet(self.styleSheet().replace("border: 1px solid rgba(255, 255, 255, 0.05);", "border: 1px solid #FF0000;"))
                 
@@ -5405,10 +5862,11 @@ class MusicPanelWidget(QWidget):
             }
             QPushButton:hover {
                 color: #ffffff;
+                background-color: rgba(255, 255, 255, 0.08);
             }
             QPushButton[active="true"] {
-                background-color: rgba(255, 91, 6, 0.15);
-                color: #FF5B06;
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
                 border: none;
             }
             QPushButton[icon_only="true"] {
@@ -5530,6 +5988,7 @@ class MusicPanelWidget(QWidget):
         
         # Main content stack
         self.stack = QStackedWidget()
+        self.stack.setMinimumWidth(200)
         
         # === Page 0: Playlist View ===
         playlist_page = QWidget()
@@ -5744,13 +6203,13 @@ class MusicPanelWidget(QWidget):
             pass
 
     def _update_yt_panel_constraints(self):
-        """Clamp YouTube panel width to <= 50% of available width."""
-        if not hasattr(self, 'yt_panel'):
+        """Clamp Universal Downloader panel width to <= 70% of available width (max 450px)."""
+        if not hasattr(self, 'dl_panel'):
             return
         total_w = max(1, self.width())
-        # Minimum width is 240px, maximum is 50% of total
-        min_w = 240
-        max_w = max(min_w, int(total_w * 0.5))
+        # Minimum width is 350px, maximum is 70% of total (capped at 450px)
+        min_w = 350
+        max_w = min(450, max(min_w, int(total_w * 0.7)))
 
         self.dl_panel.setMinimumWidth(min_w)
         self.dl_panel.setMaximumWidth(max_w)
@@ -5764,6 +6223,12 @@ class MusicPanelWidget(QWidget):
                     sizes[2] = max_w
                     sizes[1] += diff
                     self.main_splitter.setSizes(sizes)
+                # Also ensure dl_panel is at least min_w when visible
+                elif sizes[2] < min_w and sizes[2] > 0:
+                    diff = min_w - sizes[2]
+                    sizes[2] = min_w
+                    sizes[1] = max(1, sizes[1] - diff)
+                    self.main_splitter.setSizes(sizes)
 
     def _on_main_splitter_moved(self, pos, index):
         # Record the user's chosen width and keep it clamped.
@@ -5772,8 +6237,8 @@ class MusicPanelWidget(QWidget):
             if len(sizes) >= 3:
                 # Remember last width but keep it within current min/max.
                 total_w = max(1, self.width())
-                min_w = max(1, int(total_w * 0.2))
-                max_w = max(min_w, int(total_w * 0.5))
+                min_w = 350
+                max_w = min(450, max(min_w, int(total_w * 0.7)))
                 self._yt_last_width = max(min_w, min(max_w, sizes[2]))
         self._update_yt_panel_constraints()
     
@@ -6200,10 +6665,10 @@ class MusicPanelWidget(QWidget):
                 border-radius: 4px;
             }
             QMenuBar::item:selected {
-                background: rgba(255, 91, 6, 0.3);
+                background: rgba(255, 255, 255, 0.12);
             }
             QMenuBar::item:pressed {
-                background: rgba(255, 91, 6, 0.5);
+                background: rgba(255, 255, 255, 0.12);
             }
             QMenu {
                 background: rgba(25, 25, 35, 0.98);
@@ -6217,7 +6682,7 @@ class MusicPanelWidget(QWidget):
                 border-radius: 4px;
             }
             QMenu::item:selected {
-                background: rgba(255, 91, 6, 0.4);
+                background: rgba(255, 255, 255, 0.12);
             }
             QMenu::separator {
                 height: 1px;
@@ -6662,7 +7127,7 @@ class MusicPanelWidget(QWidget):
                 current_sizes = self.main_splitter.sizes()
                 sidebar_size = current_sizes[0] if len(current_sizes) > 0 else 200
                 max_w = self.dl_panel.maximumWidth()
-                desired = min(max_w, max(self.dl_panel.minimumWidth(), int(getattr(self, '_yt_last_width', 320) or 320)))
+                desired = min(max_w, max(self.dl_panel.minimumWidth(), int(getattr(self, '_yt_last_width', 350) or 350)))
                 total = max(1, self.width())
                 self.main_splitter.setSizes([sidebar_size, max(1, total - sidebar_size - desired), desired])
             self.dl_panel.url_edit.setFocus()
@@ -6675,21 +7140,53 @@ class MusicPanelWidget(QWidget):
 
     def _on_yt_download_finished(self, dest_path):
         """Handle track after integrated download completion."""
+        print(f"[DEBUG MusicPanelWidget] _on_yt_download_finished called with path: {dest_path}")
+        if hasattr(self, 'dl_panel') and self.dl_panel and hasattr(self.dl_panel, 'auto_add_cb'):
+            is_checked = self.dl_panel.auto_add_cb.isChecked()
+            print(f"[DEBUG MusicPanelWidget] Auto-add toggle status: {is_checked}")
+            if not is_checked:
+                print(f"[Universal DL] Download completed (Auto-add disabled): {os.path.basename(str(dest_path or ''))}")
+                return
+
+        target = "Track Playlist"
+        if hasattr(self, 'dl_panel') and hasattr(self.dl_panel, 'auto_add_target_combo'):
+            target = self.dl_panel.auto_add_target_combo.currentText()
+        print(f"[DEBUG MusicPanelWidget] Auto-add target selected: '{target}' for file: '{dest_path}'")
+
         if dest_path and os.path.isfile(dest_path):
-            from PlaylistWidget import PlaylistWidget as _PW
-            track = _PW.build_track_meta(dest_path) if hasattr(_PW, 'build_track_meta') else {
-                'path': dest_path,
-                'title': os.path.splitext(os.path.basename(dest_path))[0],
-                'artist': 'Downloaded',
-                'duration': 0,
-                'is_online': False,
-                'mtime': os.path.getmtime(dest_path),
-            }
-            if not hasattr(self, '_playlist') or self._playlist is None:
-                self._playlist = []
-            self._playlist.append(track)
-            self.table.set_tracks(self._playlist)
-            print(f"[Universal DL] Added to playlist: {os.path.basename(dest_path)}")
+            if "Media Library" in target:
+                if hasattr(self, 'media_lib_page') and self.media_lib_page:
+                    try:
+                        self.media_lib_page._add_path_to_library(dest_path, is_folder=False)
+                        print(f"[DEBUG MusicPanelWidget] Successfully added track to Media Library: {dest_path}")
+                    except Exception as ex:
+                        print(f"[DEBUG MusicPanelWidget] Error adding track to Media Library: {ex}")
+                else:
+                    print("[DEBUG MusicPanelWidget] media_lib_page not found on widget!")
+            else:
+                # Default to Track Playlist
+                from PlaylistWidget import PlaylistWidget as _PW
+                track = _PW.build_track_meta(dest_path) if hasattr(_PW, 'build_track_meta') else {
+                    'path': dest_path,
+                    'title': os.path.splitext(os.path.basename(dest_path))[0],
+                    'artist': 'Downloaded',
+                    'duration': 0,
+                    'is_online': False,
+                    'mtime': os.path.getmtime(dest_path),
+                }
+                if not hasattr(self, '_playlist') or self._playlist is None:
+                    self._playlist = []
+                
+                existing_paths = [t.get('path') for t in self._playlist if isinstance(t, dict)]
+                if dest_path not in existing_paths:
+                    self._playlist.append(track)
+                    if hasattr(self, 'table') and hasattr(self.table, 'set_tracks'):
+                        self.table.set_tracks(self._playlist)
+                    print(f"[DEBUG MusicPanelWidget] Successfully added track to Track Playlist: {track.get('title')} ({dest_path})")
+                else:
+                    print(f"[DEBUG MusicPanelWidget] Track already present in Track Playlist: {dest_path}")
+        else:
+            print(f"[DEBUG MusicPanelWidget] Could not add to target because file was not found: '{dest_path}'")
 
     def _rescan_folder(self):
         """Rescan current music folder."""
@@ -8382,7 +8879,7 @@ class MusicPanelWidget(QWidget):
         if raw_text.strip().startswith("http://") or raw_text.strip().startswith("https://"):
             if "spotify.com" in raw_text.lower():
                 from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Spotify DRM Restricted", "Spotify links cannot be downloaded due to strict DRM encryption.\n\nPRO TIP: Open the Stream URL box and type the Song Name to search and download it instead!")
+                QMessageBox.warning(self, "Spotify DRM Restricted", "Spotify links cannot be downloaded due to strict DRM encryption.\n\nPRO TIP: Open the Stream URL box and type the Media Name to search and download it instead!")
                 return
             self._process_url_stream_async(raw_text.strip())
             return

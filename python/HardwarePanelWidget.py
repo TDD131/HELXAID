@@ -3418,27 +3418,24 @@ class HardwarePanelWidget(QWidget):
                 height: 10px;
             }}
             QComboBox QAbstractItemView {{
-                background-color: #1a1a1a;
+                background-color: #1e2128;
                 color: #e0e0e0;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                selection-background-color: rgba(255, 91, 6, 0.25);
-                selection-color: #FF5B06;
-                border-radius: 6px;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
                 padding: 4px;
                 outline: none;
             }}
             QComboBox QAbstractItemView::item {{
                 min-height: 28px;
                 padding: 4px 10px;
+                background: transparent;
+                color: #e0e0e0;
                 border-radius: 4px;
             }}
-            QComboBox QAbstractItemView::item:hover {{
-                background-color: rgba(255, 91, 6, 0.15);
-                color: #ffffff;
-            }}
+            QComboBox QAbstractItemView::item:hover,
             QComboBox QAbstractItemView::item:selected {{
-                background-color: rgba(255, 91, 6, 0.25);
-                color: #FF5B06;
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }}
         """
 

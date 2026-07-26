@@ -27,7 +27,10 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QLinearGradie
 from AnimatedButton import AnimatedCheckBox
 
 # Paths
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if hasattr(sys, '_MEIPASS'):
+    SCRIPT_DIR = sys._MEIPASS
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 APPDATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID")
 HELRCUS_CONFIG_PATH = os.path.join(APPDATA_DIR, "helrcus_settings.json")
 
@@ -1390,11 +1393,24 @@ class WindowsCustomPanel(QWidget):
                 height: 10px;
             }}
             QComboBox QAbstractItemView {{
-                background: #1a1a1a;
+                background: rgba(18, 20, 26, 0.65);
                 color: #e0e0e0;
-                border: none;
-                border-radius: 6px;
-                selection-background-color: rgba(255, 91, 6, 0.2);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                padding: 4px;
+                outline: 0px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 26px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }}
             QLabel {{
                 color: #e0e0e0;
@@ -1946,11 +1962,24 @@ class WindowsCustomPanel(QWidget):
                 height: 10px;
             }}
             QComboBox QAbstractItemView {{
-                background: #1a1a1a;
+                background: rgba(18, 20, 26, 0.65);
                 color: #e0e0e0;
-                border: none;
-                border-radius: 6px;
-                selection-background-color: rgba(255, 91, 6, 0.2);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                padding: 4px;
+                outline: 0px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 26px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }}
         """
         
