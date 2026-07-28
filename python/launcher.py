@@ -4594,10 +4594,10 @@ class GameLauncher(QWidget):
 
     def _switch_panel_from_key(self, index):
         """Global shortcut handler for numerical panel switching (Focus-Aware)."""
-        # If user is typing in any text input, ignore the navigation shortcut
+        # Ignore navigation shortcuts only if user is actively typing in a text input field
         focus_widget = QApplication.focusWidget()
-        from PySide6.QtWidgets import QLineEdit, QTextEdit, QSpinBox, QComboBox, QPushButton
-        if focus_widget and isinstance(focus_widget, (QLineEdit, QTextEdit, QSpinBox, QComboBox, QPushButton)):
+        from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox
+        if focus_widget and isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)):
             return
             
         # Specific handling for CPU panel (panel 2) which needs state reset
