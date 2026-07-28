@@ -4340,30 +4340,6 @@ class HelxailInfoWizard(QFrame):
         self.prev_btn.style().unpolish(self.prev_btn)
         self.prev_btn.style().polish(self.prev_btn)
 
-
-class NetworkInfoWizard(HelxailInfoWizard):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        import os
-        setting_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "setting-icon.png").replace('\\', '/')
-        self.steps = [
-            {
-                "title": "Step 1: Enable Network Monitoring",
-                "desc": f"Click the <a href='open_settings_psutil' title='Click to see Spotlight Tutorial!' style='color: #FFFFFF; text-decoration: none; font-weight: bold;'>Settings</a> ( <img src='{setting_icon_path}' width='14' height='14'> ) icon on the bottom left sidebar, then uncheck <b>'Turn off Psutil'</b> under the Developer section. Alternatively, launch HELXAID as Administrator to enable ETW kernel network monitoring."
-            }
-        ]
-        self.current_step = 0
-        self.update_ui()
-
-    def update_ui(self):
-        step = self.steps[self.current_step]
-        self.step_title.setText(step["title"])
-        self.step_desc.setText(step["desc"])
-        self.title_label.setText(f"Network Guide ({self.current_step + 1}/{len(self.steps)})")
-        self.step_desc.setToolTip("Click 'Settings' to see Spotlight Tutorial!")
-        self.prev_btn.setEnabled(False)
-        self.next_btn.setText("Finish")
-
     def next_step(self):
         if self.current_step < len(self.steps) - 1:
             self.current_step += 1
@@ -4410,6 +4386,30 @@ class NetworkInfoWizard(HelxailInfoWizard):
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
             event.accept()
+
+
+class NetworkInfoWizard(HelxailInfoWizard):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        import os
+        setting_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "setting-icon.png").replace('\\', '/')
+        self.steps = [
+            {
+                "title": "Step 1: Enable Network Monitoring",
+                "desc": f"Click the <a href='open_settings_psutil' title='Click to see Spotlight Tutorial!' style='color: #FFFFFF; text-decoration: none; font-weight: bold;'>Settings</a> ( <img src='{setting_icon_path}' width='14' height='14'> ) icon on the bottom left sidebar, then uncheck <b>'Turn off Psutil'</b> under the Developer section. Alternatively, launch HELXAID as Administrator to enable ETW kernel network monitoring."
+            }
+        ]
+        self.current_step = 0
+        self.update_ui()
+
+    def update_ui(self):
+        step = self.steps[self.current_step]
+        self.step_title.setText(step["title"])
+        self.step_desc.setText(step["desc"])
+        self.title_label.setText(f"Network Guide ({self.current_step + 1}/{len(self.steps)})")
+        self.step_desc.setToolTip("Click 'Settings' to see Spotlight Tutorial!")
+        self.prev_btn.setEnabled(False)
+        self.next_btn.setText("Finish")
 
 def apply_custom_titlebar(widget, color_hex):
     """Apply Windows 11 custom title bar color and Windows 10 dark mode."""
@@ -10217,8 +10217,13 @@ Stylesheet Selector:
                         elif key == Qt.Key_L:
                             self.music_panel.player_bar._toggle_loop()
                             return True
-                        # R: Shuffle toggle
-                        elif key == Qt.Key_R:
+                        # Ctrl + R or F5: Reload currently viewed tracks
+                        elif key == Qt.Key_F5 or (key == Qt.Key_R and bool(modifiers & Qt.ControlModifier)):
+                            if hasattr(self.music_panel, 'reload_current_view'):
+                                self.music_panel.reload_current_view()
+                            return True
+                        # R (standalone without Ctrl): Shuffle toggle
+                        elif key == Qt.Key_R and not bool(modifiers & Qt.ControlModifier):
                             self.music_panel.player_bar._toggle_shuffle()
                             return True
                         # Ctrl + A: Select All (Playlist or Media Library)

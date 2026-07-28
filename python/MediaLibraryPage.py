@@ -3,11 +3,138 @@ import json
 import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
-    QTreeWidget, QTreeWidgetItem, QHeaderView, QLineEdit,
+    QTreeWidget, QTreeWidgetItem, QHeaderView, QLineEdit, QFrame,
     QFileDialog, QAbstractItemView, QApplication, QStyledItemDelegate, QStyle
 )
-from PySide6.QtCore import Qt, Signal, QSize, QTimer, QThread, QObject, QEvent
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QThread, QObject, QEvent, QPoint
 from PySide6.QtGui import QCursor, QColor, QIcon, QFont, QKeySequence, QShortcut
+
+class FloatingInvalidPathPanel(QFrame):
+    """Floating error dialog panel matching HELXAIL Guide / Modal Panel design system.
+    Component Name: FloatingInvalidPathPanel
+    """
+    def __init__(self, parent=None, title="PATH ERROR", message="The path is invalid or the file is deleted."):
+        super().__init__(parent)
+        self.setObjectName("FloatingInvalidPathPanel")
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFixedSize(420, 125)
+        
+        self._is_dragging = False
+        self._drag_start_pos = QPoint(0, 0)
+
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon.svg").replace('\\', '/')
+        close_icon_hover_path = os.path.join(script_dir, "UI Icons", "close-icon-hover.svg").replace('\\', '/')
+
+        self.setStyleSheet(f"""
+            QFrame#FloatingInvalidPathPanel {{
+                background-color: #16161a;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+            }}
+            QWidget#TitleBar {{
+                background-color: rgba(0, 0, 0, 0.4);
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            }}
+            QLabel#Title {{
+                color: #FF5B06;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+            }}
+            QPushButton#CloseBtn {{
+                background: transparent;
+                border: none;
+                image: url('{close_icon_path}');
+            }}
+            QPushButton#CloseBtn:hover {{
+                image: url('{close_icon_hover_path}');
+            }}
+            QLabel#Message {{
+                color: #E0E0E0;
+                font-size: 12px;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                line-height: 1.4;
+            }}
+        """)
+
+        main_vbox = QVBoxLayout(self)
+        main_vbox.setContentsMargins(0, 0, 0, 0)
+        main_vbox.setSpacing(0)
+
+        # 1. Title bar (Draggable & Perfectly Vertically Centered)
+        title_bar = QWidget()
+        title_bar.setObjectName("TitleBar")
+        title_bar.setFixedHeight(38)
+
+        tb_layout = QHBoxLayout(title_bar)
+        tb_layout.setContentsMargins(16, 0, 14, 0)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("Title")
+
+        close_btn = QPushButton()
+        close_btn.setObjectName("CloseBtn")
+        close_btn.setFixedSize(16, 16)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.clicked.connect(self.hide_panel)
+
+        tb_layout.addWidget(title_label, 0, Qt.AlignVCenter)
+        tb_layout.addStretch()
+        tb_layout.addWidget(close_btn, 0, Qt.AlignVCenter)
+
+        # Mouse Dragging Logic for Title Bar
+        def title_mousePressEvent(event):
+            if event.button() == Qt.LeftButton:
+                self._is_dragging = True
+                self._drag_start_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                event.accept()
+
+        def title_mouseMoveEvent(event):
+            if self._is_dragging and event.buttons() & Qt.LeftButton:
+                self.move(event.globalPosition().toPoint() - self._drag_start_pos)
+                event.accept()
+
+        def title_mouseReleaseEvent(event):
+            self._is_dragging = False
+            event.accept()
+
+        title_bar.mousePressEvent = title_mousePressEvent
+        title_bar.mouseMoveEvent = title_mouseMoveEvent
+        title_bar.mouseReleaseEvent = title_mouseReleaseEvent
+
+        main_vbox.addWidget(title_bar)
+
+        # 2. Content Widget
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(20, 16, 20, 18)
+
+        msg_label = QLabel(message)
+        msg_label.setObjectName("Message")
+        msg_label.setWordWrap(True)
+        msg_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        content_layout.addWidget(msg_label)
+        main_vbox.addWidget(content_widget, 1)
+
+    def show_panel(self):
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = (parent_rect.width() - self.width()) // 2
+            y = (parent_rect.height() - self.height()) // 2
+            self.move(x, y)
+        self.raise_()
+        self.show()
+
+    def hide_panel(self):
+        self.hide()
 
 class NoFocusDelegate(QStyledItemDelegate):
     """Custom delegate to suppress Qt's default dotted focus rectangle outline."""
@@ -210,11 +337,11 @@ class MediaLibraryPage(QWidget):
         
         self.tree.itemSelectionChanged.connect(self._update_item_selection_styles)
         
-        # Force the tree to pass drag & drop events to the parent logic
-        self.tree.setDragDropMode(QAbstractItemView.InternalMove)
+        # Allow dragging items out and receiving external drops, but disable internal row move indicator
+        self.tree.setDragDropMode(QAbstractItemView.DragDrop)
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
-        self.tree.setDropIndicatorShown(True)
+        self.tree.setDropIndicatorShown(False)
         
         orig_tree_keyPressEvent = self.tree.keyPressEvent
         def _tree_keyPressEvent(event):
@@ -562,6 +689,7 @@ class MediaLibraryPage(QWidget):
         from PySide6.QtGui import QAction
         
         item = self.tree.itemAt(pos)
+        selected = self.tree.selectedItems()
         
         menu = QMenu(self)
         menu.setStyleSheet("""
@@ -570,7 +698,16 @@ class MediaLibraryPage(QWidget):
             QMenu::item:selected { background-color: #FF5B06; }
         """)
         
-        if self.tree.selectedItems():
+        target_item = item if item else (selected[0] if len(selected) == 1 else None)
+        if target_item:
+            target_path = target_item.data(1, Qt.UserRole)
+            if target_path:
+                view_explorer_action = QAction("View at Explorer", self)
+                view_explorer_action.triggered.connect(lambda _, p=target_path: self._on_view_at_explorer(p))
+                menu.addAction(view_explorer_action)
+                menu.addSeparator()
+
+        if selected:
             add_selected_action = QAction("Add to Playlist", self)
             add_selected_action.triggered.connect(self._on_add_selected_to_playlist)
             menu.addAction(add_selected_action)
@@ -590,6 +727,25 @@ class MediaLibraryPage(QWidget):
         menu.addAction(delete_all_action)
         
         menu.exec_(self.tree.viewport().mapToGlobal(pos))
+
+    def _on_view_at_explorer(self, path):
+        import subprocess
+        if path and os.path.exists(path):
+            path_norm = os.path.normpath(path)
+            try:
+                if os.path.isfile(path_norm):
+                    subprocess.Popen(['explorer', '/select,', path_norm])
+                else:
+                    subprocess.Popen(['explorer', path_norm])
+            except Exception as e:
+                print(f"[MediaLibraryPage] Error launching explorer: {e}")
+        else:
+            self._show_invalid_path_panel()
+
+    def _show_invalid_path_panel(self, message="The path is invalid or the file is deleted."):
+        if not hasattr(self, '_invalid_path_panel') or self._invalid_path_panel is None:
+            self._invalid_path_panel = FloatingInvalidPathPanel(self, message)
+        self._invalid_path_panel.show_panel()
         
     def _get_tracks_from_item(self, item):
         tracks = []
@@ -659,25 +815,21 @@ class MediaLibraryPage(QWidget):
     # --- Drag and Drop ---
     def dragEnterEvent(self, event):
         if event.source() == self.tree:
-            from PySide6.QtWidgets import QTreeWidget
-            QTreeWidget.dragEnterEvent(self.tree, event)
+            event.ignore()
             return
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             
     def dragMoveEvent(self, event):
         if event.source() == self.tree:
-            from PySide6.QtWidgets import QTreeWidget
-            QTreeWidget.dragMoveEvent(self.tree, event)
+            event.ignore()
             return
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             
     def dropEvent(self, event):
         if event.source() == self.tree:
-            from PySide6.QtWidgets import QTreeWidget
-            QTreeWidget.dropEvent(self.tree, event)
-            self._sync_library_from_tree()
+            event.ignore()
             return
             
         urls = event.mimeData().urls()
@@ -746,6 +898,14 @@ class MediaLibraryPage(QWidget):
             self._refresh_tree()
 
     # --- Library Management ---
+    def add_path_to_library(self, path, is_folder=False, save=True, refresh=True):
+        """Public API to add a file or folder path to Media Library, saving settings and updating UI."""
+        self._add_path_to_library(path, is_folder=is_folder)
+        if save:
+            self._save_library()
+        if refresh:
+            self._refresh_tree()
+
     def _add_path_to_library(self, path, is_folder):
         if not self._allow_same_folder:
             # Check if path already exists
@@ -785,6 +945,12 @@ class MediaLibraryPage(QWidget):
 
     # --- Tree View Logic ---
     def _refresh_tree(self):
+        # Auto-purge invalid/deleted root paths from library data
+        valid_items = [item for item in self._library_data if item.get('path') and os.path.exists(item.get('path'))]
+        if len(valid_items) != len(self._library_data):
+            self._library_data = valid_items
+            self._save_library()
+
         self.tree.setSortingEnabled(False)
         self.tree.clear()
         self._all_track_items = []

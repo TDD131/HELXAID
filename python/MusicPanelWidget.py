@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QLineEdit, QSpinBox, QSpacerItem,
     QDialog, QComboBox, QRadioButton, QButtonGroup, QCheckBox,
     QProgressBar, QGroupBox, QSplitter, QApplication, QToolButton,
-    QStyledItemDelegate, QStyle
+    QStyledItemDelegate, QStyle, QMenu  
 )
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import (
@@ -3679,7 +3679,23 @@ class PlaylistTable(QWidget):
         """)
         
         item = self.tree.itemAt(pos)
+        selected = self.tree.selectedItems()
+        target_item = item if item else (selected[0] if len(selected) == 1 else None)
         
+        if target_item:
+            target_path = None
+            role_data = target_item.data(0, Qt.UserRole)
+            if isinstance(role_data, int) and 0 <= role_data < len(self._tracks):
+                target_path = self._tracks[role_data].get('path')
+            elif role_data == "folder":
+                target_path = target_item.data(1, Qt.UserRole)
+                
+            if target_path:
+                view_explorer_action = QAction("View at Explorer", self)
+                view_explorer_action.triggered.connect(lambda _, p=target_path: self._on_view_at_explorer(p))
+                menu.addAction(view_explorer_action)
+                menu.addSeparator()
+
         # Folder-specific context menu actions
         if item and item.data(0, Qt.UserRole) == "folder":
             extract_action = QAction("Extract Folder (Flatten)", self)
@@ -3697,6 +3713,30 @@ class PlaylistTable(QWidget):
         menu.addAction(delete_selected_action)
         menu.addAction(delete_all_action)
         menu.exec_(self.tree.viewport().mapToGlobal(pos))
+
+    def _on_view_at_explorer(self, path):
+        import os, subprocess
+        if path and os.path.exists(path):
+            path_norm = os.path.normpath(path)
+            try:
+                if os.path.isfile(path_norm):
+                    subprocess.Popen(['explorer', '/select,', path_norm])
+                else:
+                    subprocess.Popen(['explorer', path_norm])
+            except Exception as e:
+                print(f"[PlaylistTable] Error launching explorer: {e}")
+        else:
+            self._show_invalid_path_panel()
+
+    def _show_invalid_path_panel(self, message="The path is invalid or the file is deleted."):
+        p = self.window()
+        if hasattr(p, 'show_invalid_path_panel'):
+            p.show_invalid_path_panel(message)
+        else:
+            from MediaLibraryPage import FloatingInvalidPathPanel
+            if not hasattr(self, '_invalid_path_panel') or self._invalid_path_panel is None:
+                self._invalid_path_panel = FloatingInvalidPathPanel(self, message)
+            self._invalid_path_panel.show_panel()
         
     def _on_delete_selected(self):
         selected_items = self.tree.selectedItems()
@@ -4488,6 +4528,162 @@ class _PlayerBarOverlayWindow(QWidget):
             pass
 
 
+class SplitResumeButton(QWidget):
+    """
+    Split button widget combining a main action button and a dropdown menu button.
+    Component Name: SplitResumeButton
+    """
+    clicked = Signal()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("splitResumeContainer")
+        
+        arrow_icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        self.btn_main = QPushButton("Resume", self)
+        self.btn_main.setObjectName("splitResumeMain")
+        self.btn_main.setCursor(Qt.PointingHandCursor)
+        self.btn_main.setFixedHeight(28)
+        
+        self.btn_arrow = QToolButton(self)
+        self.btn_arrow.setObjectName("splitResumeArrow")
+        self.btn_arrow.setCursor(Qt.PointingHandCursor)
+        self.btn_arrow.setPopupMode(QToolButton.InstantPopup)
+        self.btn_arrow.setFixedSize(22, 28)
+        
+        from PySide6.QtGui import QIcon
+        from PySide6.QtCore import QSize
+        if os.path.exists(arrow_icon):
+            self.btn_arrow.setIcon(QIcon(arrow_icon))
+            self.btn_arrow.setIconSize(QSize(10, 8))
+        
+        layout.addWidget(self.btn_main)
+        layout.addWidget(self.btn_arrow)
+        
+        self.setStyleSheet(f"""
+            QWidget#splitResumeContainer {{
+                background: transparent;
+                border: none;
+            }}
+            QPushButton#splitResumeMain {{
+                color: #FFFFFF;
+                background-color: #333544;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-top-left-radius: 6px;
+                border-bottom-left-radius: 6px;
+                border-top-right-radius: 0px;
+                border-bottom-right-radius: 0px;
+                padding: 0px 14px;
+                min-height: 28px;
+                max-height: 28px;
+                min-width: 130px;
+                font-family: 'Orbitron', 'Rajdhani', sans-serif;
+                font-weight: bold;
+                font-size: 10px;
+            }}
+            QPushButton#splitResumeMain:hover {{
+                background-color: #484b60;
+                border-color: rgba(255, 255, 255, 0.25);
+            }}
+            QPushButton#splitResumeMain:pressed {{
+                background-color: #242530;
+            }}
+            QToolButton#splitResumeArrow {{
+                background-color: #333544;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-left: 1px solid rgba(255, 255, 255, 0.15);
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                min-height: 28px;
+                max-height: 28px;
+            }}
+            QToolButton#splitResumeArrow:hover {{
+                background-color: #484b60;
+                border-color: rgba(255, 255, 255, 0.25);
+            }}
+            QToolButton#splitResumeArrow:pressed {{
+                background-color: #242530;
+            }}
+            QToolButton#splitResumeArrow::menu-indicator {{
+                image: none;
+                width: 0px;
+            }}
+        """)
+        
+        # Menu Setup
+        self.resume_menu = QMenu(self)
+        self.resume_menu.setObjectName("resumeMenu")
+        self.resume_menu.setStyleSheet("""
+            QMenu#resumeMenu {
+                background-color: #1a1a1a;
+                border: none;
+                border-radius: 8px;
+                color: #ffffff;
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
+                font-size: 11px;
+                font-weight: 500;
+                padding: 4px;
+            }
+            QMenu#resumeMenu::item {
+                padding: 6px 12px;
+                min-height: 24px;
+                border-radius: 4px;
+                background: transparent;
+                color: #ffffff;
+            }
+            QMenu#resumeMenu::item:selected {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }
+        """)
+        
+        self.act_resume = self.resume_menu.addAction("Resume")
+        self.act_resume_folder = self.resume_menu.addAction("Resume and folder")
+        self.btn_arrow.setMenu(self.resume_menu)
+        
+        # QSettings Load
+        from PySide6.QtCore import QSettings
+        self._settings = QSettings("TDD131", "HELXAID")
+        pref = self._settings.value("Music/resume_mode_pref", "Resume", type=str)
+        if pref not in ("Resume", "Resume and folder"):
+            pref = "Resume"
+        self._active_pref = pref
+        self.btn_main.setText(self._active_pref)
+        
+        # Signal Connections
+        self.btn_main.clicked.connect(self.clicked.emit)
+        self.act_resume.triggered.connect(lambda: self._select_pref("Resume"))
+        self.act_resume_folder.triggered.connect(lambda: self._select_pref("Resume and folder"))
+        
+    def _select_pref(self, pref_name):
+        self._active_pref = pref_name
+        self.btn_main.setText(pref_name)
+        self._settings.setValue("Music/resume_mode_pref", pref_name)
+        self.adjustSize()
+        if self.parent():
+            self.parent().adjustSize()
+            if self.parent().parent():
+                try:
+                    self.parent().move(self.parent().parent().width() - self.parent().width() - 20, 20)
+                except Exception:
+                    pass
+
+    def get_preference(self):
+        return self._active_pref
+
+    def setEnabled(self, enabled):
+        super().setEnabled(enabled)
+        self.btn_main.setEnabled(enabled)
+        self.btn_arrow.setEnabled(enabled)
+
+
 class ResumeNotificationWidget(QFrame):
     """
     Banner to notify the user of an unfinished playlist from a previous session.
@@ -4495,6 +4691,7 @@ class ResumeNotificationWidget(QFrame):
     """
     
     resume_clicked = Signal()
+    resume_and_folder_clicked = Signal()
     dismiss_clicked = Signal()
     
     def __init__(self, parent=None):
@@ -4518,7 +4715,7 @@ class ResumeNotificationWidget(QFrame):
             QPushButton {
                 color: #FFFFFF;
                 background-color: #333544;
-                border: none;
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 6px;
                 padding: 0px 16px;
                 min-height: 28px;
@@ -4527,10 +4724,11 @@ class ResumeNotificationWidget(QFrame):
                 font-weight: bold;
                 font-size: 10px;
             }
-            QPushButton:hover {
-                background-color: #45485B;
+            QPushButton#resumeDismissBtn:hover {
+                background-color: #484b60;
+                border-color: rgba(255, 255, 255, 0.25);
             }
-            QPushButton:pressed {
+            QPushButton#resumeDismissBtn:pressed {
                 background-color: #242530;
             }
         """)
@@ -4541,7 +4739,8 @@ class ResumeNotificationWidget(QFrame):
         main_layout.setSpacing(0)
         
         content_widget = QWidget(self)
-        content_widget.setStyleSheet("background: transparent; border: none;")
+        content_widget.setObjectName("resumeContentWidget")
+        content_widget.setStyleSheet("QWidget#resumeContentWidget { background: transparent; border: none; }")
         layout = QHBoxLayout(content_widget)
         layout.setContentsMargins(15, 0, 15, 0)
         layout.setSpacing(12)
@@ -4552,13 +4751,34 @@ class ResumeNotificationWidget(QFrame):
         self.lbl_msg.setObjectName("resumeLabel")
         layout.addWidget(self.lbl_msg, alignment=Qt.AlignVCenter)
         
-        # Buttons
-        self.btn_resume = QPushButton("Resume", self)
-        self.btn_resume.setCursor(Qt.PointingHandCursor)
-        self.btn_resume.setFixedHeight(28)
+        # Split Resume Dropdown Button Component
+        self.btn_resume = SplitResumeButton(self)
+        
         self.btn_dismiss = QPushButton("Dismiss", self)
+        self.btn_dismiss.setObjectName("resumeDismissBtn")
         self.btn_dismiss.setCursor(Qt.PointingHandCursor)
         self.btn_dismiss.setFixedHeight(28)
+        self.btn_dismiss.setStyleSheet("""
+            QPushButton#resumeDismissBtn {
+                color: #FFFFFF;
+                background-color: #333544;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                padding: 0px 16px;
+                min-height: 28px;
+                max-height: 28px;
+                font-family: 'Orbitron', 'Rajdhani', sans-serif;
+                font-weight: bold;
+                font-size: 10px;
+            }
+            QPushButton#resumeDismissBtn:hover {
+                background-color: #484b60;
+                border-color: rgba(255, 255, 255, 0.25);
+            }
+            QPushButton#resumeDismissBtn:pressed {
+                background-color: #242530;
+            }
+        """)
         
         layout.addWidget(self.btn_resume, alignment=Qt.AlignVCenter)
         layout.addWidget(self.btn_dismiss, alignment=Qt.AlignVCenter)
@@ -4583,10 +4803,6 @@ class ResumeNotificationWidget(QFrame):
         """)
         main_layout.addWidget(self.progress)
         
-        # Connections
-        self.btn_resume.clicked.connect(self._on_resume_clicked)
-        self.btn_dismiss.clicked.connect(self._on_dismiss_clicked)
-        
         # Auto-dismiss timer
         from PySide6.QtCore import QTimer
         self._timer = QTimer(self)
@@ -4597,10 +4813,34 @@ class ResumeNotificationWidget(QFrame):
         
         self.progress.setRange(0, self._timeout_ms)
         
-    def _on_resume_clicked(self):
-        self._timer.stop()
-        self.resume_clicked.emit()
+        # Connections
+        self.btn_resume.clicked.connect(self._on_main_button_clicked)
+        self.btn_dismiss.clicked.connect(self._on_dismiss_clicked)
+        self.btn_resume.resume_menu.aboutToShow.connect(self._on_menu_shown)
+        self.btn_resume.resume_menu.aboutToHide.connect(self._on_menu_hidden)
         
+    def _on_menu_shown(self):
+        self._timer.stop()
+
+    def _on_menu_hidden(self):
+        # Resume auto-dismiss countdown when dropdown closes
+        if self.isVisible() and hasattr(self, '_timer') and self._elapsed_ms < self._timeout_ms:
+            self._timer.start()
+
+    def _on_main_button_clicked(self):
+        self._timer.stop()
+        pref = self.btn_resume.get_preference()
+        print(f"[Music DEBUG] ResumeNotificationWidget main button clicked! Active Preference: {pref}")
+        try:
+            if pref == "Resume and folder":
+                print("[Music DEBUG] Emitting resume_and_folder_clicked signal...")
+                self.resume_and_folder_clicked.emit()
+            else:
+                print("[Music DEBUG] Emitting resume_clicked signal...")
+                self.resume_clicked.emit()
+        except Exception as e:
+            print(f"[Music DEBUG ERROR] Signal emission error: {e}")
+
     def _on_dismiss_clicked(self):
         self._timer.stop()
         self.dismiss_clicked.emit()
@@ -4622,6 +4862,32 @@ class ResumeNotificationWidget(QFrame):
             self.graphicsEffect().setOpacity(1.0)
         if self.parent():
             self.move(self.parent().width() - self.width() - 20, 20)
+
+    def animate_out(self, callback=None):
+        """Fade out and hide the banner, then execute callback."""
+        print("[Music DEBUG] ResumeNotificationWidget.animate_out called!")
+        self._timer.stop()
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        
+        self._fade_anim = QPropertyAnimation(self.opacity_effect, b"opacity", self)
+        self._fade_anim.setDuration(200)
+        self._fade_anim.setStartValue(1.0)
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        
+        def on_finished():
+            print("[Music DEBUG] animate_out on_finished callback executing!")
+            self.hide()
+            self.setGraphicsEffect(None)
+            if callback:
+                callback()
+                
+        self._fade_anim.finished.connect(on_finished)
+        self._fade_anim.start()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -4694,9 +4960,6 @@ class ResumeNotificationWidget(QFrame):
         
         def on_finished():
             self.hide()
-            if callback:
-                callback()
-                
         self._anim_group.finished.connect(on_finished)
         from PySide6.QtCore import QAbstractAnimation
         self._anim_group.start(QAbstractAnimation.DeleteWhenStopped)
@@ -4704,70 +4967,139 @@ class ResumeNotificationWidget(QFrame):
 
 class FloatingUrlInputWidget(QFrame):
     """
-    Floating URL input overlay with modern UI.
+    Floating URL input overlay matching HELXAIL UI design system.
+    
+    Component Name: FloatingUrlInputWidget
     """
     url_submitted = Signal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("floatingUrlInput")
-        self.setFixedSize(450, 75)
+        self.setFixedSize(470, 100)
+        self._is_closing = False
         self.hide()
         
+        # Obey UI Rule: Less use border, more use background-color
         self.setStyleSheet("""
             QFrame#floatingUrlInput {
-                background-color: rgba(31, 32, 41, 0.95);
-                border: 1px solid rgba(255, 255, 255, 0.05);
-                border-radius: 8px;
+                background-color: rgba(22, 23, 29, 0.96);
+                border: none;
+                border-radius: 12px;
+            }
+            QLabel#urlInputHeaderTitle {
+                color: #FF5B06;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                background: transparent;
             }
             QLineEdit {
-                background: rgba(0, 0, 0, 0.2);
+                background: rgba(255, 255, 255, 0.05);
                 border: none;
-                border-radius: 4px;
+                border-radius: 6px;
                 color: #FFFFFF;
-                padding: 0px 10px;
+                padding: 0px 12px;
                 font-size: 12px;
+                font-family: 'Orbitron', sans-serif;
                 selection-background-color: #FF5B06;
             }
             QLineEdit:focus {
-                background: rgba(255, 91, 6, 0.15);
+                background: rgba(255, 255, 255, 0.09);
+                border: none;
             }
-            QPushButton {
+            QLineEdit::placeholder {
+                color: #777777;
+                font-family: 'Orbitron', sans-serif;
+            }
+            QPushButton#btnSearchStream {
                 color: #FFFFFF;
                 background-color: #FF5B06;
                 border: none;
-                border-radius: 4px;
-                font-weight: bold;
-                padding: 0px 15px;
+                border-radius: 6px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 0px 18px;
             }
-            QPushButton:hover {
-                background-color: #FF7B36;
+            QPushButton#btnSearchStream:hover {
+                background-color: #FF7326;
             }
-            QPushButton:pressed {
+            QPushButton#btnSearchStream:pressed {
                 background-color: #E04B00;
             }
             QLabel#errorLabel {
-                color: #FF5B06;
-                font-size: 11px;
+                color: #FF4D4D;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: 600;
+                background: transparent;
+            }
+            QPushButton#btnCloseStreamInput {
+                color: #888888;
+                background-color: transparent;
+                border: none;
+                border-radius: 10px;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 12px;
                 font-weight: bold;
+            }
+            QPushButton#btnCloseStreamInput:hover {
+                color: #FFFFFF;
+                background-color: rgba(255, 255, 255, 0.12);
+            }
+            QPushButton#btnCloseStreamInput:pressed {
+                color: #FF5B06;
+                background-color: rgba(255, 91, 6, 0.25);
             }
         """)
         
+        try:
+            from PySide6.QtWidgets import QGraphicsDropShadowEffect
+            from PySide6.QtGui import QColor
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(20)
+            shadow.setColor(QColor(0, 0, 0, 160))
+            shadow.setOffset(0, 4)
+            self.setGraphicsEffect(shadow)
+        except Exception:
+            pass
+        
         from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(5)
+        main_layout.setContentsMargins(14, 8, 14, 10)
+        main_layout.setSpacing(6)
+        
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(0)
+        
+        self.lbl_header = QLabel("OPEN STREAM URL", self)
+        self.lbl_header.setObjectName("urlInputHeaderTitle")
+        
+        self.btn_close_header = QPushButton("✕", self)
+        self.btn_close_header.setObjectName("btnCloseStreamInput")
+        self.btn_close_header.setFixedSize(20, 20)
+        self.btn_close_header.setCursor(Qt.PointingHandCursor)
+        self.btn_close_header.clicked.connect(self.close_panel)
+        
+        header_layout.addWidget(self.lbl_header, 0, Qt.AlignVCenter)
+        header_layout.addStretch(1)
+        header_layout.addWidget(self.btn_close_header, 0, Qt.AlignRight | Qt.AlignVCenter)
+        main_layout.addLayout(header_layout)
         
         input_layout = QHBoxLayout()
         input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(10)
+        input_layout.setSpacing(8)
         
         self.input_field = QLineEdit(self)
-        self.input_field.setPlaceholderText("Type media name or paste URL")
-        self.input_field.setFixedHeight(30)
+        self.input_field.setPlaceholderText("Type media title or paste stream URL...")
+        self.input_field.setFixedHeight(32)
         
         self.btn_play = QPushButton("Search", self)
-        self.btn_play.setFixedHeight(30)
+        self.btn_play.setObjectName("btnSearchStream")
+        self.btn_play.setFixedHeight(32)
         self.btn_play.setCursor(Qt.PointingHandCursor)
         
         input_layout.addWidget(self.input_field)
@@ -4783,53 +5115,73 @@ class FloatingUrlInputWidget(QFrame):
         self.btn_play.clicked.connect(self._submit)
         self.input_field.returnPressed.connect(self._submit)
         
-    def showEvent(self, event):
-        super().showEvent(event)
+        # Intercept Ctrl+Y and Esc inside QLineEdit (prevent QLineEdit from swallowing Ctrl+Y for Redo)
+        orig_key_press = self.input_field.keyPressEvent
+        def _input_key_press(event):
+            if (event.key() == Qt.Key_Y and event.modifiers() & Qt.ControlModifier) or event.key() == Qt.Key_Escape:
+                self.close_panel()
+                return
+            orig_key_press(event)
+        self.input_field.keyPressEvent = _input_key_press
+
+    def keyPressEvent(self, event):
+        if (event.key() == Qt.Key_Y and event.modifiers() & Qt.ControlModifier) or event.key() == Qt.Key_Escape:
+            self.close_panel()
+            return
+        super().keyPressEvent(event)
+
+    def show_panel(self):
+        self._is_closing = False
         self.error_label.hide()
-        self.setStyleSheet(self.styleSheet().replace("border: 1px solid #FF0000;", "border: 1px solid rgba(255, 255, 255, 0.05);"))
         self.input_field.clear()
+        self.show()
+        self.raise_()
         self.input_field.setFocus()
         if self.parent():
-            # Center it horizontally, near the top
             x = (self.parent().width() - self.width()) // 2
             self.move(x, 60)
             
-        # Add a simple drop-in animation
         from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
+        if hasattr(self, '_anim') and self._anim.state() == QPropertyAnimation.Running:
+            self._anim.stop()
+            
         self._anim = QPropertyAnimation(self, b"pos")
-        self._anim.setDuration(300)
+        self._anim.setDuration(250)
         self._anim.setStartValue(QPoint(self.x(), 20))
         self._anim.setEndValue(QPoint(self.x(), 60))
         self._anim.setEasingCurve(QEasingCurve.OutBack)
         self._anim.start()
         
-    def animate_out(self):
+    def close_panel(self):
+        if getattr(self, '_is_closing', False):
+            return
+        self._is_closing = True
         from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
+        if hasattr(self, '_anim') and self._anim.state() == QPropertyAnimation.Running:
+            self._anim.stop()
+            
         self._anim = QPropertyAnimation(self, b"pos")
-        self._anim.setDuration(200)
+        self._anim.setDuration(180)
         self._anim.setStartValue(self.pos())
-        self._anim.setEndValue(QPoint(self.x(), 20))
+        self._anim.setEndValue(QPoint(self.x(), 10))
         self._anim.setEasingCurve(QEasingCurve.InBack)
-        self._anim.finished.connect(self.hide)
+        
+        def on_finish():
+            self.hide()
+            self._is_closing = False
+            
+        self._anim.finished.connect(on_finish)
         self._anim.start()
         
-    def focusOutEvent(self, event):
-        super().focusOutEvent(event)
-        # Hide when clicking outside
-        self.animate_out()
+    def animate_out(self):
+        self.close_panel()
 
     def _submit(self):
         url = self.input_field.text().strip()
         if url:
             if "spotify.com" in url.lower():
-                self.error_label.setText("Spotify DRM Restricted. Type media name instead.")
+                self.error_label.setText("Spotify DRM Restricted. Type media title instead.")
                 self.error_label.show()
-                self.setStyleSheet(self.styleSheet().replace("border: 1px solid rgba(255, 255, 255, 0.05);", "border: 1px solid #FF0000;"))
-                
-                # Shake animation
-                from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
-                self._shake = QPropertyAnimation(self, b"pos")
-                self._shake.setDuration(300)
                 
                 import math
                 from PySide6.QtCore import QVariantAnimation
@@ -4849,64 +5201,99 @@ class FloatingUrlInputWidget(QFrame):
                 self._shake_var.start()
                 return
                 
-            # Let yt-dlp's default_search handle non-URL queries
             self.url_submitted.emit(url)
-            self.animate_out()
+            self.close_panel()
 
 
 class StreamLoadingOverlayWidget(QFrame):
     """
-    Floating loading overlay with infinite progress bar for Stream extraction.
+    Floating loading overlay with progress bar for Stream extraction.
+    
+    Component Name: StreamLoadingOverlayWidget
     """
     log_updated = Signal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("streamLoadingOverlay")
-        self.setFixedSize(400, 150)
+        self.setFixedSize(420, 150)
         self.hide()
         
+        # Obey UI Rule: Less use border, more use background-color
         self.setStyleSheet("""
             QFrame#streamLoadingOverlay {
-                background-color: rgba(31, 32, 41, 0.95);
+                background-color: rgba(22, 23, 29, 0.96);
                 border: none;
-                border-radius: 8px;
+                border-radius: 12px;
             }
-            QLabel {
+            QLabel#streamHeaderTag {
+                color: #FF5B06;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                background: transparent;
+            }
+            QLabel#lblMsg {
                 color: #FFFFFF;
-                font-size: 13px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: 500;
                 background: transparent;
                 border: none;
             }
             QPlainTextEdit {
-                background-color: rgba(0, 0, 0, 0.4);
-                color: #00FF00;
-                font-family: 'Orbitron', monospace;
+                background-color: rgba(14, 15, 20, 0.9);
+                color: #CCCCCC;
+                font-family: 'Consolas', 'Orbitron', monospace;
                 font-size: 10px;
                 border: none;
-                border-radius: 4px;
-                padding: 5px;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QPushButton {
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
             }
         """)
         
-        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QPlainTextEdit, QLayout
+        try:
+            from PySide6.QtWidgets import QGraphicsDropShadowEffect
+            from PySide6.QtGui import QColor
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(20)
+            shadow.setColor(QColor(0, 0, 0, 160))
+            shadow.setOffset(0, 4)
+            self.setGraphicsEffect(shadow)
+        except Exception:
+            pass
+            
+        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QPlainTextEdit
         from PySide6.QtCore import Qt
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 15, 20, 15)
+        layout.setContentsMargins(16, 12, 16, 12)
         
         vbox = QVBoxLayout()
-        vbox.setSpacing(10)
+        vbox.setSpacing(8)
+        
+        header_layout = QHBoxLayout()
+        self.lbl_tag = QLabel("STREAM EXTRACTION", self)
+        self.lbl_tag.setObjectName("streamHeaderTag")
+        header_layout.addWidget(self.lbl_tag)
+        header_layout.addStretch()
+        vbox.addLayout(header_layout)
         
         self.lbl_msg = QLabel("Extracting stream URL...", self)
+        self.lbl_msg.setObjectName("lblMsg")
         self.lbl_msg.setAlignment(Qt.AlignCenter)
         
         self.progress = QProgressBar(self)
         self.progress.setTextVisible(False)
-        self.progress.setRange(0, 0) # Infinite loading animation
+        self.progress.setRange(0, 0)
         self.progress.setFixedHeight(4)
         self.progress.setStyleSheet("""
             QProgressBar {
-                background-color: rgba(255, 255, 255, 0.1);
+                background-color: rgba(255, 255, 255, 0.05);
                 border: none;
                 border-radius: 2px;
             }
@@ -4921,7 +5308,6 @@ class StreamLoadingOverlayWidget(QFrame):
         self.terminal.setMaximumBlockCount(100)
         self.terminal.setFixedHeight(120)
         self.terminal.hide()
-        from PySide6.QtCore import Qt
         self.terminal.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         
         self.btn_toggle = QPushButton("▶ Show Details", self)
@@ -4929,13 +5315,14 @@ class StreamLoadingOverlayWidget(QFrame):
         self.btn_toggle.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
-                color: #A0A0A0;
+                color: #888888;
                 border: none;
                 text-align: left;
                 font-size: 11px;
+                font-family: 'Orbitron', sans-serif;
                 padding: 2px 0px;
             }
-            QPushButton:hover { color: #FFFFFF; }
+            QPushButton:hover { color: #CCCCCC; }
         """)
         
         def toggle_terminal():
@@ -4943,41 +5330,40 @@ class StreamLoadingOverlayWidget(QFrame):
                 self.terminal.show()
                 self.btn_copy.show()
                 self.btn_toggle.setText("▼ Hide Details")
-                self.setFixedSize(400, 280)
+                self.setFixedSize(420, 275)
             else:
                 self.terminal.hide()
                 self.btn_copy.hide()
                 self.btn_toggle.setText("▶ Show Details")
-                self.setFixedSize(400, 150)
+                self.setFixedSize(420, 150)
             
         self.btn_toggle.clicked.connect(toggle_terminal)
         
-        # Action Buttons
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(8)
         
         self.btn_copy = QPushButton("Copy Log", self)
-        self.btn_copy.setFixedHeight(24)
+        self.btn_copy.setFixedHeight(26)
         self.btn_copy.setCursor(Qt.PointingHandCursor)
         self.btn_copy.setStyleSheet("""
             QPushButton {
-                background-color: #333544; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+                background-color: rgba(255, 255, 255, 0.06); color: #FFFFFF; border: none; border-radius: 6px; font-size: 11px; font-family: 'Orbitron', sans-serif; padding: 0 12px;
             }
-            QPushButton:hover { background-color: #45485B; }
-            QPushButton:pressed { background-color: #242530; }
+            QPushButton:hover { background-color: rgba(255, 255, 255, 0.12); }
+            QPushButton:pressed { background-color: rgba(255, 255, 255, 0.04); }
         """)
         self.btn_copy.clicked.connect(self._copy_log)
         self.btn_copy.hide()
         
         self.btn_close = QPushButton("Close", self)
-        self.btn_close.setFixedHeight(24)
-        self.btn_close.setFixedWidth(110)
+        self.btn_close.setFixedHeight(26)
+        self.btn_close.setFixedWidth(100)
         self.btn_close.setCursor(Qt.PointingHandCursor)
         self.btn_close.setStyleSheet("""
             QPushButton {
-                background-color: #DC3545; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+                background-color: rgba(255, 255, 255, 0.08); color: #FFFFFF; border: none; border-radius: 6px; font-size: 11px; font-family: 'Orbitron', sans-serif; font-weight: 500; padding: 0 12px;
             }
-            QPushButton:hover { background-color: #E04B59; }
+            QPushButton:hover { background-color: rgba(220, 53, 69, 0.8); }
             QPushButton:pressed { background-color: #C82333; }
         """)
         self.btn_close.clicked.connect(self.hide)
@@ -5060,22 +5446,27 @@ class StreamLoadingOverlayWidget(QFrame):
         return super().eventFilter(obj, event)
 
     def _reset_ui(self):
-        self.progress.setRange(0, 0)
+        if hasattr(self, 'progress'):
+            self.progress.setRange(0, 0)
         if hasattr(self, '_countdown_timer'):
             self._countdown_timer.stop()
         if hasattr(self, '_countdown'):
             delattr(self, '_countdown')
-        self.btn_close.setText("Close")
-        self.btn_close.setStyleSheet("""
-            QPushButton {
-                background-color: #DC3545; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
-            }
-            QPushButton:hover { background-color: #E04B59; }
-            QPushButton:pressed { background-color: #C82333; }
-        """)
-        self.terminal.hide()
-        self.btn_copy.hide()
-        self.btn_toggle.setText("▶ Show Details")
+        if hasattr(self, 'btn_close'):
+            self.btn_close.setText("Close")
+            self.btn_close.setStyleSheet("""
+                QPushButton {
+                    background-color: #DC3545; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+                }
+                QPushButton:hover { background-color: #E04B59; }
+                QPushButton:pressed { background-color: #C82333; }
+            """)
+        if hasattr(self, 'terminal'):
+            self.terminal.hide()
+        if hasattr(self, 'btn_copy'):
+            self.btn_copy.hide()
+        if hasattr(self, 'btn_toggle'):
+            self.btn_toggle.setText("▶ Show Details")
         self.setFixedSize(400, 150)
 
     def hideEvent(self, event):
@@ -5492,7 +5883,46 @@ class MusicPanelWidget(QWidget):
                     
         except Exception as e:
             print(f"[Audio] Device change handling error: {e}")
-    
+
+    def show_invalid_path_panel(self, message="The path is invalid or the file is deleted."):
+        """Display floating invalid path notification overlay matching HELXAIL UI."""
+        from MediaLibraryPage import FloatingInvalidPathPanel
+        if not hasattr(self, '_invalid_path_panel') or self._invalid_path_panel is None:
+            self._invalid_path_panel = FloatingInvalidPathPanel(self, message)
+        self._invalid_path_panel.show_panel()
+
+    def reload_current_view(self):
+        """Reload/refresh tracks for whichever tab/view is currently active in HELXAIC."""
+        if hasattr(self, 'stack'):
+            idx = self.stack.currentIndex()
+            if idx == 1 and hasattr(self, 'media_lib_page'):
+                print("[MusicPanelWidget] Reloading Media Library...")
+                if hasattr(self.media_lib_page, 'load_library'):
+                    self.media_lib_page.load_library()
+                return
+
+        # Default / Playlist page (idx == 0):
+        if hasattr(self, '_music_folder') and self._music_folder and os.path.exists(self._music_folder):
+            print(f"[MusicPanelWidget] Rescanning current folder: {self._music_folder}")
+            self._load_tracks_from_folder(self._music_folder)
+        elif hasattr(self, '_playlist') and hasattr(self, 'table'):
+            print("[MusicPanelWidget] Refreshing track playlist and purging missing files...")
+            valid_playlist = []
+            for t in self._playlist:
+                if isinstance(t, dict):
+                    path = t.get('path')
+                    # Keep online tracks or local files that still exist on disk
+                    if t.get('is_online', False) or (path and os.path.exists(path)):
+                        valid_playlist.append(t)
+            if len(valid_playlist) != len(self._playlist):
+                print(f"[MusicPanelWidget] Removed {len(self._playlist) - len(valid_playlist)} missing/deleted track(s)")
+                self._playlist = valid_playlist
+                if hasattr(self, '_save_state'):
+                    self._save_state()
+            self.table.set_tracks(self._playlist)
+            if hasattr(self, 'refresh_playlist_stats'):
+                self.refresh_playlist_stats()
+
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts for music control.
         
@@ -5502,6 +5932,7 @@ class MusicPanelWidget(QWidget):
         avoid double-fire when the app has focus.
         """
         key = event.key()
+        modifiers = event.modifiers()
         
         # === Standard Keyboard Shortcuts ===
         
@@ -5529,8 +5960,14 @@ class MusicPanelWidget(QWidget):
             event.accept()
             return
         
-        # R: Shuffle toggle
-        if key == Qt.Key_R:
+        # Ctrl + R or F5: Reload currently viewed tracks
+        if key == Qt.Key_F5 or (key == Qt.Key_R and bool(modifiers & Qt.ControlModifier)):
+            self.reload_current_view()
+            event.accept()
+            return
+
+        # R (standalone without Ctrl): Shuffle toggle
+        if key == Qt.Key_R and not bool(modifiers & Qt.ControlModifier):
             self.player_bar._toggle_shuffle()
             event.accept()
             return
@@ -5978,6 +6415,7 @@ class MusicPanelWidget(QWidget):
         # Connect signals
         self.resume_banner.dismiss_clicked.connect(self._dismiss_banner)
         self.resume_banner.resume_clicked.connect(self._resume_playback_from_banner)
+        self.resume_banner.resume_and_folder_clicked.connect(self._resume_and_open_folder)
         
         # Floating URL Input
         self.floating_url_input = FloatingUrlInputWidget(self)
@@ -6488,7 +6926,7 @@ class MusicPanelWidget(QWidget):
     def _create_menu_bar(self, layout):
         """Create the menu bar with Audio, Video, and Tools menus."""
         from PySide6.QtWidgets import QMenuBar, QMenu
-        from PySide6.QtGui import QAction, QActionGroup
+        from PySide6.QtGui import QAction, QActionGroup, QKeySequence
         
         menu_bar = QMenuBar()
         menu_bar.setObjectName("musicMenuBar")
@@ -6497,6 +6935,16 @@ class MusicPanelWidget(QWidget):
         media_menu = menu_bar.addMenu("Media")
         media_menu.setObjectName("mediaMenu")
         
+        # Refresh Current Track / List (Top Item)
+        self.action_refresh_track = QAction("Refresh current track\tCtrl+R or F5", self)
+        self.action_refresh_track.setShortcuts([QKeySequence("Ctrl+R"), QKeySequence("F5")])
+        self.action_refresh_track.setShortcutContext(Qt.WindowShortcut)
+        self.action_refresh_track.triggered.connect(self.reload_current_view)
+        media_menu.addAction(self.action_refresh_track)
+        self.addAction(self.action_refresh_track)
+        
+        media_menu.addSeparator()
+
         # Add File
         self.action_open_file = QAction("Add File", self)
         self.action_open_file.setShortcut("Ctrl+O")
@@ -7157,7 +7605,14 @@ class MusicPanelWidget(QWidget):
             if "Media Library" in target:
                 if hasattr(self, 'media_lib_page') and self.media_lib_page:
                     try:
-                        self.media_lib_page._add_path_to_library(dest_path, is_folder=False)
+                        if hasattr(self.media_lib_page, 'add_path_to_library'):
+                            self.media_lib_page.add_path_to_library(dest_path, is_folder=False)
+                        else:
+                            self.media_lib_page._add_path_to_library(dest_path, is_folder=False)
+                            if hasattr(self.media_lib_page, '_save_library'):
+                                self.media_lib_page._save_library()
+                            if hasattr(self.media_lib_page, '_refresh_tree'):
+                                self.media_lib_page._refresh_tree()
                         print(f"[DEBUG MusicPanelWidget] Successfully added track to Media Library: {dest_path}")
                     except Exception as ex:
                         print(f"[DEBUG MusicPanelWidget] Error adding track to Media Library: {ex}")
@@ -8437,16 +8892,103 @@ class MusicPanelWidget(QWidget):
     
 
     def _dismiss_banner(self):
-        self.resume_banner.animate_out(lambda: self._finalize_dismiss())
+        print("[Music DEBUG] _dismiss_banner triggered!")
+        try:
+            self._finalize_dismiss()
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self.resume_banner, 'animate_out'):
+                self.resume_banner.animate_out()
+            else:
+                self.resume_banner.hide()
+        except Exception:
+            self.resume_banner.hide()
         
     def _finalize_dismiss(self):
         if hasattr(self, '_pending_single_track_resume'):
             self._pending_single_track_resume = None
 
     def _resume_playback_from_banner(self):
-        self.resume_banner.animate_out(lambda: self._finalize_resume())
+        print("[Music DEBUG] _resume_playback_from_banner triggered!")
+        try:
+            self._finalize_resume()
+        except Exception as e:
+            print(f"[Music DEBUG ERROR] Exception in _finalize_resume: {e}")
+            import traceback
+            traceback.print_exc()
+
+        try:
+            if hasattr(self.resume_banner, 'animate_out'):
+                self.resume_banner.animate_out()
+            else:
+                self.resume_banner.hide()
+        except Exception:
+            self.resume_banner.hide()
+
+    def _resume_and_open_folder(self):
+        print("[Music DEBUG] _resume_and_open_folder triggered!")
+        try:
+            self._finalize_resume_and_open_folder()
+        except Exception as e:
+            print(f"[Music DEBUG ERROR] Exception in _finalize_resume_and_open_folder: {e}")
+            import traceback
+            traceback.print_exc()
+
+        try:
+            if hasattr(self.resume_banner, 'animate_out'):
+                self.resume_banner.animate_out()
+            else:
+                self.resume_banner.hide()
+        except Exception:
+            self.resume_banner.hide()
+
+    def _finalize_resume_and_open_folder(self):
+        print("[Music DEBUG] Executing 'Resume and folder' parent folder expansion...")
+        target_path = None
+        seek_pos = 0
+        
+        if hasattr(self, '_pending_single_track_resume') and self._pending_single_track_resume:
+            target_path = self._pending_single_track_resume.get('path')
+            seek_pos = self._pending_single_track_resume.get('position', 0)
+        elif hasattr(self, '_playlist') and self._playlist and getattr(self, '_current_index', -1) >= 0:
+            try:
+                target_path = self._playlist[self._current_index].get('path')
+            except Exception:
+                target_path = None
+
+        if target_path and os.path.exists(target_path):
+            parent_folder = os.path.dirname(target_path)
+            if parent_folder and os.path.isdir(parent_folder):
+                folder_name = os.path.basename(parent_folder) or "Folder"
+                print(f"[Music DEBUG] Expanding parent folder '{folder_name}' into Track Playlist: '{parent_folder}'")
+                self._load_tracks_from_folder(parent_folder)
+                
+                # Assign playlist_group so the folder remains EXPANDED as a group in PlaylistTable (not exported/flattened)
+                for t in self._playlist:
+                    t['playlist_group'] = folder_name
+                    
+                self.table.set_tracks(self._playlist)
+                
+                # Locate target track in expanded playlist
+                norm_target = os.path.normpath(target_path).lower()
+                found_idx = next((i for i, t in enumerate(self._playlist) if os.path.normpath(t.get('path', '')).lower() == norm_target), 0)
+                
+                self._pending_single_track_resume = None
+                if seek_pos > 0:
+                    self._pending_seek_position = seek_pos
+                    
+                if hasattr(self, 'stack'):
+                    self.stack.setCurrentIndex(0)
+                self._play_track(found_idx)
+                return
+
+        print("[Music DEBUG] Parent folder unavailable, falling back to single track resume.")
+        self._finalize_resume()
 
     def _finalize_resume(self):
+        print(f"[Music DEBUG] _finalize_resume triggered! pending_single={getattr(self, '_pending_single_track_resume', None)}, current_index={getattr(self, '_current_index', -1)}, playlist_len={len(getattr(self, '_playlist', []))}")
         if hasattr(self, '_pending_single_track_resume') and self._pending_single_track_resume:
             track_info = self._pending_single_track_resume
             import datetime
@@ -8465,40 +9007,35 @@ class MusicPanelWidget(QWidget):
                 'date_added': date_str
             }
             target_path = track_info['path']
-            found_index = next((i for i, t in enumerate(self._playlist) if t['path'] == target_path), -1)
-            
-            if found_index != -1:
-                self._current_index = found_index
-                self.table.highlight_playing(found_index)
-                t = self._playlist[found_index]
-                self.player_bar.set_track_info(t.get('title', track_info['title']), t.get('artist', 'Unknown'))
-            else:
-                self._append_tracks_to_playlist([track])
-                self._current_index = len(self._playlist) - 1
-                self.table.highlight_playing(self._current_index)
-                self.player_bar.set_track_info(track_info['title'], 'Single Track')
-            self._player.setSource(QUrl.fromLocalFile(track_info['path']))
-            
-            try:
-                self._set_current_media_local_path(track_info['path'])
-            except Exception:
-                pass
-            
-            if track_info['position'] > 0:
-                self._pending_seek_position = track_info['position']
-                def on_media_loaded(status):
-                    if status == QMediaPlayer.LoadedMedia:
-                        if hasattr(self, '_pending_seek_position') and self._pending_seek_position > 0:
-                            self._player.setPosition(self._pending_seek_position)
-                            self._pending_seek_position = 0
-                        try:
-                            self._player.mediaStatusChanged.disconnect(on_media_loaded)
-                        except:
-                            pass
-                self._player.mediaStatusChanged.connect(on_media_loaded)
-            
+            if not hasattr(self, '_playlist') or self._playlist is None:
+                self._playlist = []
+                
+            found_index = next((i for i, t in enumerate(self._playlist) if t.get('path') == target_path), -1)
+            if found_index == -1:
+                self._playlist.append(track)
+                found_index = len(self._playlist) - 1
+                
+            print(f"[Music DEBUG] Resuming pending single track: '{track_info['title']}' at index {found_index}")
+            self.table.set_tracks(self._playlist)
             self._pending_single_track_resume = None
             
+            if track_info.get('position', 0) > 0:
+                self._pending_seek_position = track_info['position']
+                
+            if hasattr(self, 'stack'):
+                self.stack.setCurrentIndex(0)
+            self._play_track(found_index)
+            return
+
+        if hasattr(self, '_playlist') and self._playlist and getattr(self, '_current_index', -1) >= 0:
+            print(f"[Music DEBUG] Resuming existing track at index {self._current_index}")
+            self.table.set_tracks(self._playlist)
+            if hasattr(self, 'stack'):
+                self.stack.setCurrentIndex(0)
+            self._play_track(self._current_index)
+            return
+            
+        print("[Music DEBUG] Fallback to _toggle_play")
         self._toggle_play()
 
     def _load_last_state(self):
@@ -8748,8 +9285,10 @@ class MusicPanelWidget(QWidget):
             
     def _prompt_play_url(self):
         if hasattr(self, 'floating_url_input'):
-            self.floating_url_input.show()
-            self.floating_url_input.raise_()
+            if self.floating_url_input.isVisible() and not getattr(self.floating_url_input, '_is_closing', False):
+                self.floating_url_input.close_panel()
+            else:
+                self.floating_url_input.show_panel()
 
     def _process_url_stream_async(self, url):
         import threading
