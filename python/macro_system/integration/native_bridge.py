@@ -5,12 +5,12 @@ Wrapper that provides Python fallback when C++ native module is unavailable.
 Uses helxairo_native for high-performance input when available.
 """
 
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any, Callable
 import time
 
 # Try to import native module
 try:
-    import helxairo_native as _native
+    import helxairo_native as _native  # type: ignore
     NATIVE_AVAILABLE = True
     print("[NativeBridge] C++ native module loaded (v" + _native.__version__ + ")")
 except ImportError as e:
@@ -266,7 +266,7 @@ class NativeMacroEngine:
             if action_type == "mouse_click":
                 action = MacroAction(type=ActionType.MOUSE_CLICK, button=target)
             else:
-                action = MacroAction(type=ActionType.KEY_TAP, key=target, hold_ms=50)
+                action = MacroAction(type=ActionType.KEY_TAP, key=target, hold_ms=0)
             
             trigger = MacroTrigger(
                 type=TriggerType.KEYBOARD,
@@ -278,7 +278,7 @@ class NativeMacroEngine:
                 id=macro_id,
                 name=name,
                 trigger=trigger,
-                actions=[action],
+                repeat_action=action,
                 repeat_interval_ms=interval_ms
             )
             

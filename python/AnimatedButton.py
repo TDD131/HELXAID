@@ -8,7 +8,7 @@ Features:
 """
 from PySide6.QtWidgets import QPushButton
 from PySide6.QtCore import QSize, QTimer, Property, QPropertyAnimation, QEasingCurve, Qt, QRectF, Signal
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QIcon
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QIcon, QLinearGradient, QFontMetrics
 
 
 class AnimatedButton(QPushButton):
@@ -345,6 +345,7 @@ from PySide6.QtWidgets import QAbstractButton
 
 class AnimatedCheckBox(QAbstractButton):
     """A checkbox that animates its background and checkmark smoothly, built on QAbstractButton."""
+    stateChanged = Signal(int)
     
     def __init__(self, text="", parent=None):
         super().__init__(parent)
@@ -388,6 +389,7 @@ class AnimatedCheckBox(QAbstractButton):
         from PySide6.QtCore import QAbstractAnimation
         self._anim.setDirection(QAbstractAnimation.Forward if checked else QAbstractAnimation.Backward)
         self._anim.start()
+        self.stateChanged.emit(2 if checked else 0)
         
     def paintEvent(self, event):
         from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath, QBrush
@@ -467,3 +469,168 @@ class AnimatedCheckBox(QAbstractButton):
         p.setFont(font)
         text_rect = QRect(int(box_size + 8), 0, int(self.width() - box_size - 8), int(self.height()))
         p.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, self.text())
+
+
+class FadeHoverButton(QPushButton):
+    """Button with smooth fade-in / fade-out linear gradient hover opacity transition.
+    Styled matching cpuSavePresetBtn (#FF5B06 -> #FDA903 theme, border-radius 10px, Orbitron font).
+    """
+    
+    def __init__(self, text="", parent=None, is_secondary=False, border_radius=6.0, color_mode="default"):
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setStyleSheet("border: none; background: transparent;")
+        self._hover_progress = 0.0
+        
+        self._anim = QPropertyAnimation(self, b"hoverProgress")
+        self._anim.setDuration(180)  # 180ms smooth fade
+        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        
+        self._is_secondary = is_secondary
+        self._color_mode = color_mode if not is_secondary else "secondary"
+        self._border_radius = float(border_radius)  # Default 6.0px matching input controls
+
+    def getHoverProgress(self) -> float:
+        return self._hover_progress
+
+    def setHoverProgress(self, val: float):
+        self._hover_progress = val
+        self.update()
+
+    hoverProgress = Property(float, getHoverProgress, setHoverProgress)
+
+    def setCustomColors(self, radius=10.0):
+        self._border_radius = radius
+        self.update()
+
+    def enterEvent(self, event):
+        self._anim.stop()
+        self._anim.setStartValue(self._hover_progress)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._anim.stop()
+        self._anim.setStartValue(self._hover_progress)
+        self._anim.setEndValue(0.0)
+        self._anim.start()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect())
+        adjusted_rect = rect.adjusted(0.5, 0.5, -0.5, -0.5)
+
+        # Build horizontal linear gradient (0, 0 -> width, 0)
+        gradient = QLinearGradient(0, 0, rect.width(), 0)
+
+        if self._color_mode == "secondary" or self._is_secondary:
+            # Secondary theme: Dark charcoal (30, 32, 38) -> Medium dark (#3a3d45 -> #4a4d55)
+            r0 = int(30 + (58 - 30) * self._hover_progress)
+            g0 = int(32 + (61 - 32) * self._hover_progress)
+            b0 = int(38 + (69 - 38) * self._hover_progress)
+            a0 = int(220 + (255 - 220) * self._hover_progress)
+
+            r1 = int(30 + (74 - 30) * self._hover_progress)
+            g1 = int(32 + (77 - 32) * self._hover_progress)
+            b1 = int(38 + (85 - 38) * self._hover_progress)
+            a1 = int(220 + (255 - 220) * self._hover_progress)
+
+            text_r = int(224 + (255 - 224) * self._hover_progress)
+            text_g = int(224 + (255 - 224) * self._hover_progress)
+            text_b = int(224 + (255 - 224) * self._hover_progress)
+        elif self._color_mode == "green":
+            # Green theme: Dark forest green (#162C20) -> Emerald green gradient (#0E623B -> #1DB954)
+            r0 = int(22 + (14 - 22) * self._hover_progress)
+            g0 = int(44 + (98 - 44) * self._hover_progress)
+            b0 = int(32 + (59 - 32) * self._hover_progress)
+            a0 = int(220 + (255 - 220) * self._hover_progress)
+
+            r1 = int(22 + (29 - 22) * self._hover_progress)
+            g1 = int(44 + (185 - 44) * self._hover_progress)
+            b1 = int(32 + (84 - 32) * self._hover_progress)
+            a1 = int(220 + (255 - 220) * self._hover_progress)
+
+            text_r = 255
+            text_g = 255
+            text_b = 255
+        elif self._color_mode == "red":
+            # Red theme: Dark danger red (#771212) -> Danger red gradient (#B91C1C -> #FF3838)
+            r0 = int(119 + (185 - 119) * self._hover_progress)
+            g0 = int(18 + (28 - 18) * self._hover_progress)
+            b0 = int(18 + (28 - 18) * self._hover_progress)
+            a0 = int(220 + (255 - 220) * self._hover_progress)
+
+            r1 = int(119 + (255 - 119) * self._hover_progress)
+            g1 = int(18 + (56 - 18) * self._hover_progress)
+            b1 = int(18 + (56 - 18) * self._hover_progress)
+            a1 = int(220 + (255 - 220) * self._hover_progress)
+
+            text_r = 255
+            text_g = 255
+            text_b = 255
+        else:
+            # HELXAIR default dark state (40, 40, 40) -> cpuSavePresetBtn orange gradient (#FF5B06 -> #FDA903)
+            r0 = int(40 + (255 - 40) * self._hover_progress)
+            g0 = int(40 + (91 - 40) * self._hover_progress)
+            b0 = int(40 + (6 - 40) * self._hover_progress)
+            a0 = int(220 + (255 - 220) * self._hover_progress)
+
+            r1 = int(40 + (253 - 40) * self._hover_progress)
+            g1 = int(40 + (169 - 40) * self._hover_progress)
+            b1 = int(40 + (3 - 40) * self._hover_progress)
+            a1 = int(220 + (255 - 220) * self._hover_progress)
+
+            text_r = int(255 + (26 - 255) * self._hover_progress)
+            text_g = int(255 + (26 - 255) * self._hover_progress)
+            text_b = int(255 + (26 - 255) * self._hover_progress)
+
+        gradient.setColorAt(0.0, QColor(r0, g0, b0, a0))
+        gradient.setColorAt(1.0, QColor(r1, g1, b1, a1))
+
+        # Smooth rounded rect path
+        path = QPainterPath()
+        path.addRoundedRect(adjusted_rect, self._border_radius, self._border_radius)
+        painter.fillPath(path, QBrush(gradient))
+
+        # Draw text & icon with proper layout
+        has_text = bool(self.text())
+        has_icon = not self.icon().isNull()
+
+        if has_text or has_icon:
+            font = self.font()
+            font.setFamily("Orbitron")
+            font.setPixelSize(12)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.setPen(QColor(text_r, text_g, text_b))
+
+            if has_icon and has_text:
+                icon_size = self.iconSize() if not self.iconSize().isEmpty() else QSize(16, 16)
+                pix = self.icon().pixmap(icon_size)
+                spacing = 6
+                
+                fm = QFontMetrics(font)
+                text_w = fm.horizontalAdvance(self.text())
+                total_w = icon_size.width() + spacing + text_w
+                
+                start_x = int((rect.width() - total_w) / 2)
+                icon_y = int((rect.height() - icon_size.height()) / 2)
+                
+                painter.drawPixmap(start_x, icon_y, pix)
+                
+                text_rect = QRectF(start_x + icon_size.width() + spacing, 0, text_w + 4, rect.height())
+                painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, self.text())
+            elif has_icon:
+                icon_size = self.iconSize() if not self.iconSize().isEmpty() else QSize(18, 18)
+                pix = self.icon().pixmap(icon_size)
+                ix = int((rect.width() - icon_size.width()) / 2)
+                iy = int((rect.height() - icon_size.height()) / 2)
+                painter.drawPixmap(ix, iy, pix)
+            elif has_text:
+                painter.drawText(adjusted_rect, Qt.AlignCenter, self.text())
+
+        painter.end()

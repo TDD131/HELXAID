@@ -14,7 +14,36 @@ from PySide6.QtWidgets import (
     QAbstractItemView
 )
 from PySide6.QtGui import QIcon, QFont
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
+
+
+class SafeSpinBox(QSpinBox):
+    """QSpinBox with 400ms hover delay protection before accepting mouse wheel scrolling."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._can_wheel = False
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(400)
+        self._hover_timer.timeout.connect(self._on_hover_timeout)
+
+    def _on_hover_timeout(self):
+        self._can_wheel = True
+
+    def enterEvent(self, event):
+        self._hover_timer.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover_timer.stop()
+        self._can_wheel = False
+        super().leaveEvent(event)
+
+    def wheelEvent(self, event):
+        if self._can_wheel or self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
 
 
 class MacroSettingsDialog(QDialog):
@@ -208,7 +237,7 @@ class MacroSettingsDialog(QDialog):
         ac_layout.addWidget(self.ac_button)
         
         ac_layout.addWidget(QLabel("Interval (ms):"))
-        self.ac_interval = QSpinBox()
+        self.ac_interval = SafeSpinBox()
         self.ac_interval.setRange(10, 5000)
         self.ac_interval.setValue(100)
         ac_layout.addWidget(self.ac_interval)

@@ -48,52 +48,56 @@ class ToggleMacro(BaseMacro):
         """Execute toggle behavior."""
         sim = context.simulator
         
-        # Run activation actions
-        for action in self.on_activate_actions:
-            await action.execute(context)
-            
-        # Hold key/button if specified
-        if self.hold_key:
-            sim.key_down(self.hold_key)
-        if self.hold_button:
-            sim.mouse_down(self.hold_button)
-            
-        # One-time action
-        if self.on_action:
-            await self.on_action.execute(context)
-            
-        # Repeat action while toggled ON
-        if self.repeat_action:
-            import time
-            try:
+        try:
+            # Run activation actions
+            for action in self.on_activate_actions:
+                await action.execute(context)
+                
+            # Hold key/button if specified
+            if self.hold_key:
+                sim.key_down(self.hold_key)
+            if self.hold_button:
+                sim.mouse_down(self.hold_button)
+                
+            # One-time action
+            if self.on_action:
+                await self.on_action.execute(context)
+                
+            # Repeat action while toggled ON
+            if self.repeat_action:
+                import time
                 while True:
                     context.check_cancelled()
                     start = time.perf_counter()
                     await self.repeat_action.execute(context)
                     
                     # High-precision timing for low intervals
-                    if self.repeat_interval_ms <= 15:
-                        # Busy-wait for sub-15ms precision (Windows timer resolution limit)
+                    if self.repeat_interval_ms <= 1:
+                        # Ultra-fast mode (1ms or 0ms) for maximum CPS performance (1340+ CPS)
+                        context.check_cancelled()
+                        await asyncio.sleep(0)
+                    elif self.repeat_interval_ms <= 15:
+                        # High-precision spin wait with micro-yield for 2ms - 15ms
                         target = start + (self.repeat_interval_ms / 1000)
                         while time.perf_counter() < target:
-                            # Check cancellation during spin wait to allow quick stop
                             context.check_cancelled()
+                            await asyncio.sleep(0)
                     else:
-                        # Normal async sleep for larger intervals
+                        # Normal async sleep for larger intervals (> 15ms)
                         elapsed = (time.perf_counter() - start) * 1000
                         remaining = max(0, self.repeat_interval_ms - elapsed)
                         if remaining > 0:
                             await context.delay(remaining)
-            except asyncio.CancelledError:
-                pass
-        else:
-            # No repeat action - just wait until cancelled
-            try:
+            else:
+                # No repeat action - just wait until cancelled
                 while True:
                     context.check_cancelled()
                     await asyncio.sleep(0.1)
-            except asyncio.CancelledError:
-                pass
+        except (asyncio.CancelledError, Exception):
+            pass
+        finally:
+            # Safety First: Always release inputs and run cleanup on cancellation or exit!
+            await self.cleanup(context)
                 
     def cancel(self) -> None:
         """Called when toggle is turned OFF."""

@@ -1,15 +1,15 @@
 """
-Local HTTP Server untuk ControlHub (Furycube Mouse Config)
-Menjalankan website ControlHub secara offline untuk konfigurasi mouse.
+Local HTTP Server for ControlHub (Furycube Mouse Config)
+Runs the ControlHub website offline for mouse configuration.
 
-Cara pakai:
-1. Jalankan script ini: python controlhub_server.py
-2. Buka browser ke http://localhost:8080
-3. Klik Connect dan pilih mouse
-4. Konfigurasi button mapping
+Usage:
+1. Run this script: python controlhub_server.py
+2. Open browser to http://localhost:8080
+3. Click Connect and select mouse
+4. Configure button mapping
 
-PENTING: WebHID hanya work di browser yang support (Chrome, Edge)
-dan memerlukan HTTPS atau localhost.
+IMPORTANT: WebHID only works in supported browsers (Chrome, Edge)
+and requires HTTPS or localhost.
 """
 
 import http.server

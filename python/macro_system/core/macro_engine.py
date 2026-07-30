@@ -56,9 +56,17 @@ class ExecutionContext:
             raise asyncio.CancelledError("Macro execution cancelled")
             
     async def delay(self, ms: float):
-        """Async delay that respects cancellation."""
+        """Async delay that respects cancellation with sub-10ms response time."""
         self.check_cancelled()
-        await asyncio.sleep(ms / 1000)
+        if ms <= 15:
+            await asyncio.sleep(ms / 1000)
+        else:
+            remaining = ms
+            while remaining > 0:
+                self.check_cancelled()
+                step = min(10.0, remaining)
+                await asyncio.sleep(step / 1000)
+                remaining -= step
         self.check_cancelled()
 
 
@@ -183,17 +191,26 @@ class MacroEngine:
         self._macro_states[macro_id] = MacroState.IDLE
         
     def unregister_macro(self, macro_id: str):
-        """Unregister a macro."""
+        """Unregister a macro completely from engine memory and bindings."""
         self.cancel_macro(macro_id)
+        self.remove_bindings(macro_id)
         self._macros.pop(macro_id, None)
         self._macro_states.pop(macro_id, None)
         self._toggle_states.pop(macro_id, None)
+        if self._native_engine and hasattr(self._native_engine, 'unregister_macro'):
+            try:
+                self._native_engine.unregister_macro(macro_id)
+            except Exception:
+                pass
         
     def add_binding(self, binding: MacroBinding):
         """Add a trigger binding for a macro with O(1) lookup-ready structure."""
         b_type = binding.trigger_type
-        # Ensure trigger_value is hashable/valid
+        # Standardize string trigger values to lowercase for case-insensitive matching
         b_val = binding.trigger_value
+        if isinstance(b_val, str):
+            b_val = b_val.lower().strip()
+            binding.trigger_value = b_val
         
         # Initialize list if missing
         if b_val not in self._bindings[b_type]:
@@ -281,7 +298,6 @@ class MacroEngine:
             if macro_id:
                 self._trigger_macro(macro_id, InputEvent(mouse=event))
                 return True
-            return False
 
         # FALLBACK PATH: Dictionary lookup by button
         possible_bindings = self._bindings["mouse"].get(event.button)
@@ -324,11 +340,13 @@ class MacroEngine:
             if macro_id:
                 self._trigger_macro(macro_id, InputEvent(keyboard=event))
                 return True
-            return False
             
-        # FAST PATH: Check both key_code and key_name in dictionary
+        # FAST PATH: Check key_code, lowercase key_name, and raw key_name in dictionary
+        k_name = event.key_name.lower().strip() if event.key_name else ""
         bindings_code = self._bindings["keyboard"].get(event.key_code, [])
-        bindings_name = self._bindings["keyboard"].get(event.key_name, [])
+        bindings_name = self._bindings["keyboard"].get(k_name, [])
+        if event.key_name and event.key_name != k_name:
+            bindings_name += self._bindings["keyboard"].get(event.key_name, [])
         possible_bindings = bindings_code + bindings_name
         
         if not possible_bindings:
@@ -377,7 +395,7 @@ class MacroEngine:
     def _trigger_macro(self, macro_id: str, trigger_event: Optional[InputEvent] = None):
         """Trigger execution of a macro."""
         macro = self._macros.get(macro_id)
-        if not macro:
+        if not macro or not getattr(macro, 'enabled', True):
             return
             
         # Handle toggle macros

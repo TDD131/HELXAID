@@ -300,6 +300,24 @@ class ProfileManager:
             if macro_id in profile.macro_ids:
                 profile.macro_ids.remove(macro_id)
                 
+    def get_profile_for_macro(self, macro_id: str) -> Optional[MacroProfile]:
+        """Get the profile that contains the given macro."""
+        for profile in self._profiles.values():
+            if macro_id in profile.macro_ids:
+                return profile
+        return None
+        
+    def move_macro(self, macro_id: str, new_profile_id: str):
+        """Move a macro from its current profile to a new profile."""
+        for profile in self._profiles.values():
+            if macro_id in profile.macro_ids:
+                profile.macro_ids.remove(macro_id)
+                self.save_profile(profile)
+        new_profile = self._profiles.get(new_profile_id)
+        if new_profile and macro_id not in new_profile.macro_ids:
+            new_profile.macro_ids.append(macro_id)
+            self.save_profile(new_profile)
+                
     # ==================== CALLBACKS ====================
     
     def on_profile_change(self, callback: callable):

@@ -1,6 +1,6 @@
 {
   "id": "default",
-  "name": "Default Profile",
+  "name": "Dedault Profile",
   "description": "Default macro profile",
   "enabled": true,
   "bound_apps": [],
@@ -8,7 +8,8 @@
   "default_layer": "default",
   "layer_switch_hotkeys": {},
   "macro_ids": [
-    "autoclicker_0356c5"
+    "autoclicker_06e21a",
+    "autoclicker_8b36e6"
   ],
   "settings": {}
 }

@@ -52,8 +52,10 @@ void ToggleMacro::execute(ExecutionContext &ctx) {
       // High-precision interval timing
       uint64_t elapsed = timer->nowMicros() - startTime;
       if (elapsed < m_repeatIntervalMicros) {
-        // For very short intervals, busy-wait
-        if (m_repeatIntervalMicros <= 15000) {
+        // For 1ms or 0ms intervals (<= 1000 microseconds), unthrottle for maximum performance (1340+ CPS)
+        if (m_repeatIntervalMicros <= 1000) {
+          // Zero delay unthrottled mode
+        } else if (m_repeatIntervalMicros <= 15000) {
           uint64_t target = startTime + m_repeatIntervalMicros;
           while (timer->nowMicros() < target && !ctx.isCancelled()) {
             // Spin wait

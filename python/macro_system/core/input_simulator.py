@@ -225,13 +225,25 @@ class InputSimulator:
         self._send_input([inp])
         
     def mouse_click(self, button: str = "left", count: int = 1, interval_ms: int = 50):
-        """Click mouse button."""
+        """Click mouse button with batched SendInput for maximum performance."""
+        down_flags, data = self._get_mouse_button_flags(button, True)
+        up_flags, _ = self._get_mouse_button_flags(button, False)
+        
         for i in range(count):
-            self.mouse_down(button)
-            # Minimal delay - SendInput is fast enough
-            self.mouse_up(button)
-            
-            if i < count - 1:
+            inp_down = INPUT()
+            inp_down.type = INPUT_MOUSE
+            inp_down.union.mi.dwFlags = down_flags
+            inp_down.union.mi.mouseData = data
+            inp_down.union.mi.dwExtraInfo = self._extra_info
+
+            inp_up = INPUT()
+            inp_up.type = INPUT_MOUSE
+            inp_up.union.mi.dwFlags = up_flags
+            inp_up.union.mi.mouseData = data
+            inp_up.union.mi.dwExtraInfo = self._extra_info
+
+            self._send_input([inp_down, inp_up])
+            if i < count - 1 and interval_ms > 0:
                 time.sleep(interval_ms / 1000)
                 
     def mouse_scroll(self, delta: int, horizontal: bool = False):

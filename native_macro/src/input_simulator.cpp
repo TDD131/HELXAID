@@ -183,9 +183,20 @@ void InputSimulator::mouseUp(const std::string &button) {
 }
 
 void InputSimulator::mouseClick(const std::string &button, int count) {
+  auto [downFlags, downData] = getMouseFlags(button, true);
+  auto [upFlags, upData] = getMouseFlags(button, false);
+
   for (int i = 0; i < count; ++i) {
-    mouseDown(button);
-    mouseUp(button);
+    INPUT inputs[2] = {0};
+    inputs[0].type = INPUT_MOUSE;
+    inputs[0].mi.dwFlags = downFlags;
+    inputs[0].mi.mouseData = downData;
+
+    inputs[1].type = INPUT_MOUSE;
+    inputs[1].mi.dwFlags = upFlags;
+    inputs[1].mi.mouseData = upData;
+
+    sendInputs(inputs, 2);
   }
 }
 

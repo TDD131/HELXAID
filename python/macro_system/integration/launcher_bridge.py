@@ -51,9 +51,16 @@ class LauncherBridge:
         self._game_profile: Optional[str] = None  # Profile active due to game
         
         # Paths
-        script_dir = Path(__file__).parent.parent.parent
-        self._profiles_dir = script_dir / "macro_profiles"
-        self._scripts_dir = script_dir / "macro_scripts"
+        import sys
+        if getattr(sys, 'frozen', False):
+            # In built PyInstaller EXE mode, use AppData for permanent persistence across builds
+            appdata = os.getenv('APPDATA') or os.path.expanduser('~')
+            base_dir = Path(appdata) / "HELXAID"
+        else:
+            base_dir = Path(__file__).parent.parent.parent
+            
+        self._profiles_dir = base_dir / "macro_profiles"
+        self._scripts_dir = base_dir / "macro_scripts"
         
     def initialize(self):
         """Initialize the macro system."""
@@ -196,13 +203,20 @@ class LauncherBridge:
         if not self._engine or not self._profile_manager:
             return
             
-        # Clear current bindings
+        # 1. Stop and cancel all currently running macros
+        self._engine.cancel_all_macros()
+        
+        # 2. Clear current bindings from both Python & C++ engine
         self._engine.clear_bindings()
         
-        # Get macros for profile
+        # 3. Purge all old registered macros from engine memory so disabled macros are fully unhooked
+        for macro_id in list(self._engine._macros.keys()):
+            self._engine.unregister_macro(macro_id)
+        
+        # 4. Get macros for profile
         macros = self._profile_manager.get_macros_for_profile(profile_id)
         
-        # Register each macro
+        # 5. Register ONLY enabled macros
         for macro in macros:
             if not macro.enabled:
                 continue
@@ -274,6 +288,11 @@ class LauncherBridge:
     @property
     def is_running(self) -> bool:
         return self._initialized and self._engine and self._engine._running
+
+    def reload_active_profile_macros(self):
+        """Reload engine bindings for the currently active profile."""
+        if self._profile_manager and self._profile_manager.active_profile:
+            self._load_profile_macros(self._profile_manager.active_profile.id)
         
     def create_quick_remap(self, button: str, target_key: str, profile_id: str = "default"):
         """Convenience method to create a simple button remap."""
@@ -300,7 +319,7 @@ class LauncherBridge:
         return macro.id
         
     def create_quick_autoclicker(self, button: str = "left", interval_ms: int = 100, 
-                                  trigger_key: str = "f6", profile_id: str = "default"):
+                                  trigger_key: str = "f6", profile_id: str = "default", name: str = None):
         """Convenience method to create an auto-clicker toggle."""
         from ..macros.toggle_macro import ToggleMacro
         from ..macros.base_macro import MacroTrigger, MacroAction, TriggerType, ActionType
@@ -315,14 +334,14 @@ class LauncherBridge:
                 key=key_name,
                 hold_ms=0  # No hold for fastest possible repeat
             )
-            macro_name = f"Auto-press ({key_name.upper()})"
+            macro_name = name if (name and name.strip()) else f"Auto-press ({key_name.upper()})"
         else:
             # Mouse click action
             action = MacroAction(
                 type=ActionType.MOUSE_CLICK,
                 button=button
             )
-            macro_name = f"Auto-clicker ({button})"
+            macro_name = name if (name and name.strip()) else f"Auto-clicker ({button})"
             
         macro = ToggleMacro(
             id=f"autoclicker_{uuid.uuid4().hex[:6]}",

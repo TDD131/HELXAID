@@ -1,14 +1,3 @@
-# DEBUG MEMORY FLAGS
-# Ganti True ke False untuk mematikan komponen dan tes RAM
-ENABLE_BACKGROUND = True
-ENABLE_SIDEBAR = True
-ENABLE_DISCORD = True
-ENABLE_DEFERRED_TASKS = True
-ENABLE_TASKBAR = True
-ENABLE_DEBUG_DELAYS = False
-DEBUG_DELAY_MS = 0
-# ==========================================
-
 import sys
 
 # --- Windows Service Intercept ---
@@ -46,6 +35,9 @@ from PySide6.QtCore import Qt, QSize, QSizeF, QTimer, QPropertyAnimation, QEasin
 from integrations.cpu_controller import is_uxtu_installed, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
 from AnimatedButton import AnimatedButton, AnimatedCheckBox
 from DebugConsoleWidget import get_debug_console, toggle_debug_console
+
+# Global Feature Flags
+ENABLE_DISCORD = True
 
 # Native C++ extensions for performance (with Python fallback)
 try:
@@ -4606,15 +4598,64 @@ class GameLauncher(QWidget):
         else:
             self.switch_panel(index)
     
+    @staticmethod
+    def _sanitize_window_geometry(x, y, w, h, min_w=1380, min_h=790):
+        """Sanitize window bounds to guarantee the window is placed on an active, visible screen."""
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import QRect
+        
+        w = max(int(w or min_w), min_w)
+        h = max(int(h or min_h), min_h)
+        
+        screens = QApplication.screens()
+        if not screens:
+            return 100, 100, w, h
+            
+        primary = QApplication.primaryScreen() or screens[0]
+        rect = QRect(int(x), int(y), w, h)
+        
+        is_visible = False
+        target_screen = primary
+        for s in screens:
+            avail = s.availableGeometry()
+            intersect = avail.intersected(rect)
+            if intersect.width() >= min(200, w) and intersect.height() >= min(100, h):
+                is_visible = True
+                target_screen = s
+                break
+                
+        if not is_visible:
+            avail = primary.availableGeometry()
+            w = min(w, avail.width())
+            h = min(h, avail.height())
+            x = avail.x() + (avail.width() - w) // 2
+            y = avail.y() + (avail.height() - h) // 2
+            print(f"[Window] Geometry ({rect.x()}, {rect.y()}) was off-screen! Sanitized to ({x}, {y}, {w}, {h}) on screen {primary.name()}")
+        else:
+            avail = target_screen.availableGeometry()
+            w = min(w, avail.width())
+            h = min(h, avail.height())
+            x = max(avail.x(), min(x, avail.x() + avail.width() - w))
+            y = max(avail.y(), min(y, avail.y() + avail.height() - h))
+            
+        return x, y, w, h
+
     def _apply_initial_size(self):
-        """Apply window size and strictly center it on the current screen."""
+        """Apply window size and strictly center it on the current screen if not already safely restored."""
+        geometry = self.settings.get("window_geometry") if hasattr(self, 'settings') else None
+        if geometry and len(geometry) == 4:
+            x, y, w, h = self._sanitize_window_geometry(geometry[0], geometry[1], geometry[2], geometry[3])
+            self.resize(w, h)
+            self.move(x, y)
+            print(f"[Window] Restored saved geometry at ({x}, {y}, {w}, {h})")
+            return
+
         if hasattr(self, '_target_size'):
             target_w, target_h, screen_w, screen_h = self._target_size
             self.resize(target_w, target_h)
         else:
             target_w, target_h = self.width(), self.height()
             
-        # Get screen based on cursor position to handle multi-monitor properly
         from PySide6.QtGui import QCursor
         from PySide6.QtWidgets import QApplication
         current_screen = QApplication.primaryScreen()
@@ -4779,8 +4820,9 @@ class GameLauncher(QWidget):
         geometry = self.settings.get("window_geometry")
         if geometry and len(geometry) == 4:
             # geometry is a list [x, y, w, h]
-            self.move(geometry[0], geometry[1])
-            self.resize(geometry[2], geometry[3])
+            x, y, w, h = self._sanitize_window_geometry(geometry[0], geometry[1], geometry[2], geometry[3])
+            self.resize(w, h)
+            self.move(x, y)
                 
         # Apply resizable window setting from settings AFTER restoring geometry
         is_resizable = self.settings.get("resizable_window", True)
@@ -5709,7 +5751,7 @@ class GameLauncher(QWidget):
             
             # Auto-connect to Discord IMMEDIATELY if enabled (top priority)
             if self.discord_enabled:
-                QTimer.singleShot(100, self.connect_and_check_running_games)  # Faster connection
+                QTimer.singleShot(100, self._auto_connect_discord)  # Faster connection
         else:
             # Discord not installed - disable button
             self.discord_btn.setText("Discord: N/A")
@@ -6405,10 +6447,10 @@ class GameLauncher(QWidget):
                 self._active_nav_btn = btn
                 self._nav_gradient_offset = 0.0
                 
-                # Create timer for gradient animation
+                # Create timer for gradient animation (30ms = 33.3 fps for fluid motion)
                 self._nav_gradient_timer = QTimer(self)
                 self._nav_gradient_timer.timeout.connect(self._update_nav_gradient)
-                self._nav_gradient_timer.start(80)  # 80ms = 12.5fps, less CPU overhead
+                self._nav_gradient_timer.start(30)
                 
                 # Apply initial gradient
                 self._update_nav_gradient()
@@ -6604,8 +6646,9 @@ Stylesheet Selector:
                 # Restore previous geometry if available
                 geometry = self.settings.get("window_geometry")
                 if geometry and len(geometry) == 4:
-                    self.move(geometry[0], geometry[1])
-                    self.resize(geometry[2], geometry[3])
+                    x, y, w, h = self._sanitize_window_geometry(geometry[0], geometry[1], geometry[2], geometry[3])
+                    self.resize(w, h)
+                    self.move(x, y)
                 # Re-apply resizable constraint if non-resizable
                 if not self.settings.get("resizable_window", True):
                     self.setFixedSize(self.size())
@@ -6615,9 +6658,11 @@ Stylesheet Selector:
                 # Save normal geometry if available so we don't save maximized size
                 geom = self.normalGeometry()
                 if geom.width() > 0 and geom.height() > 0:
-                    self.settings["window_geometry"] = [geom.x(), geom.y(), geom.width(), geom.height()]
+                    gx, gy, gw, gh = self._sanitize_window_geometry(geom.x(), geom.y(), geom.width(), geom.height())
+                    self.settings["window_geometry"] = [gx, gy, gw, gh]
                 else:
-                    self.settings["window_geometry"] = [self.x(), self.y(), self.width(), self.height()]
+                    gx, gy, gw, gh = self._sanitize_window_geometry(self.x(), self.y(), self.width(), self.height())
+                    self.settings["window_geometry"] = [gx, gy, gw, gh]
                 self.showFullScreen()
                 self.settings["window_fullscreen"] = True
             save_settings(self.settings)
@@ -6626,40 +6671,74 @@ Stylesheet Selector:
             QTimer.singleShot(500, lambda: setattr(self, '_is_toggling_fullscreen', False))
     
     def _update_nav_gradient(self):
-        """Update the gradient offset for animated nav button."""
+        """Update the gradient offset for animated nav button with a 100% seamless mathematical loop."""
         if not hasattr(self, '_active_nav_btn') or not self._active_nav_btn:
             return
         
-        # OMEN gradient colors (extended for seamless loop)
-        colors = ['#ff3da7', '#ff0c2b', '#ff5700', '#ffab00', '#ff3da7']
+        # Palette RGB tuples for linear interpolation (OMEN Cyberpunk Neon theme)
+        # Magenta/Pink -> Vivid Red -> Deep Orange -> Amber/Gold (closed loop back to Pink)
+        palette_rgb = [
+            (255, 61, 167),  # #ff3da7 - Pink/Magenta
+            (255, 12, 43),   # #ff0c2b - Vivid Red
+            (255, 87, 0),    # #ff5700 - Deep Orange
+            (255, 171, 0),   # #ffab00 - Amber/Gold
+        ]
+        num_seg = len(palette_rgb)
         
-        # Shift offset (0.0 to 1.0) - slower step for smoother animation
-        self._nav_gradient_offset += 0.04
+        # Increment offset smoothly (0.0 to 1.0)
+        self._nav_gradient_offset += 0.008
         if self._nav_gradient_offset >= 1.0:
-            self._nav_gradient_offset = 0.0
+            self._nav_gradient_offset -= 1.0
         
-        offset = self._nav_gradient_offset
+        t = self._nav_gradient_offset
         
-        # Build gradient with offset positions
-        stops = []
-        num_colors = len(colors)
-        for i, color in enumerate(colors):
-            base_pos = i / (num_colors - 1)
-            shifted_pos = (base_pos + offset) % 1.0
-            stops.append((shifted_pos, color))
+        def get_color_at(u):
+            """Sample continuous cyclic color at position u in [0, 1)."""
+            u = u % 1.0
+            scaled = u * num_seg
+            idx1 = int(scaled) % num_seg
+            idx2 = (idx1 + 1) % num_seg
+            frac = scaled - int(scaled)
+            
+            r1, g1, b1 = palette_rgb[idx1]
+            r2, g2, b2 = palette_rgb[idx2]
+            
+            r = int(r1 + (r2 - r1) * frac)
+            g = int(g1 + (g2 - g1) * frac)
+            b = int(b1 + (b2 - b1) * frac)
+            return f"rgb({r},{g},{b})"
         
-        # Sort by position for valid gradient
-        stops.sort(key=lambda x: x[0])
+        # Collect stop candidates in y-space [0.0, 1.0]
+        # Top (y=0.0) and Bottom (y=1.0) sample the exact same phase color get_color_at(t)
+        candidates = [
+            (0.0, get_color_at(t)),
+            (1.0, get_color_at(1.0 + t))
+        ]
         
-        # Build gradient string
-        gradient_stops = ', '.join([f"stop:{pos:.3f} {color}" for pos, color in stops])
+        # Intermediate keyframe points in y-space
+        for k in range(num_seg):
+            u_k = k / num_seg
+            y_k = (u_k - t) % 1.0
+            if 0.001 < y_k < 0.999:
+                candidates.append((y_k, get_color_at(u_k)))
+        
+        # Sort candidates by y position
+        candidates.sort(key=lambda item: item[0])
+        
+        # Deduplicate candidates with nearly identical y positions
+        unique_stops = []
+        for pos, col in candidates:
+            if not unique_stops or (pos - unique_stops[-1][0]) > 0.001:
+                unique_stops.append((pos, col))
+        
+        # Build gradient string for Qt QSS
+        gradient_stops = ', '.join([f"stop:{pos:.3f} {col}" for pos, col in unique_stops])
         
         self._active_nav_btn.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
                 border: none;
-                border-left: 4px solid qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    {gradient_stops});
+                border-left: 4px solid qlineargradient(x1:0, y1:0, x2:0, y2:1, {gradient_stops});
                 border-radius: 0px;
                 padding-left: 4px;
                 font-size: 24px;
@@ -12306,7 +12385,8 @@ First Played: {first_played_formatted}
         # Save window geometry & fullscreen state before closing
         self.settings["window_fullscreen"] = self.isFullScreen()
         if not self.isFullScreen():
-            self.settings["window_geometry"] = [self.x(), self.y(), self.width(), self.height()]
+            gx, gy, gw, gh = self._sanitize_window_geometry(self.x(), self.y(), self.width(), self.height())
+            self.settings["window_geometry"] = [gx, gy, gw, gh]
         save_settings(self.settings)
         
         event.accept()
@@ -13013,6 +13093,17 @@ First Played: {first_played_formatted}
         # Restore proper button styling
         self.update_discord_button_text()
     
+    def _auto_connect_discord(self):
+        """Auto connect to Discord on startup if enabled and running."""
+        if self.discord_enabled:
+            if self._is_discord_running():
+                threading.Thread(target=self._connect_discord_threaded, daemon=True).start()
+            else:
+                self.discord_enabled = False
+                self.settings["discord_rpc"] = False
+                save_settings(self.settings)
+                self.update_discord_button_text()
+
     def _connect_discord_threaded(self):
         """Connect to Discord in background thread."""
         self.connect_discord()
@@ -15341,21 +15432,71 @@ First Played: {first_played_formatted}
         thread.start()
 
     def launch_omen_hub(self):
-        """Launch OMEN Gaming Hub via its app ID using PowerShell."""
+        """Launch OMEN Gaming Hub via multiple robust fallbacks on Windows."""
         app_id = r"AD2F1837.OMENCommandCenter_v10z8vjag6ke6!AD2F1837.OMENCommandCenter"
+        
+        # Tier 1: Try direct os.startfile with shell:AppsFolder (fastest & cleanest on Windows)
+        if hasattr(os, 'startfile'):
+            try:
+                os.startfile(f"shell:AppsFolder\\{app_id}")
+                print("[OMEN] Launched via os.startfile AppsFolder")
+                return
+            except Exception as e1:
+                print(f"[OMEN] os.startfile failed: {e1}")
+
+        # Tier 2: Try hidden PowerShell process execution
         try:
             cmd = [
                 "powershell",
                 "-NoProfile",
+                "-WindowStyle", "Hidden",
                 "-Command",
                 f'Start-Process "shell:AppsFolder\\{app_id}"'
             ]
-        except Exception as e:
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"Gagal menjalankan OMEN Gaming Hub.\n\n{e}"
-            )
+            flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            subprocess.Popen(cmd, creationflags=flags)
+            print("[OMEN] Launched via PowerShell Popen")
+            return
+        except Exception as e2:
+            print(f"[OMEN] PowerShell static launch failed: {e2}")
+
+        # Tier 3: Dynamic AppUserModelID lookup via PowerShell Get-StartApps
+        try:
+            find_cmd = [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-StartApps | Where-Object { `$_.Name -like '*OMEN*' } | Select-Object -ExpandProperty AppID"
+            ]
+            flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            res = subprocess.run(find_cmd, capture_output=True, text=True, creationflags=flags, timeout=5)
+            dynamic_appid = res.stdout.strip()
+            if dynamic_appid:
+                if hasattr(os, 'startfile'):
+                    os.startfile(f"shell:AppsFolder\\{dynamic_appid}")
+                else:
+                    subprocess.Popen(["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", f'Start-Process "shell:AppsFolder\\{dynamic_appid}"'], creationflags=flags)
+                print(f"[OMEN] Launched via dynamic AppID: {dynamic_appid}")
+                return
+        except Exception as e3:
+            print(f"[OMEN] Dynamic AppID lookup failed: {e3}")
+
+        # Tier 4: Fallback to URI scheme
+        if hasattr(os, 'startfile'):
+            for uri in ["hpc-omengaminghub:", "hpc-omenhub:"]:
+                try:
+                    os.startfile(uri)
+                    print(f"[OMEN] Launched via URI: {uri}")
+                    return
+                except Exception:
+                    pass
+
+        # If all tiers failed, notify user
+        QMessageBox.warning(
+            self,
+            "OMEN Gaming Hub",
+            "Failed to launch OMEN Gaming Hub.\n\nPlease ensure the OMEN Gaming Hub app is installed from the Microsoft Store."
+        )
 
     def apply_qmenu_blur(self, menu):
         """Apply translucent background and frameless window flags to QMenu."""

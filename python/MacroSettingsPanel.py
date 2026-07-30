@@ -7,21 +7,22 @@ A panel widget for the sidebar stack to configure macros, profiles, and layers.
 import os
 import time
 import json
+import re
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QStackedWidget,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QStackedWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QMenu,
     QSpinBox, QCheckBox, QLineEdit, QGroupBox, QFormLayout, QMessageBox,
     QTextEdit, QListWidget, QListWidgetItem, QSplitter, QScrollArea,
     QAbstractItemView, QSlider, QColorDialog, QAbstractSpinBox,
-    QRadioButton, QFrame
+    QRadioButton, QFrame, QGraphicsOpacityEffect, QRubberBand, QApplication
 )
 from smooth_scroll import SmoothScrollArea
-from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, Slot, QMetaObject
+from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize
 # FurycubeHID is NOT imported here -- ButtonAction is lazy-imported where needed (line ~2989).
 # Loading this module at import time pulled in the hidapi DLL, adding ~200ms to startup.
 from macro_system.integration.hardware_manager import get_hardware_manager
-
+from AnimatedButton import AnimatedCheckBox, FadeHoverButton
 
 
 class DraggableLabel(QLabel):
@@ -89,50 +90,92 @@ class HotkeyRecordButton(QPushButton):
     
     def __init__(self, default_key: str = "F6", parent=None):
         super().__init__(parent)
+        self.setObjectName("HelxairoHotkeyBtn")
         self._recording = False
         self._hotkey = default_key
         self.setText(default_key.upper())
         self.setFixedWidth(120)
+        self.setFixedHeight(32)
         self.setToolTip("Click to record a new hotkey")
         self.clicked.connect(self._start_recording)
+        
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(300)
+        self._anim_timer.timeout.connect(self._on_anim_tick)
+        self._anim_frames = [".", "..", "..."]
+        self._anim_index = 0
+        
         self._update_style()
         
     def _update_style(self):
         if self._recording:
             self.setStyleSheet("""
-                QPushButton {
-                    background: #FF5B06;
-                    color: white;
-                    border: none;
-                    padding: 8px;
+                QPushButton#HelxairoHotkeyBtn {
+                    background-color: rgba(30, 30, 30, 0.85);
+                    color: #ffffff;
+                    border: 1px solid #FF5B06;
                     border-radius: 6px;
+                    padding: 0px 10px !important;
+                    margin: 0px !important;
+                    min-height: 32px !important;
+                    max-height: 32px !important;
+                    height: 32px !important;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 13px;
                     font-weight: bold;
                 }
             """)
         else:
             self.setStyleSheet("""
-                QPushButton {
-                    background: rgba(255, 91, 6, 0.4);
+                QPushButton#HelxairoHotkeyBtn {
+                    background-color: rgba(30, 30, 30, 0.85);
                     color: #e0e0e0;
-                    border: none;
-                    padding: 8px;
+                    border: 1px solid rgba(255, 255, 255, 0.15);
                     border-radius: 6px;
+                    padding: 0px 10px !important;
+                    margin: 0px !important;
+                    min-height: 32px !important;
+                    max-height: 32px !important;
+                    height: 32px !important;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 12px;
+                    font-weight: bold;
                 }
-                QPushButton:hover {
-                    background: #FF5B06;
-                    color: white;
+                QPushButton#HelxairoHotkeyBtn:hover {
+                    background-color: rgba(40, 40, 40, 0.95);
+                    border-color: #FF5B06;
+                    color: #ffffff;
                 }
             """)
             
+    def _on_anim_tick(self):
+        if self._recording:
+            self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
+            self.setText(self._anim_frames[self._anim_index])
+
     def _start_recording(self):
         self._recording = True
-        self.setText("Press key...")
+        self._anim_index = 0
+        self.setText(self._anim_frames[0])
         self._update_style()
         self.setFocus()
-        
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+
+    def _stop_recording_ui(self):
+        self._recording = False
+        if self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self.setText(self._hotkey.upper())
+        self._update_style()
+
     def keyPressEvent(self, event):
         if self._recording:
             key = event.key()
+            if key == Qt.Key_Escape:
+                self._stop_recording_ui()
+                event.accept()
+                return
             
             # Build key name first (before checking modifiers)
             key_name = self._key_to_name(key)
@@ -182,9 +225,7 @@ class HotkeyRecordButton(QPushButton):
                     full_key = key_name
                 
             self._hotkey = full_key
-            self.setText(full_key.upper())
-            self._recording = False
-            self._update_style()
+            self._stop_recording_ui()
             self.hotkeyChanged.emit(full_key)
             event.accept()
         else:
@@ -192,9 +233,7 @@ class HotkeyRecordButton(QPushButton):
             
     def focusOutEvent(self, event):
         if self._recording:
-            self._recording = False
-            self.setText(self._hotkey.upper())
-            self._update_style()
+            self._stop_recording_ui()
         super().focusOutEvent(event)
         
     def _key_to_name(self, key: int) -> str:
@@ -232,6 +271,484 @@ class HotkeyRecordButton(QPushButton):
     def setHotkey(self, key: str):
         self._hotkey = key
         self.setText(key.upper())
+
+
+class SmoothListScroller(QObject):
+    """Silky smooth item-aligned wheel scroller with OutCubic animation for QListWidget.
+    Intercepts wheel events via eventFilter to prevent outer main scrollbar from scrolling.
+    """
+    def __init__(self, list_widget: QListWidget):
+        super().__init__(list_widget)
+        list_widget.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.list_widget = list_widget
+        self.scrollbar = list_widget.verticalScrollBar()
+        self._anim = QPropertyAnimation(self.scrollbar, b"value", list_widget)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.setDuration(180)
+        self._target_val = self.scrollbar.value()
+        
+        list_widget.installEventFilter(self)
+        if list_widget.viewport():
+            list_widget.viewport().installEventFilter(self)
+
+        app = QApplication.instance()
+        if app:
+            app.installEventFilter(self)
+
+        self.shortcut = QShortcut(QKeySequence("Ctrl+A"), list_widget)
+        self.shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+        self.shortcut.activated.connect(self._on_shortcut_activated)
+
+    def _do_select_all(self) -> bool:
+        if not self.list_widget.isVisible():
+            return False
+
+        # Native Qt DPI-aware local coordinate transformation
+        local_pos = self.list_widget.mapFromGlobal(QCursor.pos())
+        is_hovered = self.list_widget.rect().contains(local_pos)
+        is_focused = self.list_widget.hasFocus()
+
+        if is_hovered or is_focused:
+            self.list_widget.setFocus()
+            # Explicitly mark every item selected to override invalid selection model anchor states
+            for i in range(self.list_widget.count()):
+                item = self.list_widget.item(i)
+                if item:
+                    item.setSelected(True)
+            self.list_widget.selectAll()
+            return True
+        return False
+
+    def _on_shortcut_activated(self):
+        self._do_select_all()
+
+    def _get_item_height(self) -> int:
+        if self.list_widget.count() > 0:
+            first_item = self.list_widget.item(0)
+            rect = self.list_widget.visualItemRect(first_item)
+            if rect.height() > 0:
+                return rect.height()
+        return 36  # Default fallback item height
+
+    def _find_parent_panel(self):
+        w = self.list_widget.parentWidget()
+        while w:
+            if hasattr(w, '_delete_profile') or w.inherits("MacroSettingsPanel"):
+                return w
+            w = w.parentWidget()
+        return None
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Wheel:
+            if watched in (self.list_widget, self.list_widget.viewport()):
+                delta = event.angleDelta().y()
+                if delta != 0:
+                    min_v = self.scrollbar.minimum()
+                    max_v = self.scrollbar.maximum()
+                    
+                    item_h = self._get_item_height()
+                    notches = 1 if delta < 0 else -1
+                    scroll_step = notches * item_h
+                    
+                    if self._anim.state() == QPropertyAnimation.Running:
+                        self._target_val = max(min_v, min(max_v, self._target_val + scroll_step))
+                    else:
+                        self._target_val = max(min_v, min(max_v, self.scrollbar.value() + scroll_step))
+                        
+                    self._anim.stop()
+                    self._anim.setStartValue(self.scrollbar.value())
+                    self._anim.setEndValue(int(self._target_val))
+                    self._anim.start()
+                
+                event.accept()
+                return True  # Block wheel event from propagating to main window scrollbar!
+
+        elif event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride):
+            from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox
+            focus = QApplication.focusWidget()
+            if focus and isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)):
+                return super().eventFilter(watched, event)
+
+            key = event.key()
+            modifiers = event.modifiers()
+
+            # Ctrl + A -> Select All
+            if key == Qt.Key_A and (modifiers & Qt.ControlModifier):
+                if self._do_select_all():
+                    event.accept()
+                    return True
+
+            # File Explorer Keyboard Shortcuts
+            local_pos = self.list_widget.mapFromGlobal(QCursor.pos())
+            if self.list_widget.hasFocus() or self.list_widget.rect().contains(local_pos):
+                panel = self._find_parent_panel()
+                obj_name = self.list_widget.objectName()
+
+                # Delete / Shift+Delete -> Delete item(s)
+                if key == Qt.Key_Delete:
+                    if panel:
+                        if obj_name == "helxairo_profileList":
+                            panel._delete_profile()
+                            event.accept()
+                            return True
+                        elif obj_name in ("helxairo_editorMacroList", "helxairo_activeList"):
+                            panel._delete_selected()
+                            event.accept()
+                            return True
+
+                # Enter / Return -> Load/Activate profile or Edit macro
+                elif key in (Qt.Key_Return, Qt.Key_Enter):
+                    if panel:
+                        if obj_name == "helxairo_profileList":
+                            panel._load_selected_profile()
+                            event.accept()
+                            return True
+                        elif obj_name in ("helxairo_editorMacroList", "helxairo_activeList"):
+                            panel._edit_selected()
+                            event.accept()
+                            return True
+
+                # F2 -> Rename profile (focus name field) or Edit macro
+                elif key == Qt.Key_F2:
+                    if panel:
+                        if obj_name == "helxairo_profileList":
+                            panel.profile_name.setFocus()
+                            panel.profile_name.selectAll()
+                            event.accept()
+                            return True
+                        elif obj_name in ("helxairo_editorMacroList", "helxairo_activeList"):
+                            panel._edit_selected()
+                            event.accept()
+                            return True
+
+                # Ctrl + D / Ctrl + C -> Duplicate profile
+                elif (key == Qt.Key_D and (modifiers & Qt.ControlModifier)) or (key == Qt.Key_C and (modifiers & Qt.ControlModifier)):
+                    if panel and obj_name == "helxairo_profileList":
+                        panel._duplicate_selected_profile()
+                        event.accept()
+                        return True
+
+                # Ctrl + N -> New Profile
+                elif key == Qt.Key_N and (modifiers & Qt.ControlModifier):
+                    if panel and obj_name == "helxairo_profileList":
+                        panel._new_profile()
+                        event.accept()
+                        return True
+
+        elif event.type() == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                from PySide6.QtWidgets import QAbstractButton
+                clicked_widget = QApplication.widgetAt(QCursor.pos())
+                
+                # If user clicked on an action button (Toggle/Delete/Stop), preserve selection for the button handler
+                if clicked_widget and (isinstance(clicked_widget, QAbstractButton) or clicked_widget.inherits("QAbstractButton")):
+                    return super().eventFilter(watched, event)
+                    
+                local_pos = self.list_widget.mapFromGlobal(QCursor.pos())
+                if not self.list_widget.rect().contains(local_pos):
+                    if self.list_widget.selectedItems():
+                        self.list_widget.clearSelection()
+
+        return super().eventFilter(watched, event)
+
+
+def enable_rubber_band_selection(list_widget: QListWidget):
+    """Enables QRubberBand drag multi-selection with 60fps auto-scroll and silky smooth wheel scrolling."""
+    list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    list_widget._smoother = SmoothListScroller(list_widget)
+    
+    rubber_band = QRubberBand(QRubberBand.Rectangle, list_widget.viewport())
+    rubber_band.setStyleSheet("""
+        QRubberBand {
+            background-color: rgba(255, 91, 6, 0.2);
+            border: 1px solid rgba(255, 91, 6, 0.7);
+        }
+    """)
+    list_widget._rubber_band = rubber_band
+    list_widget._rubber_band_origin = None
+    list_widget._rubber_band_start_vbar = 0
+    list_widget._rubber_band_active = False
+    
+    scroll_timer = QTimer(list_widget)
+    scroll_timer.setInterval(16)  # 60fps frame rate for micro-step auto-scroll
+    list_widget._auto_scroll_step = 0
+
+    def _update_selection_on_drag():
+        if not getattr(list_widget, '_rubber_band_active', False) or list_widget._rubber_band_origin is None:
+            return
+            
+        current_pos = list_widget.viewport().mapFromGlobal(QCursor.pos())
+        current_vbar = list_widget.verticalScrollBar().value()
+        vbar_delta = current_vbar - getattr(list_widget, '_rubber_band_start_vbar', 0)
+        
+        origin = list_widget._rubber_band_origin
+        adjusted_origin = QPoint(origin.x(), origin.y() - vbar_delta)
+        
+        rect = QRect(adjusted_origin, current_pos).normalized()
+        rubber_band.setGeometry(rect)
+        
+        modifiers = QApplication.keyboardModifiers()
+        for i in range(list_widget.count()):
+            item = list_widget.item(i)
+            item_rect = list_widget.visualItemRect(item)
+            if rect.intersects(item_rect):
+                item.setSelected(True)
+            elif not (modifiers & (Qt.ControlModifier | Qt.ShiftModifier)):
+                item.setSelected(False)
+
+    def _on_scroll_timer():
+        step = getattr(list_widget, '_auto_scroll_step', 0)
+        if step != 0:
+            vbar = list_widget.verticalScrollBar()
+            vbar.setValue(vbar.value() + step)
+            _update_selection_on_drag()
+        else:
+            scroll_timer.stop()
+
+    scroll_timer.timeout.connect(_on_scroll_timer)
+    
+    orig_mousePressEvent = list_widget.mousePressEvent
+    orig_mouseMoveEvent = list_widget.mouseMoveEvent
+    orig_mouseReleaseEvent = list_widget.mouseReleaseEvent
+    
+    def _mousePressEvent(event):
+        if event.button() == Qt.LeftButton:
+            item = list_widget.itemAt(event.pos())
+            list_widget._rubber_band_origin = event.pos()
+            list_widget._rubber_band_start_vbar = list_widget.verticalScrollBar().value()
+            rubber_band.setGeometry(QRect(event.pos(), event.pos()))
+            rubber_band.show()
+            list_widget._rubber_band_active = True
+            list_widget._auto_scroll_step = 0
+            
+            if not item and not (event.modifiers() & Qt.ControlModifier):
+                list_widget.clearSelection()
+                
+        orig_mousePressEvent(event)
+        
+    def _mouseMoveEvent(event):
+        if getattr(list_widget, '_rubber_band_active', False) and list_widget._rubber_band_origin is not None:
+            pos = event.pos()
+            viewport_h = list_widget.viewport().height()
+            margin = 18
+            
+            if pos.y() < margin:
+                speed = max(2, (margin - pos.y()) // 2)
+                list_widget._auto_scroll_step = -speed
+                if not scroll_timer.isActive():
+                    scroll_timer.start()
+            elif pos.y() > viewport_h - margin:
+                speed = max(2, (pos.y() - (viewport_h - margin)) // 2)
+                list_widget._auto_scroll_step = speed
+                if not scroll_timer.isActive():
+                    scroll_timer.start()
+            else:
+                list_widget._auto_scroll_step = 0
+                if scroll_timer.isActive():
+                    scroll_timer.stop()
+
+            _update_selection_on_drag()
+            return
+        orig_mouseMoveEvent(event)
+        
+    def _mouseReleaseEvent(event):
+        if event.button() == Qt.LeftButton and getattr(list_widget, '_rubber_band_active', False):
+            if scroll_timer.isActive():
+                scroll_timer.stop()
+            list_widget._auto_scroll_step = 0
+            rubber_band.hide()
+            list_widget._rubber_band_active = False
+            list_widget._rubber_band_origin = None
+            list_widget._rubber_band_start_vbar = 0
+        orig_mouseReleaseEvent(event)
+        
+    list_widget.mousePressEvent = _mousePressEvent
+    list_widget.mouseMoveEvent = _mouseMoveEvent
+    list_widget.mouseReleaseEvent = _mouseReleaseEvent
+
+
+class FloatingToast(QFrame):
+    """Sleek floating toast notification overlay panel for HELXAID."""
+    _active_toasts = []
+
+    def __init__(self, parent, title: str, message: str, duration: int = 3500):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.SubWindow | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_StyledBackground)
+        self.setObjectName("floatingToast")
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.card = QFrame(self)
+        self.card.setObjectName("toastCard")
+        self.card.setAttribute(Qt.WA_StyledBackground)
+        self.card.setStyleSheet("""
+            QFrame#toastCard {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QFrame#toastCard:hover {
+                border-color: rgba(255, 91, 6, 0.4);
+            }
+        """)
+
+        layout = QHBoxLayout(self.card)
+        layout.setContentsMargins(18, 12, 18, 12)
+        layout.setSpacing(0)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(3)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 600; background: transparent; border: none;")
+        text_layout.addWidget(title_lbl)
+
+        msg_lbl = QLabel(message)
+        msg_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent; border: none;")
+        text_layout.addWidget(msg_lbl)
+
+        layout.addLayout(text_layout)
+
+        outer_layout.addWidget(self.card)
+        self.adjustSize()
+        
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._opacity_effect.setOpacity(0.0)
+        
+        self._anim_in = QPropertyAnimation(self._opacity_effect, b"opacity")
+        self._anim_in.setDuration(220)
+        self._anim_in.setStartValue(0.0)
+        self._anim_in.setEndValue(1.0)
+        self._anim_in.start()
+        
+        if duration > 0:
+            QTimer.singleShot(duration, self.fade_out)
+
+    @classmethod
+    def show_toast(cls, parent, title: str, message: str, duration: int = 3500):
+        if parent is None:
+            return None
+        for t in list(cls._active_toasts):
+            try:
+                t.close()
+                t.deleteLater()
+            except Exception:
+                pass
+        cls._active_toasts.clear()
+
+        toast = cls(parent, title, message, duration)
+        cls._active_toasts.append(toast)
+
+        parent_rect = parent.rect()
+        toast_width = toast.width()
+        x = parent_rect.x() + (parent_rect.width() - toast_width) // 2
+        y = parent_rect.y() + 18
+        toast.move(x, y)
+        toast.show()
+        toast.raise_()
+        return toast
+
+    def fade_out(self):
+        if hasattr(self, "_anim_out") and self._anim_out.state() == QPropertyAnimation.Running:
+            return
+        self._anim_out = QPropertyAnimation(self._opacity_effect, b"opacity")
+        self._anim_out.setDuration(250)
+        self._anim_out.setStartValue(self._opacity_effect.opacity())
+        self._anim_out.setEndValue(0.0)
+        self._anim_out.finished.connect(self._on_fade_out_finished)
+        self._anim_out.start()
+
+    def _on_fade_out_finished(self):
+        if self in FloatingToast._active_toasts:
+            FloatingToast._active_toasts.remove(self)
+        self.close()
+        self.deleteLater()
+
+
+class SafeSpinBox(QSpinBox):
+    """QSpinBox with 400ms hover delay protection before accepting mouse wheel scrolling.
+    Prevents accidental value changes and scroll-trapping when scrolling past spinboxes.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._can_wheel = False
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(400)  # Must hover continuously for 400ms
+        self._hover_timer.timeout.connect(self._on_hover_timeout)
+
+    def _on_hover_timeout(self):
+        self._can_wheel = True
+
+    def enterEvent(self, event):
+        self._hover_timer.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover_timer.stop()
+        self._can_wheel = False
+        super().leaveEvent(event)
+
+    def wheelEvent(self, event):
+        if self._can_wheel or self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class AdaptiveSpinBox(SafeSpinBox):
+    """QSpinBox with dynamic adaptive font sizing based on text length and 100ms hover wheel protection."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignCenter)
+        self.valueChanged.connect(self._adjust_font_size)
+
+    def setSuffix(self, suffix: str):
+        super().setSuffix(suffix)
+        self._adjust_font_size()
+
+    def setValue(self, val: int):
+        super().setValue(val)
+        self._adjust_font_size(val)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._adjust_font_size()
+
+    def _adjust_font_size(self, val=None):
+        if val is None:
+            val = self.value()
+        text_str = f"{val}{self.suffix()}"
+        length = len(text_str)
+        if length <= 4:
+            size = 11
+        elif length == 5:
+            size = 10
+        elif length == 6:
+            size = 9
+        else:
+            size = 8
+
+        line_edit = self.findChild(QLineEdit)
+        if line_edit:
+            line_edit.setStyleSheet(f"""
+                QLineEdit {{
+                    background: transparent;
+                    color: #e0e0e0;
+                    border: none;
+                    padding: 0px;
+                    margin: 0px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: {int(size)}px;
+                    font-weight: bold;
+                    selection-background-color: #FF5B06;
+                }}
+            """)
 
 
 class DeviceWarningOverlay(QWidget):
@@ -351,6 +868,2001 @@ class DeviceWarningOverlay(QWidget):
             return False
 
 
+class HelxairoMacroItemWidget(QFrame):
+    """
+    Expandable HELXAIL-style Accordion Dropdown Card Widget for Active Macros list.
+    
+    Header Row (2-Line HELXAIL Layout):
+    - Status Icon (Check / Uncheck on left)
+    - Vertical Title VBox:
+      - Line 1: Macro Name (White bold Orbitron, 13px)
+      - Line 2: Subtitle / Profile name (Muted grey #999999 Orbitron, 11px)
+    - Expand/Collapse Accordion Arrow Button (far right)
+    
+    Details Frame (Expandable Dropdown Body):
+    - Hotkey pill
+    - Interval pill
+    - Action target pill
+    
+    Component Name: HelxairoMacroItemWidget
+    """
+    def __init__(self, macro, profile_name, list_item, list_widget, parent=None):
+        super().__init__(parent)
+        self.macro = macro
+        self.profile_name = profile_name
+        self.list_item = list_item
+        self.list_widget = list_widget
+        self._is_expanded = False
+        
+        self._click_count = 0
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.timeout.connect(self._on_click_timer_timeout)
+        
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("HelxairoMacroItemWidget")
+        self._setup_ui()
+
+    def sizeHint(self):
+        """Dynamic responsive size hint matching QListWidget viewport width."""
+        w = 0
+        if self.list_widget and hasattr(self.list_widget, 'viewport'):
+            w = max(0, self.list_widget.viewport().width() - 4)
+        return QSize(w, 80 if self._is_expanded else 38)
+
+    def _setup_ui(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        check_icon_path = os.path.join(script_dir, "UI Icons", "check-icon.svg").replace('\\', '/')
+        uncheck_icon_path = os.path.join(script_dir, "UI Icons", "uncheck-icon.svg").replace('\\', '/')
+        self.right_arrow_path = os.path.join(script_dir, "UI Icons", "right-arrow-triangle.svg").replace('\\', '/')
+        self.down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace('\\', '/')
+        
+        self.setStyleSheet("""
+            QFrame#HelxairoMacroItemWidget {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+            QFrame#HelxairoMacroItemWidget:hover {
+                background-color: rgba(255, 255, 255, 0.06);
+                border-color: rgba(255, 91, 6, 0.35);
+            }
+            QFrame#MacroHeaderFrame {
+                background: transparent;
+                border: none;
+            }
+            QFrame#MacroDetailsContainer {
+                background-color: rgba(0, 0, 0, 0.25);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 6px;
+            }
+            QPushButton#MacroExpandArrow {
+                background: transparent;
+                border: none;
+                padding: 0px !important;
+                margin: 0px !important;
+                min-width: 16px !important;
+                max-width: 16px !important;
+                min-height: 16px !important;
+                max-height: 16px !important;
+                width: 16px !important;
+                height: 16px !important;
+            }
+        """)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 1, 10, 5)
+        main_layout.setSpacing(4)
+        
+        # 1. Header Frame (Fixed 30px container for clean single row)
+        self.header_frame = QFrame()
+        self.header_frame.setObjectName("MacroHeaderFrame")
+        self.header_frame.setFixedHeight(30)
+        
+        header_layout = QHBoxLayout(self.header_frame)
+        header_layout.setContentsMargins(6, 2, 6, 2)
+        header_layout.setSpacing(8)
+        
+        # Status Icon (Left - Clickable to toggle macro on/off)
+        is_enabled = getattr(self.macro, 'enabled', True)
+        icon_path = check_icon_path if is_enabled else uncheck_icon_path
+        self.status_icon = QLabel()
+        self.status_icon.setFixedSize(16, 16)
+        self.status_icon.setPixmap(QPixmap(icon_path).scaled(16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.status_icon.setCursor(Qt.PointingHandCursor)
+        self.status_icon.mousePressEvent = self._on_status_icon_clicked
+        header_layout.addWidget(self.status_icon, 0, Qt.AlignVCenter)
+        
+        # Clean Name & Title ("macro1")
+        name = getattr(self.macro, 'name', 'Unnamed Macro')
+        for sym in ("✓", "○", "✔"):
+            if name.startswith(sym):
+                name = name[len(sym):].strip()
+        
+        self.name_lbl = QLabel(name)
+        self.name_lbl.setObjectName("MacroItemName")
+        self.name_lbl.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent;")
+        header_layout.addWidget(self.name_lbl, 0, Qt.AlignVCenter)
+        
+        header_layout.addStretch()
+        
+        # Expand Accordion Arrow Button SVG (Far Right, Perfectly VCenter Aligned with Title)
+        self.arrow_btn = QPushButton()
+        self.arrow_btn.setObjectName("MacroExpandArrow")
+        self.arrow_btn.setFixedSize(16, 16)
+        self.arrow_btn.setStyleSheet("background: transparent; border: none; padding: 0px; margin: 0px; min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px;")
+        self.arrow_btn.setIcon(QIcon(self.right_arrow_path))
+        self.arrow_btn.setIconSize(QSize(10, 10))
+        self.arrow_btn.setCursor(Qt.PointingHandCursor)
+        self.arrow_btn.clicked.connect(self.toggle_expand)
+        header_layout.addWidget(self.arrow_btn, 0, Qt.AlignVCenter)
+        
+        main_layout.addWidget(self.header_frame, 0, Qt.AlignTop)
+        
+        # 2. Details Container (Hidden by default)
+        self.details_container = QFrame()
+        self.details_container.setObjectName("MacroDetailsContainer")
+        self.details_container.setVisible(False)
+        
+        details_layout = QHBoxLayout(self.details_container)
+        details_layout.setContentsMargins(10, 6, 10, 6)
+        details_layout.setSpacing(16)
+        
+        # Extract metadata
+        # Hotkey
+        trigger_str = ""
+        trigger = getattr(self.macro, 'trigger', None)
+        if trigger:
+            if getattr(trigger, 'button', None):
+                trigger_str = f"[{trigger.button.upper()}]"
+            elif getattr(trigger, 'key', None):
+                trigger_str = f"[{trigger.key.upper()}]"
+        if not trigger_str:
+            trigger_str = "[No Hotkey]"
+            
+        lbl_hk = QLabel(f"Hotkey: {trigger_str}")
+        lbl_hk.setStyleSheet("color: #DDDDDD; font-size: 11px; font-family: 'Orbitron', sans-serif; background: transparent;")
+        details_layout.addWidget(lbl_hk)
+        
+        # Interval
+        interval_ms = getattr(self.macro, 'repeat_interval_ms', None)
+        if interval_ms is None and hasattr(self.macro, 'interval_ms'):
+            interval_ms = getattr(self.macro, 'interval_ms', None)
+        if interval_ms is not None and interval_ms > 0:
+            int_str = f"{interval_ms // 1000}s" if (interval_ms >= 1000 and interval_ms % 1000 == 0) else f"{interval_ms}ms"
+            lbl_int = QLabel(f"Interval: {int_str}")
+            lbl_int.setStyleSheet("color: #DDDDDD; font-size: 11px; font-family: 'Orbitron', sans-serif; background: transparent;")
+            details_layout.addWidget(lbl_int)
+            
+        # Target App
+        target_app = getattr(self.macro, 'target_app', '') or getattr(self.macro, 'bound_apps', '')
+        if isinstance(target_app, list):
+            target_app = ", ".join(target_app)
+        if target_app:
+            lbl_app = QLabel(f"Target: {target_app}")
+            lbl_app.setStyleSheet("color: #DDDDDD; font-size: 11px; font-family: 'Orbitron', sans-serif; background: transparent;")
+            details_layout.addWidget(lbl_app)
+            
+        details_layout.addStretch()
+        main_layout.addWidget(self.details_container)
+        main_layout.addStretch()
+
+    def toggle_expand(self):
+        """Toggle expand/collapse details state."""
+        self._is_expanded = not self._is_expanded
+        self.details_container.setVisible(self._is_expanded)
+        arrow_path = self.down_arrow_path if self._is_expanded else self.right_arrow_path
+        self.arrow_btn.setIcon(QIcon(arrow_path))
+        self.arrow_btn.setIconSize(QSize(10, 10))
+        
+        # Update sizeHint on QListWidgetItem
+        if self.list_item and self.list_widget:
+            self.list_item.setSizeHint(self.sizeHint())
+            self.list_widget.doItemsLayout()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self.list_widget and self.list_item:
+                self.list_widget.setCurrentItem(self.list_item)
+            
+            self._click_count += 1
+            if self._click_timer.isActive():
+                self._click_timer.stop()
+            
+            if self._click_count >= 3:
+                self._handle_click_action(3)
+            else:
+                self._click_timer.start(280)
+        super().mousePressEvent(event)
+
+    def _on_click_timer_timeout(self):
+        count = self._click_count
+        self._handle_click_action(count)
+
+    def _handle_click_action(self, count):
+        self._click_timer.stop()
+        self._click_count = 0
+        if count == 1:
+            # 1x click: Select item only (already selected in mousePressEvent)
+            pass
+        elif count == 2:
+            # 2x click: Toggle expand/collapse accordion
+            self.toggle_expand()
+        elif count >= 3:
+            # 3x click: Open Edit Macro panel
+            parent_panel = self.window()
+            if hasattr(parent_panel, '_edit_selected'):
+                parent_panel._edit_selected()
+
+    def _on_status_icon_clicked(self, event):
+        """Clicking on status icon directly toggles macro enable/disable state."""
+        if event.button() == Qt.LeftButton:
+            parent_panel = self.window()
+            if hasattr(parent_panel, '_toggle_selected_macro'):
+                if self.list_widget and self.list_item:
+                    self.list_widget.setCurrentItem(self.list_item)
+                parent_panel._toggle_selected_macro()
+            event.accept()
+
+
+class HelxairoLowIntervalWarningOverlayPanel(QWidget):
+    """
+    Floating overlay panel warning user about low intervals (<40ms or <5ms).
+    Matching HELXAIL floating guide / edit panel style.
+    
+    Component Name: HelxairoLowIntervalWarningOverlayPanel
+    """
+    def __init__(self, parent_panel, on_proceed_callback, title="Low Interval Warning", description=None, proceed_text="Proceed", is_extreme_risk=False):
+        super().__init__(parent_panel)
+        self.parent_panel = parent_panel
+        self.on_proceed_callback = on_proceed_callback
+        self.panel_title = title
+        self.panel_desc = description if description else (
+            "Setting an interval below 40ms may cause high CPU load or system instability due to extremely rapid input rates.\n\nAre you sure you want to proceed?"
+        )
+        self.proceed_text = proceed_text
+        self.is_extreme_risk = is_extreme_risk
+        
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("HelxairoLowIntervalWarningOverlayPanel")
+        
+        self.setGeometry(0, 0, parent_panel.width(), parent_panel.height())
+        self._setup_ui()
+        
+        # Shortcut Esc to close (Cancel)
+        self._esc_shortcut = QShortcut(QKeySequence("Escape"), self)
+        self._esc_shortcut.activated.connect(self.close)
+
+    def _setup_ui(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        warning_icon_path = os.path.join(script_dir, "UI Icons", "warning-icon.svg").replace('\\', '/')
+
+        overlay_bg = "rgba(105, 12, 12, 0.52)" if self.is_extreme_risk else "rgba(0, 0, 0, 0.55)"
+        card_bg_border = (
+            "background-color: rgba(26, 12, 14, 0.98); border: 1px solid rgba(239, 68, 68, 0.55);"
+            if self.is_extreme_risk else
+            "background-color: rgba(22, 22, 26, 0.98); border: none;"
+        )
+
+        self.setStyleSheet(f"""
+            QWidget#HelxairoLowIntervalWarningOverlayPanel {{
+                background-color: {overlay_bg};
+            }}
+            QFrame#HelxairoWarningCard {{
+                {card_bg_border}
+                border-radius: 14px;
+            }}
+            QWidget#HelxairoWarningTitleBar {{
+                background: transparent;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }}
+            QScrollArea#HelxairoWarningScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea#HelxairoWarningScrollArea QScrollBar:vertical {{
+                background: rgba(15, 15, 18, 0.6);
+                width: 6px;
+                border-radius: 3px;
+                margin: 0px;
+            }}
+            QScrollArea#HelxairoWarningScrollArea QScrollBar::handle:vertical {{
+                background: #FF5B06;
+                border-radius: 3px;
+                min-height: 20px;
+            }}
+            QScrollArea#HelxairoWarningScrollArea QScrollBar::handle:vertical:hover {{
+                background: #FDA903;
+            }}
+            QScrollArea#HelxairoWarningScrollArea QScrollBar::add-line:vertical, QScrollArea#HelxairoWarningScrollArea QScrollBar::sub-line:vertical {{
+                height: 0px;
+                background: none;
+                border: none;
+            }}
+            QScrollArea#HelxairoWarningScrollArea QScrollBar::add-page:vertical, QScrollArea#HelxairoWarningScrollArea QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+        """)
+        
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.card = QFrame()
+        self.card.setObjectName("HelxairoWarningCard")
+        self.card.setFixedSize(450, 240)
+        
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 16)
+        card_layout.setSpacing(14)
+        
+        # 1. Header Title Bar
+        title_bar = QWidget()
+        title_bar.setObjectName("HelxairoWarningTitleBar")
+        title_bar.setFixedHeight(44)
+        
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(18, 0, 18, 0)
+        title_layout.setSpacing(10)
+        
+        # SVG Warning Icon (No emoji, vector SVG icon)
+        icon_lbl = QLabel()
+        icon_lbl.setFixedSize(20, 20)
+        icon_lbl.setPixmap(QPixmap(warning_icon_path).scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        icon_lbl.setStyleSheet("background: transparent;")
+        
+        title_label = QLabel(self.panel_title)
+        title_label.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
+        
+        title_layout.addWidget(icon_lbl)
+        title_layout.addWidget(title_label)
+        title_layout.addStretch()
+        
+        card_layout.addWidget(title_bar)
+        
+        # 2. Body Warning Message in QScrollArea with larger text (13px)
+        scroll_area = QScrollArea()
+        scroll_area.setObjectName("HelxairoWarningScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        
+        scroll_content = QWidget()
+        scroll_content.setStyleSheet("background: transparent;")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(20, 4, 16, 4)
+        scroll_layout.setSpacing(0)
+        
+        msg_lbl = QLabel(self.panel_desc)
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setStyleSheet("color: #D8D8D8; font-family: 'Orbitron', sans-serif; font-size: 13px; line-height: 1.5; background: transparent;")
+        scroll_layout.addWidget(msg_lbl)
+        
+        scroll_area.setWidget(scroll_content)
+        card_layout.addWidget(scroll_area, 1)
+        
+        # 3. Footer Action Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(20, 0, 20, 0)
+        btn_layout.setSpacing(12)
+        
+        if self.is_extreme_risk:
+            cancel_btn = FadeHoverButton("Cancel", is_secondary=False, border_radius=8.0, color_mode="green")
+            proceed_btn = FadeHoverButton(self.proceed_text, is_secondary=False, border_radius=8.0, color_mode="red")
+        else:
+            cancel_btn = FadeHoverButton("Cancel", is_secondary=True, border_radius=8.0)
+            proceed_btn = FadeHoverButton(self.proceed_text, is_secondary=False, border_radius=8.0, color_mode="default")
+            
+        cancel_btn.setFixedSize(100, 36)
+        cancel_btn.clicked.connect(self.close)
+        
+        btn_w = max(110, len(self.proceed_text) * 9 + 20)
+        proceed_btn.setFixedSize(btn_w, 36)
+        proceed_btn.clicked.connect(self._on_proceed)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(proceed_btn)
+        
+        card_layout.addLayout(btn_layout)
+        
+        # Center card in outer layout
+        outer_layout.addStretch()
+        h_center = QHBoxLayout()
+        h_center.addStretch()
+        h_center.addWidget(self.card)
+        h_center.addStretch()
+        outer_layout.addLayout(h_center)
+        outer_layout.addStretch()
+
+    def paintEvent(self, event):
+        from PySide6.QtWidgets import QStyle, QStyleOption
+        from PySide6.QtGui import QPainter
+        opt = QStyleOption()
+        opt.initFrom(self)
+        p = QPainter(self)
+        self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
+        super().paintEvent(event)
+
+    def _on_proceed(self):
+        self.close()
+        if self.on_proceed_callback:
+            self.on_proceed_callback()
+
+    def mousePressEvent(self, event):
+        focused = QApplication.focusWidget()
+        if focused and focused is not self:
+            focused.clearFocus()
+            
+        if hasattr(self, 'card') and self.card:
+            if not self.card.geometry().contains(event.pos()):
+                self.close()
+                return
+        super().mousePressEvent(event)
+
+    def resizeEvent(self, event):
+        if self.parent():
+            self.setGeometry(0, 0, self.parent().width(), self.parent().height())
+        super().resizeEvent(event)
+
+
+class StarRatingWidget(QWidget):
+    """
+    Universal Vector Star Rating Widget for benchmark and score ratings (No Emojis, pure QPainter vector).
+    Supports optional sequential lighting animation.
+    
+    Component Name: StarRatingWidget
+    """
+    def __init__(self, rating=5, max_stars=5, star_size=18, animate=True, parent=None):
+        super().__init__(parent)
+        self.setObjectName("StarRatingWidget")
+        self.target_rating = rating
+        self.max_stars = max_stars
+        self.star_size = star_size
+        self.setFixedSize(max_stars * (star_size + 4), star_size)
+        
+        if animate:
+            self.current_rating = 0
+            self._timer = QTimer(self)
+            self._timer.setInterval(90)
+            self._timer.timeout.connect(self._step_star)
+        else:
+            self.current_rating = rating
+            self._timer = None
+
+    def start_animation(self):
+        if hasattr(self, '_timer') and self._timer:
+            self.current_rating = 0
+            self.update()
+            self._timer.start()
+
+    def _step_star(self):
+        if self.current_rating < self.target_rating:
+            self.current_rating += 1
+            self.update()
+        else:
+            self._timer.stop()
+
+    def set_rating(self, rating):
+        self.target_rating = rating
+        self.current_rating = rating
+        self.update()
+
+    def paintEvent(self, event):
+        import math
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        for i in range(self.max_stars):
+            painter.save()
+            painter.translate(i * (self.star_size + 4), 0)
+            
+            # Star path polygon
+            path = QPainterPath()
+            cx = self.star_size / 2.0
+            cy = self.star_size / 2.0
+            outer_r = self.star_size / 2.0
+            inner_r = outer_r * 0.4
+            
+            for k in range(10):
+                r = outer_r if k % 2 == 0 else inner_r
+                angle = (k * 36 - 90) * math.pi / 180.0
+                x = cx + r * math.cos(angle)
+                y = cy + r * math.sin(angle)
+                if k == 0:
+                    path.moveTo(x, y)
+                else:
+                    path.lineTo(x, y)
+            path.closeSubpath()
+
+            if i < self.current_rating:
+                painter.setBrush(QBrush(QColor("#FFC107")))
+                painter.setPen(Qt.NoPen)
+            else:
+                painter.setBrush(QBrush(QColor("#35353d")))
+                painter.setPen(Qt.NoPen)
+                
+            painter.drawPath(path)
+            painter.restore()
+
+
+class CpsResultOverlayPanel(QWidget):
+    """
+    Universal floating modal overlay panel displaying CPS Benchmark results.
+    Includes smooth backdrop fade-in, sequential star lighting, and rolling stats count-up.
+    
+    Component Name: CpsResultOverlayPanel
+    """
+    def __init__(self, parent_panel, on_retry_callback, cps_score, peak_cps, total_clicks, rank_badge, star_rating, rank_desc, rank_color):
+        super().__init__(parent_panel)
+        self.parent_panel = parent_panel
+        self.on_retry_callback = on_retry_callback
+        self.cps_score = cps_score
+        self.peak_cps = peak_cps
+        self.total_clicks = total_clicks
+        self.rank_badge = rank_badge
+        self.star_rating = star_rating
+        self.rank_desc = rank_desc
+        self.rank_color = rank_color
+        
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("CpsResultOverlayPanel")
+        
+        self.setGeometry(0, 0, parent_panel.width(), parent_panel.height())
+        self._setup_ui()
+
+    def _setup_ui(self):
+        # Rule 1: Less use border, more use background-color contrast
+        self.setStyleSheet("""
+            QWidget#CpsResultOverlayPanel {
+                background-color: rgba(0, 0, 0, 0.70);
+            }
+            QFrame#CpsResultCard {
+                background-color: #18181c;
+                border: none;
+                border-radius: 12px;
+            }
+            QWidget#CpsResultTitleBar {
+                background-color: #22222a;
+                border: none;
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+            }
+        """)
+        
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.card = QFrame()
+        self.card.setObjectName("CpsResultCard")
+        self.card.setFixedSize(480, 250)
+        
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 16)
+        card_layout.setSpacing(14)
+        
+        # 1. Header Title Bar
+        title_bar = QWidget()
+        title_bar.setObjectName("CpsResultTitleBar")
+        title_bar.setFixedHeight(44)
+        
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(18, 0, 18, 0)
+        title_layout.setSpacing(10)
+        
+        title_label = QLabel("BENCHMARK RESULT")
+        title_label.setObjectName("CpsResultTitleLabel")
+        title_label.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
+        
+        title_layout.addWidget(title_label)
+        title_layout.addStretch()
+        
+        card_layout.addWidget(title_bar)
+        
+        # 2. Main Result Content
+        body_content = QWidget()
+        body_content.setObjectName("CpsResultBody")
+        body_content.setStyleSheet("background: transparent;")
+        body_layout = QVBoxLayout(body_content)
+        body_layout.setContentsMargins(20, 4, 20, 4)
+        body_layout.setSpacing(12)
+        
+        # Rank Row (Rank Tag + Universal Vector Star Rating Widget)
+        rank_row = QHBoxLayout()
+        rank_row.setSpacing(12)
+        
+        rank_lbl = QLabel(self.rank_badge)
+        rank_lbl.setObjectName("CpsResultRankTag")
+        rank_lbl.setFont(QFont("Orbitron", 15, QFont.Bold))
+        rank_lbl.setStyleSheet(f"color: {self.rank_color}; font-family: 'Orbitron', sans-serif; background: transparent;")
+        rank_row.addWidget(rank_lbl)
+
+        # Universal Vector Star Rating with Sequential Animation
+        self.star_widget = StarRatingWidget(rating=self.star_rating, max_stars=5, star_size=16, animate=True)
+        self.star_widget.setObjectName("CpsResultStarRating")
+        rank_row.addWidget(self.star_widget)
+
+        rank_row.addStretch()
+        body_layout.addLayout(rank_row)
+        
+        # Score Breakdown Stats Grid (Background contrast boxes, no borders)
+        stats_row = QHBoxLayout()
+        stats_row.setSpacing(12)
+        
+        self.cps_stat = QLabel("CPS: <span style='color: #888;'>0.0</span>")
+        self.cps_stat.setObjectName("CpsStatBadge")
+        self.cps_stat.setStyleSheet("""
+            color: #E0E0E0;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            font-weight: bold;
+            background-color: #24242c;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+        """)
+        
+        self.peak_stat = QLabel("PEAK: <span style='color: #888;'>0.0</span>")
+        self.peak_stat.setObjectName("PeakStatBadge")
+        self.peak_stat.setStyleSheet("""
+            color: #E0E0E0;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            font-weight: bold;
+            background-color: #24242c;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+        """)
+        
+        self.clicks_stat = QLabel("CLICKS: <span style='color: #888;'>0</span>")
+        self.clicks_stat.setObjectName("ClicksStatBadge")
+        self.clicks_stat.setStyleSheet("""
+            color: #E0E0E0;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            font-weight: bold;
+            background-color: #24242c;
+            border: none;
+            border-radius: 6px;
+            padding: 6px 12px;
+        """)
+        
+        stats_row.addWidget(self.cps_stat)
+        stats_row.addWidget(self.peak_stat)
+        stats_row.addWidget(self.clicks_stat)
+        stats_row.addStretch()
+        body_layout.addLayout(stats_row)
+        
+        # Rank Description Text
+        desc_lbl = QLabel(self.rank_desc)
+        desc_lbl.setObjectName("CpsResultDescLabel")
+        desc_lbl.setWordWrap(True)
+        desc_lbl.setStyleSheet("color: #A0A0A0; font-family: 'Orbitron', sans-serif; font-size: 12px; background: transparent;")
+        body_layout.addWidget(desc_lbl)
+        
+        card_layout.addWidget(body_content, 1)
+        
+        # 3. Footer Action Button (Single Primary "Close" button)
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(20, 0, 20, 0)
+        btn_layout.setSpacing(0)
+        
+        close_btn = FadeHoverButton("Close", is_secondary=False, border_radius=8.0, color_mode="default")
+        close_btn.setObjectName("CpsResultCloseBtn")
+        close_btn.setFixedSize(110, 34)
+        close_btn.setFont(QFont("Orbitron", 10, QFont.Bold))
+        close_btn.clicked.connect(self._on_close)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(close_btn)
+        
+        card_layout.addLayout(btn_layout)
+        
+        # Center card in outer layout
+        outer_layout.addStretch()
+        h_center = QHBoxLayout()
+        h_center.addStretch()
+        h_center.addWidget(self.card)
+        h_center.addStretch()
+        outer_layout.addLayout(h_center)
+        outer_layout.addStretch()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._start_animations()
+
+    def _start_animations(self):
+        # 1. Smooth Backdrop Fade-in Animation (Opacity 0 -> 1 over 250ms)
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity_effect)
+        
+        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity")
+        self._fade_anim.setDuration(250)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_anim.start()
+
+        # 2. Sequential Vector Star Lighting Animation
+        if hasattr(self, 'star_widget'):
+            self.star_widget.start_animation()
+
+        # 3. Smooth Stats Count-Up Roll Animation (450ms OutCubic)
+        self._anim_start_time = time.perf_counter()
+        self._count_timer = QTimer(self)
+        self._count_timer.setInterval(20)
+        self._count_timer.timeout.connect(self._step_countup)
+        self._count_timer.start()
+
+    def _step_countup(self):
+        elapsed = time.perf_counter() - self._anim_start_time
+        duration = 0.45  # 450ms smooth roll-up
+        progress = min(1.0, elapsed / duration)
+        
+        # Smooth OutCubic easing math
+        ease = 1.0 - (1.0 - progress) ** 3
+        
+        cur_cps = self.cps_score * ease
+        cur_peak = self.peak_cps * ease
+        cur_clicks = int(round(self.total_clicks * ease))
+
+        self.cps_stat.setText(f"CPS: <span style='color:{self.rank_color};'>{cur_cps:.1f}</span>")
+        self.peak_stat.setText(f"PEAK: <span style='color:#FDA903;'>{cur_peak:.1f}</span>")
+        self.clicks_stat.setText(f"CLICKS: <span style='color:#00FF66;'>{cur_clicks}</span>")
+
+        if progress >= 1.0:
+            self._count_timer.stop()
+
+    def paintEvent(self, event):
+        from PySide6.QtWidgets import QStyle, QStyleOption
+        from PySide6.QtGui import QPainter
+        opt = QStyleOption()
+        opt.initFrom(self)
+        p = QPainter(self)
+        self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
+        super().paintEvent(event)
+
+    def _on_close(self):
+        if getattr(self, '_is_closing', False):
+            return
+        self._is_closing = True
+
+        if hasattr(self, '_count_timer') and self._count_timer:
+            self._count_timer.stop()
+
+        # Smooth 200ms Backdrop & Modal Fade-out Animation
+        if not hasattr(self, '_opacity_effect') or not self._opacity_effect:
+            self._opacity_effect = QGraphicsOpacityEffect(self)
+            self.setGraphicsEffect(self._opacity_effect)
+            
+        self._fade_out_anim = QPropertyAnimation(self._opacity_effect, b"opacity")
+        self._fade_out_anim.setDuration(200)
+        self._fade_out_anim.setStartValue(self._opacity_effect.opacity())
+        self._fade_out_anim.setEndValue(0.0)
+        self._fade_out_anim.setEasingCurve(QEasingCurve.InCubic)
+
+        def _finish_and_destroy():
+            super(CpsResultOverlayPanel, self).close()
+            if self.on_retry_callback:
+                self.on_retry_callback()
+
+        self._fade_out_anim.finished.connect(_finish_and_destroy)
+        self._fade_out_anim.start()
+
+    def mousePressEvent(self, event):
+        focused = QApplication.focusWidget()
+        if focused and focused is not self:
+            focused.clearFocus()
+        event.accept()
+
+    def resizeEvent(self, event):
+        if self.parent():
+            self.setGeometry(0, 0, self.parent().width(), self.parent().height())
+        super().resizeEvent(event)
+
+
+class CpsBenchmarkPanel(QWidget):
+    """
+    Universal High-precision Click Per Second (CPS) Benchmark Panel.
+    Supports human manual clicking, fast jitter clicking, and ultra-high speed (1340+ CPS) autoclickers.
+    
+    Component Name: CpsBenchmarkPanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CpsBenchmarkPanel")
+        
+        from collections import deque
+        self._timestamps = deque()
+        self._timestamps_all = []
+        self._total_clicks = 0
+        self._peak_cps = 0.0
+        self._current_cps = 0.0
+        self._is_testing = False
+        self._test_duration = 5.0  # Default 5 seconds
+        self._time_remaining = 5.0
+        self._target_button = "left"  # left, right, middle, any
+        self._start_time = 0.0
+        
+        # High-frequency UI update timer (20ms interval = 50 FPS smooth stats)
+        self._timer = QTimer(self)
+        self._timer.setInterval(20)
+        self._timer.timeout.connect(self._update_stats)
+        
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(12)
+
+        # ── 1. TOP HEADER & CONTROLS ROW ─────────────────────
+        header_frame = QFrame()
+        header_frame.setObjectName("CpsHeaderFrame")
+        header_frame.setFixedHeight(38)
+        header_frame.setStyleSheet("""
+            QFrame#CpsHeaderFrame {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        # Vector Back Arrow Button (Integrated directly into header frame)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("CpsBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        self.back_btn.setIcon(QIcon(back_icon_path))
+        self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Benchmark Lab")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#CpsBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#CpsBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self.back_clicked.emit)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("CPS BENCHMARK LAB")
+        title_lbl.setObjectName("CpsHeaderTitle")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
+        h_layout.addWidget(title_lbl)
+
+        h_layout.addStretch()
+
+        # Target Button Selector
+        btn_lbl = QLabel("Button:")
+        btn_lbl.setObjectName("CpsBtnLabel")
+        btn_lbl.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 10px;")
+        h_layout.addWidget(btn_lbl)
+
+        self.btn_combo = QComboBox()
+        self.btn_combo.setObjectName("CpsBtnCombo")
+        self.btn_combo.addItems(["Left Click", "Right Click", "Middle Click", "Any Button"])
+        self.btn_combo.setFixedWidth(105)
+        self.btn_combo.setFixedHeight(26)
+        self.btn_combo.setStyleSheet("""
+            QComboBox#CpsBtnCombo {
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 6px;
+                padding: 2px 6px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.btn_combo.currentIndexChanged.connect(self._on_btn_combo_changed)
+        h_layout.addWidget(self.btn_combo)
+
+        # Duration Mode Selector
+        dur_lbl = QLabel("Duration:")
+        dur_lbl.setObjectName("CpsDurLabel")
+        dur_lbl.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 10px;")
+        h_layout.addWidget(dur_lbl)
+
+        self.dur_combo = QComboBox()
+        self.dur_combo.setObjectName("CpsDurCombo")
+        self.dur_combo.addItems(["5 Seconds", "10 Seconds", "15 Seconds", "30 Seconds", "Uncapped Live"])
+        self.dur_combo.setFixedWidth(115)
+        self.dur_combo.setFixedHeight(26)
+        self.dur_combo.setStyleSheet("""
+            QComboBox#CpsDurCombo {
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 6px;
+                padding: 2px 6px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.dur_combo.currentIndexChanged.connect(self._on_dur_combo_changed)
+        h_layout.addWidget(self.dur_combo)
+
+        # Reset Button (Universal objectName CpsResetBtn + strict QSS dimensions)
+        self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
+        self.reset_btn.setObjectName("CpsResetBtn")
+        self.reset_btn.setFixedSize(65, 26)
+        self.reset_btn.setStyleSheet("""
+            QPushButton#CpsResetBtn, FadeHoverButton#CpsResetBtn {
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 26px;
+                max-height: 26px;
+                padding: 0px;
+                margin: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.reset_btn.clicked.connect(self.reset_benchmark)
+        h_layout.addWidget(self.reset_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. METRICS DISPLAY CARDS (4 COLUMNS) ───────────────
+        metrics_layout = QHBoxLayout()
+        metrics_layout.setSpacing(8)
+
+        # Metric 1: Current CPS
+        self.card_cps_val = self._create_metric_card("CURRENT CPS", "0.0", "#FF5B06")
+        metrics_layout.addWidget(self.card_cps_val)
+
+        # Metric 2: Peak CPS
+        self.card_peak_val = self._create_metric_card("PEAK CPS", "0.0", "#FDA903")
+        metrics_layout.addWidget(self.card_peak_val)
+
+        # Metric 3: Total Clicks
+        self.card_clicks_val = self._create_metric_card("TOTAL CLICKS", "0", "#00FF66")
+        metrics_layout.addWidget(self.card_clicks_val)
+
+        # Metric 4: Timer Remaining
+        self.card_timer_val = self._create_metric_card("TIME REMAINING", "5.0s", "#00E5FF")
+        metrics_layout.addWidget(self.card_timer_val)
+
+        main_layout.addLayout(metrics_layout)
+
+        # ── 3. MAIN INTERACTIVE CLICK ZONE ────────────────────
+        self.click_target_zone = QFrame()
+        self.click_target_zone.setObjectName("CpsClickTargetZone")
+        self.click_target_zone.setFixedHeight(110)
+        self.click_target_zone.setCursor(Qt.PointingHandCursor)
+        self.click_target_zone.setStyleSheet("""
+            QFrame#CpsClickTargetZone {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 91, 6, 0.08), stop:1 rgba(20, 22, 28, 0.95));
+                border: 2px dashed rgba(255, 91, 6, 0.4);
+                border-radius: 10px;
+            }
+            QFrame#CpsClickTargetZone:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 91, 6, 0.15), stop:1 rgba(30, 32, 40, 0.95));
+                border: 2px solid #FF5B06;
+            }
+        """)
+
+        target_layout = QVBoxLayout(self.click_target_zone)
+        target_layout.setAlignment(Qt.AlignCenter)
+        target_layout.setSpacing(4)
+
+        self.target_status_lbl = QLabel("CLICK HERE TO START BENCHMARK")
+        self.target_status_lbl.setFont(QFont("Orbitron", 15, QFont.Bold))
+        self.target_status_lbl.setStyleSheet("color: #FFFFFF; background: transparent;")
+        self.target_status_lbl.setAlignment(Qt.AlignCenter)
+        target_layout.addWidget(self.target_status_lbl)
+
+        self.target_hint_lbl = QLabel("Click manually or toggle your autoclicker inside this box to test CPS")
+        self.target_hint_lbl.setFont(QFont("Orbitron", 10))
+        self.target_hint_lbl.setStyleSheet("color: #888888; background: transparent;")
+        self.target_hint_lbl.setAlignment(Qt.AlignCenter)
+        target_layout.addWidget(self.target_hint_lbl)
+
+        # Hook mouse press on target zone
+        self.click_target_zone.mousePressEvent = self._on_zone_mouse_press
+
+        main_layout.addWidget(self.click_target_zone)
+
+        # ── 4. RECENT BENCHMARK HISTORY SECTION ────────────────
+        history_frame = QFrame()
+        history_frame.setObjectName("CpsHistoryFrame")
+        history_frame.setStyleSheet("""
+            QFrame#CpsHistoryFrame {
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+            }
+        """)
+        hist_main_layout = QVBoxLayout(history_frame)
+        hist_main_layout.setContentsMargins(10, 8, 10, 8)
+        hist_main_layout.setSpacing(8)
+
+        # Header Row
+        hist_header_layout = QHBoxLayout()
+        hist_header_layout.setContentsMargins(2, 0, 2, 0)
+
+        hist_title = QLabel("RECENT BENCHMARK HISTORY")
+        hist_title.setObjectName("CpsHistoryTitle")
+        hist_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: bold; background: transparent;")
+        hist_header_layout.addWidget(hist_title)
+
+        hist_header_layout.addStretch()
+
+        self.clear_hist_btn = FadeHoverButton("Clear History", is_secondary=True, border_radius=6.0)
+        self.clear_hist_btn.setObjectName("CpsHistoryClearBtn")
+        self.clear_hist_btn.setFixedSize(95, 24)
+        self.clear_hist_btn.setStyleSheet("""
+            QPushButton#CpsHistoryClearBtn, FadeHoverButton#CpsHistoryClearBtn {
+                min-width: 95px;
+                max-width: 95px;
+                min-height: 24px;
+                max-height: 24px;
+                padding: 0px;
+                margin: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.clear_hist_btn.clicked.connect(self._clear_history)
+        hist_header_layout.addWidget(self.clear_hist_btn)
+
+        hist_main_layout.addLayout(hist_header_layout)
+
+        # Container QListWidget (Macro List Style)
+        self.history_list_widget = QListWidget()
+        self.history_list_widget.setObjectName("CpsHistoryListWidget")
+        self.history_list_widget.setStyleSheet("""
+            QListWidget#CpsHistoryListWidget {
+                background-color: rgba(0, 0, 0, 0.25);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+                padding: 4px;
+                outline: none;
+            }
+            QListWidget#CpsHistoryListWidget::item {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 6px;
+                padding: 2px;
+                margin-bottom: 4px;
+            }
+            QListWidget#CpsHistoryListWidget::item:hover {
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.4);
+            }
+            QListWidget#CpsHistoryListWidget::item:selected {
+                background-color: rgba(255, 91, 6, 0.15);
+                border-color: #FF5B06;
+            }
+        """)
+        self.history_list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.history_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.history_list_widget.setSelectionMode(QAbstractItemView.NoSelection)
+
+        hist_main_layout.addWidget(self.history_list_widget, 1)
+
+        main_layout.addWidget(history_frame, 1)
+
+        # Initialize history disk persistence
+        appdata_dir = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), 'HELXAID')
+        self._history_file_path = os.path.join(appdata_dir, 'cps_history.json')
+        self._history_records = self._load_history_from_disk()
+        self._update_history_ui()
+
+    def _load_history_from_disk(self):
+        try:
+            if os.path.exists(self._history_file_path):
+                with open(self._history_file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+        except Exception as e:
+            print(f"[CPS History] Error loading from disk: {e}")
+        return []
+
+    def _save_history_to_disk(self):
+        try:
+            os.makedirs(os.path.dirname(self._history_file_path), exist_ok=True)
+            with open(self._history_file_path, 'w', encoding='utf-8') as f:
+                json.dump(self._history_records, f, indent=2)
+        except Exception as e:
+            print(f"[CPS History] Error saving to disk: {e}")
+
+    def _add_history_record(self, cps, peak_cps, total_clicks, badge, star_rating, color):
+        import time as pytime
+        now_time_str = pytime.strftime("%H:%M:%S")
+        now_date_str = pytime.strftime("%d/%m/%y")
+        btn_name = self.btn_combo.currentText()
+        dur_name = self.dur_combo.currentText()
+        dur_short = dur_name.replace(" Seconds", "s").replace("Uncapped Live", "Live")
+        
+        record = {
+            "time": now_time_str,
+            "date": now_date_str,
+            "btn": btn_name,
+            "dur": dur_short,
+            "cps": cps,
+            "peak": peak_cps,
+            "clicks": total_clicks,
+            "badge": badge,
+            "stars": star_rating,
+            "color": color
+        }
+        self._history_records.insert(0, record)
+        if len(self._history_records) > 10:
+            self._history_records.pop()
+        self._save_history_to_disk()
+        self._update_history_ui()
+
+    def _clear_history(self):
+        self._history_records.clear()
+        self._save_history_to_disk()
+        self._update_history_ui()
+
+    def _update_history_ui(self):
+        self.history_list_widget.clear()
+        
+        if not self._history_records:
+            empty_item = QListWidgetItem(self.history_list_widget)
+            empty_item.setSizeHint(QSize(0, 44))
+
+            empty_lbl = QLabel("No benchmark history recorded yet. Complete a test above to record your score!")
+            empty_lbl.setObjectName("CpsHistoryEmptyLabel")
+            empty_lbl.setFont(QFont("Orbitron", 10))
+            empty_lbl.setStyleSheet("color: #666666; font-family: 'Orbitron', sans-serif; background: transparent;")
+            empty_lbl.setAlignment(Qt.AlignCenter)
+            
+            self.history_list_widget.setItemWidget(empty_item, empty_lbl)
+            return
+
+        for item in self._history_records:
+            list_item = QListWidgetItem(self.history_list_widget)
+            list_item.setSizeHint(QSize(0, 36))
+
+            item_widget = QWidget()
+            item_widget.setObjectName("CpsHistoryItemWidget")
+            item_widget.setStyleSheet("background: transparent;")
+            
+            card_layout = QHBoxLayout(item_widget)
+            card_layout.setContentsMargins(8, 2, 8, 2)
+            card_layout.setSpacing(10)
+
+            # Left Rank Tag & Vector Star Rating
+            badge_lbl = QLabel(item['badge'])
+            badge_lbl.setObjectName("CpsHistoryBadge")
+            badge_lbl.setFont(QFont("Orbitron", 10, QFont.Bold))
+            badge_lbl.setStyleSheet(f"color: {item['color']}; font-family: 'Orbitron', sans-serif; background: transparent;")
+            card_layout.addWidget(badge_lbl)
+
+            stars = StarRatingWidget(rating=item['stars'], max_stars=5, star_size=11, animate=False)
+            stars.setObjectName("CpsHistoryStars")
+            card_layout.addWidget(stars)
+
+            card_layout.addStretch()
+
+            # Center Stats summary
+            stats_lbl = QLabel(f"CPS: <span style='color:{item['color']}; font-weight:bold;'>{item['cps']:.1f}</span>  |  PEAK: <span style='color:#FDA903;'>{item['peak']:.1f}</span>  |  CLICKS: <span style='color:#00FF66;'>{item['clicks']}</span>")
+            stats_lbl.setObjectName("CpsHistoryStats")
+            stats_lbl.setFont(QFont("Orbitron", 9.5))
+            stats_lbl.setStyleSheet("color: #CCCCCC; font-family: 'Orbitron', sans-serif; background: transparent;")
+            card_layout.addWidget(stats_lbl)
+
+            card_layout.addStretch()
+
+            # Right Meta Info: Left Click (5s) • HH:MM:SS DD/MM/YY
+            meta_lbl = QLabel(f"{item['btn']} ({item['dur']})  •  {item['time']} {item['date']}")
+            meta_lbl.setObjectName("CpsHistoryMeta")
+            meta_lbl.setFont(QFont("Orbitron", 8.5))
+            meta_lbl.setStyleSheet("color: #777777; font-family: 'Orbitron', sans-serif; background: transparent;")
+            card_layout.addWidget(meta_lbl)
+
+            self.history_list_widget.setItemWidget(list_item, item_widget)
+
+    def _create_metric_card(self, title, default_val, color_hex):
+        card = QFrame()
+        card.setObjectName("CpsMetricCard")
+        card.setFixedHeight(48)
+        card.setStyleSheet(f"""
+            QFrame#CpsMetricCard {{
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+            }}
+        """)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(0)
+
+        val_lbl = QLabel(default_val)
+        val_lbl.setFont(QFont("Orbitron", 16, QFont.Bold))
+        val_lbl.setStyleSheet(f"color: {color_hex}; background: transparent;")
+        val_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(val_lbl)
+
+        title_lbl = QLabel(title)
+        title_lbl.setFont(QFont("Orbitron", 8))
+        title_lbl.setStyleSheet("color: #777777; background: transparent;")
+        title_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_lbl)
+
+        card.val_label = val_lbl
+        return card
+
+    def _recalculate_peak_cps(self):
+        """Recalculate peak CPS as the click rate in the densest 1.0s sliding window."""
+        if not self._timestamps_all:
+            self._peak_cps = 0.0
+            return 0.0
+
+        ts = self._timestamps_all
+        max_rate = 0.0
+        left = 0
+
+        for right in range(len(ts)):
+            while ts[right] - ts[left] > 1.0:
+                left += 1
+            count = right - left + 1
+            if count >= 2:
+                span = ts[right] - ts[left]
+                if span > 0.001:
+                    rate = (count - 1) / span
+                else:
+                    rate = float(count)
+            else:
+                rate = 1.0
+            if rate > max_rate:
+                max_rate = rate
+
+        self._peak_cps = max_rate
+        return self._peak_cps
+
+    def register_click(self, btn_name="left"):
+        """Register a click event (manual or high-speed autoclicker)."""
+        now = time.perf_counter()
+        
+        # Check if button matches target filter
+        if self._target_button != "any":
+            if self._target_button == "left" and btn_name != "left":
+                return
+            elif self._target_button == "right" and btn_name != "right":
+                return
+            elif self._target_button == "middle" and btn_name != "middle":
+                return
+
+        # Start test automatically on first click if not running
+        if not self._is_testing:
+            self.start_benchmark()
+
+        self._total_clicks += 1
+        self._timestamps.append(now)
+        self._timestamps_all.append(now)
+
+    def _on_zone_mouse_press(self, event):
+        btn_map = {Qt.LeftButton: "left", Qt.RightButton: "right", Qt.MiddleButton: "middle"}
+        btn_name = btn_map.get(event.button(), "left")
+        self.register_click(btn_name)
+        event.accept()
+
+    def start_benchmark(self):
+        """Start or restart the benchmark run."""
+        self._is_testing = True
+        self._start_time = time.perf_counter()
+        self._timestamps.clear()
+        self._timestamps_all.clear()
+        self._total_clicks = 0
+        self._peak_cps = 0.0
+        self._current_cps = 0.0
+        
+        self.target_status_lbl.setText("CLICK AS FAST AS YOU CAN!")
+        self.target_status_lbl.setStyleSheet("color: #FF5B06; background: transparent;")
+        self.click_target_zone.setStyleSheet("""
+            QFrame#CpsClickTargetZone {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 91, 6, 0.2), stop:1 rgba(30, 32, 40, 0.95));
+                border: 2px solid #FF5B06;
+                border-radius: 12px;
+            }
+        """)
+        self._timer.start()
+
+    def finish_benchmark(self):
+        """Complete the benchmark and show full floating modal result panel over the software window."""
+        self._is_testing = False
+        self._timer.stop()
+        
+        # Authoritatively recalculate final peak CPS over all timestamps
+        self._recalculate_peak_cps()
+        self.card_peak_val.val_label.setText(f"{self._peak_cps:.1f}")
+
+        # Ensure final current_cps is exact Total Clicks / Duration
+        if self._test_duration > 0:
+            self._current_cps = self._total_clicks / self._test_duration
+            self.card_cps_val.val_label.setText(f"{self._current_cps:.1f}")
+
+        self.target_status_lbl.setText("BENCHMARK COMPLETE!")
+        self.target_status_lbl.setStyleSheet("color: #00FF66; background: transparent;")
+        self.click_target_zone.setStyleSheet("""
+            QFrame#CpsClickTargetZone {
+                background: rgba(255, 255, 255, 0.03);
+                border: 2px solid rgba(0, 255, 102, 0.5);
+                border-radius: 12px;
+            }
+        """)
+
+        # Compute rank based on Average CPS achieved (No Emojis per UI Rules)
+        cps = self._current_cps
+        if cps >= 100:
+            badge = "GODLIKE MONSTER"
+            star_rating = 5
+            desc = f"UNBELIEVABLE! {cps:.1f} CPS Auto-Clicker Beast Speed!"
+            color = "#FF0055"
+        elif cps >= 20:
+            badge = "CYBER SONIC"
+            star_rating = 5
+            desc = f"Superhuman speed! {cps:.1f} CPS Jitter/Butterfly God!"
+            color = "#00E5FF"
+        elif cps >= 10:
+            badge = "CHEETAH"
+            star_rating = 4
+            desc = f"Blistering speed! {cps:.1f} CPS Pro Gamer Reflexes!"
+            color = "#FF5B06"
+        elif cps >= 5:
+            badge = "RABBIT"
+            star_rating = 3
+            desc = f"Solid speed! {cps:.1f} CPS Casual Gamer Pace."
+            color = "#FDA903"
+        else:
+            badge = "TURTLE"
+            star_rating = 2
+            desc = f"Taking it slow! {cps:.1f} CPS Steady Pace."
+            color = "#888888"
+
+        # Add entry to Recent Benchmark History list
+        self._add_history_record(cps, self._peak_cps, self._total_clicks, badge, star_rating, color)
+
+        # Launch full window floating modal overlay (centered on application window)
+        parent_panel = self.window()
+        overlay = CpsResultOverlayPanel(
+            parent_panel=parent_panel,
+            on_retry_callback=self.reset_benchmark,
+            cps_score=cps,
+            peak_cps=self._peak_cps,
+            total_clicks=self._total_clicks,
+            rank_badge=badge,
+            star_rating=star_rating,
+            rank_desc=desc,
+            rank_color=color
+        )
+        overlay.show()
+
+    def reset_benchmark(self):
+        """Reset benchmark state back to initial."""
+        self._is_testing = False
+        self._timer.stop()
+        self._timestamps.clear()
+        self._timestamps_all.clear()
+        self._total_clicks = 0
+        self._peak_cps = 0.0
+        self._current_cps = 0.0
+        self._time_remaining = self._test_duration
+        
+        self.card_cps_val.val_label.setText("0.0")
+        self.card_peak_val.val_label.setText("0.0")
+        self.card_clicks_val.val_label.setText("0")
+        
+        if self._test_duration <= 0:
+            self.card_timer_val.val_label.setText("∞ Live")
+        else:
+            self.card_timer_val.val_label.setText(f"{self._test_duration:.1f}s")
+            
+        self.target_status_lbl.setText("CLICK HERE TO START BENCHMARK")
+        self.target_status_lbl.setStyleSheet("color: #FFFFFF; background: transparent;")
+        self.click_target_zone.setStyleSheet("""
+            QFrame#CpsClickTargetZone {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 91, 6, 0.08), stop:1 rgba(20, 22, 28, 0.95));
+                border: 2px dashed rgba(255, 91, 6, 0.4);
+                border-radius: 12px;
+            }
+            QFrame#CpsClickTargetZone:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255, 91, 6, 0.15), stop:1 rgba(30, 32, 40, 0.95));
+                border: 2px solid #FF5B06;
+            }
+        """)
+
+    def _update_stats(self):
+        """Update Average CPS, Peak Instantaneous CPS, and countdown timer (runs every 20ms)."""
+        now = time.perf_counter()
+        
+        if self._is_testing:
+            elapsed = max(0.001, now - self._start_time)
+            
+            # 1. Live Current CPS: Total Clicks / Elapsed (running average)
+            self._current_cps = self._total_clicks / elapsed
+
+            # 2. Live Peak CPS: Maximum 1.0s window rate achieved so far
+            self._recalculate_peak_cps()
+
+            # Handle countdown
+            if self._test_duration > 0:
+                self._time_remaining = max(0.0, self._test_duration - elapsed)
+                self.card_timer_val.val_label.setText(f"{self._time_remaining:.1f}s")
+                
+                if self._time_remaining <= 0:
+                    self.finish_benchmark()
+
+        self.card_cps_val.val_label.setText(f"{self._current_cps:.1f}")
+        self.card_peak_val.val_label.setText(f"{self._peak_cps:.1f}")
+        self.card_clicks_val.val_label.setText(str(self._total_clicks))
+
+    def _on_btn_combo_changed(self, idx):
+        maps = ["left", "right", "middle", "any"]
+        self._target_button = maps[idx] if idx < len(maps) else "left"
+
+    def _on_dur_combo_changed(self, idx):
+        durations = [5.0, 10.0, 15.0, 30.0, -1.0]
+        val = durations[idx] if idx < len(durations) else 5.0
+        self._test_duration = val
+        self.reset_benchmark()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_result_banner()
+
+    def _reposition_result_banner(self):
+        if hasattr(self, 'result_banner') and hasattr(self, 'click_target_zone') and self.result_banner.isVisible():
+            w = min(self.click_target_zone.width() - 30, 720)
+            h = 44
+            x = max(0, (self.click_target_zone.width() - w) // 2)
+            y = max(0, (self.click_target_zone.height() - h) // 2)
+            self.result_banner.setGeometry(x, y, w, h)
+            self.result_banner.raise_()
+
+
+class HelxairoEditMacroOverlayPanel(QWidget):
+    """
+    Floating overlay panel for editing macro properties.
+    Matching HELXAIL floating guide style.
+    
+    Component Name: HelxairoEditMacroOverlayPanel
+    """
+    def __init__(self, macro, bridge, parent_panel):
+        super().__init__(parent_panel)
+        self.macro = macro
+        self.bridge = bridge
+        self.parent_panel = parent_panel
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("HelxairoEditMacroOverlayPanel")
+        
+        # Match parent bounds
+        self.setGeometry(0, 0, parent_panel.width(), parent_panel.height())
+        self._setup_ui()
+        self._load_macro_data()
+        
+        # Shortcut Esc (Smart handling: cancels typing/recording mode first, closes panel if idle)
+        self._esc_shortcut = QShortcut(QKeySequence("Escape"), self)
+        self._esc_shortcut.activated.connect(self._handle_esc)
+
+    def _setup_ui(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon.svg").replace('\\', '/')
+        close_icon_hover_path = os.path.join(script_dir, "UI Icons", "close-icon-hover.svg").replace('\\', '/')
+        
+        # Overlay background (semi-transparent dark backdrop)
+        self.setStyleSheet(f"""
+            QWidget#HelxairoEditMacroOverlayPanel {{
+                background-color: rgba(0, 0, 0, 0.70);
+            }}
+            QFrame#HelxairoEditMacroCard {{
+                background-color: rgba(22, 22, 26, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 14px;
+            }}
+            QWidget#HelxairoEditTitleBar {{
+                background-color: rgba(14, 14, 16, 0.85);
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
+            }}
+            QLabel#HelxairoEditTitle {{
+                color: #FFFFFF;
+                font-size: 14px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+            }}
+            QPushButton#HelxairoEditCloseBtn {{
+                background: transparent;
+                border: none;
+                image: url({close_icon_path});
+            }}
+            QPushButton#HelxairoEditCloseBtn:hover {{
+                image: url({close_icon_hover_path});
+            }}
+            QLabel.HelxairoFieldLabel {{
+                color: #AAAAAA;
+                font-size: 12px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+            }}
+            QLineEdit#HelxairoEditNameInput {{
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 6px;
+                padding: 0px 10px;
+                min-height: 32px;
+                max-height: 32px;
+                height: 32px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+            }}
+            QLineEdit#HelxairoEditNameInput:focus {{
+                border-color: #FF5B06;
+            }}
+            QSpinBox#HelxairoEditIntervalBox {{
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 6px;
+                padding: 0px 8px;
+                min-height: 32px;
+                max-height: 32px;
+                height: 32px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+            }}
+            QComboBox#HelxairoEditActionCombo, QComboBox#HelxairoEditUnitCombo {{
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 6px;
+                padding: 0px 10px;
+                min-height: 32px;
+                max-height: 32px;
+                height: 32px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+            }}
+            QComboBox#HelxairoEditActionCombo QAbstractItemView, QComboBox#HelxairoEditUnitCombo QAbstractItemView {{
+                background-color: #1a1a1e;
+                color: #FFFFFF;
+                selection-background-color: rgba(255, 255, 255, 0.12);
+            }}
+        """)
+
+        # Main centering layout
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Center card container
+        self.card = QFrame(self)
+        self.card.setObjectName("HelxairoEditMacroCard")
+        self.card.setFixedSize(480, 360)
+        
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 20)
+        card_layout.setSpacing(16)
+        
+        # 1. Header Title Bar (Without X close button)
+        title_bar = QWidget()
+        title_bar.setObjectName("HelxairoEditTitleBar")
+        title_bar.setFixedHeight(44)
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(16, 0, 16, 0)
+        
+        title_label = QLabel("Edit Macro Settings")
+        title_label.setObjectName("HelxairoEditTitle")
+        title_layout.addWidget(title_label)
+        
+        card_layout.addWidget(title_bar)
+        
+        # 2. Form Body Scroll Area
+        scroll_area = SmoothScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical {
+                background: rgba(20, 22, 28, 0.6);
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #FF5B06;
+                border-radius: 4px;
+                min-height: 30px;
+            }
+        """)
+
+        body_container = QWidget()
+        body_container.setStyleSheet("background: transparent;")
+        body_layout = QFormLayout(body_container)
+        body_layout.setContentsMargins(20, 8, 20, 8)
+        body_layout.setVerticalSpacing(16)
+        body_layout.setHorizontalSpacing(16)
+        
+        # Macro Name
+        lbl_name = QLabel("Macro Name")
+        lbl_name.setProperty("class", "HelxairoFieldLabel")
+        self.name_input = QLineEdit()
+        self.name_input.setObjectName("HelxairoEditNameInput")
+        self.name_input.setFixedHeight(32)
+        body_layout.addRow(lbl_name, self.name_input)
+
+        # Bound Apps (auto-switch applications)
+        lbl_apps = QLabel("Bound Apps")
+        lbl_apps.setProperty("class", "HelxairoFieldLabel")
+        lbl_apps.setToolTip("Auto-activate this profile when specified apps/games are running (comma-separated, e.g., gta5.exe, valorant.exe)")
+        self.bound_apps_input = QLineEdit()
+        self.bound_apps_input.setObjectName("HelxairoEditNameInput")
+        self.bound_apps_input.setPlaceholderText("e.g., gta5.exe, valorant.exe")
+        self.bound_apps_input.setToolTip("Auto-activate this profile when specified apps/games are running (comma-separated, e.g., gta5.exe, valorant.exe)")
+        self.bound_apps_input.setFixedHeight(32)
+        body_layout.addRow(lbl_apps, self.bound_apps_input)
+        
+        # Hotkey
+        lbl_hotkey = QLabel("Trigger Hotkey")
+        lbl_hotkey.setProperty("class", "HelxairoFieldLabel")
+        self.hotkey_btn = HotkeyRecordButton("F8")
+        self.hotkey_btn.setFixedHeight(32)
+        body_layout.addRow(lbl_hotkey, self.hotkey_btn)
+        
+        # Repeat Interval (SpinBox + Unit Combo)
+        lbl_interval = QLabel("Interval")
+        lbl_interval.setProperty("class", "HelxairoFieldLabel")
+        
+        interval_container = QWidget()
+        interval_layout = QHBoxLayout(interval_container)
+        interval_layout.setContentsMargins(0, 0, 0, 0)
+        interval_layout.setSpacing(8)
+        
+        self.interval_spin = AdaptiveSpinBox()
+        self.interval_spin.setObjectName("HelxairoEditIntervalBox")
+        self.interval_spin.setRange(1, 60000)
+        self.interval_spin.setSingleStep(5)
+        self.interval_spin.setFixedHeight(32)
+        
+        self.unit_combo = QComboBox()
+        self.unit_combo.setObjectName("HelxairoEditUnitCombo")
+        self.unit_combo.addItems(["ms", "s"])
+        self.unit_combo.setFixedWidth(70)
+        self.unit_combo.setFixedHeight(32)
+        self.unit_combo.currentTextChanged.connect(self._on_unit_changed)
+        
+        interval_layout.addWidget(self.interval_spin, 1)
+        interval_layout.addWidget(self.unit_combo, 0)
+        
+        body_layout.addRow(lbl_interval, interval_container)
+        
+        # Action Type (Auto-Click Key + Custom Key button)
+        lbl_action = QLabel("Auto-Click Key")
+        lbl_action.setProperty("class", "HelxairoFieldLabel")
+        
+        action_container = QWidget()
+        action_layout = QHBoxLayout(action_container)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(8)
+        
+        self.action_combo = QComboBox()
+        self.action_combo.setObjectName("HelxairoEditActionCombo")
+        self.action_combo.addItems(["Left Click", "Right Click", "Middle Click", "Custom Key"])
+        self.action_combo.setFixedHeight(32)
+        self.action_combo.currentTextChanged.connect(self._on_action_type_changed)
+        
+        self.custom_key_btn = HotkeyRecordButton("E")
+        self.custom_key_btn.setFixedWidth(80)
+        self.custom_key_btn.setFixedHeight(32)
+        self.custom_key_btn.setVisible(False)
+        
+        action_layout.addWidget(self.action_combo, 1)
+        action_layout.addWidget(self.custom_key_btn, 0)
+        
+        body_layout.addRow(lbl_action, action_container)
+        
+        scroll_area.setWidget(body_container)
+        card_layout.addWidget(scroll_area, 1)
+        
+        # 3. Footer Action Buttons (Matching Editor sub-tab FadeHoverButton style)
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(20, 0, 20, 0)
+        btn_layout.setSpacing(12)
+        
+        cancel_btn = FadeHoverButton("Cancel", is_secondary=True, border_radius=8.0)
+        cancel_btn.setFixedSize(100, 36)
+        cancel_btn.clicked.connect(self.close)
+        
+        save_btn = FadeHoverButton("Save Changes", is_secondary=False, border_radius=8.0)
+        save_btn.setFixedSize(140, 36)
+        save_btn.clicked.connect(self._save_changes)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(save_btn)
+        
+        card_layout.addLayout(btn_layout)
+        
+        # Center card in outer layout
+        outer_layout.addStretch()
+        h_center = QHBoxLayout()
+        h_center.addStretch()
+        h_center.addWidget(self.card)
+        h_center.addStretch()
+        outer_layout.addLayout(h_center)
+        outer_layout.addStretch()
+
+    def _on_unit_changed(self, unit: str):
+        """Adjust spinbox range, step, and value when switching between ms and s (matching Quick Action Panel)."""
+        self.interval_spin.blockSignals(True)
+        val = self.interval_spin.value()
+        if unit == "s":
+            new_val = max(1, min(300, val // 1000 if val >= 1000 else 1))
+            self.interval_spin.setRange(1, 300)
+            self.interval_spin.setSingleStep(1)
+            self.interval_spin.setValue(new_val)
+        else:
+            if val <= 300:
+                new_val = max(1, val * 1000)
+            else:
+                new_val = max(1, val)
+            self.interval_spin.setRange(1, 60000)
+            self.interval_spin.setSingleStep(5)
+            self.interval_spin.setValue(new_val)
+        self.interval_spin.blockSignals(False)
+
+    def _on_action_type_changed(self, text: str):
+        """Show/hide custom key button when Custom Key is selected."""
+        is_custom = (text == "Custom Key")
+        self.custom_key_btn.setVisible(is_custom)
+
+    def _load_macro_data(self):
+        if not self.macro:
+            return
+            
+        # Clean name
+        name = getattr(self.macro, 'name', 'Macro')
+        for sym in ("✓", "○", "✔"):
+            if name.startswith(sym):
+                name = name[len(sym):].strip()
+        self.name_input.setText(name)
+        
+        # Bound Apps
+        if self.bridge and hasattr(self.bridge, 'profile_manager') and self.bridge.profile_manager:
+            prof = self.bridge.profile_manager.active_profile
+            if prof:
+                self.bound_apps_input.setText(", ".join(prof.bound_apps))
+        
+        # Hotkey
+        trigger = getattr(self.macro, 'trigger', None)
+        if trigger:
+            if getattr(trigger, 'button', None):
+                self.hotkey_btn.setHotkey(trigger.button.upper())
+            elif getattr(trigger, 'key', None):
+                self.hotkey_btn.setHotkey(trigger.key.upper())
+                
+        # Interval (matching Quick Action Panel range & 5ms step)
+        interval_ms = getattr(self.macro, 'repeat_interval_ms', 500)
+        if interval_ms is None and hasattr(self.macro, 'interval_ms'):
+            interval_ms = getattr(self.macro, 'interval_ms', 500)
+        if interval_ms is None:
+            interval_ms = 500
+            
+        self.unit_combo.blockSignals(True)
+        self.interval_spin.blockSignals(True)
+        if interval_ms >= 1000 and interval_ms % 1000 == 0:
+            self.unit_combo.setCurrentText("s")
+            self.interval_spin.setRange(1, 300)
+            self.interval_spin.setSingleStep(1)
+            self.interval_spin.setValue(min(300, interval_ms // 1000))
+        else:
+            self.unit_combo.setCurrentText("ms")
+            self.interval_spin.setRange(1, 60000)
+            self.interval_spin.setSingleStep(5)
+            self.interval_spin.setValue(max(1, min(60000, interval_ms)))
+        self.interval_spin.blockSignals(False)
+        self.unit_combo.blockSignals(False)
+        
+        # Action (Left, Right, Middle, or Custom Key)
+        hold_b = getattr(self.macro, 'hold_button', '') or ''
+        hold_k = getattr(self.macro, 'hold_key', '') or ''
+        
+        self.action_combo.blockSignals(True)
+        if hold_b.startswith("key:"):
+            key_val = hold_b[4:].strip().upper()
+            self.action_combo.setCurrentText("Custom Key")
+            self.custom_key_btn.setHotkey(key_val)
+            self.custom_key_btn.setVisible(True)
+        elif hold_k:
+            self.action_combo.setCurrentText("Custom Key")
+            self.custom_key_btn.setHotkey(hold_k.upper())
+            self.custom_key_btn.setVisible(True)
+        elif "right" in hold_b.lower():
+            self.action_combo.setCurrentText("Right Click")
+            self.custom_key_btn.setVisible(False)
+        elif "middle" in hold_b.lower():
+            self.action_combo.setCurrentText("Middle Click")
+            self.custom_key_btn.setVisible(False)
+        else:
+            self.action_combo.setCurrentText("Left Click")
+            self.custom_key_btn.setVisible(False)
+        self.action_combo.blockSignals(False)
+
+    def _save_changes(self):
+        if not self.macro:
+            self.close()
+            return
+
+        val = self.interval_spin.value()
+        final_ms = val * 1000 if self.unit_combo.currentText() == "s" else val
+        
+        if final_ms < 40 and not getattr(self, '_warning_acknowledged', False):
+            parent_window = self.window()
+            
+            def on_first_proceed():
+                if final_ms < 5 and not getattr(self, '_extreme_warning_acknowledged', False):
+                    def on_second_proceed():
+                        self._warning_acknowledged = True
+                        self._extreme_warning_acknowledged = True
+                        self._save_changes()
+                    panel2 = HelxairoLowIntervalWarningOverlayPanel(
+                        parent_window,
+                        on_second_proceed,
+                        title="Extreme Risk Warning",
+                        description="Intervals below 10ms carry a severe risk of system freezing, CPU overload, or hardware instability. We assume no responsibility for any system damage or issues, as you have been warned twice.\n\nDo you still wish to proceed at your own risk?",
+                        proceed_text="Proceed at Own Risk",
+                        is_extreme_risk=True
+                    )
+                    panel2.show()
+                    panel2.raise_()
+                else:
+                    self._warning_acknowledged = True
+                    self._save_changes()
+
+            warn_overlay = HelxairoLowIntervalWarningOverlayPanel(parent_window, on_first_proceed)
+            warn_overlay.show()
+            warn_overlay.raise_()
+            return
+
+        self._warning_acknowledged = False
+        self._extreme_warning_acknowledged = False
+        self._do_perform_save()
+
+    def _do_perform_save(self):
+        new_name = self.name_input.text().strip()
+        if new_name:
+            self.macro.name = new_name
+            
+        # Hotkey
+        new_hk = self.hotkey_btn.hotkey().lower()
+        if new_hk:
+            from macro_system.macros.base_macro import MacroTrigger, TriggerType
+            if new_hk in ("x1", "x2", "lbutton", "rbutton", "mbutton"):
+                self.macro.trigger = MacroTrigger(type=TriggerType.MOUSE_BUTTON, button=new_hk)
+            else:
+                self.macro.trigger = MacroTrigger(type=TriggerType.KEYBOARD_KEY, key=new_hk)
+                
+        # Interval (convert to ms based on unit selection)
+        val = self.interval_spin.value()
+        final_ms = val * 1000 if self.unit_combo.currentText() == "s" else val
+        
+        if hasattr(self.macro, 'repeat_interval_ms'):
+            self.macro.repeat_interval_ms = final_ms
+        if hasattr(self.macro, 'interval_ms'):
+            self.macro.interval_ms = final_ms
+            
+        # Action target
+        action_txt = self.action_combo.currentText()
+        from macro_system.macros.base_macro import MacroAction, ActionType
+        if action_txt == "Custom Key":
+            c_key = self.custom_key_btn.hotkey().lower().strip()
+            if hasattr(self.macro, 'hold_button'):
+                self.macro.hold_button = f"key:{c_key}"
+            if hasattr(self.macro, 'hold_key'):
+                self.macro.hold_key = c_key
+            if hasattr(self.macro, 'repeat_action') and self.macro.repeat_action:
+                self.macro.repeat_action.type = ActionType.KEY_TAP
+                self.macro.repeat_action.key = c_key
+                self.macro.repeat_action.button = None
+        else:
+            btn_name = "left"
+            if "right" in action_txt.lower():
+                btn_name = "right"
+            elif "middle" in action_txt.lower():
+                btn_name = "middle"
+            if hasattr(self.macro, 'hold_button'):
+                self.macro.hold_button = btn_name
+            if hasattr(self.macro, 'hold_key'):
+                self.macro.hold_key = None
+            if hasattr(self.macro, 'repeat_action') and self.macro.repeat_action:
+                self.macro.repeat_action.type = ActionType.MOUSE_CLICK
+                self.macro.repeat_action.button = btn_name
+                self.macro.repeat_action.key = None
+                
+        # Save Bound Apps to active profile
+        if self.bridge and hasattr(self.bridge, 'profile_manager') and self.bridge.profile_manager:
+            prof = self.bridge.profile_manager.active_profile
+            if prof:
+                apps_text = self.bound_apps_input.text()
+                prof.bound_apps = [a.strip() for a in apps_text.split(",") if a.strip()]
+                self.bridge.profile_manager.save_profile(prof)
+            self.bridge.profile_manager.save_all()
+            
+        if self.bridge and hasattr(self.bridge, 'reload_active_profile_macros'):
+            self.bridge.reload_active_profile_macros()
+            
+        # Reload macro list in parent panel
+        if hasattr(self.parent_panel, '_load_macros'):
+            self.parent_panel._load_macros()
+            
+        if hasattr(self.parent_panel, '_show_toast'):
+            self.parent_panel._show_toast("Macro updated successfully!", "success")
+            
+        self.close()
+
+    def _handle_esc(self):
+        """Smart Esc key handler: cancel typing/recording mode if active, otherwise close panel."""
+        focused = QApplication.focusWidget()
+        
+        # 1. Stop recording on any active HotkeyRecordButton
+        is_recording = False
+        for btn in (getattr(self, 'hotkey_btn', None), getattr(self, 'custom_key_btn', None)):
+            if btn and getattr(btn, '_recording', False):
+                btn._stop_recording_ui()
+                is_recording = True
+
+        # 2. Check if an input field currently has keyboard focus
+        is_input_focused = False
+        if focused and focused is not self:
+            parent_widget = focused.parent()
+            if isinstance(focused, (QLineEdit, QSpinBox, QAbstractSpinBox, QComboBox, HotkeyRecordButton)) or \
+               isinstance(parent_widget, (QSpinBox, QAbstractSpinBox, QComboBox)):
+                is_input_focused = True
+            focused.clearFocus()
+
+        # If user was typing or recording, only exit typing mode (do NOT close panel)
+        if is_input_focused or is_recording:
+            return
+
+        # If user was NOT in typing/recording mode, close the overlay panel
+        self.close()
+
+    def mousePressEvent(self, event):
+        focused = QApplication.focusWidget()
+        if focused and focused is not self:
+            focused.clearFocus()
+            
+        if hasattr(self, 'card') and self.card:
+            if not self.card.geometry().contains(event.pos()):
+                self.close()
+                return
+        super().mousePressEvent(event)
+
+    def resizeEvent(self, event):
+        if self.parent():
+            self.setGeometry(0, 0, self.parent().width(), self.parent().height())
+        super().resizeEvent(event)
+
+
 class MacroSettingsPanel(QWidget):
     """
     Settings panel for the macro system (fits in content stack).
@@ -414,20 +2926,23 @@ class MacroSettingsPanel(QWidget):
         # Build absolute path for icons
         import os
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow.png").replace("\\", "/")
+        up_arrow_path = os.path.join(script_dir, "UI Icons", "up-arrow-triangle.svg").replace("\\", "/")
+        down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
         
         self.setStyleSheet(f"""
             QWidget#macroPanel {{
                 background: transparent;
             }}
             QGroupBox {{
-                border: none;
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 12px;
                 margin-top: 12px;
                 padding: 15px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 15px;
                 font-weight: bold;
                 color: #FF5B06;
-                background: rgba(30, 33, 40, 0.6);
+                background: rgba(255, 255, 255, 0.03);
             }}
             QGroupBox::title {{
                 subcontrol-origin: margin;
@@ -455,77 +2970,186 @@ class MacroSettingsPanel(QWidget):
                 border: none;
                 color: white;
             }}
-            QLineEdit, QSpinBox, QComboBox {{
+            QLineEdit {{
                 background: rgba(30, 33, 40, 0.9);
                 color: #e0e0e0;
                 border: none;
                 padding: 10px;
                 border-radius: 6px;
             }}
-            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {{
+            QLineEdit:focus {{
                 border: none;
+            }}
+            QSpinBox {{
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 0px 18px 0px 4px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QSpinBox QLineEdit {{
+                background: transparent;
+                color: #e0e0e0;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                selection-background-color: #FF5B06;
+            }}
+            QSpinBox:hover {{
+                background-color: rgba(40, 40, 40, 0.95);
+                border-color: #FF5B06;
+                color: #ffffff;
+            }}
+            QSpinBox::up-button {{
+                width: 16px;
+                background: rgba(60, 64, 72, 0.8);
+                border: none;
+                border-top-right-radius: 5px;
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+            }}
+            QSpinBox::up-button:hover {{
+                background: rgba(255, 91, 6, 0.4);
+            }}
+            QSpinBox::up-arrow {{
+                image: url('{up_arrow_path}');
+                width: 8px;
+                height: 8px;
+            }}
+            QSpinBox::down-button {{
+                width: 16px;
+                background: rgba(60, 64, 72, 0.8);
+                border: none;
+                border-bottom-right-radius: 5px;
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+            }}
+            QSpinBox::down-button:hover {{
+                background: rgba(255, 91, 6, 0.4);
+            }}
+            QSpinBox::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 8px;
+                height: 8px;
+            }}
+            QComboBox {{
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 6px 28px 6px 12px;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+            QComboBox:hover {{
+                background-color: rgba(40, 40, 40, 0.95);
+                border-color: #FF5B06;
+                color: #ffffff;
             }}
             QComboBox::drop-down {{
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 25px;
-                border-left: 1px solid rgba(255, 91, 6, 0.3);
-                border-top-right-radius: 6px;
-                border-bottom-right-radius: 6px;
-                background: rgba(255, 91, 6, 0.3);
+                width: 24px;
+                border: none;
+                background: transparent;
             }}
             QComboBox::down-arrow {{
-                image: url({down_arrow_path});
-                width: 12px;
-                height: 12px;
+                image: url('{down_arrow_path}');
+                width: 10px;
+                height: 10px;
             }}
             QComboBox QAbstractItemView {{
-                background: #1a1a1a;
+                background-color: #1e2128;
                 color: #e0e0e0;
-                border: none;
-                selection-background-color: #FF5B06;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 28px;
+                padding: 4px 10px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
             }}
             QListWidget {{
-                background: rgba(30, 33, 40, 0.5);
-                border: none;
-                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
                 color: #e0e0e0;
+                outline: none;
             }}
             QListWidget::item {{
-                padding: 12px;
-                border-bottom: 1px solid rgba(80, 80, 80, 0.2);
+                padding: 8px 12px;
+                border-radius: 4px;
             }}
             QListWidget::item:selected {{
-                background: rgba(255, 91, 6, 0.3);
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+                font-weight: bold;
+                outline: none;
             }}
             QListWidget::item:hover {{
-                background: rgba(255, 91, 6, 0.2);
+                background-color: rgba(255, 255, 255, 0.05);
+                color: #ffffff;
             }}
             QLabel {{
                 color: #e0e0e0;
             }}
             QCheckBox {{
                 color: #e0e0e0;
+                font-size: 13px;
+                spacing: 8px;
             }}
             QCheckBox::indicator {{
                 width: 18px;
                 height: 18px;
+                border-radius: 4px;
+                border: 2px solid #555;
+                background: rgba(30, 33, 40, 0.9);
+            }}
+            QCheckBox::indicator:hover {{
+                border-color: #FF5B06;
+            }}
+            QCheckBox::indicator:checked {{
+                background: #FF5B06;
+                border: 2px solid #FF5B06;
             }}
             QScrollBar:vertical {{
-                background: transparent;
-                width: 10px;
-                border-radius: 5px;
+                background: rgba(20, 22, 28, 0.6);
+                width: 14px;
+                border-radius: 7px;
+                margin: 2px;
             }}
             QScrollBar::handle:vertical {{
-                background: rgba(255, 91, 6, 0.5);
-                border-radius: 5px;
-                min-height: 30px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06);
+                border-radius: 6px;
+                min-height: 40px;
+                border: 1px solid rgba(253, 169, 3, 0.8);
             }}
             QScrollBar::handle:vertical:hover {{
-                background: #FF5B06;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903);
+                border: 1px solid #FFFF00;
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
+                height: 0px;
+                background: none;
+                border: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: transparent;
             }}
         """)
         
@@ -641,7 +3265,7 @@ class MacroSettingsPanel(QWidget):
         tab_bar_layout.setSpacing(4)
         
         # Tab button names
-        tab_names = ["Home", "DPI", "Macro", "Settings"]
+        tab_names = ["Home", "DPI", "Macro", "Benchmark", "Settings"]
         self._tab_buttons = []
         self._current_tab = 0  # Default to Home tab
         
@@ -897,7 +3521,7 @@ class MacroSettingsPanel(QWidget):
         self._debounce_slider.setCursor(Qt.PointingHandCursor)
         
         # Spinbox for manual input
-        self._debounce_spinbox = QSpinBox()
+        self._debounce_spinbox = AdaptiveSpinBox()
         self._debounce_spinbox.setObjectName("helxairo_debounceSpinbox")
         self._debounce_spinbox.setRange(0, 30)
         self._debounce_spinbox.setValue(10)
@@ -1096,7 +3720,13 @@ class MacroSettingsPanel(QWidget):
         dpi_tab = QWidget()
         dpi_scroll = SmoothScrollArea()
         dpi_scroll.setWidgetResizable(True)
-        dpi_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        dpi_scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical { background: rgba(20, 22, 28, 0.6); width: 14px; border-radius: 7px; margin: 2px; }
+            QScrollBar::handle:vertical { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06); border-radius: 6px; min-height: 40px; border: 1px solid rgba(253, 169, 3, 0.8); }
+            QScrollBar::handle:vertical:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903); border: 1px solid #FFFF00; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; background: none; }
+        """)
         
         dpi_content = QWidget()
         dpi_layout = QVBoxLayout(dpi_content)
@@ -1493,20 +4123,6 @@ class MacroSettingsPanel(QWidget):
         self._mode_combo.setObjectName("helxairo_modeCombo")
         self._mode_combo.addItems(["LP", "HP", "Corded"])
         self._mode_combo.setFixedWidth(100)
-        self._mode_combo.setStyleSheet("""
-            QComboBox {
-                background: #2a2d35;
-                color: #e0e0e0;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 10px;
-            }
-            QComboBox QAbstractItemView {
-                background: #2a2d35;
-                color: #e0e0e0;
-                selection-background-color: #409eff;
-            }
-        """)
         mode_col.addWidget(self._mode_combo)
         sensor_controls.addLayout(mode_col)
         
@@ -1514,9 +4130,8 @@ class MacroSettingsPanel(QWidget):
         perf_col = QVBoxLayout()
         perf_row = QHBoxLayout()
         
-        self._highest_perf_check = QCheckBox("Highest performance")
+        self._highest_perf_check = AnimatedCheckBox("Highest performance")
         self._highest_perf_check.setObjectName("helxairo_highestPerfCheck")
-        self._highest_perf_check.setStyleSheet("color: #e0e0e0; font-size: 12px;")
         perf_row.addWidget(self._highest_perf_check)
         
         perf_col.addLayout(perf_row)
@@ -1526,20 +4141,6 @@ class MacroSettingsPanel(QWidget):
         self._perf_time_combo.addItems(["10s", "30s", "1min", "2min", "5min", "10min"])
         self._perf_time_combo.setCurrentText("1min")
         self._perf_time_combo.setFixedWidth(80)
-        self._perf_time_combo.setStyleSheet("""
-            QComboBox {
-                background: #2a2d35;
-                color: #e0e0e0;
-                border: none;
-                border-radius: 4px;
-                padding: 4px 8px;
-            }
-            QComboBox QAbstractItemView {
-                background: #2a2d35;
-                color: #e0e0e0;
-                selection-background-color: #409eff;
-            }
-        """)
         self._perf_time_combo.currentTextChanged.connect(self._on_perf_time_changed)
         perf_col.addWidget(self._perf_time_combo)
         sensor_controls.addLayout(perf_col)
@@ -1548,33 +4149,14 @@ class MacroSettingsPanel(QWidget):
         toggles_col = QVBoxLayout()
         toggles_col.setSpacing(8)
         
-        toggle_style = """
-            QCheckBox {
-                color: #e0e0e0;
-                font-size: 12px;
-            }
-            QCheckBox::indicator {
-                width: 36px;
-                height: 20px;
-                border-radius: 10px;
-                background: #4a4d55;
-            }
-            QCheckBox::indicator:checked {
-                background: #FF5B06;
-            }
-        """
-        
-        self._ripple_toggle = QCheckBox("Ripple control")
+        self._ripple_toggle = AnimatedCheckBox("Ripple control")
         self._ripple_toggle.setObjectName("helxairo_rippleToggle")
-        self._ripple_toggle.setStyleSheet(toggle_style)
         toggles_col.addWidget(self._ripple_toggle)
         
-        self._angle_snap_toggle = QCheckBox("Angle snap")
+        self._angle_snap_toggle = AnimatedCheckBox("Angle snap")
         self._angle_snap_toggle.setObjectName("helxairo_angleSnapToggle")
-        self._angle_snap_toggle.setStyleSheet(toggle_style)
         toggles_col.addWidget(self._angle_snap_toggle)
         
-        sensor_controls.addLayout(toggles_col)
         sensor_controls.addLayout(toggles_col)
         sensor_controls.addStretch()
         
@@ -1620,20 +4202,6 @@ class MacroSettingsPanel(QWidget):
             self._effect_combo.addItem(name, mode_id)
             
         self._effect_combo.setFixedWidth(120)
-        self._effect_combo.setStyleSheet("""
-            QComboBox {
-                background: #2a2d35;
-                color: #e0e0e0;
-                border: none;
-                border-radius: 4px;
-                padding: 6px 10px;
-            }
-            QComboBox QAbstractItemView {
-                background: #2a2d35;
-                color: #e0e0e0;
-                selection-background-color: #409eff;
-            }
-        """)
         effect_controls.addWidget(self._effect_combo)
         
         # Brightness slider
@@ -1777,25 +4345,82 @@ class MacroSettingsPanel(QWidget):
         
         # === MACRO TAB ===
         macro_tab = QWidget()
-        macro_scroll = SmoothScrollArea()
-        macro_scroll.setWidgetResizable(True)
-        macro_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        macro_tab.setObjectName("helxairo_macroTab")
+        macro_tab_layout = QVBoxLayout(macro_tab)
+        macro_tab_layout.setContentsMargins(20, 15, 20, 20)
+        macro_tab_layout.setSpacing(15)
 
-        macro_content = QWidget()
-        macro_content.setStyleSheet("background: transparent;")
-        macro_layout = QVBoxLayout(macro_content)
-        macro_layout.setContentsMargins(20, 20, 20, 20)
-        macro_layout.setSpacing(15)
+        # ── SUB-TAB NAVIGATION BAR ──────────────────
+        sub_tab_container = QWidget()
+        sub_tab_container.setObjectName("macroSubNav")
+        sub_tab_container.setFixedHeight(40)
+        sub_tab_container.setStyleSheet("""
+            QWidget#macroSubNav {
+                background: rgba(26, 26, 26, 0.95);
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton {
+                background: transparent;
+                color: #888888;
+                border: none;
+                border-bottom: 2px solid transparent;
+                padding: 6px 16px;
+                font-size: 12px;
+                font-weight: 600;
+                font-family: 'Orbitron', sans-serif;
+            }
+            QPushButton:hover {
+                color: #e0e0e0;
+                background: rgba(255, 91, 6, 0.1);
+                border-radius: 4px;
+            }
+            QPushButton:checked {
+                color: #FF5B06;
+                border-bottom: 2px solid #FF5B06;
+                background: transparent;
+                border-radius: 0px;
+            }
+        """)
+        sub_tab_layout = QHBoxLayout(sub_tab_container)
+        sub_tab_layout.setContentsMargins(6, 4, 6, 4)
+        sub_tab_layout.setSpacing(6)
 
-        # Shared QGroupBox style — matches Settings tab exactly
+        sub_tab_names = ["Editor", "Live Recorder", "Profiles"]
+        sub_tab_keys = ["editor", "recorder", "profiles"]
+        self._macro_sub_buttons = []
+        self._current_macro_subtab = 0  # Default to Editor
+
+        for i, (name, key) in enumerate(zip(sub_tab_names, sub_tab_keys)):
+            btn = QPushButton(name)
+            btn.setObjectName(f"macroSubNav_{key}")
+            btn.setFixedHeight(30)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setCheckable(True)
+            btn.setChecked(i == 0)
+            btn.clicked.connect(lambda checked, idx=i: self._switch_macro_subtab(idx))
+            self._macro_sub_buttons.append(btn)
+            sub_tab_layout.addWidget(btn)
+
+        sub_tab_layout.addStretch()
+        macro_tab_layout.addWidget(sub_tab_container)
+
+        # ── SUB-PAGE STACK ──────────────────────────
+        self._macro_sub_stack = QStackedWidget()
+        self._macro_sub_stack.setObjectName("macroSubStack")
+
+        # Shared QGroupBox style — matches Settings tab & HELXAIL exactly
         _grp_style = """
             QGroupBox {
                 color: #ff5b06;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 16px;
                 font-weight: bold;
-                border: none;
-                border-radius: 6px;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
                 margin-top: 10px;
-                padding-top: 15px;
+                padding: 15px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -1823,68 +4448,449 @@ class MacroSettingsPanel(QWidget):
             QPushButton:disabled { color: #555; border-color: transparent; }
         """
 
-        # Shared combo style — matches DPI tab
-        _combo_style = """
-            QComboBox {
-                background: #2a2d35;
+        # Shared combo style — matches HELXAIL hardware panel style
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        up_arrow_path = os.path.join(script_dir, "UI Icons", "up-arrow-triangle.svg").replace("\\", "/")
+        down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+
+        _spinbox_style = f"""
+            QSpinBox {{
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 0px 18px 0px 4px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QSpinBox QLineEdit {{
+                background: transparent;
                 color: #e0e0e0;
                 border: none;
-                border-radius: 4px;
-                padding: 6px 10px;
-            }
-            QComboBox:hover { border-color: transparent; }
-            QComboBox::drop-down { border: none; width: 20px; }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 6px solid #888;
-            }
-            QComboBox QAbstractItemView {
-                background: #2a2d35;
-                color: #e0e0e0;
-                border: none;
+                padding: 0px;
+                margin: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
                 selection-background-color: #FF5B06;
+            }}
+            QSpinBox:hover {{
+                background-color: rgba(40, 40, 40, 0.95);
+                border-color: #FF5B06;
+                color: #ffffff;
+            }}
+            QSpinBox::up-button {{
+                width: 16px;
+                background: rgba(60, 64, 72, 0.8);
+                border: none;
+                border-top-right-radius: 5px;
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+            }}
+            QSpinBox::up-button:hover {{
+                background: rgba(255, 91, 6, 0.4);
+            }}
+            QSpinBox::up-arrow {{
+                image: url('{up_arrow_path}');
+                width: 8px;
+                height: 8px;
+            }}
+            QSpinBox::down-button {{
+                width: 16px;
+                background: rgba(60, 64, 72, 0.8);
+                border: none;
+                border-bottom-right-radius: 5px;
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+            }}
+            QSpinBox::down-button:hover {{
+                background: rgba(255, 91, 6, 0.4);
+            }}
+            QSpinBox::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 8px;
+                height: 8px;
+            }}
+        """
+
+        _combo_style = f"""
+            QComboBox {{
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 6px 28px 6px 12px;
+                font-size: 12px;
+                font-weight: 600;
+            }}
+            QComboBox:hover {{
+                background-color: rgba(40, 40, 40, 0.95);
+                border-color: #FF5B06;
+                color: #ffffff;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #1e2128;
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 28px;
+                padding: 4px 10px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }}
+        """
+
+        _unit_combo_style = f"""
+            QComboBox {{
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 4px 18px 4px 8px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QComboBox:hover {{
+                background-color: rgba(40, 40, 40, 0.95);
+                border-color: #FF5B06;
+                color: #ffffff;
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 14px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 8px;
+                height: 8px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: #1e2128;
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 24px;
+                padding: 2px 6px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }}
+        """
+
+        _lineedit_style = """
+            QLineEdit {
+                background-color: rgba(30, 30, 30, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 6px;
+                color: #ffffff;
+                padding: 4px 8px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #FF5B06;
+                background-color: rgba(30, 30, 30, 0.85);
             }
         """
-        # ── Macro Editor (New Top Section) ──────────────────────────────
+
+        _scroll_style = """
+            QScrollArea {
+                border: none;
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                background: rgba(20, 22, 28, 0.6);
+                width: 14px;
+                border-radius: 7px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06);
+                border-radius: 6px;
+                min-height: 40px;
+                border: 1px solid rgba(253, 169, 3, 0.8);
+            }
+            QScrollBar::handle:vertical:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903);
+                border: 1px solid #FFFF00;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+                border: none;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
+        """
+
+        _list_style = """
+            QListWidget {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                color: #e0e0e0;
+                font-size: 13px;
+                outline: none;
+            }
+            QListWidget::item {
+                padding: 3px 6px;
+                border-radius: 6px;
+            }
+            QListWidget::item:selected {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+                font-weight: bold;
+                outline: none;
+            }
+            QListWidget::item:hover {
+                background-color: rgba(255, 255, 255, 0.05);
+                color: #ffffff;
+            }
+        """
+
+        # ── SUB-PAGE 0: MACRO EDITOR (Default Page) ──────────────
+        page_editor = QWidget()
+        page_editor_scroll = SmoothScrollArea()
+        page_editor_scroll.setWidgetResizable(True)
+        page_editor_scroll.setStyleSheet(_scroll_style)
+        page_editor_content = QWidget()
+        page_editor_content.setStyleSheet("background: transparent;")
+        layout_editor = QVBoxLayout(page_editor_content)
+        layout_editor.setContentsMargins(0, 0, 0, 0)
+        layout_editor.setSpacing(15)
+
+        # Quick Actions (Auto-Clicker) Card at top of Editor
+        quick_group = QGroupBox("Quick Actions")
+        quick_group.setStyleSheet(_grp_style)
+        quick_layout = QVBoxLayout(quick_group)
+        quick_layout.setSpacing(12)
+        quick_layout.setAlignment(Qt.AlignVCenter)
+
+        ac_layout = QHBoxLayout()
+        ac_layout.setSpacing(10)
+        ac_layout.setAlignment(Qt.AlignVCenter)
+
+        # 1. Macro Name Input
+        ac_name_lbl = QLabel("Macro Name")
+        ac_name_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        ac_name_lbl.setAlignment(Qt.AlignVCenter)
+        ac_layout.addWidget(ac_name_lbl, 0, Qt.AlignVCenter)
+
+        self.ac_name_input = QLineEdit()
+        self.ac_name_input.setObjectName("helxairo_acName")
+        self.ac_name_input.setPlaceholderText("Auto-clicker")
+        self.ac_name_input.setFixedWidth(110)
+        self.ac_name_input.setFixedHeight(30)
+        self.ac_name_input.setStyleSheet(_lineedit_style)
+        ac_layout.addWidget(self.ac_name_input, 0, Qt.AlignVCenter)
+
+        # 2. Bound Apps Input
+        ac_apps_lbl = QLabel("Bound Apps")
+        ac_apps_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        ac_apps_lbl.setAlignment(Qt.AlignVCenter)
+        ac_apps_lbl.setToolTip("Auto-activate this profile when specified apps/games are running (comma-separated, e.g., gta5.exe, valorant.exe)")
+        ac_layout.addWidget(ac_apps_lbl, 0, Qt.AlignVCenter)
+
+        self.ac_apps_input = QLineEdit()
+        self.ac_apps_input.setObjectName("helxairo_acApps")
+        self.ac_apps_input.setPlaceholderText("e.g. gta5.exe")
+        self.ac_apps_input.setToolTip("Auto-activate this profile when specified apps/games are running (comma-separated, e.g., gta5.exe, valorant.exe)")
+        self.ac_apps_input.setFixedWidth(110)
+        self.ac_apps_input.setFixedHeight(30)
+        self.ac_apps_input.setStyleSheet(_lineedit_style)
+        self.ac_apps_input.editingFinished.connect(self._save_ac_apps)
+        ac_layout.addWidget(self.ac_apps_input, 0, Qt.AlignVCenter)
+
+        # 2. Auto Click Key Selector
+        ac_lbl = QLabel("Auto Click Key")
+        ac_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        ac_lbl.setAlignment(Qt.AlignVCenter)
+        ac_layout.addWidget(ac_lbl, 0, Qt.AlignVCenter)
+
+        self.ac_button = QComboBox()
+        self.ac_button.setObjectName("helxairo_acType")
+        self.ac_button.addItems(["Left Click", "Right Click", "Middle Click", "Custom Key"])
+        self.ac_button.setFixedWidth(120)
+        self.ac_button.setFixedHeight(30)
+        self.ac_button.setStyleSheet(_combo_style)
+        self.ac_button.currentTextChanged.connect(self._on_ac_type_changed)
+        ac_layout.addWidget(self.ac_button, 0, Qt.AlignVCenter)
+
+        self.ac_custom_key = HotkeyRecordButton("E")
+        self.ac_custom_key.setFixedWidth(80)
+        self.ac_custom_key.setFixedHeight(30)
+        self.ac_custom_key.setVisible(False)
+        ac_layout.addWidget(self.ac_custom_key, 0, Qt.AlignVCenter)
+
+        interval_lbl = QLabel("Interval")
+        interval_lbl.setStyleSheet("color: #e0e0e0;")
+        interval_lbl.setAlignment(Qt.AlignVCenter)
+        ac_layout.addWidget(interval_lbl, 0, Qt.AlignVCenter)
+
+        self.ac_interval = AdaptiveSpinBox()
+        self.ac_interval.setObjectName("helxairo_acInterval")
+        self.ac_interval.setRange(1, 999)
+        self.ac_interval.setValue(500)
+        self.ac_interval.setSingleStep(5)
+        self.ac_interval.setSuffix("")
+        self.ac_interval.setFixedWidth(75)
+        self.ac_interval.setFixedHeight(30)
+        self.ac_interval.setStyleSheet(_spinbox_style)
+        ac_layout.addWidget(self.ac_interval, 0, Qt.AlignVCenter)
+
+        self.ac_unit = QComboBox()
+        self.ac_unit.setObjectName("helxairo_acUnit")
+        self.ac_unit.addItems(["ms", "s"])
+        self.ac_unit.setCurrentText("ms")
+        self.ac_unit.setFixedWidth(65)
+        self.ac_unit.setFixedHeight(30)
+        self.ac_unit.setStyleSheet(_unit_combo_style)
+        self.ac_unit.currentTextChanged.connect(self._on_ac_unit_changed)
+        ac_layout.addWidget(self.ac_unit, 0, Qt.AlignVCenter)
+
+        hotkey_lbl = QLabel("Hotkey")
+        hotkey_lbl.setStyleSheet("color: #e0e0e0;")
+        hotkey_lbl.setAlignment(Qt.AlignVCenter)
+        ac_layout.addWidget(hotkey_lbl, 0, Qt.AlignVCenter)
+
+        self.ac_hotkey = HotkeyRecordButton("F8")
+        self.ac_hotkey.setFixedWidth(80)
+        self.ac_hotkey.setFixedHeight(30)
+        ac_layout.addWidget(self.ac_hotkey, 0, Qt.AlignVCenter)
+
+        self.ac_create_btn = FadeHoverButton("Create", border_radius=6.0)
+        self.ac_create_btn.setObjectName("helxairo_acCreateBtn")
+        self.ac_create_btn.setFixedHeight(30)
+        self.ac_create_btn.setFixedWidth(85)
+        self.ac_create_btn.clicked.connect(self._create_autoclicker)
+        ac_layout.addWidget(self.ac_create_btn, 0, Qt.AlignVCenter)
+
+        ac_layout.addStretch()
+        quick_layout.addLayout(ac_layout)
+        layout_editor.addWidget(quick_group)
+
+        editor_group = QGroupBox("Macro Editor")
+        editor_group.setStyleSheet(_grp_style)
+        editor_group_layout = QVBoxLayout(editor_group)
+        editor_group_layout.setSpacing(12)
+
         editor_layout = QHBoxLayout()
         editor_layout.setSpacing(20)
 
         # Left Column: Macro list
+        # Left Column: Unified Macro list
         col1 = QVBoxLayout()
         col1_lbl = QLabel("Macro list")
         col1_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col1.addWidget(col1_lbl)
 
-        self.editor_macro_list = QListWidget()
-        self.editor_macro_list.setObjectName("helxairo_editorMacroList")
-        self.editor_macro_list.setMinimumHeight(350)
-        self.editor_macro_list.setStyleSheet("""
-            QListWidget {
-                background: #2a2d35;
-                border: none;
-                border-radius: 4px;
-                color: #e0e0e0;
-                font-size: 13px;
-            }
-            QListWidget::item { padding: 8px 12px; }
-            QListWidget::item:selected { background: #FF5B06; color: white; }
-            QListWidget::item:hover { background: #3a3d45; }
-        """)
-        col1.addWidget(self.editor_macro_list)
+        self.active_list = QListWidget()
+        self.active_list.setObjectName("helxairo_activeList")
+        self.active_list.setMinimumHeight(350)
+        self.active_list.setStyleSheet(_list_style)
+        enable_rubber_band_selection(self.active_list)
+        
+        def _on_active_list_resize(event):
+            type(self.active_list).resizeEvent(self.active_list, event)
+            vp_w = max(0, self.active_list.viewport().width() - 4)
+            for i in range(self.active_list.count()):
+                item = self.active_list.item(i)
+                w = self.active_list.itemWidget(item)
+                if item and w:
+                    h = 80 if getattr(w, '_is_expanded', False) else 38
+                    item.setSizeHint(QSize(vp_w, h))
+            self.active_list.doItemsLayout()
+
+        self.active_list.resizeEvent = _on_active_list_resize
+        col1.addWidget(self.active_list)
+
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        icons_dir = os.path.join(script_dir, "UI Icons")
 
         col1_btns = QHBoxLayout()
-        col1_btns.setSpacing(10)
-        self.editor_new_macro_btn = QPushButton("New Macro")
-        self.editor_new_macro_btn.setStyleSheet(_btn_style)
-        self.editor_new_macro_btn.setCursor(Qt.PointingHandCursor)
+        col1_btns.setSpacing(6)
+
+        self.editor_new_macro_btn = FadeHoverButton("", is_secondary=False)
+        self.editor_new_macro_btn.setIcon(QIcon(os.path.join(icons_dir, "plus-icon.svg")))
+        self.editor_new_macro_btn.setIconSize(QSize(16, 16))
+        self.editor_new_macro_btn.setFixedHeight(32)
+        self.editor_new_macro_btn.setToolTip("New Macro")
         col1_btns.addWidget(self.editor_new_macro_btn)
 
-        self.editor_delete_macro_btn = QPushButton("Delete")
-        self.editor_delete_macro_btn.setStyleSheet(_btn_style)
-        self.editor_delete_macro_btn.setCursor(Qt.PointingHandCursor)
-        col1_btns.addWidget(self.editor_delete_macro_btn)
+        self.edit_selected_btn = FadeHoverButton("", is_secondary=True)
+        self.edit_selected_btn.setObjectName("helxairo_editSelected")
+        self.edit_selected_btn.setIcon(QIcon(os.path.join(icons_dir, "edit.svg")))
+        self.edit_selected_btn.setIconSize(QSize(16, 16))
+        self.edit_selected_btn.setFixedHeight(32)
+        self.edit_selected_btn.setToolTip("Edit Macro")
+        self.edit_selected_btn.clicked.connect(self._edit_selected)
+        col1_btns.addWidget(self.edit_selected_btn)
+
+        self.toggle_macro_btn = FadeHoverButton("", is_secondary=True)
+        self.toggle_macro_btn.setObjectName("helxairo_toggleMacro")
+        self.toggle_macro_btn.setIcon(QIcon(os.path.join(icons_dir, "star-white.svg")))
+        self.toggle_macro_btn.setIconSize(QSize(16, 16))
+        self.toggle_macro_btn.setFixedHeight(32)
+        self.toggle_macro_btn.setToolTip("Toggle Active")
+        self.toggle_macro_btn.clicked.connect(self._toggle_selected_macro)
+        col1_btns.addWidget(self.toggle_macro_btn)
+
+        self.delete_selected_btn = FadeHoverButton("", is_secondary=True)
+        self.delete_selected_btn.setObjectName("helxairo_deleteSelected")
+        self.delete_selected_btn.setIcon(QIcon(os.path.join(icons_dir, "trash-icon-white.svg")))
+        self.delete_selected_btn.setIconSize(QSize(16, 16))
+        self.delete_selected_btn.setFixedHeight(32)
+        self.delete_selected_btn.setToolTip("Delete Macro")
+        self.delete_selected_btn.clicked.connect(self._delete_selected)
+        col1_btns.addWidget(self.delete_selected_btn)
+
+        self.disable_all_btn = FadeHoverButton("", is_secondary=True)
+        self.disable_all_btn.setObjectName("helxairo_stopAll")
+        self.disable_all_btn.setIcon(QIcon(os.path.join(icons_dir, "close-icon-white.svg")))
+        self.disable_all_btn.setIconSize(QSize(16, 16))
+        self.disable_all_btn.setFixedHeight(32)
+        self.disable_all_btn.setToolTip("Stop All Macros")
+        self.disable_all_btn.clicked.connect(self._disable_all)
+        col1_btns.addWidget(self.disable_all_btn)
 
         col1.addLayout(col1_btns)
         editor_layout.addLayout(col1, 1)
@@ -1898,20 +4904,21 @@ class MacroSettingsPanel(QWidget):
         self.editor_keys_list = QListWidget()
         self.editor_keys_list.setObjectName("helxairo_editorKeysList")
         self.editor_keys_list.setMinimumHeight(350)
-        self.editor_keys_list.setStyleSheet(self.editor_macro_list.styleSheet())
+        self.editor_keys_list.setStyleSheet(self.active_list.styleSheet())
+        enable_rubber_band_selection(self.editor_keys_list)
         col2.addWidget(self.editor_keys_list)
 
         col2_btns = QHBoxLayout()
         col2_btns.setSpacing(10)
 
-        self.editor_modify_key_btn = QPushButton("Modify")
-        self.editor_modify_key_btn.setStyleSheet(_btn_style)
-        self.editor_modify_key_btn.setCursor(Qt.PointingHandCursor)
+        self.editor_modify_key_btn = FadeHoverButton("Modify", is_secondary=True)
+        self.editor_modify_key_btn.setFixedHeight(32)
+        self.editor_modify_key_btn.setToolTip("Modify selected key action")
         col2_btns.addWidget(self.editor_modify_key_btn)
 
-        self.editor_delete_key_btn = QPushButton("Delete")
-        self.editor_delete_key_btn.setStyleSheet(_btn_style)
-        self.editor_delete_key_btn.setCursor(Qt.PointingHandCursor)
+        self.editor_delete_key_btn = FadeHoverButton("Delete", is_secondary=True)
+        self.editor_delete_key_btn.setFixedHeight(32)
+        self.editor_delete_key_btn.setToolTip("Delete selected key from sequence")
         col2_btns.addWidget(self.editor_delete_key_btn)
 
         col2.addLayout(col2_btns)
@@ -1920,27 +4927,10 @@ class MacroSettingsPanel(QWidget):
         # Right Column: Controls
         col3 = QVBoxLayout()
         col3.setSpacing(10)
-        
-        # We need a spacer above to align controls properly with lists
         col3.addSpacing(22)
 
-        self.editor_start_record_btn = QPushButton("  Start recording")
-        self.editor_start_record_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(220, 50, 50, 0.15);
-                color: #e0e0e0;
-                border: none;
-                border-radius: 4px;
-                padding: 8px;
-                font-size: 13px;
-                font-weight: 500;
-            }
-            QPushButton:hover { background: rgba(220, 50, 50, 0.3); color: white; }
-            QPushButton:pressed { background: rgba(220, 50, 50, 0.5); }
-        """)
-        self.editor_start_record_btn.setCursor(Qt.PointingHandCursor)
-        # Adding a red dot using Unicode
-        self.editor_start_record_btn.setText("🔴 Start recording")
+        self.editor_start_record_btn = FadeHoverButton("Start recording", is_secondary=True)
+        self.editor_start_record_btn.setFixedHeight(36)
         col3.addWidget(self.editor_start_record_btn)
 
         col3.addSpacing(15)
@@ -1951,7 +4941,6 @@ class MacroSettingsPanel(QWidget):
             QRadioButton::indicator:checked { background: #FF5B06; border: none; }
         """
         
-        # Delay section
         self.rb_auto_delay = QRadioButton("Auto insert delay")
         self.rb_auto_delay.setStyleSheet(_radio_style)
         col3.addWidget(self.rb_auto_delay)
@@ -1960,19 +4949,16 @@ class MacroSettingsPanel(QWidget):
         self.rb_default_delay.setStyleSheet(_radio_style)
         col3.addWidget(self.rb_default_delay)
 
-        self.spin_default_delay = QSpinBox()
+        self.spin_default_delay = AdaptiveSpinBox()
         self.spin_default_delay.setRange(0, 9999)
         self.spin_default_delay.setValue(10)
         self.spin_default_delay.setAlignment(Qt.AlignCenter)
-        self.spin_default_delay.setStyleSheet("""
-            QSpinBox { background: #2a2d35; color: #e0e0e0; border: none; border-radius: 4px; padding: 4px; margin-left: 24px; }
-            QSpinBox::up-button, QSpinBox::down-button { width: 0px; }
-        """)
+        self.spin_default_delay.setFixedWidth(85)
+        self.spin_default_delay.setStyleSheet(_spinbox_style)
         col3.addWidget(self.spin_default_delay)
 
         col3.addSpacing(15)
 
-        # Cycle section
         self.rb_cycle_release = QRadioButton("Cycle until the button is released")
         self.rb_cycle_release.setStyleSheet(_radio_style)
         col3.addWidget(self.rb_cycle_release)
@@ -1990,16 +4976,16 @@ class MacroSettingsPanel(QWidget):
         self.rb_cycle_times.setChecked(True)
         col3.addWidget(self.rb_cycle_times)
 
-        self.spin_cycle_times = QSpinBox()
+        self.spin_cycle_times = AdaptiveSpinBox()
         self.spin_cycle_times.setRange(1, 9999)
         self.spin_cycle_times.setValue(1)
         self.spin_cycle_times.setAlignment(Qt.AlignCenter)
-        self.spin_cycle_times.setStyleSheet(self.spin_default_delay.styleSheet())
+        self.spin_cycle_times.setFixedWidth(85)
+        self.spin_cycle_times.setStyleSheet(_spinbox_style)
         col3.addWidget(self.spin_cycle_times)
 
         col3.addSpacing(15)
 
-        # Insert Command
         lbl_insert = QLabel("Insert command")
         lbl_insert.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col3.addWidget(lbl_insert)
@@ -2010,147 +4996,51 @@ class MacroSettingsPanel(QWidget):
 
         col3.addSpacing(10)
 
-        # Save Button
-        self.editor_save_btn = QPushButton("Save")
-        self.editor_save_btn.setStyleSheet("""
-            QPushButton {
-                background: #FF5B06;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background: #ff7530; }
-            QPushButton:pressed { background: #e04b00; }
-        """)
-        self.editor_save_btn.setCursor(Qt.PointingHandCursor)
+        self.editor_save_btn = FadeHoverButton("Save", is_secondary=False)
+        self.editor_save_btn.setIcon(QIcon(os.path.join(icons_dir, "save-floppy.svg")))
+        self.editor_save_btn.setIconSize(QSize(16, 16))
+        self.editor_save_btn.setFixedHeight(36)
         col3.addWidget(self.editor_save_btn)
         
         col3.addStretch()
         editor_layout.addLayout(col3, 1)
+        editor_group_layout.addLayout(editor_layout)
+        layout_editor.addWidget(editor_group)
+        layout_editor.addStretch()
 
-        macro_layout.addLayout(editor_layout)
-        
-        # Separator line
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        sep.setStyleSheet("background-color: #4a4d55;")
-        macro_layout.addWidget(sep)
-        macro_layout.addSpacing(10)
+        page_editor_scroll.setWidget(page_editor_content)
+        pe_layout = QVBoxLayout(page_editor)
+        pe_layout.setContentsMargins(0, 0, 0, 0)
+        pe_layout.addWidget(page_editor_scroll)
 
-        # ── Quick Actions ──────────────────────────────
-        quick_group = QGroupBox("Quick Actions")
-        quick_group.setStyleSheet(_grp_style)
-        quick_layout = QVBoxLayout(quick_group)
-        quick_layout.setSpacing(12)
+        self._macro_sub_stack.addWidget(page_editor)
 
-        # Auto-Clicker row
-        ac_layout = QHBoxLayout()
-        ac_layout.setSpacing(10)
+        # ── SUB-PAGE 2: LIVE RECORDER ─────────────────────────────
+        page_recorder = QWidget()
+        page_recorder_scroll = SmoothScrollArea()
+        page_recorder_scroll.setWidgetResizable(True)
+        page_recorder_scroll.setStyleSheet(_scroll_style)
+        page_recorder_content = QWidget()
+        page_recorder_content.setStyleSheet("background: transparent;")
+        layout_recorder = QVBoxLayout(page_recorder_content)
+        layout_recorder.setContentsMargins(0, 0, 0, 0)
+        layout_recorder.setSpacing(15)
 
-        ac_lbl = QLabel("Auto-Clicker:")
-        ac_lbl.setStyleSheet("color: #e0e0e0;")
-        ac_layout.addWidget(ac_lbl)
-
-        self.ac_button = QComboBox()
-        self.ac_button.setObjectName("helxairo_acType")
-        self.ac_button.addItems(["Left Click", "Right Click", "Middle Click", "Custom Key"])
-        self.ac_button.setFixedWidth(130)
-        self.ac_button.setStyleSheet(_combo_style)
-        self.ac_button.currentTextChanged.connect(self._on_ac_type_changed)
-        ac_layout.addWidget(self.ac_button)
-
-        self.ac_custom_key = HotkeyRecordButton("E")
-        self.ac_custom_key.setFixedWidth(80)
-        self.ac_custom_key.setVisible(False)
-        ac_layout.addWidget(self.ac_custom_key)
-
-        interval_lbl = QLabel("Interval:")
-        interval_lbl.setStyleSheet("color: #e0e0e0;")
-        ac_layout.addWidget(interval_lbl)
-
-        self.ac_interval = QSpinBox()
-        self.ac_interval.setObjectName("helxairo_acInterval")
-        self.ac_interval.setRange(1, 5000)
-        self.ac_interval.setValue(100)
-        self.ac_interval.setSuffix(" ms")
-        self.ac_interval.setFixedWidth(95)
-        ac_layout.addWidget(self.ac_interval)
-
-        hotkey_lbl = QLabel("Hotkey:")
-        hotkey_lbl.setStyleSheet("color: #e0e0e0;")
-        ac_layout.addWidget(hotkey_lbl)
-
-        self.ac_hotkey = HotkeyRecordButton("F8")
-        ac_layout.addWidget(self.ac_hotkey)
-
-        self.ac_create_btn = QPushButton("Create")
-        self.ac_create_btn.setObjectName("helxairo_acCreateBtn")
-        self.ac_create_btn.setCursor(Qt.PointingHandCursor)
-        self.ac_create_btn.setStyleSheet(_btn_style)
-        self.ac_create_btn.clicked.connect(self._create_autoclicker)
-        ac_layout.addWidget(self.ac_create_btn)
-
-        ac_layout.addStretch()
-        quick_layout.addLayout(ac_layout)
-
-        # Button Remap row
-        remap_layout = QHBoxLayout()
-        remap_layout.setSpacing(10)
-
-        remap_lbl = QLabel("Button Remap:")
-        remap_lbl.setStyleSheet("color: #e0e0e0;")
-        remap_layout.addWidget(remap_lbl)
-
-        self.remap_from = QComboBox()
-        self.remap_from.setObjectName("helxairo_remapFrom")
-        self.remap_from.addItems(["X1 (Side)", "X2 (Side)", "Middle"])
-        self.remap_from.setFixedWidth(120)
-        self.remap_from.setStyleSheet(_combo_style)
-        remap_layout.addWidget(self.remap_from)
-
-        arrow_lbl = QLabel("→")
-        arrow_lbl.setStyleSheet("color: #FF5B06; font-size: 16px;")
-        remap_layout.addWidget(arrow_lbl)
-
-        self.remap_to = HotkeyRecordButton("ctrl")
-        remap_layout.addWidget(self.remap_to)
-
-        self.remap_create_btn = QPushButton("Create")
-        self.remap_create_btn.setObjectName("helxairo_remapCreateBtn")
-        self.remap_create_btn.setCursor(Qt.PointingHandCursor)
-        self.remap_create_btn.setStyleSheet(_btn_style)
-        self.remap_create_btn.clicked.connect(self._create_remap)
-        remap_layout.addWidget(self.remap_create_btn)
-
-        remap_layout.addStretch()
-        quick_layout.addLayout(remap_layout)
-
-        macro_layout.addWidget(quick_group)
-
-        # ── Macro Recorder ────────────────────────────
         recorder_group = QGroupBox("Record Macro")
         recorder_group.setStyleSheet(_grp_style)
         recorder_layout = QVBoxLayout(recorder_group)
         recorder_layout.setSpacing(12)
 
-        # Initialize recorder state
         self._recorder = None
         self._player = None
         self._current_recording = None
 
-        # Record controls row
         record_controls = QHBoxLayout()
         record_controls.setSpacing(10)
 
-        self.record_btn = QPushButton("Record")
+        self.record_btn = FadeHoverButton("Record")
         self.record_btn.setObjectName("helxairo_recordBtn")
-        self.record_btn.setFixedWidth(120)
-        self.record_btn.setCursor(Qt.PointingHandCursor)
-        self.record_btn.setStyleSheet(_btn_style)
+        self.record_btn.setFixedSize(120, 34)
         self.record_btn.clicked.connect(self._toggle_recording)
         record_controls.addWidget(self.record_btn)
 
@@ -2170,26 +5060,24 @@ class MacroSettingsPanel(QWidget):
 
         recorder_layout.addLayout(record_controls)
 
-        # Options row
         options_row = QHBoxLayout()
         options_row.setSpacing(15)
 
-        self.record_mouse_cb = QCheckBox("Mouse Clicks")
+        self.record_mouse_cb = AnimatedCheckBox("Mouse Clicks")
         self.record_mouse_cb.setChecked(True)
         options_row.addWidget(self.record_mouse_cb)
 
-        self.record_movement_cb = QCheckBox("Mouse Movement")
+        self.record_movement_cb = AnimatedCheckBox("Mouse Movement")
         self.record_movement_cb.setChecked(False)
         options_row.addWidget(self.record_movement_cb)
 
-        self.record_keyboard_cb = QCheckBox("Keyboard")
+        self.record_keyboard_cb = AnimatedCheckBox("Keyboard")
         self.record_keyboard_cb.setChecked(True)
         options_row.addWidget(self.record_keyboard_cb)
 
         options_row.addStretch()
         recorder_layout.addLayout(options_row)
 
-        # Playback options row
         playback_row = QHBoxLayout()
         playback_row.setSpacing(10)
 
@@ -2209,12 +5097,13 @@ class MacroSettingsPanel(QWidget):
         loops_lbl.setStyleSheet("color: #e0e0e0;")
         playback_row.addWidget(loops_lbl)
 
-        self.loop_spin = QSpinBox()
+        self.loop_spin = AdaptiveSpinBox()
         self.loop_spin.setObjectName("helxairo_loopSpin")
         self.loop_spin.setRange(0, 999)
         self.loop_spin.setValue(1)
-        self.loop_spin.setFixedWidth(70)
+        self.loop_spin.setFixedWidth(75)
         self.loop_spin.setToolTip("0 = infinite loop")
+        self.loop_spin.setStyleSheet(_spinbox_style)
         playback_row.addWidget(self.loop_spin)
 
         hotkey2_lbl = QLabel("Hotkey:")
@@ -2227,131 +5116,153 @@ class MacroSettingsPanel(QWidget):
         playback_row.addStretch()
         recorder_layout.addLayout(playback_row)
 
-        # Save/Play/Clear buttons
         save_row = QHBoxLayout()
         save_row.setSpacing(8)
 
-        self.save_recording_btn = QPushButton("Save Recording")
+        self.save_recording_btn = FadeHoverButton("Save Recording")
         self.save_recording_btn.setObjectName("helxairo_saveRec")
-        self.save_recording_btn.setCursor(Qt.PointingHandCursor)
-        self.save_recording_btn.setStyleSheet(_btn_style)
+        self.save_recording_btn.setFixedHeight(34)
         self.save_recording_btn.clicked.connect(self._save_recording)
         self.save_recording_btn.setEnabled(False)
         save_row.addWidget(self.save_recording_btn)
 
-        self.play_recording_btn = QPushButton("Play")
+        self.play_recording_btn = FadeHoverButton("Play")
         self.play_recording_btn.setObjectName("helxairo_playRec")
-        self.play_recording_btn.setCursor(Qt.PointingHandCursor)
-        self.play_recording_btn.setStyleSheet(_btn_style)
+        self.play_recording_btn.setFixedHeight(34)
         self.play_recording_btn.clicked.connect(self._play_recording)
         self.play_recording_btn.setEnabled(False)
         save_row.addWidget(self.play_recording_btn)
 
-        self.clear_recording_btn = QPushButton("Clear")
+        self.clear_recording_btn = FadeHoverButton("Clear", is_secondary=True)
         self.clear_recording_btn.setObjectName("helxairo_clearRec")
-        self.clear_recording_btn.setCursor(Qt.PointingHandCursor)
-        self.clear_recording_btn.setStyleSheet(_btn_style)
+        self.clear_recording_btn.setFixedHeight(34)
         self.clear_recording_btn.clicked.connect(self._clear_recording)
         save_row.addWidget(self.clear_recording_btn)
 
         save_row.addStretch()
         recorder_layout.addLayout(save_row)
+        layout_recorder.addWidget(recorder_group)
+        layout_recorder.addStretch()
 
-        macro_layout.addWidget(recorder_group)
+        page_recorder_scroll.setWidget(page_recorder_content)
+        pr_layout = QVBoxLayout(page_recorder)
+        pr_layout.setContentsMargins(0, 0, 0, 0)
+        pr_layout.addWidget(page_recorder_scroll)
 
-        # ── Active Macros ─────────────────────────────
-        active_group = QGroupBox("Active Macros")
-        active_group.setStyleSheet(_grp_style)
-        active_layout = QVBoxLayout(active_group)
+        self._macro_sub_stack.addWidget(page_recorder)
 
-        self.active_list = QListWidget()
-        self.active_list.setObjectName("helxairo_activeList")
-        self.active_list.setMinimumHeight(160)
-        self.active_list.setStyleSheet("""
-            QListWidget {
-                background: #2a2d35;
-                border: none;
-                border-radius: 4px;
-                color: #e0e0e0;
-                font-size: 12px;
-            }
-            QListWidget::item { padding: 8px 12px; }
-            QListWidget::item:selected { background: #FF5B06; color: white; }
-            QListWidget::item:hover { background: #3a3d45; }
-        """)
-        active_layout.addWidget(self.active_list)
+        # ── SUB-PAGE 3: PROFILES ─────────────────────────────────
+        page_profiles = QWidget()
+        page_profiles_scroll = SmoothScrollArea()
+        page_profiles_scroll.setWidgetResizable(True)
+        page_profiles_scroll.setStyleSheet(_scroll_style)
+        page_profiles_content = QWidget()
+        page_profiles_content.setStyleSheet("background: transparent;")
+        layout_profiles = QVBoxLayout(page_profiles_content)
+        layout_profiles.setContentsMargins(0, 0, 0, 0)
+        layout_profiles.setSpacing(15)
 
-        active_btn_row = QHBoxLayout()
-        active_btn_row.setSpacing(8)
-
-        self.toggle_macro_btn = QPushButton("Toggle Selected")
-        self.toggle_macro_btn.setObjectName("helxairo_toggleMacro")
-        self.toggle_macro_btn.setCursor(Qt.PointingHandCursor)
-        self.toggle_macro_btn.setStyleSheet(_btn_style)
-        self.toggle_macro_btn.clicked.connect(self._toggle_selected_macro)
-        active_btn_row.addWidget(self.toggle_macro_btn)
-
-        self.delete_selected_btn = QPushButton("Delete Selected")
-        self.delete_selected_btn.setObjectName("helxairo_deleteSelected")
-        self.delete_selected_btn.setCursor(Qt.PointingHandCursor)
-        self.delete_selected_btn.setStyleSheet(_btn_style)
-        self.delete_selected_btn.clicked.connect(self._delete_selected)
-        active_btn_row.addWidget(self.delete_selected_btn)
-
-        self.disable_all_btn = QPushButton("Stop All")
-        self.disable_all_btn.setObjectName("helxairo_stopAll")
-        self.disable_all_btn.setCursor(Qt.PointingHandCursor)
-        self.disable_all_btn.setStyleSheet(_btn_style)
-        self.disable_all_btn.clicked.connect(self._disable_all)
-        active_btn_row.addWidget(self.disable_all_btn)
-
-        active_btn_row.addStretch()
-        active_layout.addLayout(active_btn_row)
-
-        macro_layout.addWidget(active_group)
-
-        # ── Profiles ──────────────────────────────────
         profile_group = QGroupBox("Profiles")
         profile_group.setStyleSheet(_grp_style)
         profile_layout = QHBoxLayout(profile_group)
 
-        # Left: profile list + new/delete buttons
         profile_left = QVBoxLayout()
 
         self.profile_list = QListWidget()
         self.profile_list.setObjectName("helxairo_profileList")
-        self.profile_list.setMaximumWidth(200)
-        self.profile_list.setStyleSheet("""
-            QListWidget {
-                background: #2a2d35;
-                border: none;
-                border-radius: 4px;
-                color: #e0e0e0;
-                font-size: 12px;
-            }
-            QListWidget::item { padding: 7px 12px; }
-            QListWidget::item:selected { background: #FF5B06; color: white; }
-            QListWidget::item:hover { background: #3a3d45; }
-        """)
+        self.profile_list.setMaximumWidth(220)
+        self.profile_list.setIconSize(QSize(16, 16))
+        self.profile_list.setStyleSheet(_list_style)
+        enable_rubber_band_selection(self.profile_list)
         self.profile_list.currentItemChanged.connect(self._on_profile_selected)
+        self.profile_list.itemDoubleClicked.connect(self._on_profile_double_clicked)
         profile_left.addWidget(self.profile_list)
 
         profile_btn_row = QHBoxLayout()
         profile_btn_row.setSpacing(6)
 
-        self.new_profile_btn = QPushButton("+")
+        import os as _os
+        _script_dir = _os.path.dirname(_os.path.abspath(__file__))
+        _plus_icon_path = _os.path.join(_script_dir, "UI Icons", "plus-icon.svg").replace("\\", "/")
+        _load_icon_path = _os.path.join(_script_dir, "UI Icons", "folder-load.svg").replace("\\", "/")
+        _save_icon_path = _os.path.join(_script_dir, "UI Icons", "save-floppy.svg").replace("\\", "/")
+        _trash_icon_path = _os.path.join(_script_dir, "UI Icons", "trash-icon-white.svg").replace("\\", "/")
+
+        _btn_icon_style = """
+            QPushButton {
+                background: rgba(40, 40, 40, 0.8);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 91, 6, 0.3);
+            }
+            QPushButton:pressed {
+                background: rgba(255, 91, 6, 0.5);
+            }
+            QPushButton#helxairo_delProfileBtn:hover {
+                background: rgba(220, 53, 69, 0.4);
+            }
+        """
+
+        # 1. New Profile (+)
+        self.new_profile_btn = QPushButton()
         self.new_profile_btn.setObjectName("helxairo_newProfileBtn")
-        self.new_profile_btn.setFixedWidth(36)
+        self.new_profile_btn.setFixedSize(34, 32)
         self.new_profile_btn.setCursor(Qt.PointingHandCursor)
-        self.new_profile_btn.setStyleSheet(_btn_style)
+        self.new_profile_btn.setToolTip("Create New Profile")
+        self.new_profile_btn.setStyleSheet(_btn_icon_style)
+        if _os.path.exists(_plus_icon_path):
+            self.new_profile_btn.setIcon(QIcon(_plus_icon_path))
+            self.new_profile_btn.setIconSize(QSize(16, 16))
+        else:
+            self.new_profile_btn.setText("+")
         self.new_profile_btn.clicked.connect(self._new_profile)
         profile_btn_row.addWidget(self.new_profile_btn)
 
-        self.delete_profile_btn = QPushButton("-")
+        # 2. Load / Activate Profile (Folder with Down Arrow)
+        self.load_profile_btn = QPushButton()
+        self.load_profile_btn.setObjectName("helxairo_loadProfileBtn")
+        self.load_profile_btn.setFixedSize(34, 32)
+        self.load_profile_btn.setCursor(Qt.PointingHandCursor)
+        self.load_profile_btn.setToolTip("Load & Activate Selected Profile (or double-click profile)")
+        self.load_profile_btn.setStyleSheet(_btn_icon_style)
+        if _os.path.exists(_load_icon_path):
+            self.load_profile_btn.setIcon(QIcon(_load_icon_path))
+            self.load_profile_btn.setIconSize(QSize(16, 16))
+        else:
+            self.load_profile_btn.setText("📂")
+        self.load_profile_btn.clicked.connect(self._load_selected_profile)
+        profile_btn_row.addWidget(self.load_profile_btn)
+
+        # 3. Save Profile (Floppy Disk)
+        self.save_profile_btn = QPushButton()
+        self.save_profile_btn.setObjectName("helxairo_saveProfileBtn")
+        self.save_profile_btn.setFixedSize(34, 32)
+        self.save_profile_btn.setCursor(Qt.PointingHandCursor)
+        self.save_profile_btn.setToolTip("Save Profile Settings")
+        self.save_profile_btn.setStyleSheet(_btn_icon_style)
+        if _os.path.exists(_save_icon_path):
+            self.save_profile_btn.setIcon(QIcon(_save_icon_path))
+            self.save_profile_btn.setIconSize(QSize(16, 16))
+        else:
+            self.save_profile_btn.setText("💾")
+        self.save_profile_btn.clicked.connect(self._save_profile)
+        profile_btn_row.addWidget(self.save_profile_btn)
+
+        # 4. Delete Profile (Trash)
+        self.delete_profile_btn = QPushButton()
         self.delete_profile_btn.setObjectName("helxairo_delProfileBtn")
-        self.delete_profile_btn.setFixedWidth(36)
+        self.delete_profile_btn.setFixedSize(34, 32)
         self.delete_profile_btn.setCursor(Qt.PointingHandCursor)
-        self.delete_profile_btn.setStyleSheet(_btn_style)
+        self.delete_profile_btn.setToolTip("Delete Selected Profile")
+        self.delete_profile_btn.setStyleSheet(_btn_icon_style)
+        if _os.path.exists(_trash_icon_path):
+            self.delete_profile_btn.setIcon(QIcon(_trash_icon_path))
+            self.delete_profile_btn.setIconSize(QSize(16, 16))
+        else:
+            self.delete_profile_btn.setText("-")
         self.delete_profile_btn.clicked.connect(self._delete_profile)
         profile_btn_row.addWidget(self.delete_profile_btn)
 
@@ -2359,50 +5270,371 @@ class MacroSettingsPanel(QWidget):
         profile_left.addLayout(profile_btn_row)
         profile_layout.addLayout(profile_left)
 
-        # Right: name, bound apps, save button
         profile_right = QVBoxLayout()
 
         form = QFormLayout()
         form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignLeft)
 
+        _profile_input_style = """
+            QLineEdit {
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 6px;
+                padding: 0px 10px;
+                min-height: 32px;
+                max-height: 32px;
+                height: 32px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #FF5B06;
+                background-color: rgba(30, 30, 30, 0.85);
+            }
+        """
+
         self.profile_name = QLineEdit()
         self.profile_name.setObjectName("helxairo_profileName")
         self.profile_name.setPlaceholderText("Profile name...")
-        form.addRow("Name:", self.profile_name)
-
-        self.profile_apps = QLineEdit()
-        self.profile_apps.setObjectName("helxairo_profileApps")
-        self.profile_apps.setPlaceholderText("e.g., gta5.exe, valorant.exe")
-        form.addRow("Bound Apps:", self.profile_apps)
+        self.profile_name.setStyleSheet(_profile_input_style)
+        form.addRow("Name", self.profile_name)
 
         profile_right.addLayout(form)
-
-        self.save_profile_btn = QPushButton("Save Profile")
-        self.save_profile_btn.setObjectName("helxairo_saveProfileBtn")
-        self.save_profile_btn.setCursor(Qt.PointingHandCursor)
-        self.save_profile_btn.setStyleSheet(_btn_style)
-        self.save_profile_btn.clicked.connect(self._save_profile)
-        profile_right.addWidget(self.save_profile_btn)
 
         profile_right.addStretch()
         profile_layout.addLayout(profile_right, 1)
 
-        macro_layout.addWidget(profile_group)
+        layout_profiles.addWidget(profile_group)
+        layout_profiles.addStretch()
 
-        macro_layout.addStretch()
-        macro_scroll.setWidget(macro_content)
+        page_profiles_scroll.setWidget(page_profiles_content)
+        pp_layout = QVBoxLayout(page_profiles)
+        pp_layout.setContentsMargins(0, 0, 0, 0)
+        pp_layout.addWidget(page_profiles_scroll)
 
-        macro_tab_layout = QVBoxLayout(macro_tab)
-        macro_tab_layout.setContentsMargins(0, 0, 0, 0)
-        macro_tab_layout.addWidget(macro_scroll)
+        self._macro_sub_stack.addWidget(page_profiles)
+
+        # ── SUB-PAGE 3: MOUSE TESTER (Placeholder Panel) ─────────
+        page_mousetester = QWidget()
+        page_mousetester.setObjectName("HelxairoMouseTesterPanel")
+        page_mousetester_scroll = SmoothScrollArea()
+        page_mousetester_scroll.setWidgetResizable(True)
+        page_mousetester_scroll.setStyleSheet(_scroll_style)
+        
+        page_mousetester_content = QWidget()
+        page_mousetester_content.setStyleSheet("background: transparent;")
+        mt_layout = QVBoxLayout(page_mousetester_content)
+        mt_layout.setContentsMargins(15, 15, 15, 15)
+        mt_layout.setSpacing(15)
+
+        # Header Group Box
+        mt_group = QGroupBox("Benchmark Lab")
+        mt_group.setObjectName("HelxairoMouseTesterGroup")
+        mt_group.setStyleSheet(_grp_style)
+        mt_group_layout = QVBoxLayout(mt_group)
+        mt_group_layout.setContentsMargins(16, 20, 16, 16)
+        mt_group_layout.setSpacing(12)
+
+        mt_desc = QLabel("Comprehensive Mouse Performance & CPS Diagnostics Suite")
+        mt_desc.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        mt_group_layout.addWidget(mt_desc)
+
+        # Grid of Placeholder Feature Cards
+        grid_container = QWidget()
+        grid_layout = QGridLayout(grid_container)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(15)
+
+        # Card 1: CPS Benchmark
+        card_cps = QFrame()
+        card_cps.setObjectName("HelxairoCpsTestCard")
+        card_cps.setStyleSheet("""
+            QFrame#HelxairoCpsTestCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#HelxairoCpsTestCard:hover {
+                background-color: rgba(255, 91, 6, 0.05);
+            }
+        """)
+        cps_layout = QVBoxLayout(card_cps)
+        cps_title = QLabel("CPS Benchmark")
+        cps_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        cps_sub = QLabel("Real-time Click Per Second (CPS) Speed Test & High-Precision Counter")
+        cps_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        cps_sub.setWordWrap(True)
+        cps_layout.addWidget(cps_title)
+        cps_layout.addWidget(cps_sub)
+        cps_layout.addStretch()
+
+        # Card 2: Mouse Button & Double Click Test
+        card_btn = QFrame()
+        card_btn.setObjectName("HelxairoButtonTestCard")
+        card_btn.setStyleSheet("""
+            QFrame#HelxairoButtonTestCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#HelxairoButtonTestCard:hover {
+                background-color: rgba(255, 91, 6, 0.05);
+            }
+        """)
+        btn_layout = QVBoxLayout(card_btn)
+        btn_title = QLabel("Button & Double-Click Test")
+        btn_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        btn_sub = QLabel("Interactive mouse button tester, debouncing & chatter detection")
+        btn_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        btn_sub.setWordWrap(True)
+        btn_layout.addWidget(btn_title)
+        btn_layout.addWidget(btn_sub)
+        btn_layout.addStretch()
+
+        # Card 3: Scroll & Wheel Test
+        card_scroll = QFrame()
+        card_scroll.setObjectName("HelxairoScrollTestCard")
+        card_scroll.setStyleSheet("""
+            QFrame#HelxairoScrollTestCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#HelxairoScrollTestCard:hover {
+                background-color: rgba(255, 91, 6, 0.05);
+            }
+        """)
+        scroll_layout = QVBoxLayout(card_scroll)
+        scroll_title = QLabel("Scroll Wheel Test")
+        scroll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        scroll_sub = QLabel("Scroll direction, delta smoothness & wheel step counter")
+        scroll_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        scroll_sub.setWordWrap(True)
+        scroll_layout.addWidget(scroll_title)
+        scroll_layout.addWidget(scroll_sub)
+        scroll_layout.addStretch()
+
+        # Card 4: Polling Rate & Latency
+        card_poll = QFrame()
+        card_poll.setObjectName("HelxairoPollingTestCard")
+        card_poll.setStyleSheet("""
+            QFrame#HelxairoPollingTestCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#HelxairoPollingTestCard:hover {
+                background-color: rgba(255, 91, 6, 0.05);
+            }
+        """)
+        poll_layout = QVBoxLayout(card_poll)
+        poll_title = QLabel("Polling Rate & Latency")
+        poll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        poll_sub = QLabel("Hz frequency report, motion smoothness & click latency estimation")
+        poll_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        poll_sub.setWordWrap(True)
+        poll_layout.addWidget(poll_title)
+        poll_layout.addWidget(poll_sub)
+        poll_layout.addStretch()
+
+        grid_layout.addWidget(card_cps, 0, 0)
+        grid_layout.addWidget(card_btn, 0, 1)
+        grid_layout.addWidget(card_scroll, 1, 0)
+        grid_layout.addWidget(card_poll, 1, 1)
+
+        mt_group_layout.addWidget(grid_container)
+        mt_layout.addWidget(mt_group)
+        mt_layout.addStretch()
+
+        page_mousetester_scroll.setWidget(page_mousetester_content)
+        pmt_layout = QVBoxLayout(page_mousetester)
+        pmt_layout.setContentsMargins(0, 0, 0, 0)
+        pmt_layout.addWidget(page_mousetester_scroll)
+
+        macro_tab_layout.addWidget(self._macro_sub_stack, 1)
+        self._switch_macro_subtab(0)  # Default to Quick Actions (Page 0)
 
         self._page_stack.addWidget(macro_tab)
+
+        # === BENCHMARK TAB (Main Top Tab Page 3) ===
+        benchmark_tab = QWidget()
+        benchmark_tab.setObjectName("BenchmarkTab")
+        benchmark_layout = QVBoxLayout(benchmark_tab)
+        benchmark_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._benchmark_stack = QStackedWidget()
+        self._benchmark_stack.setObjectName("BenchmarkStack")
+
+        # ── SUB-PAGE 0: BENCHMARK HUB GRID (4 Cards Selector) ──
+        hub_scroll = SmoothScrollArea()
+        hub_scroll.setWidgetResizable(True)
+        hub_scroll.setStyleSheet(_scroll_style)
+        
+        hub_content = QWidget()
+        hub_content.setStyleSheet("background: transparent;")
+        hub_layout = QVBoxLayout(hub_content)
+        hub_layout.setContentsMargins(20, 20, 20, 20)
+        hub_layout.setSpacing(15)
+
+        # Benchmark Lab Group Box
+        hub_group = QGroupBox("Benchmark Lab")
+        hub_group.setObjectName("MouseTesterGroup")
+        hub_group.setStyleSheet(_grp_style)
+        hub_group_layout = QVBoxLayout(hub_group)
+        hub_group_layout.setContentsMargins(16, 20, 16, 16)
+        hub_group_layout.setSpacing(12)
+
+        hub_desc = QLabel("Comprehensive Mouse Performance & CPS Diagnostics Suite")
+        hub_desc.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        hub_group_layout.addWidget(hub_desc)
+
+        # 2x2 Grid of Feature Cards
+        grid_container = QWidget()
+        grid_layout = QGridLayout(grid_container)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(15)
+
+        # Card 1: CPS Benchmark (Clickable -> Opens CPS Page)
+        card_cps = QFrame()
+        card_cps.setObjectName("CpsBenchmarkCard")
+        card_cps.setCursor(Qt.PointingHandCursor)
+        card_cps.setStyleSheet("""
+            QFrame#CpsBenchmarkCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#CpsBenchmarkCard:hover {
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+        """)
+        cps_card_layout = QVBoxLayout(card_cps)
+        cps_card_title = QLabel("CPS Benchmark")
+        cps_card_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        cps_card_sub = QLabel("Real-time Click Per Second (CPS) Speed Test & High-Precision Counter")
+        cps_card_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        cps_card_sub.setWordWrap(True)
+        cps_card_layout.addWidget(cps_card_title)
+        cps_card_layout.addWidget(cps_card_sub)
+        cps_card_layout.addStretch()
+        
+        # Connect click event on CPS card to switch to Page 1!
+        card_cps.mousePressEvent = lambda e: self._benchmark_stack.setCurrentIndex(1)
+
+        # Card 2: Mouse Button & Double Click Test
+        card_btn = QFrame()
+        card_btn.setObjectName("ButtonTestCard")
+        card_btn.setCursor(Qt.PointingHandCursor)
+        card_btn.setStyleSheet("""
+            QFrame#ButtonTestCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#ButtonTestCard:hover {
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+        """)
+        btn_layout = QVBoxLayout(card_btn)
+        btn_title = QLabel("Button & Double-Click Test")
+        btn_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        btn_sub = QLabel("Interactive mouse button tester, debouncing & chatter detection")
+        btn_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        btn_sub.setWordWrap(True)
+        btn_layout.addWidget(btn_title)
+        btn_layout.addWidget(btn_sub)
+        btn_layout.addStretch()
+
+        # Card 3: Scroll & Wheel Test
+        card_scroll = QFrame()
+        card_scroll.setObjectName("ScrollTestCard")
+        card_scroll.setCursor(Qt.PointingHandCursor)
+        card_scroll.setStyleSheet("""
+            QFrame#ScrollTestCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#ScrollTestCard:hover {
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+        """)
+        scroll_layout = QVBoxLayout(card_scroll)
+        scroll_title = QLabel("Scroll Wheel Test")
+        scroll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        scroll_sub = QLabel("Scroll direction, delta smoothness & wheel step counter")
+        scroll_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        scroll_sub.setWordWrap(True)
+        scroll_layout.addWidget(scroll_title)
+        scroll_layout.addWidget(scroll_sub)
+        scroll_layout.addStretch()
+
+        # Card 4: Polling Rate & Latency
+        card_poll = QFrame()
+        card_poll.setObjectName("PollingTestCard")
+        card_poll.setCursor(Qt.PointingHandCursor)
+        card_poll.setStyleSheet("""
+            QFrame#PollingTestCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#PollingTestCard:hover {
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+        """)
+        poll_layout = QVBoxLayout(card_poll)
+        poll_title = QLabel("Polling Rate & Latency")
+        poll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        poll_sub = QLabel("Hz frequency report, motion smoothness & click latency estimation")
+        poll_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        poll_sub.setWordWrap(True)
+        poll_layout.addWidget(poll_title)
+        poll_layout.addWidget(poll_sub)
+        poll_layout.addStretch()
+
+        grid_layout.addWidget(card_cps, 0, 0)
+        grid_layout.addWidget(card_btn, 0, 1)
+        grid_layout.addWidget(card_scroll, 1, 0)
+        grid_layout.addWidget(card_poll, 1, 1)
+
+        hub_group_layout.addWidget(grid_container)
+        hub_layout.addWidget(hub_group)
+        hub_layout.addStretch()
+
+        hub_scroll.setWidget(hub_content)
+        self._benchmark_stack.addWidget(hub_scroll)  # Index 0: Hub Grid
+
+        # ── SUB-PAGE 1: DEDICATED CPS BENCHMARK PAGE ──────────
+        cps_page = QWidget()
+        cps_page_layout = QVBoxLayout(cps_page)
+        cps_page_layout.setContentsMargins(12, 10, 12, 10)
+        cps_page_layout.setSpacing(8)
+
+        # Active CPS Panel Suite (Back button integrated in header frame)
+        self.cps_benchmark_panel = CpsBenchmarkPanel()
+        self.cps_benchmark_panel.back_clicked.connect(lambda: self._benchmark_stack.setCurrentIndex(0))
+        cps_page_layout.addWidget(self.cps_benchmark_panel, 1)
+
+        self._benchmark_stack.addWidget(cps_page)  # Index 1: CPS Benchmark Suite
+
+        benchmark_layout.addWidget(self._benchmark_stack)
+        self._page_stack.addWidget(benchmark_tab)
         
         # === SETTINGS TAB ===
         settings_scroll = SmoothScrollArea()
         settings_scroll.setWidgetResizable(True)
-        settings_scroll.setStyleSheet("background: transparent; border: none;")
+        settings_scroll.setStyleSheet(_scroll_style)
         settings_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
@@ -2419,26 +5651,7 @@ class MacroSettingsPanel(QWidget):
         settings_layout.addWidget(settings_header)
         
         # Indicator Drag Mode checkbox (KEPT per user request)
-        self._drag_mode_checkbox = QCheckBox("Enable indicator drag mode (reposition button numbers on mouse image)")
-        self._drag_mode_checkbox.setStyleSheet("""
-            QCheckBox {
-                color: #e0e0e0;
-                font-size: 13px;
-                spacing: 8px;
-            }
-            QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-                border: none;
-                border-radius: 4px;
-                background: #2a2d35;
-            }
-            QCheckBox::indicator:checked {
-                background: #FF5B06;
-                border-color: transparent;
-                image: url(:/qt-project.org/styles/commonstyle/images/checkbox_checked.png);
-            }
-        """)
+        self._drag_mode_checkbox = AnimatedCheckBox("Enable indicator drag mode (reposition button numbers on mouse image)")
         self._drag_mode_checkbox.stateChanged.connect(self._toggle_indicator_drag_mode)
         settings_layout.addWidget(self._drag_mode_checkbox)
         
@@ -2465,30 +5678,7 @@ class MacroSettingsPanel(QWidget):
         general_layout.setSpacing(12)
         
         # Combo style for settings
-        settings_combo_style = """
-            QComboBox {
-                background: #2a2d35;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 5px 10px;
-                min-width: 120px;
-            }
-            QComboBox:hover { border-color: transparent; }
-            QComboBox::drop-down { border: none; width: 20px; }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 6px solid #888;
-            }
-            QComboBox QAbstractItemView {
-                background: #2a2d35;
-                color: #e0e0e0;
-                border: none;
-                selection-background-color: #FF5B06;
-            }
-        """
+        settings_combo_style = _combo_style
         
         # Language dropdown
         self._language_combo = QComboBox()
@@ -2519,8 +5709,7 @@ class MacroSettingsPanel(QWidget):
         self._advanced_device_warning.show()
         
         # Long Distance Mode checkbox
-        self._long_distance_check = QCheckBox("Long Distance Mode")
-        self._long_distance_check.setStyleSheet(self._drag_mode_checkbox.styleSheet())
+        self._long_distance_check = AnimatedCheckBox("Long Distance Mode")
         self._long_distance_check.stateChanged.connect(self._on_long_distance_changed)
         advanced_layout.addWidget(self._long_distance_check)
         
@@ -2653,6 +5842,13 @@ class MacroSettingsPanel(QWidget):
         self._current_tab = index
         self._page_stack.setCurrentIndex(index)
         self._update_tab_buttons()
+
+    def _switch_macro_subtab(self, index: int):
+        """Switch between sub-tabs in the Macro tab."""
+        self._current_macro_subtab = index
+        self._macro_sub_stack.setCurrentIndex(index)
+        for i, btn in enumerate(self._macro_sub_buttons):
+            btn.setChecked(i == index)
     
     def _update_tab_buttons(self):
         """Update tab button styles based on current selection (HELXTATS style)."""
@@ -3933,24 +7129,25 @@ class MacroSettingsPanel(QWidget):
         if not self._bridge or not self._bridge.profile_manager:
             return
         
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        check_icon_path = os.path.join(script_dir, "UI Icons", "check-icon.svg").replace("\\", "/")
+        uncheck_icon_path = os.path.join(script_dir, "UI Icons", "uncheck-icon.svg").replace("\\", "/")
+
         # Update each item's status in place
         for i in range(self.active_list.count()):
             item = self.active_list.item(i)
+            widget = self.active_list.itemWidget(item)
             macro = item.data(Qt.UserRole + 1)
-            if macro:
-                status = "✓" if macro.enabled else "○"
-                type_name = type(macro).__name__.replace("Macro", "")
-                
-                trigger_str = ""
-                if macro.trigger:
-                    if macro.trigger.button:
-                        trigger_str = f"[{macro.trigger.button}]"
-                    elif macro.trigger.key:
-                        trigger_str = f"[{macro.trigger.key.upper()}]"
-                
-                new_text = f"{status} {macro.name} {trigger_str} - {type_name}"
-                if item.text() != new_text:
-                    item.setText(new_text)
+            if macro and isinstance(widget, HelxairoMacroItemWidget):
+                prof = self._bridge.profile_manager.get_profile_for_macro(macro.id)
+                prof_name = prof.name if prof else None
+                widget.macro = macro
+                widget.profile_name = prof_name
+                is_enabled = getattr(macro, 'enabled', True)
+                icon_path = check_icon_path if is_enabled else uncheck_icon_path
+                widget.status_icon.setPixmap(QPixmap(icon_path).scaled(16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                if hasattr(widget, 'sub_lbl') and prof_name:
+                    widget.sub_lbl.setText(f"Profile: {prof_name}")
         
         # Also update system status
         self._update_status()
@@ -4030,60 +7227,150 @@ class MacroSettingsPanel(QWidget):
         except Exception as e:
             print(f"[HELXAIRO] Failed to initialize macro bridge: {e}")
             
+    def _format_macro_item_label(self, macro, profile_name=None) -> str:
+        """Generate a detailed, readable label for a macro item."""
+        # 1. Trigger / Hotkey
+        trigger_str = ""
+        trigger = getattr(macro, 'trigger', None)
+        if trigger:
+            if getattr(trigger, 'button', None):
+                trigger_str = f"[{trigger.button.upper()}]"
+            elif getattr(trigger, 'key', None):
+                trigger_str = f"[{trigger.key.upper()}]"
+        if not trigger_str:
+            trigger_str = "[No Hotkey]"
+            
+        # 2. Mode
+        is_toggle = getattr(macro, 'is_toggle', False)
+        mode_str = "Toggle" if is_toggle else "Press"
+        
+        # 3. Details (Interval, Action, Steps)
+        details = []
+        
+        # Interval
+        interval_ms = getattr(macro, 'repeat_interval_ms', None)
+        if interval_ms is None and hasattr(macro, 'interval_ms'):
+            interval_ms = getattr(macro, 'interval_ms', None)
+            
+        if interval_ms is not None and interval_ms > 0:
+            if interval_ms >= 1000 and interval_ms % 1000 == 0:
+                details.append(f"Interval: {interval_ms // 1000}s")
+            else:
+                details.append(f"Interval: {interval_ms}ms")
+                
+        # Hold / Action
+        hold_b = getattr(macro, 'hold_button', None)
+        hold_k = getattr(macro, 'hold_key', None)
+        if hold_b:
+            details.append(f"Action: {hold_b.capitalize()} Click")
+        elif hold_k:
+            details.append(f"Action: Key '{hold_k.upper()}'")
+            
+        # Sequence / Steps
+        actions = getattr(macro, 'actions', None) or getattr(macro, 'sequence', None)
+        if actions and isinstance(actions, list):
+            details.append(f"{len(actions)} steps")
+            
+        details_str = f"  |  {', '.join(details)}" if details else ""
+        name = getattr(macro, 'name', 'Unnamed Macro')
+        
+        # Strip leading status symbols if present in macro name
+        for sym in ("✓", "○", "✔"):
+            if name.startswith(sym):
+                name = name[len(sym):].strip()
+        
+        prof_str = f"  |  Profile: {profile_name}" if profile_name else ""
+        return f"{name}{prof_str}  |  Hotkey: {trigger_str}{details_str}"
+
     def _load_macros(self):
-        """Load macros into list."""
-        print("[MacroPanel] Loading macros into list...")
+        """Load macros belonging to the active profile into the macro lists."""
+        print("[MacroPanel] Loading macros for active profile into list...")
         self.active_list.clear()
         
         if not self._bridge or not self._bridge.profile_manager:
             print("[MacroPanel] Error: Bridge or profile manager not available")
             return
             
-        profiles = self._bridge.profile_manager.get_all_profiles()
-        print(f"[MacroPanel] Found {len(profiles)} profiles")
-        
-        for profile in profiles:
-            macros = self._bridge.profile_manager.get_macros_for_profile(profile.id)
-            print(f"[MacroPanel] Profile '{profile.name}' has {len(macros)} macros")
+        active_prof = self._bridge.profile_manager.active_profile
+        if not active_prof:
+            profiles = self._bridge.profile_manager.get_all_profiles()
+            active_prof = profiles[0] if profiles else None
             
-            for macro in macros:
-                try:
-                    status = "✓" if macro.enabled else "○"
-                    type_name = type(macro).__name__.replace("Macro", "")
-                    
-                    trigger_str = ""
-                    if macro.trigger:
-                        if macro.trigger.button:
-                            trigger_str = f"[{macro.trigger.button}]"
-                        elif macro.trigger.key:
-                            trigger_str = f"[{macro.trigger.key.upper()}]"
-                            
-                    item = QListWidgetItem(f"{status} {macro.name} {trigger_str} - {type_name}")
-                    item.setData(Qt.UserRole, macro.id)
-                    item.setData(Qt.UserRole + 1, macro)
-                    self.active_list.addItem(item)
-                except Exception as e:
-                    print(f"[MacroPanel] Error adding macro item: {e}")
+        if hasattr(self, 'ac_apps_input'):
+            self.ac_apps_input.blockSignals(True)
+            self.ac_apps_input.setText(", ".join(active_prof.bound_apps))
+            self.ac_apps_input.blockSignals(False)
+
+        macros = self._bridge.profile_manager.get_macros_for_profile(active_prof.id)
+        print(f"[MacroPanel] Active Profile '{active_prof.name}' (id={active_prof.id}) has {len(macros)} macro(s)")
+        
+        for macro in macros:
+            try:
+                # Add item to active_list (Macro list)
+                item = QListWidgetItem()
+                widget = HelxairoMacroItemWidget(macro, active_prof.name, item, self.active_list, parent=self.active_list)
+                item.setData(Qt.UserRole, macro.id)
+                item.setData(Qt.UserRole + 1, macro)
+                item.setSizeHint(widget.sizeHint())
+                self.active_list.addItem(item)
+                self.active_list.setItemWidget(item, widget)
+            except Exception as e:
+                print(f"[MacroPanel] Error adding macro item: {e}")
+                
+        if self._bridge and hasattr(self._bridge, 'reload_active_profile_macros'):
+            self._bridge.reload_active_profile_macros()
                 
     def _load_profiles(self):
-        """Load profiles into list."""
+        """Load profiles into list with SVG star icon for active profile."""
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        star_icon_path = os.path.join(script_dir, "UI Icons", "star-filled.svg").replace("\\", "/")
+        star_icon = QIcon(star_icon_path) if os.path.exists(star_icon_path) else None
+
+        self.profile_list.blockSignals(True)
         self.profile_list.clear()
         
+        if hasattr(self, 'ac_profile_combo'):
+            self.ac_profile_combo.clear()
+            
         if not self._bridge or not self._bridge.profile_manager:
-            # Show default even if not initialized
-            item = QListWidgetItem("Default")
+            item = QListWidgetItem("Default [Active]")
             item.setData(Qt.UserRole, "default")
+            if star_icon:
+                item.setIcon(star_icon)
+            item.setForeground(QColor("#FF5B06"))
             self.profile_list.addItem(item)
+            if hasattr(self, 'ac_profile_combo'):
+                self.ac_profile_combo.addItem("Default", "default")
+            self.profile_list.blockSignals(False)
             return
             
+        active_prof = self._bridge.profile_manager.active_profile
+        active_id = active_prof.id if active_prof else "default"
+        
         for profile in self._bridge.profile_manager.get_all_profiles():
-            item = QListWidgetItem(profile.name)
+            is_active = (profile.id == active_id)
+            display_text = f"{profile.name} [Active]" if is_active else profile.name
+            
+            item = QListWidgetItem(display_text)
             item.setData(Qt.UserRole, profile.id)
+            if is_active:
+                if star_icon:
+                    item.setIcon(star_icon)
+                item.setForeground(QColor("#FF5B06"))
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                
             self.profile_list.addItem(item)
+            if hasattr(self, 'ac_profile_combo'):
+                self.ac_profile_combo.addItem(profile.name, profile.id)
+                
+        self.profile_list.blockSignals(False)
             
     def _on_profile_selected(self, current, previous):
-        """Handle profile selection."""
-        if not current or not self._bridge:
+        """Handle single-click profile selection to inspect/edit properties."""
+        if not current or not self._bridge or not self._bridge.profile_manager:
             return
             
         profile_id = current.data(Qt.UserRole)
@@ -4091,13 +7378,69 @@ class MacroSettingsPanel(QWidget):
         
         if profile:
             self.profile_name.setText(profile.name)
-            self.profile_apps.setText(", ".join(profile.bound_apps))
+            if hasattr(self, 'profile_apps'):
+                self.profile_apps.setText(", ".join(profile.bound_apps))
+
+    def _on_profile_double_clicked(self, item):
+        """Handle double-clicking a profile item to LOAD & ACTIVATE it instantly."""
+        if not item:
+            return
+        profile_id = item.data(Qt.UserRole)
+        self._load_selected_profile(target_profile_id=profile_id)
+
+    def _load_selected_profile(self, target_profile_id=None):
+        """Load and activate the specified or currently selected profile into the engine."""
+        if not self._bridge or not self._bridge.profile_manager:
+            return
+            
+        if not target_profile_id:
+            current = self.profile_list.currentItem()
+            if current:
+                target_profile_id = current.data(Qt.UserRole)
+                
+        if not target_profile_id:
+            FloatingToast.show_toast(self, "No Profile Selected", "Please select a profile to load.")
+            return
+            
+        profile = self._bridge.profile_manager.get_profile(target_profile_id)
+        if profile:
+            self._bridge.profile_manager.activate_profile(target_profile_id)
+            if hasattr(self._bridge, 'reload_active_profile_macros'):
+                self._bridge.reload_active_profile_macros()
+            self._load_profiles()
+            self._load_macros()
+            self.macros_changed.emit()
+            FloatingToast.show_toast(self, "Profile Loaded", f"Activated profile: {profile.name}")
                 
     def _on_ac_type_changed(self, text: str):
         """Show/hide custom key input based on dropdown selection."""
         is_custom = (text == "Custom Key")
         self.ac_custom_key.setVisible(is_custom)
+
+    def _on_ac_unit_changed(self, unit: str):
+        """Adjust spinbox range and step when switching between ms and s."""
+        if unit == "s":
+            self.ac_interval.setRange(1, 300)
+            self.ac_interval.setSingleStep(1)
+            if self.ac_interval.value() > 300:
+                self.ac_interval.setValue(1)
+        else:
+            self.ac_interval.setRange(1, 999)
+            self.ac_interval.setSingleStep(5)
+            if self.ac_interval.value() < 1 or self.ac_interval.value() > 999:
+                self.ac_interval.setValue(500)
     
+    def _save_ac_apps(self):
+        """Save bound apps entered in Quick Actions to the active profile."""
+        if not self._bridge or not self._bridge.profile_manager:
+            return
+        active_prof = self._bridge.profile_manager.active_profile
+        if active_prof and hasattr(self, 'ac_apps_input'):
+            apps_text = self.ac_apps_input.text()
+            active_prof.bound_apps = [a.strip() for a in apps_text.split(",") if a.strip()]
+            self._bridge.profile_manager.save_profile(active_prof)
+            self._bridge.profile_manager.save_all()
+
     def _create_autoclicker(self):
         """Create auto-clicker from quick action."""
         if not self._bridge:
@@ -4114,24 +7457,76 @@ class MacroSettingsPanel(QWidget):
             # Use custom key for key-based auto-clicker
             custom_key = self.ac_custom_key.hotkey().lower().strip()
             button = f"key:{custom_key}"  # Special format for key press
+            default_name = f"Auto-press ({custom_key.upper()})"
         else:
             button_map = {"Left Click": "left", "Right Click": "right", "Middle Click": "middle"}
             button = button_map.get(selected, "left")
+            default_name = f"Auto-Clicker ({selected})"
+            custom_key = ""
         
         interval = self.ac_interval.value()
+        if hasattr(self, 'ac_unit') and self.ac_unit.currentText() == "s":
+            interval = interval * 1000
         hotkey = self.ac_hotkey.hotkey().lower().strip()
         
-        macro_id = self._bridge.create_quick_autoclicker(button, interval, hotkey)
+        # Custom Macro Name from LineEdit (or default from selected Auto Click Key)
+        custom_name = self.ac_name_input.text().strip() if hasattr(self, 'ac_name_input') else ""
+        if not custom_name:
+            custom_name = default_name
+            
+        if interval < 40 and not getattr(self, '_ac_warning_ack', False):
+            parent_window = self.window()
+            
+            def on_first_proceed_ac():
+                if interval < 5 and not getattr(self, '_ac_extreme_ack', False):
+                    def on_second_proceed_ac():
+                        self._ac_warning_ack = True
+                        self._ac_extreme_ack = True
+                        self._do_create_autoclicker(button, interval, hotkey, custom_name, selected, custom_key)
+                        self._ac_warning_ack = False
+                        self._ac_extreme_ack = False
+
+                    panel2 = HelxairoLowIntervalWarningOverlayPanel(
+                        parent_window,
+                        on_second_proceed_ac,
+                        title="Extreme Risk Warning",
+                        description="Intervals below 10ms carry a severe risk of system freezing, CPU overload, or hardware instability. We assume no responsibility for any system damage or issues, as you have been warned twice.\n\nDo you still wish to proceed at your own risk?",
+                        proceed_text="Proceed at Own Risk",
+                        is_extreme_risk=True
+                    )
+                    panel2.show()
+                    panel2.raise_()
+                else:
+                    self._ac_warning_ack = True
+                    self._do_create_autoclicker(button, interval, hotkey, custom_name, selected, custom_key)
+                    self._ac_warning_ack = False
+
+            warn_overlay = HelxairoLowIntervalWarningOverlayPanel(parent_window, on_first_proceed_ac)
+            warn_overlay.show()
+            warn_overlay.raise_()
+            return
+
+        self._ac_warning_ack = False
+        self._ac_extreme_ack = False
+        self._do_create_autoclicker(button, interval, hotkey, custom_name, selected, custom_key)
+
+    def _do_create_autoclicker(self, button, interval, hotkey, custom_name, selected, custom_key):
+        self._save_ac_apps()
+        # Target current active profile connected with Profile sub-tab
+        active_prof = self._bridge.profile_manager.active_profile if (self._bridge and hasattr(self._bridge, 'profile_manager')) else None
+        target_profile_id = active_prof.id if active_prof else "default"
+        
+        macro_id = self._bridge.create_quick_autoclicker(button, interval, hotkey, profile_id=target_profile_id, name=custom_name)
         
         if selected == "Custom Key":
-            QMessageBox.information(self, "Created", f"Key auto-presser created!\nKey: {custom_key.upper()}\nToggle with: {hotkey.upper()}")
+            FloatingToast.show_toast(self, "Key Auto-Presser Created", f"Key: {custom_key.upper()}  |  Toggle: {hotkey.upper()}")
         else:
-            QMessageBox.information(self, "Created", f"Auto-clicker created!\nToggle with: {hotkey.upper()}")
+            FloatingToast.show_toast(self, "Auto-Clicker Created", f"Toggle with: {hotkey.upper()}")
         
         self._load_macros()
         self.macros_changed.emit()
         
-    def _create_remap(self):
+    def _create_remap(self, from_btn=None, to_key=None):
         """Create button remap from quick action."""
         if not self._bridge:
             self._init_bridge()
@@ -4140,52 +7535,152 @@ class MacroSettingsPanel(QWidget):
             if not self._bridge.is_running:
                 self._bridge.start()
             
-        from_map = {"X1 (Side)": "x1", "X2 (Side)": "x2", "Middle": "middle"}
-        from_btn = from_map.get(self.remap_from.currentText(), "x1")
-        to_key = self.remap_to.hotkey().lower().strip()
+        if not from_btn:
+            if hasattr(self, 'remap_from'):
+                from_map = {"X1 (Side)": "x1", "X2 (Side)": "x2", "Middle": "middle"}
+                from_btn = from_map.get(self.remap_from.currentText(), "x1")
+            else:
+                from_btn = "x1"
+                
+        if not to_key:
+            if hasattr(self, 'remap_to'):
+                to_key = self.remap_to.text().lower().strip()
+            else:
+                to_key = "a"
+            
+        active_prof = self._bridge.profile_manager.active_profile if (self._bridge and hasattr(self._bridge, 'profile_manager')) else None
+        target_profile_id = active_prof.id if active_prof else "default"
         
-        macro_id = self._bridge.create_quick_remap(from_btn, to_key)
-        QMessageBox.information(self, "Created", f"Remap created!\n{from_btn.upper()} → {to_key.upper()}")
+        macro_id = self._bridge.create_quick_remap(from_btn, to_key, profile_id=target_profile_id)
+        FloatingToast.show_toast(self, "Remap Created", f"{from_btn.upper()} → {to_key.upper()}")
         
         self._load_macros()
         self.macros_changed.emit()
         
     def _toggle_selected_macro(self):
-        """Toggle the selected macro's enabled state."""
-        current = self.active_list.currentItem()
-        if not current:
+        """Toggle enabled status for all selected macros in active_list."""
+        if not self._bridge:
+            self._init_bridge()
+            if not self._bridge:
+                return
+                
+        selected_items = self.active_list.selectedItems()
+        if not selected_items:
+            current = self.active_list.currentItem()
+            if current:
+                selected_items = [current]
+                
+        if not selected_items:
+            FloatingToast.show_toast(self, "No Selection", "Please select macro(s) to toggle.")
             return
             
-        macro = current.data(Qt.UserRole + 1)
-        if macro:
-            macro.enabled = not macro.enabled
-            self._load_macros()
-            
-    def _disable_all(self):
-        """Disable all running macros."""
-        if not self._bridge or not self._bridge.engine:
-            return
-            
-        self._bridge.engine.cancel_all_macros()
-        QMessageBox.information(self, "Stopped", "All active macros stopped.")
-        
-    def _delete_selected(self):
-        """Delete selected macro."""
-        current = self.active_list.currentItem()
-        if not current:
-            return
-            
-        macro_id = current.data(Qt.UserRole)
-        
-        reply = QMessageBox.question(self, "Delete Macro",
-            "Delete this macro?",
-            QMessageBox.Yes | QMessageBox.No)
-            
-        if reply == QMessageBox.Yes:
-            self._bridge.profile_manager.remove_macro(macro_id)
-            self._bridge.profile_manager.save_all()
+        toggled_count = 0
+        for item in selected_items:
+            macro = item.data(Qt.UserRole + 1)
+            if macro:
+                macro.enabled = not macro.enabled
+                toggled_count += 1
+                
+        if toggled_count > 0:
+            if self._bridge.profile_manager:
+                self._bridge.profile_manager.save_all()
+            if hasattr(self._bridge, 'reload_active_profile_macros'):
+                self._bridge.reload_active_profile_macros()
             self._load_macros()
             self.macros_changed.emit()
+            FloatingToast.show_toast(self, "Macros Toggled", f"Toggled {toggled_count} selected macro(s).")
+            
+    def _disable_all(self):
+        """Stop and disable all macros across all profiles."""
+        if not self._bridge:
+            self._init_bridge()
+            
+        disabled_count = 0
+        if self._bridge and self._bridge.profile_manager:
+            for profile in self._bridge.profile_manager.get_all_profiles():
+                macros = self._bridge.profile_manager.get_macros_for_profile(profile.id)
+                for macro in macros:
+                    if macro.enabled:
+                        macro.enabled = False
+                        disabled_count += 1
+            self._bridge.profile_manager.save_all()
+            if hasattr(self._bridge, 'reload_active_profile_macros'):
+                self._bridge.reload_active_profile_macros()
+            
+        if self._bridge and self._bridge.engine:
+            self._bridge.engine.cancel_all_macros()
+            
+        self._load_macros()
+        self.macros_changed.emit()
+        FloatingToast.show_toast(self, "All Macros Stopped", f"Disabled and stopped all active macros ({disabled_count} stopped).")
+
+    def _edit_selected(self):
+        """Open floating edit panel for selected macro."""
+        if not self._bridge:
+            self._init_bridge()
+            if not self._bridge:
+                return
+                
+        selected_items = self.active_list.selectedItems()
+        if not selected_items:
+            current = self.active_list.currentItem()
+            if current:
+                selected_items = [current]
+                
+        if not selected_items:
+            FloatingToast.show_toast(self, "No Selection", "Please select a macro to edit.")
+            return
+            
+        macro = selected_items[0].data(Qt.UserRole + 1)
+        if not macro:
+            return
+            
+        overlay = HelxairoEditMacroOverlayPanel(macro, self._bridge, self)
+        overlay.show()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        for child in self.children():
+            if isinstance(child, HelxairoEditMacroOverlayPanel):
+                child.setGeometry(0, 0, self.width(), self.height())
+        
+    def _delete_selected(self):
+        """Delete all selected macros in active_list."""
+        if not self._bridge:
+            self._init_bridge()
+            if not self._bridge:
+                return
+                
+        selected_items = self.active_list.selectedItems()
+        if not selected_items:
+            current = self.active_list.currentItem()
+            if current:
+                selected_items = [current]
+                
+        if not selected_items:
+            FloatingToast.show_toast(self, "No Selection", "Please select macro(s) to delete.")
+            return
+            
+        reply = QMessageBox.question(
+            self, "Delete Selected Macros",
+            f"Are you sure you want to delete {len(selected_items)} selected macro(s)?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            deleted_count = 0
+            for item in selected_items:
+                macro_id = item.data(Qt.UserRole)
+                if macro_id and self._bridge.profile_manager:
+                    self._bridge.profile_manager.remove_macro(macro_id)
+                    deleted_count += 1
+                    
+            if deleted_count > 0:
+                if self._bridge.profile_manager:
+                    self._bridge.profile_manager.save_all()
+                self._load_macros()
+                self.macros_changed.emit()
+                FloatingToast.show_toast(self, "Macros Deleted", f"Deleted {deleted_count} macro(s).")
             
     def _new_profile(self):
         """Create new profile."""
@@ -4193,49 +7688,156 @@ class MacroSettingsPanel(QWidget):
         
         if not self._bridge:
             self._init_bridge()
-            if not self._bridge:
+            if not self._bridge or not self._bridge.profile_manager:
                 return
         
         name, ok = QInputDialog.getText(self, "New Profile", "Profile name:")
-        if ok and name:
-            self._bridge.profile_manager.create_profile(name)
+        if ok and name and name.strip():
+            prof = self._bridge.profile_manager.create_profile(name.strip())
+            self._bridge.profile_manager.save_all()
             self._load_profiles()
+            FloatingToast.show_toast(self, "Profile Created", f"Created profile '{name.strip()}'.")
             
     def _delete_profile(self):
-        """Delete selected profile."""
-        current = self.profile_list.currentItem()
-        if not current:
+        """Delete selected profile(s)."""
+        if not self._bridge:
+            self._init_bridge()
+            if not self._bridge or not self._bridge.profile_manager:
+                return
+
+        selected_items = self.profile_list.selectedItems()
+        if not selected_items:
+            current = self.profile_list.currentItem()
+            if current:
+                selected_items = [current]
+
+        if not selected_items:
+            FloatingToast.show_toast(self, "No Selection", "Please select profile(s) to delete.")
             return
+
+        valid_items = []
+        has_default_in_selection = False
+
+        for item in selected_items:
+            pid = item.data(Qt.UserRole)
+            prof = self._bridge.profile_manager.get_profile(pid) if pid else None
+            is_default = (pid == "default") or (prof and prof.id == "default") or (prof and prof.name.lower() == "default profile")
             
-        profile_id = current.data(Qt.UserRole)
-        
-        if profile_id == "default":
-            QMessageBox.warning(self, "Cannot Delete", "Cannot delete the default profile.")
+            if is_default:
+                has_default_in_selection = True
+            else:
+                valid_items.append(item)
+
+        # If ONLY default profile is selected, show FloatingToast notification ONLY (no pop-up window)
+        if not valid_items:
+            if has_default_in_selection:
+                FloatingToast.show_toast(self, "Default Profile", "Cannot delete the default profile.")
             return
-            
-        reply = QMessageBox.question(self, "Delete Profile",
-            "Delete this profile?",
-            QMessageBox.Yes | QMessageBox.No)
-            
-        if reply == QMessageBox.Yes and self._bridge:
-            self._bridge.profile_manager.delete_profile(profile_id)
-            self._load_profiles()
-            
+
+        # If default profile was selected along with other profiles, notify via toast
+        if has_default_in_selection:
+            FloatingToast.show_toast(self, "Default Profile", "Cannot delete the default profile.")
+
+        if len(valid_items) == 1:
+            p_id = valid_items[0].data(Qt.UserRole)
+            prof = self._bridge.profile_manager.get_profile(p_id)
+            p_name = prof.name if prof else "this"
+            msg = f"Are you sure you want to delete '{p_name}' profile?"
+        else:
+            msg = f"Are you sure you want to delete {len(valid_items)} selected profiles?"
+
+        reply = QMessageBox.question(self, "Delete Profile(s)", msg, QMessageBox.Yes | QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            deleted_count = 0
+            for item in valid_items:
+                profile_id = item.data(Qt.UserRole)
+                if profile_id and profile_id != "default":
+                    self._bridge.profile_manager.delete_profile(profile_id)
+                    deleted_count += 1
+
+            if deleted_count > 0:
+                self._bridge.profile_manager.save_all()
+                self._load_profiles()
+                self.macros_changed.emit()
+                FloatingToast.show_toast(self, "Profiles Deleted", f"Deleted {deleted_count} profile(s).")
+
     def _save_profile(self):
         """Save current profile settings."""
+        if not self._bridge:
+            self._init_bridge()
+            if not self._bridge or not self._bridge.profile_manager:
+                return
+
         current = self.profile_list.currentItem()
-        if not current or not self._bridge:
-            return
+        profile_id = current.data(Qt.UserRole) if current else None
+        
+        if not profile_id:
+            active_prof = self._bridge.profile_manager.active_profile
+            profile_id = active_prof.id if active_prof else "default"
             
-        profile_id = current.data(Qt.UserRole)
         profile = self._bridge.profile_manager.get_profile(profile_id)
         
         if profile:
-            profile.name = self.profile_name.text()
-            profile.bound_apps = [a.strip() for a in self.profile_apps.text().split(",") if a.strip()]
+            new_name = self.profile_name.text().strip()
+            if new_name:
+                profile.name = new_name
+            if hasattr(self, 'profile_apps'):
+                profile.bound_apps = [a.strip() for a in self.profile_apps.text().split(",") if a.strip()]
             self._bridge.profile_manager.save_profile(profile)
+            self._bridge.profile_manager.save_all()
             self._load_profiles()
-            QMessageBox.information(self, "Saved", "Profile saved!")
+            self.macros_changed.emit()
+            FloatingToast.show_toast(self, "Profile Saved", f"Saved settings for '{profile.name}'.")
+        else:
+            FloatingToast.show_toast(self, "Save Failed", "No profile selected to save.")
+
+    def _duplicate_selected_profile(self):
+        """Duplicate currently selected profile(s)."""
+        if not self._bridge:
+            self._init_bridge()
+            if not self._bridge or not self._bridge.profile_manager:
+                return
+
+        selected_items = self.profile_list.selectedItems()
+        if not selected_items:
+            current = self.profile_list.currentItem()
+            if current:
+                selected_items = [current]
+
+        if not selected_items:
+            FloatingToast.show_toast(self, "No Selection", "Please select profile(s) to duplicate.")
+            return
+
+        dup_count = 0
+        import copy
+        import uuid
+
+        for item in selected_items:
+            profile_id = item.data(Qt.UserRole)
+            src_profile = self._bridge.profile_manager.get_profile(profile_id)
+            if not src_profile:
+                continue
+
+            new_name = f"{src_profile.name} (Copy)"
+            new_prof = self._bridge.profile_manager.create_profile(new_name)
+            new_prof.bound_apps = list(src_profile.bound_apps)
+
+            # Copy macros from original profile to new profile
+            src_macros = self._bridge.profile_manager.get_macros_for_profile(profile_id)
+            for m in src_macros:
+                cloned_m = copy.deepcopy(m)
+                cloned_m.id = str(uuid.uuid4())
+                self._bridge.profile_manager.add_macro_to_profile(new_prof.id, cloned_m)
+
+            self._bridge.profile_manager.save_profile(new_prof)
+            dup_count += 1
+
+        if dup_count > 0:
+            self._bridge.profile_manager.save_all()
+            self._load_profiles()
+            self.macros_changed.emit()
+            FloatingToast.show_toast(self, "Profiles Duplicated", f"Duplicated {dup_count} profile(s).")
             
     # ===== MACRO RECORDER METHODS =====
     
@@ -4359,7 +7961,7 @@ class MacroSettingsPanel(QWidget):
         with open(filepath, 'w') as f:
             json.dump(self._current_recording.to_dict(), f, indent=2)
             
-        QMessageBox.information(self, "Saved", f"Recording saved!\nHotkey: {self._current_recording.playback_hotkey.upper()}")
+        FloatingToast.show_toast(self, "Recording Saved", f"Hotkey: {self._current_recording.playback_hotkey.upper()}")
         
     def _play_recording(self):
         """Play the current recording."""
