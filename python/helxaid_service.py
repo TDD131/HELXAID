@@ -78,7 +78,10 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
         sa.SECURITY_DESCRIPTOR = sd
         return sa
 
-    def get_ryzenadj_path(self):
+    def get_ryzenadj_path(self, explicit_path=None):
+        if explicit_path and os.path.exists(explicit_path):
+            return explicit_path
+
         # Try finding in the portable dir (next to service executable)
         base_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
         # PyInstaller paths
@@ -87,12 +90,26 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
         paths_to_check = [
             os.path.join(base_dir, "assets", "ryzenadj.exe"),
             os.path.join(exe_dir, "assets", "ryzenadj.exe"),
-            # AppData Fallback (from tools_downloader)
+            os.path.join(base_dir, "tools", "ryzenadj", "ryzenadj.exe"),
+            os.path.join(exe_dir, "tools", "ryzenadj", "ryzenadj.exe"),
             os.path.join(os.environ.get('APPDATA', ''), "HELXAID", "tools", "ryzenadj", "ryzenadj.exe")
         ]
+
+        # Scan user profiles in C:\Users when running under LocalSystem account
+        users_dir = "C:\\Users"
+        if os.path.exists(users_dir):
+            try:
+                for u in os.listdir(users_dir):
+                    if u.lower() in ["public", "default", "default user", "all users"]:
+                        continue
+                    p = os.path.join(users_dir, u, "AppData", "Roaming", "HELXAID", "tools", "ryzenadj", "ryzenadj.exe")
+                    if os.path.exists(p):
+                        paths_to_check.append(p)
+            except Exception:
+                pass
         
         for p in paths_to_check:
-            if os.path.exists(p):
+            if p and os.path.exists(p):
                 return p
         return None
 
@@ -106,7 +123,8 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 if not profile:
                     return {"status": "error", "message": "No profile data provided."}
                 
-                ryzenadj_path = self.get_ryzenadj_path()
+                explicit_path = data.get("ryzenadj_path")
+                ryzenadj_path = self.get_ryzenadj_path(explicit_path)
                 if not ryzenadj_path:
                     return {"status": "error", "message": "RyzenAdj executable not found."}
                 

@@ -8918,7 +8918,20 @@ Stylesheet Selector:
         import ctypes
         import sys
         import os
-        
+        from integrations.tools_downloader import is_ryzenadj_available, ensure_ryzenadj
+
+        # Ensure RyzenAdj is installed/downloaded before installing Zero-UAC service
+        if not is_ryzenadj_available():
+            print("[Zero-UAC] RyzenAdj missing. Triggering auto-download...")
+            downloaded = ensure_ryzenadj(self)
+            if not downloaded:
+                QMessageBox.critical(
+                    self, "Zero-UAC Setup Error",
+                    "RyzenAdj executable is required for Zero-UAC Mode, but could not be downloaded.\n\n"
+                    "Service installation aborted. Please check your internet connection and try again."
+                )
+                return
+
         reply = QMessageBox.question(
             self, "Enable Zero-UAC Mode", 
             "This will enable Zero-UAC Mode by registering a background helper service.\n\nWindows will ask for Administrator permissions once.\nContinue?",
@@ -9024,7 +9037,7 @@ Stylesheet Selector:
                     self,
                     "Application Failed",
                     f"Failed to apply settings:\n\n{error}\n\n"
-                    "Try running the launcher as administrator."
+                    "Try running the launcher as administrator or restart Zero-UAC Service."
                 )
                 
         # Connect the signal to the handler callback
@@ -10776,8 +10789,10 @@ Stylesheet Selector:
         dev_sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border: none; max-height: 1px;")
         dev_layout.addWidget(dev_sep)
 
-        # Danger button: only enabled when Developer Mode is active.
-        # Removes external runtime tools (RyzenAdj, FFprobe) from the system.
+        # Dev action buttons
+        dev_btn_layout = QHBoxLayout()
+        dev_btn_layout.setSpacing(8)
+
         uninstall_tools_btn = AnimatedButton("Uninstall External Tools")
         uninstall_tools_btn.setEnabled(dev_mode_cb.isChecked())
         uninstall_tools_btn.setStyleSheet("""
@@ -10793,10 +10808,30 @@ Stylesheet Selector:
             QPushButton:disabled { background: rgba(80,80,80,0.4); color: #555555; }
         """)
         uninstall_tools_btn.clicked.connect(self.uninstall_external_tools)
-        dev_layout.addWidget(uninstall_tools_btn)
+        dev_btn_layout.addWidget(uninstall_tools_btn)
 
-        # Wire toggle so button enables/disables reactively without reopening dialog
+        reset_appdata_btn = AnimatedButton("Reset AppData (Clean Install)")
+        reset_appdata_btn.setEnabled(dev_mode_cb.isChecked())
+        reset_appdata_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(180, 80, 20, 0.7);
+                color: white;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: rgba(210, 100, 30, 0.9); }
+            QPushButton:disabled { background: rgba(80,80,80,0.4); color: #555555; }
+        """)
+        reset_appdata_btn.clicked.connect(self.reset_appdata_clean_install)
+        dev_btn_layout.addWidget(reset_appdata_btn)
+
+        dev_layout.addLayout(dev_btn_layout)
+
+        # Wire toggles so buttons enable/disable reactively without reopening dialog
         dev_mode_cb.toggled.connect(uninstall_tools_btn.setEnabled)
+        dev_mode_cb.toggled.connect(reset_appdata_btn.setEnabled)
 
         # Toggle for turning off Psutil fallback scanning
         turn_off_psutil_cb = AnimatedCheckBox("Turn off Psutil")
@@ -10962,7 +10997,66 @@ Stylesheet Selector:
             # scratch and parsing the config JSON again is a massive waste of time 
             # and causes extreme UI freezing.
             
-        del dialog
+    def reset_appdata_clean_install(self):
+        """Wipe AppData, presets, playlists, and QSettings to simulate a 100% fresh install."""
+        confirm = QMessageBox.warning(
+            self, "Reset AppData - Clean Install Test",
+            "This action will permanently delete stored settings, presets, playlists,\n"
+            "and QSettings registry entries, simulating a 100% fresh installation.\n\n"
+            "Would you like to delete downloaded external tools (RyzenAdj, FFmpeg, LHM, etc.) as well?\n\n"
+            "- Yes: Wipe EVERYTHING (Complete Factory Reset)\n"
+            "- No: Wipe settings & data, but KEEP downloaded tools\n"
+            "- Cancel: Abort reset",
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+        )
+        if confirm == QMessageBox.Cancel:
+            return
+            
+        wipe_tools = (confirm == QMessageBox.Yes)
+        
+        try:
+            import shutil
+            from PySide6.QtCore import QSettings, QProcess
+            
+            # 1. Clear QSettings
+            qs = QSettings("TDD131", "HELXAID")
+            qs.clear()
+            
+            # 2. Clear AppData
+            appdata_dir = os.path.join(os.environ.get("APPDATA", ""), "HELXAID")
+            if os.path.exists(appdata_dir):
+                if wipe_tools:
+                    shutil.rmtree(appdata_dir, ignore_errors=True)
+                else:
+                    # Keep tools dir, delete everything else inside APPDATA/HELXAID
+                    for item in os.listdir(appdata_dir):
+                        if item.lower() == "tools":
+                            continue
+                        p = os.path.join(appdata_dir, item)
+                        if os.path.isdir(p):
+                            shutil.rmtree(p, ignore_errors=True)
+                        else:
+                            try:
+                                os.remove(p)
+                            except Exception:
+                                pass
+                                
+            # 3. Clear LocalAppData if exists
+            local_appdata = os.path.join(os.environ.get("LOCALAPPDATA", ""), "HELXAID")
+            if os.path.exists(local_appdata):
+                shutil.rmtree(local_appdata, ignore_errors=True)
+                
+            QMessageBox.information(
+                self, "Reset Complete",
+                "AppData and settings have been completely reset.\n\n"
+                "HELXAID will now restart into a fresh first-run state."
+            )
+            
+            # 4. Restart application
+            QProcess.startDetached(sys.executable, sys.argv)
+            QApplication.quit()
+        except Exception as e:
+            QMessageBox.critical(self, "Reset Failed", f"Could not reset AppData:\n{e}")
 
     def uninstall_external_tools(self):
         """Remove external runtime tools from the system.
@@ -10986,6 +11080,17 @@ Stylesheet Selector:
         from integrations.cpu_controller import is_uxtu_installed
         if is_uxtu_installed():
             targets.append(("SYSTEM_UNINSTALL_UXTU", "UXTU (Universal x86 Tuning Utility)"))
+            
+        # ---- RyzenAdj ----
+        try:
+            from integrations.tools_downloader import RYZENADJ_DIR
+            if os.path.exists(RYZENADJ_DIR) and RYZENADJ_DIR not in seen_paths:
+                targets.append((RYZENADJ_DIR, f"RyzenAdj  ({RYZENADJ_DIR})"))
+                seen_paths.add(RYZENADJ_DIR)
+        except Exception as e:
+            print(f"[UninstallTools] Could not resolve RyzenAdj path: {e}")
+
+        # ---- LibreHardwareMonitor ----
         try:
             from integrations.tools_downloader import LIBREHWMON_DIR
             if os.path.exists(LIBREHWMON_DIR) and LIBREHWMON_DIR not in seen_paths:
@@ -11011,6 +11116,15 @@ Stylesheet Selector:
                 seen_paths.add(FFMPEG_DIR)
         except Exception as e:
             print(f"[UninstallTools] Could not resolve FFmpeg path: {e}")
+
+        # ---- VLC ----
+        try:
+            from integrations.tools_downloader import VLC_DIR
+            if os.path.exists(VLC_DIR) and VLC_DIR not in seen_paths:
+                targets.append((VLC_DIR, f"VLC Media Player  ({VLC_DIR})"))
+                seen_paths.add(VLC_DIR)
+        except Exception as e:
+            print(f"[UninstallTools] Could not resolve VLC path: {e}")
 
         if not targets:
             QMessageBox.information(
@@ -11088,6 +11202,14 @@ Stylesheet Selector:
             self.settings.pop("ffprobe_exe", None)
             save_settings(self.settings)
 
+        # Clean up empty tools directory if all managed tools were removed
+        try:
+            from integrations.tools_downloader import TOOLS_DIR
+            if os.path.exists(TOOLS_DIR) and not os.listdir(TOOLS_DIR):
+                os.rmdir(TOOLS_DIR)
+        except Exception:
+            pass
+
         # Build and show result summary
         msg = ""
         if removed:
@@ -11097,15 +11219,15 @@ Stylesheet Selector:
 
         QMessageBox.information(self, "Uninstall Complete", msg.strip())
 
-        # Trigger live panel reload for CPU if UXTU was removed
-        if any("UXTU" in n for n in removed):
+        # Trigger live panel reload for CPU if UXTU or RyzenAdj was removed
+        if any("UXTU" in n or "RyzenAdj" in n for n in removed):
             self._reload_cpu_panel()
             
         # Trigger live panel reload for HELXTATS if LHM or HWiNFO was removed.
         if any("LibreHardwareMonitor" in n or "HWiNFO" in n for n in removed):
             self._reload_hardware_panel()
-        # Trigger live panel reload for HELXAIC if FFprobe/FFmpeg was removed.
-        if any("FFprobe" in n or "FFmpeg" in n for n in removed):
+        # Trigger live panel reload for HELXAIC if FFprobe/FFmpeg or VLC was removed.
+        if any("FFprobe" in n or "FFmpeg" in n or "VLC" in n for n in removed):
             self._reload_music_panel()
 
     def check_for_updates(self):
@@ -16153,6 +16275,16 @@ if __name__ == "__main__":
                 self.status_text = status
             self.repaint()
     
+    # Check for --clean / --sandbox CLI flag for instant fresh install testing
+    if any(arg in sys.argv for arg in ['--clean', '--sandbox', '--fresh']):
+        import tempfile
+        import uuid
+        clean_appdata = os.path.join(tempfile.gettempdir(), f"HELXAID_CleanTest_{uuid.uuid4().hex[:6]}")
+        os.makedirs(clean_appdata, exist_ok=True)
+        os.environ["APPDATA"] = clean_appdata
+        os.environ["LOCALAPPDATA"] = clean_appdata
+        print(f"[CleanMode] Running in isolated temporary AppData environment: {clean_appdata}")
+
     # Read hide_initialize_panel setting early
     import json
     settings_path = os.path.join(os.getenv('APPDATA', ''), "HELXAID", "settings.json")
@@ -16227,17 +16359,30 @@ if __name__ == "__main__":
     # Check if Zero-UAC should be initialized in Software Initialize Panel
     try:
         if _s.get("init_zero_uac_in_panel", False):
-            update_splash(70, "Initializing Zero-UAC Service...")
-            import ctypes
-            if getattr(sys, 'frozen', False):
-                exe_path = sys.executable
-                setup_args = "--run-service --setup"
+            from integrations.cpu_controller import is_service_running
+            if is_service_running():
+                print("[Init] Zero-UAC Service is already running.")
             else:
-                pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
-                exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
-                script_path = os.path.abspath(sys.argv[0])
-                setup_args = f'"{script_path}" --run-service --setup'
-            ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
+                update_splash(70, "Initializing Zero-UAC Service...")
+                # Auto-download RyzenAdj if missing
+                try:
+                    from integrations.tools_downloader import is_ryzenadj_available, download_ryzenadj
+                    if not is_ryzenadj_available():
+                        print("[Init] RyzenAdj missing for Zero-UAC on startup, downloading...")
+                        download_ryzenadj()
+                except Exception as dl_err:
+                    print(f"[Init] Auto-download RyzenAdj error: {dl_err}")
+
+                import ctypes
+                if getattr(sys, 'frozen', False):
+                    exe_path = sys.executable
+                    setup_args = "--run-service --setup"
+                else:
+                    pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+                    exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
+                    script_path = os.path.abspath(sys.argv[0])
+                    setup_args = f'"{script_path}" --run-service --setup'
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
     except Exception as e:
         print(f"[Init] Zero-UAC panel init error: {e}")
     

@@ -40,6 +40,12 @@ import time
 from typing import Optional
 from functools import partial
 
+try:
+    from PIL import Image, JpegImagePlugin, PngImagePlugin, WebPImagePlugin
+    PIL_AVAILABLE = True
+except Exception:
+    PIL_AVAILABLE = False
+
 
 class FadingHandleSlider(QSlider):
     """Base slider with a handle that fades out after inactivity and fades in on hover."""
@@ -354,16 +360,14 @@ class DownloadWorker(QThread):
             return f'bestvideo[height<={res}]+bestaudio/best[height<={res}]/best'
 
     def run(self):
-        """Execute the download in a shell via yt-dlp module."""
-        import subprocess
+        """Execute the download in-process via yt-dlp Python API."""
         import os
         import sys
         
         self.downloaded_path = None
         
         try:
-            import yt_dlp as _yt_dlp_mod
-            main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
+            import yt_dlp
             
             f_str = self.get_f_str()
             out_tmpl = os.path.join(self.out_dir, '%(title)s.%(ext)s')
@@ -379,99 +383,88 @@ class DownloadWorker(QThread):
             except Exception:
                 ffmpeg_location = None
             
-            # Build command line
-            cmd = [
-                sys.executable, main_py,
-                '--newline',
-                '--no-playlist',
-                '--no-check-certificate',
-                '--format', f_str,
-                '--output', out_tmpl,
-                '--progress-template', '"[download] %(progress._percent_str)s"'
-            ]
-            
-            if getattr(self, 'browser_cookies', 'None').lower() != 'none':
-                cmd.extend(['--cookies-from-browser', self.browser_cookies.lower()])
+            def progress_hook(d):
+                if self._is_cancelled:
+                    raise Exception("Download cancelled by user.")
                 
-            cmd.append(self.url)
+                status_type = d.get('status')
+                if status_type == 'downloading':
+                    p_str = d.get('_percent_str', '').strip()
+                    if p_str:
+                        clean_p = p_str.replace('%', '').replace('"', '').strip()
+                        try:
+                            val = float(clean_p)
+                            self.progress.emit(int(val))
+                        except Exception:
+                            pass
+                        self.status.emit(f"[download] {p_str}")
+                    
+                    fn = d.get('filename')
+                    if fn:
+                        self.downloaded_path = fn
+                elif status_type == 'finished':
+                    fn = d.get('filename')
+                    if fn:
+                        self.downloaded_path = fn
+                    self.status.emit("[download] 100%")
+
+            ydl_opts = {
+                'format': f_str,
+                'outtmpl': out_tmpl,
+                'nocheckcertificate': True,
+                'noplaylist': True,
+                'progress_hooks': [progress_hook],
+                'quiet': True,
+                'no_warnings': True,
+                'retries': 10,
+                'fragment_retries': 10,
+                'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web']}},
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                },
+            }
 
             if ffmpeg_location:
-                cmd.extend(['--ffmpeg-location', ffmpeg_location])
-            
-            if self.fmt == 'audio':
-                # Convert to mp3 and remove the original downloaded container
-                # so the user only gets a single mp3 file.
-                cmd.extend(['--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0', '--no-keep-video'])
-            else:
-                # Force a single merged output container when possible.
-                cmd.extend(['--merge-output-format', 'mp4'])
+                ydl_opts['ffmpeg_location'] = ffmpeg_location
 
-            startupinfo = None
-            if sys.platform == 'win32':
-                from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
-                startupinfo = STARTUPINFO()
-                startupinfo.dwFlags |= STARTF_USESHOWWINDOW
-                
-            print(f"[DEBUG DownloadWorker] Running command: {' '.join(cmd)}")
-            self._proc = subprocess.Popen(
-                cmd, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE, 
-                text=True, 
-                encoding='utf-8', 
-                errors='replace',
-                startupinfo=startupinfo
-            )
-            
-            while not self._is_cancelled:
-                line = self._proc.stdout.readline()
-                if not line:
-                    break
-                
-                clean_line = line.strip()
-                if not clean_line:
-                    continue
-                
-                self.status.emit(clean_line)
-                
-                # Parse output file path from yt-dlp stdout
-                if 'Destination:' in clean_line:
-                    p = clean_line.split('Destination:', 1)[1].strip()
-                    if p: self.downloaded_path = p
-                elif 'Merging formats into' in clean_line:
-                    p = clean_line.split('Merging formats into', 1)[1].strip().strip('"')
-                    if p: self.downloaded_path = p
-                elif 'has already been downloaded' in clean_line and '[download]' in clean_line:
-                    p = clean_line.replace('[download]', '').split('has already been downloaded')[0].strip()
-                    if p: self.downloaded_path = p
-                
-                # Parse progress percent
-                if '[download]' in clean_line and '%' in clean_line:
-                    try:
-                        # Extract percentage (e.g., "[download] 12.5%")
-                        parts = clean_line.split()
-                        for p in parts:
-                            if '%' in p:
-                                val_str = p.replace('%', '').replace('"', '').strip()
-                                val = float(val_str)
-                                self.progress.emit(int(val))
-                                break
-                    except:
-                        pass
-            
-            self._proc.wait()
-            
+            if getattr(self, 'browser_cookies', 'None').lower() != 'none':
+                ydl_opts['cookiesfrombrowser'] = (self.browser_cookies.lower(),)
+
+            if self.fmt == 'audio':
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '0',
+                }]
+                ydl_opts['keepvideo'] = False
+            else:
+                ydl_opts['merge_output_format'] = 'mp4'
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.url, download=True)
+                if info:
+                    if isinstance(info, dict) and 'entries' in info:
+                        entries = [e for e in info.get('entries', []) if isinstance(e, dict)]
+                        if entries:
+                            info = entries[0]
+                    if 'requested_downloads' in info and info['requested_downloads']:
+                        self.downloaded_path = info['requested_downloads'][0].get('filepath') or self.downloaded_path
+                    elif '_filename' in info:
+                        self.downloaded_path = info.get('_filename') or self.downloaded_path
+
             if self._is_cancelled:
                 self.error.emit("Download cancelled by user.")
-            elif self._proc.returncode == 0:
+            else:
                 print(f"[DEBUG DownloadWorker] Finished successfully. Captured path: {self.downloaded_path}")
                 self.finished.emit(self.downloaded_path or "Download successful!")
-            else:
-                err_msg = self._proc.stderr.read()
-                self.error.emit(err_msg or f"yt-dlp exited with code {self._proc.returncode}")
                 
         except Exception as e:
-            self.error.emit(str(e))
+            if self._is_cancelled:
+                self.error.emit("Download cancelled by user.")
+            else:
+                self.error.emit(str(e))
 
 
 class MetadataWorker(QThread):
@@ -495,64 +488,83 @@ class MetadataWorker(QThread):
         self._is_cancelled = True
 
     def run(self):
-        import subprocess
         import os
         import sys
         
         if self._is_cancelled: return
 
         try:
-            import yt_dlp as _yt_dlp_mod
-            main_py = os.path.join(os.path.dirname(_yt_dlp_mod.__file__), '__main__.py')
+            import yt_dlp
             
             dw = DownloadWorker(self.url, "", self.fmt, self.quality_idx, self.browser_cookies)
             f_str = dw.get_f_str()
             
-            # Request Title, Thumbnail URL, and Size
-            cmd = [
-                sys.executable, main_py,
-                '--simulate',
-                '--no-playlist',
-                '--no-check-certificate',
-                '--quiet',
-                '--no-warnings',
-                '--format', f_str,
-                '--print', 'title',
-                '--print', 'thumbnail',
-                '--print', 'filesize,filesize_approx'
-            ]
-            
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'nocheckcertificate': True,
+                'noplaylist': True,
+                'format': f_str,
+                'extract_flat': False,
+                'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web']}},
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                },
+            }
             if getattr(self, 'browser_cookies', 'None').lower() != 'none':
-                cmd.extend(['--cookies-from-browser', self.browser_cookies.lower()])
+                ydl_opts['cookiesfrombrowser'] = (self.browser_cookies.lower(),)
                 
-            cmd.append(self.url)
-            
-            startupinfo = None
-            if sys.platform == 'win32':
-                from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
-                startupinfo = STARTUPINFO()
-                startupinfo.dwFlags |= STARTF_USESHOWWINDOW
-                
-            res = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', startupinfo=startupinfo)
-            
-            if self._is_cancelled: return
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.url, download=False)
+                if not info:
+                    if not self._is_cancelled:
+                        self.error.emit("Failed to fetch meta.")
+                    return
 
-            if res.returncode == 0:
-                lines = [l.strip() for l in res.stdout.strip().split('\n') if l.strip()]
+                # If query was a search string ('ytsearch1:...'), unpack first entry
+                if isinstance(info, dict) and 'entries' in info:
+                    entries = [e for e in info.get('entries', []) if isinstance(e, dict)]
+                    if entries:
+                        info = entries[0]
                 
-                title = lines[0] if len(lines) > 0 else "Unknown Title"
-                thumb_url = lines[1] if len(lines) > 1 else None
-                size_raw = lines[2] if len(lines) > 2 and lines[2] != 'NA' else "Unknown"
-                
-                if size_raw != "Unknown":
+                title = info.get('title', 'Unknown Title')
+                thumb_url = info.get('thumbnail', None)
+                if not thumb_url and info.get('thumbnails'):
+                    thumbnails = info.get('thumbnails')
+                    if isinstance(thumbnails, list) and len(thumbnails) > 0:
+                        thumb_url = thumbnails[-1].get('url')
+                        
+                val = info.get('filesize') or info.get('filesize_approx')
+                if not val and info.get('requested_downloads'):
+                    reqs = info.get('requested_downloads')
+                    if isinstance(reqs, list) and reqs:
+                        val = sum(r.get('filesize') or r.get('filesize_approx') or 0 for r in reqs if isinstance(r, dict))
+                if not val and info.get('formats'):
+                    for f in info.get('formats', []):
+                        if isinstance(f, dict) and (f.get('filesize') or f.get('filesize_approx')):
+                            val = f.get('filesize') or f.get('filesize_approx')
+                            break
+                if not val and info.get('duration'):
                     try:
-                        val = int(size_raw)
+                        dur = float(info.get('duration'))
+                        bitrate = 320000 if self.fmt == 'audio' else 2500000
+                        val = (dur * bitrate) / 8
+                    except Exception:
+                        pass
+
+                size_raw = "Unknown"
+                if val:
+                    try:
+                        val_num = float(val)
                         for unit in ['B','KB','MB','GB']:
-                            if val < 1024:
-                                size_raw = f"{val:.1f} {unit}"
+                            if val_num < 1024:
+                                size_raw = f"{val_num:.1f} {unit}"
                                 break
-                            val /= 1024
-                    except: pass
+                            val_num /= 1024
+                    except Exception:
+                        pass
                 
                 if not self._is_cancelled:
                     self.metadata.emit({
@@ -560,9 +572,6 @@ class MetadataWorker(QThread):
                         'thumb_url': thumb_url,
                         'size': size_raw
                     })
-            else:
-                if not self._is_cancelled:
-                    self.error.emit("Failed to fetch meta.")
         except Exception as e:
             if not self._is_cancelled:
                 self.error.emit(str(e))
@@ -575,10 +584,26 @@ class ImageLoader(QThread):
         super().__init__()
         self.url = url
     def run(self):
+        import urllib.request
+        import ssl
         try:
-            data = urllib.request.urlopen(self.url, timeout=10).read()
-            if data: self.loaded.emit(data)
-        except: pass
+            req = urllib.request.Request(
+                self.url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+                }
+            )
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
+                data = resp.read()
+                if data:
+                    self.loaded.emit(data)
+        except Exception as e:
+            print(f"[ImageLoader] Error loading thumbnail from {self.url}: {e}")
 
 
 class SpinningLoader(QWidget):
@@ -1597,6 +1622,21 @@ class UniversalDownloaderPanel(QFrame):
             if pixmap.loadFromData(data):
                 self._raw_thumb_pixmap = pixmap
                 self._update_scaled_thumb()
+            else:
+                # Fallback to PIL in case QPixmap fails on certain webp or image containers
+                try:
+                    import io
+                    from PIL import Image
+                    from PySide6.QtGui import QImage
+                    im = Image.open(io.BytesIO(data))
+                    im = im.convert('RGBA')
+                    qimg = QImage(im.tobytes('raw', 'RGBA'), im.width, im.height, QImage.Format_RGBA8888)
+                    pixmap = QPixmap.fromImage(qimg)
+                    if not pixmap.isNull():
+                        self._raw_thumb_pixmap = pixmap
+                        self._update_scaled_thumb()
+                except Exception as err:
+                    print(f"[UniversalDownloader] Image fallback error: {err}")
         except (RuntimeError, AttributeError):
             pass
 
@@ -8366,70 +8406,60 @@ class MusicPanelWidget(QWidget):
         
         def fetch():
             import sys
-            import subprocess
             import json
             import os
             
             try:
                 import yt_dlp
-                main_py = os.path.join(os.path.dirname(yt_dlp.__file__), '__main__.py')
             except ImportError as e:
                 print(f"yt-dlp core module missing entirely: {e}")
                 return
             
-            cmd = [
-                sys.executable, main_py,
-                '--dump-json',
-                '--extract-flat',
-                '--quiet',
-                '--no-warnings',
-                '--playlist-end', '50',
-                '--socket-timeout', '10',
-                '--no-check-certificate',
-                '--extractor-args', 'youtube:player_client=android',
-                url
-            ]
+            ydl_opts = {
+                'extract_flat': 'in_playlist',
+                'playlistend': 50,
+                'quiet': True,
+                'no_warnings': True,
+                'socket_timeout': 10,
+                'nocheckcertificate': True,
+                'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web']}},
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                },
+            }
             
             try:
-                startupinfo = None
-                if sys.platform == 'win32':
-                    from subprocess import STARTUPINFO, STARTF_USESHOWWINDOW
-                    startupinfo = STARTUPINFO()
-                    startupinfo.dwFlags |= STARTF_USESHOWWINDOW
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                    if not info:
+                        return
                     
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=25, startupinfo=startupinfo)
-                if result.returncode == 0 and result.stdout:
                     tracks_to_add = []
-                    lines = result.stdout.strip().split('\n')
-                    for line in lines:
-                        if not line.strip(): continue
-                        try:
-                            info = json.loads(line)
-                            
-                            if 'entries' in info and info['entries']:
-                                for idx, entry in enumerate(info['entries']):
-                                    if entry:
-                                        tracks_to_add.append({
-                                            'path': entry.get('url', ''),
-                                            'original_url': entry.get('url', ''),
-                                            'title': entry.get('title', f"Stream {idx+1}"),
-                                            'artist': entry.get('uploader', info.get('uploader', 'Unknown')),
-                                            'duration': entry.get('duration') or 0,
-                                            'is_online': True,
-                                            'mtime': 0,
-                                        })
-                            else:
+                    entries = info.get('entries', [])
+                    if entries:
+                        for idx, entry in enumerate(entries):
+                            if entry:
                                 tracks_to_add.append({
-                                    'path': info.get('webpage_url', info.get('url', url)),
-                                    'original_url': info.get('webpage_url', info.get('url', url)),
-                                    'title': info.get('title', 'Unknown Stream'),
-                                    'artist': info.get('uploader', 'Unknown'),
-                                    'duration': info.get('duration') or 0,
+                                    'path': entry.get('url', ''),
+                                    'original_url': entry.get('url', ''),
+                                    'title': entry.get('title', f"Stream {idx+1}"),
+                                    'artist': entry.get('uploader', info.get('uploader', 'Unknown')),
+                                    'duration': entry.get('duration') or 0,
                                     'is_online': True,
                                     'mtime': 0,
                                 })
-                        except json.JSONDecodeError:
-                            continue
+                    else:
+                        tracks_to_add.append({
+                            'path': info.get('webpage_url', info.get('url', url)),
+                            'original_url': info.get('webpage_url', info.get('url', url)),
+                            'title': info.get('title', 'Unknown Stream'),
+                            'artist': info.get('uploader', 'Unknown'),
+                            'duration': info.get('duration') or 0,
+                            'is_online': True,
+                            'mtime': 0,
+                        })
                     if tracks_to_add:
                         def update_ui():
                             # Safety check to reliably replace the dummy object
@@ -8454,10 +8484,8 @@ class MusicPanelWidget(QWidget):
                                 
                         from PySide6.QtCore import QTimer
                         QTimer.singleShot(0, update_ui)
-                else:
-                    raise Exception(result.stderr)
             except Exception as e:
-                print(f"Failed to fetch metadata (yt-dlp shell): {e}")
+                print(f"Failed to fetch metadata (yt-dlp): {e}")
                 if dummy_track:
                     dummy_track['title'] = 'Failed to load stream'
                     dummy_track['artist'] = ''
@@ -8482,7 +8510,13 @@ class MusicPanelWidget(QWidget):
                     'format': 'bestaudio/best',
                     'quiet': True,
                     'no_warnings': True,
-                    'extract_flat': False
+                    'extract_flat': False,
+                    'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web']}},
+                    'http_headers': {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                    },
                 }
                 
                 from PySide6.QtCore import QSettings

@@ -1,0 +1,12 @@
+<Configuration>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>d:\Software\tididi\HELXAID\dist</HostFolder>
+      <UserFolder>C:\Users\WDAGUtilityAccount\Desktop\HELXAID_Dist</UserFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>powershell -Command "Write-Host 'Windows Sandbox initialized. Open Desktop\HELXAID_Dist to test clean install.'"</Command>
+  </LogonCommand>
+</Configuration>

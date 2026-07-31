@@ -336,7 +336,12 @@ def apply_ryzenadj(profile: dict) -> tuple:
             
         if pipe_available:
             try:
-                payload = json.dumps({"action": "apply_cpu", "profile": profile})
+                ry_path = get_ryzenadj_path()
+                payload = json.dumps({
+                    "action": "apply_cpu",
+                    "profile": profile,
+                    "ryzenadj_path": ry_path
+                })
                 # CallNamedPipe(pipeName, data, bufSize, timeOut_ms)
                 data = win32pipe.CallNamedPipe(pipe_name, payload.encode('utf-8'), 65536, 15000)
                 
