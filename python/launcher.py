@@ -8956,11 +8956,15 @@ Stylesheet Selector:
         import sys
         import os
         
-        reply = QMessageBox.question(
-            self, "Disable Zero-UAC Mode", 
+        msg = QMessageBox(
+            QMessageBox.Question,
+            "Disable Zero-UAC Mode", 
             "Disable Zero-UAC Mode and remove the background helper service?\nCPU changes will require UAC prompts again.",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
+            self
         )
+        apply_custom_titlebar(msg, "#000000")
+        reply = msg.exec()
         if reply == QMessageBox.Yes:
             if getattr(sys, 'frozen', False):
                 exe_path = sys.executable
@@ -10999,16 +11003,20 @@ Stylesheet Selector:
             
     def reset_appdata_clean_install(self):
         """Wipe AppData, presets, playlists, and QSettings to simulate a 100% fresh install."""
-        confirm = QMessageBox.warning(
-            self, "Reset AppData - Clean Install Test",
+        msg = QMessageBox(
+            QMessageBox.Warning,
+            "Reset AppData - Clean Install Test",
             "This action will permanently delete stored settings, presets, playlists,\n"
             "and QSettings registry entries, simulating a 100% fresh installation.\n\n"
             "Would you like to delete downloaded external tools (RyzenAdj, FFmpeg, LHM, etc.) as well?\n\n"
             "- Yes: Wipe EVERYTHING (Complete Factory Reset)\n"
             "- No: Wipe settings & data, but KEEP downloaded tools\n"
             "- Cancel: Abort reset",
-            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+            self
         )
+        apply_custom_titlebar(msg, "#000000")
+        confirm = msg.exec()
         if confirm == QMessageBox.Cancel:
             return
             
@@ -11137,14 +11145,18 @@ Stylesheet Selector:
 
         # Show confirmation listing all discovered paths before touching anything
         names = "\n".join(f"  - {label}" for _, label in targets)
-        confirm = QMessageBox.warning(
-            self, "Uninstall External Tools",
+        msg = QMessageBox(
+            QMessageBox.Warning,
+            "Uninstall External Tools",
             f"The following external tools will be permanently deleted:\n\n{names}\n\n"
             "This action cannot be undone. Features that depend on these tools\n"
             "(CPU Controller, Music duration reading) will stop working.\n\n"
             "Are you sure?",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
+            self
         )
+        apply_custom_titlebar(msg, "#000000")
+        confirm = msg.exec()
         if confirm != QMessageBox.Yes:
             return
 
@@ -16427,6 +16439,8 @@ if __name__ == "__main__":
         if w.settings.get("window_fullscreen", False):
             w.showFullScreen()
         else:
-            w.show()
+            w.showNormal()
+        w.activateWindow()
+        w.raise_()
     
     sys.exit(app.exec())

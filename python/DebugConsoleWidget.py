@@ -113,6 +113,26 @@ class DebugConsoleWidget(QWidget):
             }
         """)
         btn_layout.addWidget(clear_btn)
+
+        # Copy Logs button
+        self.copy_btn = QPushButton("Copy Logs")
+        self.copy_btn.setObjectName("debugCopyBtn")
+        self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.clicked.connect(self.copy_logs)
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background: #333;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 5px 15px;
+            }
+            QPushButton:hover {
+                background: #444;
+                border-color: #FF5B06;
+            }
+        """)
+        btn_layout.addWidget(self.copy_btn)
         
         # Auto-scroll toggle
         self.auto_scroll_btn = QPushButton("Auto-Scroll: ON")
@@ -205,6 +225,22 @@ class DebugConsoleWidget(QWidget):
         """Toggle auto-scroll."""
         self.auto_scroll_btn.setText(f"Auto-Scroll: {'ON' if checked else 'OFF'}")
     
+    def copy_logs(self):
+        """Copy selected text or all console logs to clipboard."""
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import QTimer
+        
+        selected = self.console.textCursor().selectedText()
+        text_to_copy = selected if selected else self.console.toPlainText()
+        
+        if text_to_copy:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(text_to_copy.replace('\u2029', '\n'))
+            
+            orig_text = self.copy_btn.text()
+            self.copy_btn.setText("Copied!")
+            QTimer.singleShot(1500, lambda: self.copy_btn.setText(orig_text))
+
     def clear_console(self):
         """Clear the console."""
         self.console.clear()
