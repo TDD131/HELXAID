@@ -15,6 +15,7 @@ import subprocess
 import ctypes
 from ctypes import wintypes
 import threading
+from datetime import timedelta
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QStackedWidget, QGroupBox, QCheckBox, QSpinBox,
@@ -51,6 +52,131 @@ def get_cached_pixmap(path: str, width: int = None, height: int = None) -> QPixm
         
     _PIXMAP_CACHE[key] = pixmap
     return pixmap
+
+
+class TimeMaskLineEdit(QLineEdit):
+    """Custom QLineEdit implementing segmented HH:MM time masking with auto-skip and indestructible ':' separator."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setText("00:00")
+        self.setMaxLength(5)
+        self.setAlignment(Qt.AlignCenter)
+        
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        QTimer.singleShot(0, lambda: self.setSelection(0, 2))
+        
+    def mousePressEvent(self, event):
+        had_focus = self.hasFocus()
+        super().mousePressEvent(event)
+        if not had_focus:
+            QTimer.singleShot(0, lambda: self.setSelection(0, 2))
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        text = self.text()
+        
+        if len(text) != 5 or (len(text) >= 3 and text[2] != ':'):
+            text = "00:00"
+            self.setText(text)
+            
+        cursor_pos = self.cursorPosition()
+        has_sel = self.hasSelectedText()
+        sel_start = self.selectionStart()
+        sel_len = len(self.selectedText())
+        
+        # If user selected all text (0..5) and types a digit
+        if has_sel and sel_start == 0 and sel_len >= 4:
+            if Qt.Key_0 <= key <= Qt.Key_9:
+                digit = chr(key)
+                if int(digit) >= 3:
+                    self.setText(f"0{digit}:00")
+                    self.setSelection(3, 2)
+                else:
+                    self.setText(f"{digit}0:00")
+                    self.setCursorPosition(1)
+                return
+            elif key in (Qt.Key_Colon, Qt.Key_Semicolon):
+                self.setSelection(3, 2)
+                return
+            elif key in (Qt.Key_Backspace, Qt.Key_Delete):
+                self.setText("00:00")
+                self.setSelection(0, 2)
+                return
+
+        # If user selected hour segment (0..2)
+        if has_sel and sel_start == 0 and sel_len == 2:
+            if Qt.Key_0 <= key <= Qt.Key_9:
+                digit = chr(key)
+                min_part = text[3:5] if len(text) >= 5 else "00"
+                if int(digit) >= 3:
+                    self.setText(f"0{digit}:{min_part}")
+                    self.setSelection(3, 2)
+                else:
+                    self.setText(f"{digit}0:{min_part}")
+                    self.setCursorPosition(1)
+                return
+
+        # If user selected minute segment (3..5)
+        if has_sel and sel_start >= 3:
+            if Qt.Key_0 <= key <= Qt.Key_9:
+                digit = chr(key)
+                hr_part = text[0:2] if len(text) >= 2 else "00"
+                self.setText(f"{hr_part}:{digit}0")
+                self.setCursorPosition(4)
+                return
+
+        # Digit key typing at cursor position
+        if Qt.Key_0 <= key <= Qt.Key_9:
+            digit = chr(key)
+            chars = list(text if len(text) == 5 else "00:00")
+            
+            if cursor_pos == 2:
+                cursor_pos = 3
+                
+            if cursor_pos < 2:
+                chars[cursor_pos] = digit
+                new_pos = cursor_pos + 1
+                if new_pos == 2:  # Skip over ':'
+                    new_pos = 3
+            elif cursor_pos >= 3 and cursor_pos < 5:
+                chars[cursor_pos] = digit
+                new_pos = min(5, cursor_pos + 1)
+            else:
+                new_pos = 5
+                
+            new_text = "".join(chars)
+            self.setText(new_text)
+            self.setCursorPosition(new_pos)
+            return
+
+        # Colon, Semicolon, or Right Arrow: Jump to Minute section
+        if key in (Qt.Key_Colon, Qt.Key_Semicolon) or (key == Qt.Key_Right and cursor_pos == 2):
+            self.setSelection(3, 2)
+            return
+            
+        # Left Arrow at ':' position: Jump back to Hour section
+        if key == Qt.Key_Left and cursor_pos == 3:
+            self.setSelection(0, 2)
+            return
+
+        # Backspace
+        if key == Qt.Key_Backspace:
+            if cursor_pos == 3:  # Just after ':'
+                self.setSelection(0, 2)
+                return
+            elif cursor_pos > 0:
+                target_pos = cursor_pos - 1
+                if target_pos == 2:
+                    target_pos = 1
+                chars = list(text if len(text) == 5 else "00:00")
+                chars[target_pos] = '0'
+                self.setText("".join(chars))
+                self.setCursorPosition(target_pos)
+                return
+
+        super().keyPressEvent(event)
 
 
 def _load_helrcus_config():
@@ -1085,7 +1211,19 @@ class WindowsUpdateControl:
                     error_msg = res.stderr.strip()
             return success, error_msg
         else:
-            # Need elevation - use VBS wrapper to prevent console flash
+            # First attempt Zero-UAC Helper Service execution (No UAC prompt)
+            try:
+                from integrations.cpu_controller import is_service_running, send_service_command
+                if is_service_running():
+                    res = send_service_command({"action": "exec_batch_commands", "commands": commands})
+                    if isinstance(res, dict) and res.get("status") == "success":
+                        return True, ""
+                    elif isinstance(res, dict) and res.get("message"):
+                        print(f"[WindowsUpdateControl] Helper service exec error: {res.get('message')}, trying UAC fallback...")
+            except Exception as svc_err:
+                print(f"[WindowsUpdateControl] Helper service check exception: {svc_err}")
+
+            # Fallback for non-Zero-UAC mode — use VBS wrapper to prevent console flash
             import tempfile, os, time
             
             temp_dir = tempfile.gettempdir()
@@ -1375,7 +1513,10 @@ class WindowsCustomPanel(QWidget):
                 color: #e0e0e0;
                 border: none;
                 border-radius: 10px;
-                padding: 6px 12px;
+                padding-left: 12px;
+                padding-right: 30px;
+                padding-top: 6px;
+                padding-bottom: 6px;
                 font-size: 13px;
                 font-weight: 500;
             }}
@@ -1383,11 +1524,15 @@ class WindowsCustomPanel(QWidget):
                 background: rgba(255, 255, 255, 0.2);
             }}
             QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
                 border: none;
                 width: 24px;
                 background: transparent;
             }}
             QComboBox::down-arrow {{
+                subcontrol-origin: content;
+                subcontrol-position: center;
                 image: url({down_arrow_path});
                 width: 10px;
                 height: 10px;
@@ -1782,7 +1927,7 @@ class WindowsCustomPanel(QWidget):
         controls_layout.setSpacing(14)
         
         # --- Pause Updates Section ---
-        pause_lbl = QLabel("Pause until:")
+        pause_lbl = QLabel("Pause until (DD/MM/YY):")
         pause_lbl.setStyleSheet("font-size: 12px;")
         controls_layout.addWidget(pause_lbl)
         
@@ -1797,26 +1942,47 @@ class WindowsCustomPanel(QWidget):
         # Shared inline style for date input boxes (overrides global launcher stylesheet)
         _input_style = """
             QLineEdit {
-                background: #2a2d35;
-                color: #e0e0e0;
-                border: none;
-                border-radius: 5px;
-                padding: 6px 8px;
-                font-size: 12px;
+                background: rgba(255, 255, 255, 0.08);
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px 6px;
+                font-size: 13px;
+                font-weight: 600;
                 margin: 0px;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
+            }
+            QLineEdit::selection {
+                background-color: #ffffff;
+                color: #000000;
+            }
+            QLineEdit:hover {
+                background: rgba(255, 255, 255, 0.14);
+                border: 1px solid rgba(255, 91, 6, 0.5);
             }
             QLineEdit:focus {
-                background: #32353e;
-                border: 1px solid rgba(255, 91, 6, 0.6);
+                background: rgba(255, 91, 6, 0.15);
+                border: 1.5px solid #FF5B06;
+                color: #ffffff;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
             }
         """
         
+        from PySide6.QtGui import QPalette, QColor
+        _sel_palette = QPalette()
+        _sel_palette.setColor(QPalette.Highlight, QColor("#ffffff"))
+        _sel_palette.setColor(QPalette.HighlightedText, QColor("#000000"))
+
         # Day input
         self._pause_day = QLineEdit()
         self._pause_day.setPlaceholderText("DD")
         self._pause_day.setFixedWidth(48)
         self._pause_day.setFixedHeight(36)
         self._pause_day.setMaxLength(2)
+        self._pause_day.setAlignment(Qt.AlignCenter)
+        self._pause_day.setPalette(_sel_palette)
         self._pause_day.setStyleSheet(_input_style)
         
         sep1 = QLabel("/")
@@ -1831,6 +1997,8 @@ class WindowsCustomPanel(QWidget):
         self._pause_month.setFixedWidth(48)
         self._pause_month.setFixedHeight(36)
         self._pause_month.setMaxLength(2)
+        self._pause_month.setAlignment(Qt.AlignCenter)
+        self._pause_month.setPalette(_sel_palette)
         self._pause_month.setStyleSheet(_input_style)
         
         sep2 = QLabel("/")
@@ -1845,9 +2013,11 @@ class WindowsCustomPanel(QWidget):
         self._pause_year.setFixedWidth(64)
         self._pause_year.setFixedHeight(36)
         self._pause_year.setMaxLength(4)
+        self._pause_year.setAlignment(Qt.AlignCenter)
+        self._pause_year.setPalette(_sel_palette)
         self._pause_year.setStyleSheet(_input_style)
         
-        # Populate from saved config or leave blank
+        # Populate from saved config or default to 30 days from today
         if saved_date:
             try:
                 _saved = _dt.strptime(saved_date, "%d/%m/%Y")
@@ -1856,6 +2026,11 @@ class WindowsCustomPanel(QWidget):
                 self._pause_year.setText(str(_saved.year))
             except ValueError:
                 pass
+        else:
+            _default_date = _dt.now() + timedelta(days=30)
+            self._pause_day.setText(f"{_default_date.day:02d}")
+            self._pause_month.setText(f"{_default_date.month:02d}")
+            self._pause_year.setText(str(_default_date.year))
         
         # --- Per-widget button style (MacroSettingsPanel pattern) ---
         _btn_style = """
@@ -1944,19 +2119,47 @@ class WindowsCustomPanel(QWidget):
                 color: #e0e0e0;
                 border: none;
                 border-radius: 10px;
-                padding: 6px 12px;
+                padding-left: 12px;
+                padding-right: 30px;
+                padding-top: 6px;
+                padding-bottom: 6px;
                 font-size: 12px;
                 font-weight: 500;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
+            }}
+            QComboBox:editable {{
+                background: rgba(255, 255, 255, 0.1);
+                color: #ffffff;
+                border: none;
+                border-radius: 10px;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
+            }}
+            QComboBox QLineEdit {{
+                background: transparent;
+                color: #ffffff;
+                border: none;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
+            }}
+            QComboBox QLineEdit::selection {{
+                background-color: #ffffff;
+                color: #000000;
             }}
             QComboBox:hover {{
                 background: rgba(255, 255, 255, 0.2);
             }}
             QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
                 border: none;
                 width: 24px;
                 background: transparent;
             }}
             QComboBox::down-arrow {{
+                subcontrol-origin: content;
+                subcontrol-position: center;
                 image: url({down_arrow_path});
                 width: 10px;
                 height: 10px;
@@ -1984,6 +2187,7 @@ class WindowsCustomPanel(QWidget):
         """
         
         self._hours_preset_combo = QComboBox()
+        self._hours_preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self._hours_preset_combo.addItems(["Always Active", "8 Hours", "12 Hours", "18 Hours", "Customize"])
         # Set default selection from config
         saved_preset = self._config["windows_update"].get("active_hours_preset", "Customize")
@@ -1992,7 +2196,7 @@ class WindowsCustomPanel(QWidget):
             self._hours_preset_combo.setCurrentIndex(preset_idx)
         else:
             self._hours_preset_combo.setCurrentIndex(4)  # Default to Customize
-        self._hours_preset_combo.setFixedWidth(140)
+        self._hours_preset_combo.setMinimumWidth(160)
         self._hours_preset_combo.setFixedHeight(36)
         self._hours_preset_combo.setStyleSheet(_combo_style)
         self._hours_preset_combo.currentIndexChanged.connect(self._on_hours_preset_changed)
@@ -2006,12 +2210,20 @@ class WindowsCustomPanel(QWidget):
         custom_layout.setSpacing(10)
         custom_layout.setAlignment(Qt.AlignVCenter)
         
+        from PySide6.QtGui import QPalette, QColor
+        _sel_palette = QPalette()
+        _sel_palette.setColor(QPalette.Highlight, QColor("#ffffff"))
+        _sel_palette.setColor(QPalette.HighlightedText, QColor("#000000"))
+
         self._hours_start = QComboBox()
+        self._hours_start.setEditable(True)
+        self._hours_start.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self._hours_start.addItems([f"{i:02d}:00" for i in range(24)])
         self._hours_start.setCurrentIndex(self._config["windows_update"]["active_hours_start"])
-        self._hours_start.setFixedWidth(90)
+        self._hours_start.setMinimumWidth(100)
         self._hours_start.setFixedHeight(36)
         self._hours_start.setStyleSheet(_combo_style)
+        self._setup_time_combo_behavior(self._hours_start, _sel_palette)
         
         hours_to = QLabel("to")
         hours_to.setFixedHeight(36)
@@ -2019,11 +2231,14 @@ class WindowsCustomPanel(QWidget):
         hours_to.setStyleSheet("font-size: 12px; margin: 0px; background: transparent;")
         
         self._hours_end = QComboBox()
+        self._hours_end.setEditable(True)
+        self._hours_end.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self._hours_end.addItems([f"{i:02d}:00" for i in range(24)])
         self._hours_end.setCurrentIndex(self._config["windows_update"]["active_hours_end"])
-        self._hours_end.setFixedWidth(90)
+        self._hours_end.setMinimumWidth(100)
         self._hours_end.setFixedHeight(36)
         self._hours_end.setStyleSheet(_combo_style)
+        self._setup_time_combo_behavior(self._hours_end, _sel_palette)
         
         custom_layout.addWidget(self._hours_start, 0, Qt.AlignVCenter)
         custom_layout.addWidget(hours_to, 0, Qt.AlignVCenter)
@@ -2204,12 +2419,15 @@ class WindowsCustomPanel(QWidget):
             month = int(month_str)
             year = int(year_str)
             
-            from datetime import datetime
+            from datetime import datetime, timedelta
             # Set time to 23:59:59 so updates are paused through the end of that day
             target_date = datetime(year, month, day, 23, 59, 59)
             
-            if target_date <= datetime.now():
-                raise ValueError("Date must be in the future.")
+            now = datetime.now()
+            min_date = now + timedelta(days=29)   # Minimum 30 days from today
+            
+            if target_date < min_date:
+                raise ValueError("Pause date must be at least 30 days from today.")
         except ValueError as e:
             err_msg = str(e)
             if "invalid literal for int()" in err_msg:
@@ -2262,6 +2480,57 @@ class WindowsCustomPanel(QWidget):
         preset = self._hours_preset_combo.currentText()
         self._custom_hours_widget.setVisible(preset == "Customize")
         
+    @staticmethod
+    def _setup_time_combo_behavior(combo, sel_palette):
+        """Setup segmented HH:MM time mask line edit for combo box."""
+        current_val = combo.currentText()
+        time_mask_edit = TimeMaskLineEdit(combo)
+        combo.setLineEdit(time_mask_edit)
+        
+        line_edit = combo.lineEdit()
+        if current_val:
+            line_edit.setText(current_val)
+        line_edit.setAlignment(Qt.AlignCenter)
+        line_edit.setPalette(sel_palette)
+        line_edit.setMaxLength(5)
+        
+        def on_editing_finished():
+            txt = line_edit.text().strip()
+            if not txt or len(txt) != 5 or txt[2] != ':':
+                txt = "00:00"
+            else:
+                parts = txt.split(":")
+                try:
+                    h = max(0, min(23, int(parts[0])))
+                    m = max(0, min(59, int(parts[1])))
+                    txt = f"{h:02d}:{m:02d}"
+                except ValueError:
+                    txt = "00:00"
+                    
+            line_edit.setText(txt)
+            matching_idx = combo.findText(txt)
+            if matching_idx >= 0:
+                combo.setCurrentIndex(matching_idx)
+
+        line_edit.editingFinished.connect(on_editing_finished)
+
+    @staticmethod
+    def _parse_hour(combo):
+        """Parse hour integer (0-23) from a combo box whether selected or typed manually."""
+        idx = combo.currentIndex()
+        if idx >= 0:
+            return idx % 24
+        txt = combo.currentText().strip()
+        if not txt:
+            return 0
+        try:
+            if ":" in txt:
+                txt = txt.split(":")[0]
+            val = int(txt)
+            return max(0, min(23, val))
+        except ValueError:
+            return 0
+
     def _apply_active_hours(self):
         """Apply active hours setting based on preset or custom values."""
         preset = self._hours_preset_combo.currentText()
@@ -2279,8 +2548,8 @@ class WindowsCustomPanel(QWidget):
             start = 6
             end = 0
         else:  # Customize
-            start = self._hours_start.currentIndex()
-            end = self._hours_end.currentIndex()
+            start = self._parse_hour(self._hours_start)
+            end = self._parse_hour(self._hours_end)
             
         success, msg = WindowsUpdateControl.set_active_hours(start, end)
         

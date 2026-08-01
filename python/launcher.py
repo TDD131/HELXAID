@@ -10730,7 +10730,7 @@ Stylesheet Selector:
         layout.addWidget(sys_group)
 
         # === Background Service Settings Group ===
-        service_group, service_layout = create_card("Zero-UAC Mode (CPU)", icon_name="sparkle-icon.svg")
+        service_group, service_layout = create_card("Zero-UAC Mode", icon_name="sparkle-icon.svg")
         service_layout.setSpacing(6)
         
         service_inner_layout = QHBoxLayout()

@@ -282,7 +282,12 @@ def send_service_command(payload_dict: dict) -> dict:
         try:
             win32pipe.WaitNamedPipe(pipe_name, 100)
         except pywintypes.error:
-            return {"status": "error", "message": "Service pipe not available"}
+            try:
+                import subprocess
+                subprocess.run(['net.exe', 'start', 'HelxaidHelperService'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=5)
+                win32pipe.WaitNamedPipe(pipe_name, 2000)
+            except Exception:
+                return {"status": "error", "message": "Service pipe not available"}
 
         payload_bytes = json.dumps(payload_dict).encode('utf-8')
         data = win32pipe.CallNamedPipe(pipe_name, payload_bytes, 65536, 15000)

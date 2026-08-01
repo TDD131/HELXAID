@@ -130,7 +130,6 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 
                 # Auto-kill UXTU's PawnIO driver if it's running (to prevent RyzenAdj crash)
                 try:
-                    import time
                     res = subprocess.run(["sc.exe", "stop", "PawnIO"], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                     if res.returncode == 0:
                         time.sleep(1.5)  # Wait for driver to fully unload from memory
@@ -299,12 +298,43 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 except Exception as e:
                     return {"status": "error", "message": str(e)}
 
+            elif action == "exec_batch_commands":
+                commands = data.get("commands", [])
+                if not commands:
+                    return {"status": "error", "message": "No commands provided."}
+                
+                import tempfile
+                temp_dir = tempfile.gettempdir()
+                bat_path = os.path.join(temp_dir, f"helxaid_svc_cmd_{int(time.time()*1000)}.bat")
+                with open(bat_path, 'w', encoding='utf-8') as f:
+                    f.write("@echo off\n")
+                    for cmd in commands:
+                        f.write(cmd + "\n")
+                
+                try:
+                    res = subprocess.run(
+                        ["cmd.exe", "/c", bat_path],
+                        capture_output=True, text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        timeout=30
+                    )
+                    if res.returncode == 0:
+                        return {"status": "success", "message": "OK"}
+                    else:
+                        err_out = (res.stderr or res.stdout or "").strip()
+                        return {"status": "error", "message": f"Command exit {res.returncode}: {err_out}"}
+                except Exception as e:
+                    return {"status": "error", "message": str(e)}
+                finally:
+                    if os.path.exists(bat_path):
+                        try: os.remove(bat_path)
+                        except OSError: pass
+
             elif action == "ping":
                 return {"status": "success", "message": "pong"}
 
             elif action == "restart":
                 def _do_exit():
-                    import time
                     time.sleep(0.1)
                     os._exit(0)
                 import threading
