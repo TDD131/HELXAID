@@ -14,15 +14,242 @@ from PySide6.QtWidgets import (
     QSpinBox, QCheckBox, QLineEdit, QGroupBox, QFormLayout, QMessageBox,
     QTextEdit, QListWidget, QListWidgetItem, QSplitter, QScrollArea,
     QAbstractItemView, QSlider, QColorDialog, QAbstractSpinBox,
-    QRadioButton, QFrame, QGraphicsOpacityEffect, QRubberBand, QApplication
+    QRadioButton, QFrame, QGraphicsOpacityEffect, QRubberBand, QApplication, QSizePolicy, QAbstractButton
 )
 from smooth_scroll import SmoothScrollArea
-from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize
+from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize, QVariantAnimation, QAbstractAnimation
 # FurycubeHID is NOT imported here -- ButtonAction is lazy-imported where needed (line ~2989).
 # Loading this module at import time pulled in the hidapi DLL, adding ~200ms to startup.
 from macro_system.integration.hardware_manager import get_hardware_manager
 from AnimatedButton import AnimatedCheckBox, FadeHoverButton
+
+
+def apply_custom_titlebar(widget, color_hex="#121212"):
+    """Apply Windows 11 custom title bar color and Windows 10 dark mode."""
+    import sys
+    if sys.platform != "win32":
+        return
+        
+    try:
+        import ctypes
+        hwnd = int(widget.winId())
+        set_window_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        
+        # 1. Enable base immersive dark mode
+        rendering_policy = ctypes.c_int(1)
+        result = set_window_attribute(hwnd, 20, ctypes.byref(rendering_policy), ctypes.sizeof(rendering_policy))
+        if result != 0:
+            set_window_attribute(hwnd, 19, ctypes.byref(rendering_policy), ctypes.sizeof(rendering_policy))
+            
+        # 2. Apply Custom Exact Color (Windows 11 ONLY)
+        if color_hex:
+            color_hex = color_hex.lstrip('#')
+            if len(color_hex) == 6:
+                r = color_hex[0:2]
+                g = color_hex[2:4]
+                b = color_hex[4:6]
+                bgr_hex = f"0x00{b}{g}{r}"
+                bg_color = ctypes.c_int(int(bgr_hex, 16))
+                set_window_attribute(hwnd, 35, ctypes.byref(bg_color), ctypes.sizeof(bg_color))
+                
+                # Text color (light grey)
+                text_color = ctypes.c_int(0x00E0E0E0)
+                set_window_attribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+    except Exception as e:
+        print(f"[Theme] Failed to apply custom title bar: {e}")
+
+
+def show_custom_question_box(parent, title: str, text: str) -> bool:
+    """
+    Custom dark QMessageBox question dialog with title bar set to #121212
+    and custom button hover styling (No button has transparent gray hover).
+    Returns True if Yes is clicked, False otherwise.
+    """
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Question)
+    msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+    msg.setDefaultButton(QMessageBox.No)
+
+    apply_custom_titlebar(msg, "#121212")
+
+    msg.setStyleSheet("""
+        QMessageBox {
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+        QMessageBox QLabel {
+            color: #e0e0e0;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            padding: 10px 15px;
+        }
+    """)
+
+    btn_style_base = """
+        QPushButton {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 6px 20px;
+            min-width: 75px;
+            min-height: 28px;
+            text-decoration: none;
+            outline: none;
+        }
+    """
+
+    yes_btn = msg.button(QMessageBox.Yes)
+    no_btn = msg.button(QMessageBox.No)
+
+    if yes_btn:
+        yes_btn.setText("Yes")
+        yes_btn.setCursor(Qt.PointingHandCursor)
+        yes_btn.setStyleSheet(btn_style_base + """
+            QPushButton:hover {
+                background: rgba(255, 91, 6, 0.4);
+                border-color: #FF5B06;
+                color: #ffffff;
+                text-decoration: none;
+            }
+            QPushButton:pressed {
+                background: rgba(255, 91, 6, 0.65);
+                border-color: #FF5B06;
+                color: #ffffff;
+                text-decoration: none;
+            }
+            QPushButton:focus {
+                outline: none;
+                border-color: #FF5B06;
+                text-decoration: none;
+            }
+        """)
+
+    if no_btn:
+        no_btn.setText("No")
+        no_btn.setCursor(Qt.PointingHandCursor)
+        no_btn.setStyleSheet(btn_style_base + """
+            QPushButton:hover {
+                background: rgba(160, 160, 160, 0.25);
+                border-color: rgba(255, 255, 255, 0.3);
+                color: #ffffff;
+                text-decoration: none;
+            }
+            QPushButton:pressed {
+                background: rgba(160, 160, 160, 0.4);
+                border-color: rgba(255, 255, 255, 0.4);
+                color: #ffffff;
+                text-decoration: none;
+            }
+            QPushButton:focus {
+                outline: none;
+                border-color: rgba(255, 255, 255, 0.3);
+                text-decoration: none;
+            }
+        """)
+
+    res = msg.exec()
+    return res == QMessageBox.Yes
+
+
+class HelxairoMacroGroupCardWidget(QFrame):
+    """
+    Unified Card Container for a Macro in List of Keys, combining Macro Title Header
+    and all its Step items into a single container card.
+    """
+    def __init__(self, macro_name: str, step_count: int, steps_info: list, list_item=None, list_widget=None, parent=None):
+        super().__init__(parent)
+        self.list_item = list_item
+        self.list_widget = list_widget
+        self.step_count = max(1, len(steps_info))
+        
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("HelxairoMacroGroupCardWidget")
+        
+        self.setStyleSheet("""
+            QFrame#HelxairoMacroGroupCardWidget {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+            }
+            QFrame#HelxairoMacroGroupCardWidget:hover {
+                background-color: rgba(255, 255, 255, 0.06);
+                border-color: rgba(255, 91, 6, 0.4);
+            }
+        """)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 10, 12, 10)
+        main_layout.setSpacing(6)
+
+        # 1. Macro Title Header Row
+        header_layout = QHBoxLayout()
+        header_layout.setSpacing(8)
+
+        self.title_lbl = QLabel(macro_name)
+        self.title_lbl.setStyleSheet("color: #FFFFFF; font-weight: bold; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        header_layout.addWidget(self.title_lbl)
+
+        step_suffix = "step" if step_count == 1 else "steps"
+        self.count_lbl = QLabel(f"({step_count} {step_suffix})")
+        self.count_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px;")
+        header_layout.addWidget(self.count_lbl)
+
+        header_layout.addStretch()
+        main_layout.addLayout(header_layout)
+
+        # Subtle Horizontal Separator Line
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: rgba(255, 255, 255, 0.06); min-height: 1px; max-height: 1px; border: none;")
+        main_layout.addWidget(line)
+
+        # 2. Step Rows Container
+        for step_idx, (key_name, delay_str) in enumerate(steps_info, start=1):
+            step_row = QHBoxLayout()
+            step_row.setContentsMargins(4, 2, 4, 2)
+            step_row.setSpacing(10)
+
+            step_lbl = QLabel(f"Step {step_idx}")
+            step_lbl.setStyleSheet("color: #E0E0E0; font-weight: bold; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+            step_row.addWidget(step_lbl)
+
+            key_lbl = QLabel(key_name)
+            key_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+            step_row.addWidget(key_lbl)
+
+            step_row.addStretch()
+
+            interval_lbl = QLabel(f"Interval {delay_str}")
+            interval_lbl.setStyleSheet("""
+                color: #888888;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                background: transparent;
+                border: none;
+            """)
+            step_row.addWidget(interval_lbl)
+
+            main_layout.addLayout(step_row)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self.list_widget and self.list_item:
+                self.list_widget.setCurrentItem(self.list_item)
+        super().mousePressEvent(event)
+
+    def sizeHint(self):
+        w = 0
+        if self.list_widget and hasattr(self.list_widget, 'viewport'):
+            w = max(0, self.list_widget.viewport().width() - 4)
+        calculated_h = 36 + (self.step_count * 28) + 12
+        return QSize(w, calculated_h)
 
 
 class DraggableLabel(QLabel):
@@ -868,6 +1095,145 @@ class DeviceWarningOverlay(QWidget):
             return False
 
 
+class MacroStatusCheckWidget(QWidget):
+    """
+    Pure QPainter Vector Status Check/Uncheck Indicator with Smooth QVariantAnimation.
+    Matches the smooth 150ms checkmark drawing & color transition of AnimatedCheckBox in main settings.
+    - Checked (True): Green checkmark (#00FF88) with subtle green glow on hover
+    - Unchecked (False): Grey circle outline (#777777) with subtle white glow on hover
+    - Zero event propagation leak & zero state desync.
+    
+    Component Name: MacroStatusCheckWidget
+    """
+    clicked = Signal()
+
+    def __init__(self, is_enabled=True, parent=None):
+        super().__init__(parent)
+        self.setObjectName("MacroStatusCheckWidget")
+        self._is_enabled = is_enabled
+        self._progress = 1.0 if is_enabled else 0.0
+        self.setFixedSize(20, 20)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to toggle Macro ON/OFF")
+        
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(150)
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._anim.valueChanged.connect(self._on_anim_value_changed)
+
+    def isChecked(self) -> bool:
+        return self._is_enabled
+
+    def set_enabled_state(self, state: bool):
+        target_dir = QAbstractAnimation.Forward if state else QAbstractAnimation.Backward
+        
+        # If animation is currently running towards this state, let it finish smoothly without interrupting or snapping _progress
+        if self._anim.state() == QAbstractAnimation.Running:
+            if self._anim.direction() == target_dir:
+                return
+            else:
+                self._is_enabled = state
+                self._anim.setDirection(target_dir)
+                return
+
+        if self._is_enabled != state:
+            self._is_enabled = state
+            self._anim.setDirection(target_dir)
+            self._progress = 0.05 if state else 0.95
+            self._anim.start()
+        elif not (0.0 < self._progress < 1.0):
+            self._progress = 1.0 if state else 0.0
+            self.update()
+
+    def _on_anim_value_changed(self, value):
+        self._progress = float(value)
+        self.update()
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.rect().contains(event.pos()):
+            event.accept()
+            print(f"[HELXAIRO-TOGGLE] MacroStatusCheckWidget clicked! Current state={self._is_enabled}")
+            self.clicked.emit()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        
+        rect = self.rect()
+        w, h = rect.width(), rect.height()
+        
+        is_hovered = self.underMouse()
+        
+        # Subtle hover background glow for interactive toggle feedback
+        if is_hovered:
+            bg_alpha = int(35 * self._progress) if self._progress > 0 else 25
+            bg_color = QColor(0, 255, 136, bg_alpha) if self._progress > 0 else QColor(255, 255, 255, 25)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(bg_color))
+            painter.drawEllipse(rect.adjusted(1, 1, -1, -1))
+
+        # 1. Unchecked Grey Circle Outline (smoothly fades out as _progress -> 1.0)
+        circle_alpha = int(255 * (1.0 - self._progress))
+        if circle_alpha > 0:
+            circle_color = QColor(119, 119, 119, circle_alpha) if not is_hovered else QColor(204, 204, 204, circle_alpha)
+            pen = QPen(circle_color, 1.8, Qt.SolidLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            
+            center = rect.center()
+            radius = int(w * 0.34)
+            painter.drawEllipse(center, radius, radius)
+        
+        # 2. Checked Green Checkmark (smoothly draws path & fades in as _progress > 0)
+        if self._progress > 0:
+            target_green = QColor("#00FF88") if not is_hovered else QColor("#55FFB0")
+            r = int(119 + (target_green.red() - 119) * self._progress)
+            g = int(119 + (target_green.green() - 119) * self._progress)
+            b = int(119 + (target_green.blue() - 119) * self._progress)
+            pen_color = QColor(r, g, b, int(255 * self._progress))
+            
+            pen = QPen(pen_color, 2.2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            
+            p1_x, p1_y = w * 0.22, h * 0.52
+            p2_x, p2_y = w * 0.42, h * 0.72
+            p3_x, p3_y = w * 0.78, h * 0.28
+            
+            threshold = 0.33
+            
+            path = QPainterPath()
+            path.moveTo(p1_x, p1_y)
+            
+            if self._progress <= threshold:
+                t = self._progress / threshold
+                cur_x = p1_x + (p2_x - p1_x) * t
+                cur_y = p1_y + (p2_y - p1_y) * t
+                path.lineTo(cur_x, cur_y)
+            else:
+                path.lineTo(p2_x, p2_y)
+                t = (self._progress - threshold) / (1.0 - threshold)
+                cur_x = p2_x + (p3_x - p2_x) * t
+                cur_y = p2_y + (p3_y - p2_y) * t
+                path.lineTo(cur_x, cur_y)
+                
+            painter.drawPath(path)
+
+
 class HelxairoMacroItemWidget(QFrame):
     """
     Expandable HELXAIL-style Accordion Dropdown Card Widget for Active Macros list.
@@ -904,18 +1270,13 @@ class HelxairoMacroItemWidget(QFrame):
         self._setup_ui()
 
     def sizeHint(self):
-        """Dynamic responsive size hint matching QListWidget viewport width."""
+        """Fixed size hint matching QListWidget viewport width."""
         w = 0
         if self.list_widget and hasattr(self.list_widget, 'viewport'):
             w = max(0, self.list_widget.viewport().width() - 4)
-        return QSize(w, 80 if self._is_expanded else 38)
+        return QSize(w, 38)
 
     def _setup_ui(self):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        check_icon_path = os.path.join(script_dir, "UI Icons", "check-icon.svg").replace('\\', '/')
-        uncheck_icon_path = os.path.join(script_dir, "UI Icons", "uncheck-icon.svg").replace('\\', '/')
-        self.right_arrow_path = os.path.join(script_dir, "UI Icons", "right-arrow-triangle.svg").replace('\\', '/')
-        self.down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace('\\', '/')
         
         self.setStyleSheet("""
             QFrame#HelxairoMacroItemWidget {
@@ -931,30 +1292,13 @@ class HelxairoMacroItemWidget(QFrame):
                 background: transparent;
                 border: none;
             }
-            QFrame#MacroDetailsContainer {
-                background-color: rgba(0, 0, 0, 0.25);
-                border: 1px solid rgba(255, 255, 255, 0.06);
-                border-radius: 6px;
-            }
-            QPushButton#MacroExpandArrow {
-                background: transparent;
-                border: none;
-                padding: 0px !important;
-                margin: 0px !important;
-                min-width: 16px !important;
-                max-width: 16px !important;
-                min-height: 16px !important;
-                max-height: 16px !important;
-                width: 16px !important;
-                height: 16px !important;
-            }
         """)
         
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 1, 10, 5)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(10, 1, 10, 1)
+        main_layout.setSpacing(0)
         
-        # 1. Header Frame (Fixed 30px container for clean single row)
+        # Header Frame (Fixed 30px container)
         self.header_frame = QFrame()
         self.header_frame.setObjectName("MacroHeaderFrame")
         self.header_frame.setFixedHeight(30)
@@ -963,102 +1307,38 @@ class HelxairoMacroItemWidget(QFrame):
         header_layout.setContentsMargins(6, 2, 6, 2)
         header_layout.setSpacing(8)
         
-        # Status Icon (Left - Clickable to toggle macro on/off)
+        # Status Icon (Pure Vector QPainter Toggle Button - Clickable to toggle macro on/off)
         is_enabled = getattr(self.macro, 'enabled', True)
-        icon_path = check_icon_path if is_enabled else uncheck_icon_path
-        self.status_icon = QLabel()
-        self.status_icon.setFixedSize(16, 16)
-        self.status_icon.setPixmap(QPixmap(icon_path).scaled(16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        self.status_icon.setCursor(Qt.PointingHandCursor)
-        self.status_icon.mousePressEvent = self._on_status_icon_clicked
+        self.status_icon = MacroStatusCheckWidget(is_enabled=is_enabled)
+        self.status_icon.clicked.connect(self._on_status_icon_clicked)
         header_layout.addWidget(self.status_icon, 0, Qt.AlignVCenter)
         
-        # Clean Name & Title ("macro1")
+        # Clean Name & Title
         name = getattr(self.macro, 'name', 'Unnamed Macro')
         for sym in ("✓", "○", "✔"):
             if name.startswith(sym):
                 name = name[len(sym):].strip()
         
-        self.name_lbl = QLabel(name)
+        # Extract Hotkey
+        trigger_str = ""
+        trigger = getattr(self.macro, 'trigger', None)
+        if trigger:
+            if getattr(trigger, 'button', None):
+                trigger_str = trigger.button.upper()
+            elif getattr(trigger, 'key', None):
+                trigger_str = trigger.key.upper()
+        if not trigger_str:
+            trigger_str = "No Hotkey"
+            
+        display_name = f"{name}  |  {trigger_str}"
+        
+        self.name_lbl = QLabel(display_name)
         self.name_lbl.setObjectName("MacroItemName")
         self.name_lbl.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent;")
         header_layout.addWidget(self.name_lbl, 0, Qt.AlignVCenter)
         
         header_layout.addStretch()
-        
-        # Expand Accordion Arrow Button SVG (Far Right, Perfectly VCenter Aligned with Title)
-        self.arrow_btn = QPushButton()
-        self.arrow_btn.setObjectName("MacroExpandArrow")
-        self.arrow_btn.setFixedSize(16, 16)
-        self.arrow_btn.setStyleSheet("background: transparent; border: none; padding: 0px; margin: 0px; min-width: 16px; max-width: 16px; min-height: 16px; max-height: 16px;")
-        self.arrow_btn.setIcon(QIcon(self.right_arrow_path))
-        self.arrow_btn.setIconSize(QSize(10, 10))
-        self.arrow_btn.setCursor(Qt.PointingHandCursor)
-        self.arrow_btn.clicked.connect(self.toggle_expand)
-        header_layout.addWidget(self.arrow_btn, 0, Qt.AlignVCenter)
-        
-        main_layout.addWidget(self.header_frame, 0, Qt.AlignTop)
-        
-        # 2. Details Container (Hidden by default)
-        self.details_container = QFrame()
-        self.details_container.setObjectName("MacroDetailsContainer")
-        self.details_container.setVisible(False)
-        
-        details_layout = QHBoxLayout(self.details_container)
-        details_layout.setContentsMargins(10, 6, 10, 6)
-        details_layout.setSpacing(16)
-        
-        # Extract metadata
-        # Hotkey
-        trigger_str = ""
-        trigger = getattr(self.macro, 'trigger', None)
-        if trigger:
-            if getattr(trigger, 'button', None):
-                trigger_str = f"[{trigger.button.upper()}]"
-            elif getattr(trigger, 'key', None):
-                trigger_str = f"[{trigger.key.upper()}]"
-        if not trigger_str:
-            trigger_str = "[No Hotkey]"
-            
-        lbl_hk = QLabel(f"Hotkey: {trigger_str}")
-        lbl_hk.setStyleSheet("color: #DDDDDD; font-size: 11px; font-family: 'Orbitron', sans-serif; background: transparent;")
-        details_layout.addWidget(lbl_hk)
-        
-        # Interval
-        interval_ms = getattr(self.macro, 'repeat_interval_ms', None)
-        if interval_ms is None and hasattr(self.macro, 'interval_ms'):
-            interval_ms = getattr(self.macro, 'interval_ms', None)
-        if interval_ms is not None and interval_ms > 0:
-            int_str = f"{interval_ms // 1000}s" if (interval_ms >= 1000 and interval_ms % 1000 == 0) else f"{interval_ms}ms"
-            lbl_int = QLabel(f"Interval: {int_str}")
-            lbl_int.setStyleSheet("color: #DDDDDD; font-size: 11px; font-family: 'Orbitron', sans-serif; background: transparent;")
-            details_layout.addWidget(lbl_int)
-            
-        # Target App
-        target_app = getattr(self.macro, 'target_app', '') or getattr(self.macro, 'bound_apps', '')
-        if isinstance(target_app, list):
-            target_app = ", ".join(target_app)
-        if target_app:
-            lbl_app = QLabel(f"Target: {target_app}")
-            lbl_app.setStyleSheet("color: #DDDDDD; font-size: 11px; font-family: 'Orbitron', sans-serif; background: transparent;")
-            details_layout.addWidget(lbl_app)
-            
-        details_layout.addStretch()
-        main_layout.addWidget(self.details_container)
-        main_layout.addStretch()
-
-    def toggle_expand(self):
-        """Toggle expand/collapse details state."""
-        self._is_expanded = not self._is_expanded
-        self.details_container.setVisible(self._is_expanded)
-        arrow_path = self.down_arrow_path if self._is_expanded else self.right_arrow_path
-        self.arrow_btn.setIcon(QIcon(arrow_path))
-        self.arrow_btn.setIconSize(QSize(10, 10))
-        
-        # Update sizeHint on QListWidgetItem
-        if self.list_item and self.list_widget:
-            self.list_item.setSizeHint(self.sizeHint())
-            self.list_widget.doItemsLayout()
+        main_layout.addWidget(self.header_frame, 0, Qt.AlignVCenter)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1079,6 +1359,15 @@ class HelxairoMacroItemWidget(QFrame):
         count = self._click_count
         self._handle_click_action(count)
 
+    def _find_macro_panel(self):
+        """Traverse parent tree to find MacroSettingsPanel."""
+        curr = self.parent()
+        while curr is not None:
+            if hasattr(curr, '_toggle_macro') or hasattr(curr, '_edit_selected'):
+                return curr
+            curr = curr.parent() if hasattr(curr, 'parent') else None
+        return None
+
     def _handle_click_action(self, count):
         self._click_timer.stop()
         self._click_count = 0
@@ -1090,19 +1379,29 @@ class HelxairoMacroItemWidget(QFrame):
             self.toggle_expand()
         elif count >= 3:
             # 3x click: Open Edit Macro panel
-            parent_panel = self.window()
-            if hasattr(parent_panel, '_edit_selected'):
-                parent_panel._edit_selected()
+            panel = self._find_macro_panel()
+            if panel and hasattr(panel, '_edit_selected'):
+                panel._edit_selected()
 
-    def _on_status_icon_clicked(self, event):
-        """Clicking on status icon directly toggles macro enable/disable state."""
-        if event.button() == Qt.LeftButton:
-            parent_panel = self.window()
-            if hasattr(parent_panel, '_toggle_selected_macro'):
-                if self.list_widget and self.list_item:
-                    self.list_widget.setCurrentItem(self.list_item)
-                parent_panel._toggle_selected_macro()
-            event.accept()
+    def _on_status_icon_clicked(self, *args):
+        """Clicking on status toggle button directly toggles this macro's enable/disable state."""
+        macro_id = getattr(self.macro, 'id', 'unknown')
+        macro_name = getattr(self.macro, 'name', 'unknown')
+        curr_enabled = getattr(self.macro, 'enabled', None)
+        print(f"[HELXAIRO-TOGGLE] _on_status_icon_clicked: macro_id={macro_id}, name='{macro_name}', curr_enabled={curr_enabled}")
+        
+        if self.list_widget and self.list_item:
+            self.list_widget.setCurrentItem(self.list_item)
+            
+        panel = self._find_macro_panel()
+        if panel:
+            print(f"[HELXAIRO-TOGGLE] Found MacroSettingsPanel: {panel}")
+            if hasattr(panel, '_toggle_macro'):
+                panel._toggle_macro(self.macro)
+            elif hasattr(panel, '_toggle_selected_macro'):
+                panel._toggle_selected_macro()
+        else:
+            print("[HELXAIRO-TOGGLE] ERR: Could not find MacroSettingsPanel in parent tree!")
 
 
 class HelxairoLowIntervalWarningOverlayPanel(QWidget):
@@ -1392,12 +1691,13 @@ class CpsResultOverlayPanel(QWidget):
     
     Component Name: CpsResultOverlayPanel
     """
-    def __init__(self, parent_panel, on_retry_callback, cps_score, peak_cps, total_clicks, rank_badge, star_rating, rank_desc, rank_color):
+    def __init__(self, parent_panel, on_retry_callback, cps_score, peak_cps, total_clicks, rank_badge, star_rating, rank_desc, rank_color, avg_cps=0.0):
         super().__init__(parent_panel)
         self.parent_panel = parent_panel
         self.on_retry_callback = on_retry_callback
         self.cps_score = cps_score
         self.peak_cps = peak_cps
+        self.avg_cps = avg_cps
         self.total_clicks = total_clicks
         self.rank_badge = rank_badge
         self.star_rating = star_rating
@@ -1489,7 +1789,7 @@ class CpsResultOverlayPanel(QWidget):
         stats_row = QHBoxLayout()
         stats_row.setSpacing(12)
         
-        self.cps_stat = QLabel("CPS: <span style='color: #888;'>0.0</span>")
+        self.cps_stat = QLabel("AVG: <span style='color: #888;'>0.0</span>")
         self.cps_stat.setObjectName("CpsStatBadge")
         self.cps_stat.setStyleSheet("""
             color: #E0E0E0;
@@ -1603,11 +1903,11 @@ class CpsResultOverlayPanel(QWidget):
         # Smooth OutCubic easing math
         ease = 1.0 - (1.0 - progress) ** 3
         
-        cur_cps = self.cps_score * ease
+        cur_cps = self.avg_cps * ease
         cur_peak = self.peak_cps * ease
         cur_clicks = int(round(self.total_clicks * ease))
 
-        self.cps_stat.setText(f"CPS: <span style='color:{self.rank_color};'>{cur_cps:.1f}</span>")
+        self.cps_stat.setText(f"AVG: <span style='color:{self.rank_color};'>{cur_cps:.1f}</span>")
         self.peak_stat.setText(f"PEAK: <span style='color:#FDA903;'>{cur_peak:.1f}</span>")
         self.clicks_stat.setText(f"CLICKS: <span style='color:#00FF66;'>{cur_clicks}</span>")
 
@@ -1674,19 +1974,36 @@ class CpsBenchmarkPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("CpsBenchmarkPanel")
-        
-        from collections import deque
-        self._timestamps = deque()
-        self._timestamps_all = []
+
         self._total_clicks = 0
         self._peak_cps = 0.0
-        self._current_cps = 0.0
+        self._current_cps = 0.0  # Live 1s sliding window CPS
+        self._avg_cps = 0.0      # Running average CPS (total / elapsed)
         self._is_testing = False
         self._test_duration = 5.0  # Default 5 seconds
         self._time_remaining = 5.0
         self._target_button = "left"  # left, right, middle, any
         self._start_time = 0.0
-        
+
+        # Timer-based CPS sampling
+        from collections import deque
+        self._samples = deque()
+
+        # Background click-counter thread for autoclicker-proof counting.
+        # At 1000+ CPS autoclicker SendInput generates WM_LBUTTONDOWN + WM_LBUTTONUP
+        # that Qt must dispatch. 2000 Windows messages/s saturates the UI thread → freeze.
+        # Fix: daemon thread polls GetAsyncKeyState at ~0.5ms, counts press→release
+        # transitions. Qt timer (20ms) reads the atomic counter. mousePressEvent only
+        # used for first-click auto-start; once running, the thread does counting.
+        import ctypes, threading
+        self._user32 = ctypes.windll.user32
+        self._click_counter_stop = threading.Event()
+        self._click_counter_thread = None
+        self._VK_LBUTTON = 0x01
+        self._VK_RBUTTON = 0x02
+        self._VK_MBUTTON = 0x04
+        self._vk_map = {"left": 0x01, "right": 0x02, "middle": 0x04}
+
         # High-frequency UI update timer (20ms interval = 50 FPS smooth stats)
         self._timer = QTimer(self)
         self._timer.setInterval(20)
@@ -1826,7 +2143,7 @@ class CpsBenchmarkPanel(QWidget):
         metrics_layout = QHBoxLayout()
         metrics_layout.setSpacing(8)
 
-        # Metric 1: Current CPS
+        # Metric 1: Current CPS (1s sliding window)
         self.card_cps_val = self._create_metric_card("CURRENT CPS", "0.0", "#FF5B06")
         metrics_layout.addWidget(self.card_cps_val)
 
@@ -1834,12 +2151,16 @@ class CpsBenchmarkPanel(QWidget):
         self.card_peak_val = self._create_metric_card("PEAK CPS", "0.0", "#FDA903")
         metrics_layout.addWidget(self.card_peak_val)
 
-        # Metric 3: Total Clicks
+        # Metric 3: Avg CPS
+        self.card_avg_val = self._create_metric_card("AVG CPS", "0.0", "#BB86FC")
+        metrics_layout.addWidget(self.card_avg_val)
+
+        # Metric 4: Total Clicks
         self.card_clicks_val = self._create_metric_card("TOTAL CLICKS", "0", "#00FF66")
         metrics_layout.addWidget(self.card_clicks_val)
 
-        # Metric 4: Timer Remaining
-        self.card_timer_val = self._create_metric_card("TIME REMAINING", "5.0s", "#00E5FF")
+        # Metric 5: Timer Remaining
+        self.card_timer_val = self._create_metric_card("TIME LEFT", "5.0s", "#00E5FF")
         metrics_layout.addWidget(self.card_timer_val)
 
         main_layout.addLayout(metrics_layout)
@@ -1879,8 +2200,14 @@ class CpsBenchmarkPanel(QWidget):
         self.target_hint_lbl.setAlignment(Qt.AlignCenter)
         target_layout.addWidget(self.target_hint_lbl)
 
-        # Hook mouse press on target zone
+        # Hook mouse press on target zone (only for first click auto-start)
         self.click_target_zone.mousePressEvent = self._on_zone_mouse_press
+
+        # Install event filter to eat mouse events during benchmark.
+        # Without this, Qt dispatches every WM_LBUTTONDOWN/UP through its full
+        # event pipeline (hit-test → focus → widget routing) even if the handler
+        # is a no-op. At 1000+ CPS that's 2000 events/s freezing the UI thread.
+        self.click_target_zone.installEventFilter(self)
 
         main_layout.addWidget(self.click_target_zone)
 
@@ -2062,7 +2389,7 @@ class CpsBenchmarkPanel(QWidget):
             card_layout.addStretch()
 
             # Center Stats summary
-            stats_lbl = QLabel(f"CPS: <span style='color:{item['color']}; font-weight:bold;'>{item['cps']:.1f}</span>  |  PEAK: <span style='color:#FDA903;'>{item['peak']:.1f}</span>  |  CLICKS: <span style='color:#00FF66;'>{item['clicks']}</span>")
+            stats_lbl = QLabel(f"AVG: <span style='color:{item['color']}; font-weight:bold;'>{item['cps']:.1f}</span>  |  PEAK: <span style='color:#FDA903;'>{item['peak']:.1f}</span>  |  CLICKS: <span style='color:#00FF66;'>{item['clicks']}</span>")
             stats_lbl.setObjectName("CpsHistoryStats")
             stats_lbl.setFont(QFont("Orbitron", 9.5))
             stats_lbl.setStyleSheet("color: #CCCCCC; font-family: 'Orbitron', sans-serif; background: transparent;")
@@ -2109,38 +2436,40 @@ class CpsBenchmarkPanel(QWidget):
         card.val_label = val_lbl
         return card
 
-    def _recalculate_peak_cps(self):
-        """Recalculate peak CPS as the click rate in the densest 1.0s sliding window."""
-        if not self._timestamps_all:
-            self._peak_cps = 0.0
-            return 0.0
+    def _click_counter_loop(self):
+        """Background thread: poll GetAsyncKeyState at ~0.5ms to count click transitions.
+        Runs as daemon — dies with main thread. Only counts buttons matching _target_button."""
+        import time as _time
+        get_key = self._user32.GetAsyncKeyState
+        stop_ev = self._click_counter_stop
 
-        ts = self._timestamps_all
-        max_rate = 0.0
-        left = 0
+        # Build list of VK codes to watch
+        if self._target_button == "any":
+            vk_list = [0x01, 0x02, 0x04]
+        else:
+            vk_list = [self._vk_map.get(self._target_button, 0x01)]
 
-        for right in range(len(ts)):
-            while ts[right] - ts[left] > 1.0:
-                left += 1
-            count = right - left + 1
-            if count >= 2:
-                span = ts[right] - ts[left]
-                if span > 0.001:
-                    rate = (count - 1) / span
-                else:
-                    rate = float(count)
-            else:
-                rate = 1.0
-            if rate > max_rate:
-                max_rate = rate
+        prev_states = {vk: False for vk in vk_list}
 
-        self._peak_cps = max_rate
-        return self._peak_cps
+        while not stop_ev.is_set():
+            for vk in vk_list:
+                state = get_key(vk)
+                pressed = bool(state & 0x8000)  # bit 15 = currently pressed
+                if pressed and not prev_states[vk]:
+                    # Transition: released → pressed = one click
+                    self._total_clicks += 1
+                prev_states[vk] = pressed
+            # ~0.5ms spin — fast enough to catch 1ms autoclicker transitions
+            # while using negligible CPU (spin-sleep hybrid)
+            _time.sleep(0.0005)
 
     def register_click(self, btn_name="left"):
-        """Register a click event (manual or high-speed autoclicker)."""
-        now = time.perf_counter()
-        
+        """Handle first click to auto-start benchmark. Once running, the background
+        thread counts clicks — this method is effectively a no-op during testing."""
+        if self._is_testing:
+            # Background thread handles counting — ignore Qt events to avoid flood
+            return
+
         # Check if button matches target filter
         if self._target_button != "any":
             if self._target_button == "left" and btn_name != "left":
@@ -2150,29 +2479,67 @@ class CpsBenchmarkPanel(QWidget):
             elif self._target_button == "middle" and btn_name != "middle":
                 return
 
-        # Start test automatically on first click if not running
-        if not self._is_testing:
-            self.start_benchmark()
-
-        self._total_clicks += 1
-        self._timestamps.append(now)
-        self._timestamps_all.append(now)
+        # First click starts benchmark (background thread takes over counting)
+        self.start_benchmark()
 
     def _on_zone_mouse_press(self, event):
+        if self._is_testing:
+            event.accept()
+            return
         btn_map = {Qt.LeftButton: "left", Qt.RightButton: "right", Qt.MiddleButton: "middle"}
         btn_name = btn_map.get(event.button(), "left")
         self.register_click(btn_name)
         event.accept()
 
+    def eventFilter(self, obj, event):
+        """Eat mouse press/release events on click zone during benchmark.
+        This blocks Qt's full event dispatch pipeline (hit-test, focus, routing)
+        which is what actually freezes the UI at high CPS, not our handler code."""
+        if self._is_testing and obj is self.click_target_zone:
+            etype = event.type()
+            if etype in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
+                         QEvent.MouseButtonDblClick):
+                return True  # Consumed — Qt skips all further dispatch
+        return super().eventFilter(obj, event)
+
+    def _stop_click_counter(self):
+        """Stop background click counter thread if running."""
+        if self._click_counter_stop:
+            self._click_counter_stop.set()
+        if self._click_counter_thread and self._click_counter_thread.is_alive():
+            self._click_counter_thread.join(timeout=0.1)
+        self._click_counter_thread = None
+
     def start_benchmark(self):
         """Start or restart the benchmark run."""
+        # Stop any previous counter thread
+        self._stop_click_counter()
+
         self._is_testing = True
         self._start_time = time.perf_counter()
-        self._timestamps.clear()
-        self._timestamps_all.clear()
-        self._total_clicks = 0
+        self._samples.clear()
+        self._total_clicks = 1  # Count the click that triggered start
         self._peak_cps = 0.0
         self._current_cps = 0.0
+        self._avg_cps = 0.0
+
+        # Launch background click counter thread
+        import threading
+        self._click_counter_stop = threading.Event()
+        self._click_counter_thread = threading.Thread(
+            target=self._click_counter_loop, daemon=True,
+            name="CPS-ClickCounter"
+        )
+        self._click_counter_thread.start()
+
+        # Make click zone transparent to mouse events so Qt's message pump
+        # skips hit-testing and routing for this widget entirely.
+        # Without this, 2000 WM_LBUTTONDOWN/UP per second from SendInput
+        # saturates Qt's internal event dispatch even if our handler is a no-op.
+        self.click_target_zone.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        # Also make child labels transparent so they don't catch events either
+        self.target_status_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.target_hint_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         
         self.target_status_lbl.setText("CLICK AS FAST AS YOU CAN!")
         self.target_status_lbl.setStyleSheet("color: #FF5B06; background: transparent;")
@@ -2190,15 +2557,22 @@ class CpsBenchmarkPanel(QWidget):
         """Complete the benchmark and show full floating modal result panel over the software window."""
         self._is_testing = False
         self._timer.stop()
+        self._stop_click_counter()
+        # Restore mouse event handling on click zone
+        self.click_target_zone.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.target_status_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.target_hint_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         
-        # Authoritatively recalculate final peak CPS over all timestamps
-        self._recalculate_peak_cps()
+        # Peak CPS already tracked incrementally — just update label
         self.card_peak_val.val_label.setText(f"{self._peak_cps:.1f}")
 
-        # Ensure final current_cps is exact Total Clicks / Duration
+        # Final avg CPS = Total Clicks / Duration
         if self._test_duration > 0:
-            self._current_cps = self._total_clicks / self._test_duration
-            self.card_cps_val.val_label.setText(f"{self._current_cps:.1f}")
+            self._avg_cps = self._total_clicks / self._test_duration
+            self.card_avg_val.val_label.setText(f"{self._avg_cps:.1f}")
+
+        # Final current CPS = last 1s window (already computed by _update_stats)
+        self.card_cps_val.val_label.setText(f"{self._current_cps:.1f}")
 
         self.target_status_lbl.setText("BENCHMARK COMPLETE!")
         self.target_status_lbl.setStyleSheet("color: #00FF66; background: transparent;")
@@ -2211,7 +2585,7 @@ class CpsBenchmarkPanel(QWidget):
         """)
 
         # Compute rank based on Average CPS achieved (No Emojis per UI Rules)
-        cps = self._current_cps
+        cps = self._avg_cps
         if cps >= 100:
             badge = "GODLIKE MONSTER"
             star_rating = 5
@@ -2252,7 +2626,8 @@ class CpsBenchmarkPanel(QWidget):
             rank_badge=badge,
             star_rating=star_rating,
             rank_desc=desc,
-            rank_color=color
+            rank_color=color,
+            avg_cps=self._avg_cps
         )
         overlay.show()
 
@@ -2260,15 +2635,21 @@ class CpsBenchmarkPanel(QWidget):
         """Reset benchmark state back to initial."""
         self._is_testing = False
         self._timer.stop()
-        self._timestamps.clear()
-        self._timestamps_all.clear()
+        self._stop_click_counter()
+        # Restore mouse event handling
+        self.click_target_zone.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.target_status_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.target_hint_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self._samples.clear()
         self._total_clicks = 0
         self._peak_cps = 0.0
         self._current_cps = 0.0
+        self._avg_cps = 0.0
         self._time_remaining = self._test_duration
-        
+
         self.card_cps_val.val_label.setText("0.0")
         self.card_peak_val.val_label.setText("0.0")
+        self.card_avg_val.val_label.setText("0.0")
         self.card_clicks_val.val_label.setText("0")
         
         if self._test_duration <= 0:
@@ -2293,28 +2674,50 @@ class CpsBenchmarkPanel(QWidget):
         """)
 
     def _update_stats(self):
-        """Update Average CPS, Peak Instantaneous CPS, and countdown timer (runs every 20ms)."""
+        """Update CPS metrics from background thread's click counter (runs every 20ms)."""
         now = time.perf_counter()
-        
+
         if self._is_testing:
             elapsed = max(0.001, now - self._start_time)
-            
-            # 1. Live Current CPS: Total Clicks / Elapsed (running average)
-            self._current_cps = self._total_clicks / elapsed
 
-            # 2. Live Peak CPS: Maximum 1.0s window rate achieved so far
-            self._recalculate_peak_cps()
+            # Sample current click count
+            self._samples.append((now, self._total_clicks))
+
+            # Evict samples older than 1s
+            cutoff = now - 1.0
+            while self._samples and self._samples[0][0] < cutoff:
+                self._samples.popleft()
+
+            # 1. Current CPS: clicks gained across the 1s sample window
+            if len(self._samples) >= 2:
+                oldest_t, oldest_c = self._samples[0]
+                span = now - oldest_t
+                delta_clicks = self._total_clicks - oldest_c
+                if span > 0.01:
+                    self._current_cps = delta_clicks / span
+                else:
+                    self._current_cps = float(delta_clicks)
+            else:
+                self._current_cps = float(self._total_clicks)
+
+            # 2. Avg CPS: total clicks / elapsed
+            self._avg_cps = self._total_clicks / elapsed
+
+            # 3. Peak CPS: highest current CPS ever observed
+            if self._current_cps > self._peak_cps:
+                self._peak_cps = self._current_cps
 
             # Handle countdown
             if self._test_duration > 0:
                 self._time_remaining = max(0.0, self._test_duration - elapsed)
                 self.card_timer_val.val_label.setText(f"{self._time_remaining:.1f}s")
-                
+
                 if self._time_remaining <= 0:
                     self.finish_benchmark()
 
         self.card_cps_val.val_label.setText(f"{self._current_cps:.1f}")
         self.card_peak_val.val_label.setText(f"{self._peak_cps:.1f}")
+        self.card_avg_val.val_label.setText(f"{self._avg_cps:.1f}")
         self.card_clicks_val.val_label.setText(str(self._total_clicks))
 
     def _on_btn_combo_changed(self, idx):
@@ -2886,7 +3289,7 @@ class MacroSettingsPanel(QWidget):
         
         # UI now ONLY uses HardwareManager to avoid thread contention/freezes
         self._hw_manager = get_hardware_manager()
-        self._hw_manager.start_manager()  # Start the background thread
+        QTimer.singleShot(0, self._hw_manager.start_manager)  # Start the background thread on tick 0
         self._setup_ui()
         
         # Timer for fast UI status updates (macro lists, active markers)
@@ -2913,9 +3316,8 @@ class MacroSettingsPanel(QWidget):
         # Initial device warning check after HardwareManager has time to initialize
         QTimer.singleShot(2000, self._check_device_warnings_initial)
         
-        # Auto-initialize and start macro bridge (no manual start/stop needed)
-        # This makes all macro features work immediately without user intervention
-        QTimer.singleShot(500, self._auto_init_macro_system)
+        # Auto-initialize and start macro bridge (deferred by 1.5s for zero-latency page switch)
+        QTimer.singleShot(1500, self._auto_init_macro_system)
         
     def set_bridge(self, bridge):
         """Set the macro bridge and load data."""
@@ -3714,8 +4116,27 @@ class MacroSettingsPanel(QWidget):
         home_main_layout.addWidget(right_column)
         
         self._page_stack.addWidget(home_tab)
-
         
+        # Add placeholders for remaining tabs (built deferred on tick 0)
+        for _ in range(4):
+            ph = QWidget()
+            self._page_stack.addWidget(ph)
+            
+        layout.addWidget(self._page_stack, 1)
+        self._page_stack.setCurrentIndex(0)
+        self._update_tab_buttons()
+        
+        # Build remaining tabs deferred on tick 0 for zero-latency page load
+        QTimer.singleShot(0, self._build_remaining_tabs)
+
+    def _build_remaining_tabs(self):
+        """Build DPI, Macro, Benchmark, and Settings tabs asynchronously on tick 0."""
+        # Remove 4 placeholder widgets
+        while self._page_stack.count() > 1:
+            w = self._page_stack.widget(1)
+            self._page_stack.removeWidget(w)
+            w.deleteLater()
+
         # === DPI TAB ===
         dpi_tab = QWidget()
         dpi_scroll = SmoothScrollArea()
@@ -4358,32 +4779,38 @@ class MacroSettingsPanel(QWidget):
             QWidget#macroSubNav {
                 background: rgba(26, 26, 26, 0.95);
                 border: none;
-                border-radius: 6px;
+                border-radius: 8px;
             }
             QPushButton {
                 background: transparent;
                 color: #888888;
                 border: none;
                 border-bottom: 2px solid transparent;
-                padding: 6px 16px;
+                border-radius: 6px;
+                padding: 4px 16px;
                 font-size: 12px;
                 font-weight: 600;
                 font-family: 'Orbitron', sans-serif;
             }
             QPushButton:hover {
-                color: #e0e0e0;
-                background: rgba(255, 91, 6, 0.1);
-                border-radius: 4px;
+                color: #ffffff;
+                background: rgba(255, 91, 6, 0.12);
+                border-radius: 6px;
             }
             QPushButton:checked {
                 color: #FF5B06;
                 border-bottom: 2px solid #FF5B06;
-                background: transparent;
-                border-radius: 0px;
+                background: rgba(255, 91, 6, 0.06);
+                border-radius: 6px;
+            }
+            QPushButton:checked:hover {
+                color: #FF5B06;
+                background: rgba(255, 91, 6, 0.15);
+                border-radius: 6px;
             }
         """)
         sub_tab_layout = QHBoxLayout(sub_tab_container)
-        sub_tab_layout.setContentsMargins(6, 4, 6, 4)
+        sub_tab_layout.setContentsMargins(6, 5, 6, 5)
         sub_tab_layout.setSpacing(6)
 
         sub_tab_names = ["Editor", "Live Recorder", "Profiles"]
@@ -4822,11 +5249,100 @@ class MacroSettingsPanel(QWidget):
         col1_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col1.addWidget(col1_lbl)
 
+        # Container Frame for Search Bar + Macro Item List
+        self.macro_list_container = QFrame()
+        self.macro_list_container.setObjectName("macroListContainer")
+        self.macro_list_container.setStyleSheet("""
+            QFrame#macroListContainer {
+                background: rgba(18, 20, 26, 0.45);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+            }
+        """)
+        macro_container_layout = QVBoxLayout(self.macro_list_container)
+        macro_container_layout.setContentsMargins(8, 8, 8, 8)
+        macro_container_layout.setSpacing(8)
+
+        # Search Bar + Sort Button Row inside Container
+        search_sort_row = QHBoxLayout()
+        search_sort_row.setContentsMargins(0, 0, 0, 0)
+        search_sort_row.setSpacing(6)
+
+        import os
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        icons_dir = os.path.join(script_dir, "UI Icons")
+        sort_icon_path = os.path.join(icons_dir, "sort-icon-white.svg")
+
+        # Square Sort Button (32x32, fixed aspect ratio)
+        self.macro_sort_btn = QPushButton()
+        self.macro_sort_btn.setObjectName("macroSortBtn")
+        self.macro_sort_btn.setFixedSize(32, 32)
+        self.macro_sort_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        if os.path.exists(sort_icon_path):
+            self.macro_sort_btn.setIcon(QIcon(sort_icon_path))
+            self.macro_sort_btn.setIconSize(QSize(16, 16))
+        self.macro_sort_btn.setToolTip("Sort Macros")
+        self.macro_sort_btn.setCursor(Qt.PointingHandCursor)
+        self.macro_sort_btn.setStyleSheet("""
+            QPushButton#macroSortBtn {
+                background: rgba(255, 255, 255, 0.06);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QPushButton#macroSortBtn:hover {
+                background: rgba(255, 255, 255, 0.15);
+                border-color: #FF5B06;
+            }
+            QPushButton#macroSortBtn:pressed {
+                background: rgba(255, 91, 6, 0.25);
+                border-color: #FF5B06;
+            }
+        """)
+        self.macro_sort_btn.clicked.connect(self._show_sort_menu)
+        search_sort_row.addWidget(self.macro_sort_btn)
+
+        # Responsive Search Bar inside Container (expands to fill remaining width)
+        self.macro_search_input = QLineEdit()
+        self.macro_search_input.setObjectName("macroSearchInput")
+        self.macro_search_input.setPlaceholderText("Search macro...")
+        self.macro_search_input.setFixedHeight(32)
+        self.macro_search_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.macro_search_input.setStyleSheet("""
+            QLineEdit#macroSearchInput {
+                background: rgba(255, 255, 255, 0.06);
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding: 4px 10px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
+            }
+            QLineEdit#macroSearchInput:focus {
+                border: 1px solid #FF5B06;
+                background: rgba(255, 255, 255, 0.1);
+            }
+        """)
+        self.macro_search_input.textChanged.connect(self._filter_macro_list)
+        search_sort_row.addWidget(self.macro_search_input, 1)
+
+        macro_container_layout.addLayout(search_sort_row)
+
         self.active_list = QListWidget()
         self.active_list.setObjectName("helxairo_activeList")
-        self.active_list.setMinimumHeight(350)
-        self.active_list.setStyleSheet(_list_style)
+        self.active_list.setMinimumHeight(330)
+        self.active_list.setStyleSheet(_list_style + """
+            QListWidget#helxairo_activeList {
+                border: none;
+                background: transparent;
+            }
+        """)
         enable_rubber_band_selection(self.active_list)
+        
+        self.active_list.itemSelectionChanged.connect(self._on_macro_selection_changed)
         
         def _on_active_list_resize(event):
             type(self.active_list).resizeEvent(self.active_list, event)
@@ -4835,12 +5351,12 @@ class MacroSettingsPanel(QWidget):
                 item = self.active_list.item(i)
                 w = self.active_list.itemWidget(item)
                 if item and w:
-                    h = 80 if getattr(w, '_is_expanded', False) else 38
-                    item.setSizeHint(QSize(vp_w, h))
+                    item.setSizeHint(QSize(vp_w, 38))
             self.active_list.doItemsLayout()
 
         self.active_list.resizeEvent = _on_active_list_resize
-        col1.addWidget(self.active_list)
+        macro_container_layout.addWidget(self.active_list)
+        col1.addWidget(self.macro_list_container)
 
         import os
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -4903,9 +5419,46 @@ class MacroSettingsPanel(QWidget):
 
         self.editor_keys_list = QListWidget()
         self.editor_keys_list.setObjectName("helxairo_editorKeysList")
+        self.editor_keys_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.editor_keys_list.setMinimumHeight(350)
-        self.editor_keys_list.setStyleSheet(self.active_list.styleSheet())
+        self.editor_keys_list.setSpacing(4)
+        self.editor_keys_list.setStyleSheet("""
+            QListWidget#helxairo_editorKeysList {
+                background: rgba(18, 20, 26, 0.45);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                color: #e0e0e0;
+                font-size: 13px;
+                outline: none;
+                padding: 6px;
+            }
+            QListWidget#helxairo_editorKeysList::item {
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin-bottom: 2px;
+            }
+            QListWidget#helxairo_editorKeysList::item:selected {
+                background: transparent;
+                outline: none;
+            }
+            QListWidget#helxairo_editorKeysList::item:hover {
+                background: transparent;
+            }
+        """)
         enable_rubber_band_selection(self.editor_keys_list)
+
+        def _on_editor_keys_list_resize(event):
+            type(self.editor_keys_list).resizeEvent(self.editor_keys_list, event)
+            vp_w = max(0, self.editor_keys_list.viewport().width() - 4)
+            for i in range(self.editor_keys_list.count()):
+                item = self.editor_keys_list.item(i)
+                w = self.editor_keys_list.itemWidget(item)
+                if item and w:
+                    item.setSizeHint(QSize(vp_w, w.sizeHint().height()))
+            self.editor_keys_list.doItemsLayout()
+
+        self.editor_keys_list.resizeEvent = _on_editor_keys_list_resize
         col2.addWidget(self.editor_keys_list)
 
         col2_btns = QHBoxLayout()
@@ -4994,15 +5547,14 @@ class MacroSettingsPanel(QWidget):
         self.combo_insert_cmd.setStyleSheet(_combo_style)
         col3.addWidget(self.combo_insert_cmd)
 
-        col3.addSpacing(10)
+        col3.addStretch()
 
         self.editor_save_btn = FadeHoverButton("Save", is_secondary=False)
         self.editor_save_btn.setIcon(QIcon(os.path.join(icons_dir, "save-floppy.svg")))
         self.editor_save_btn.setIconSize(QSize(16, 16))
-        self.editor_save_btn.setFixedHeight(36)
+        self.editor_save_btn.setFixedHeight(32)
         col3.addWidget(self.editor_save_btn)
-        
-        col3.addStretch()
+
         editor_layout.addLayout(col3, 1)
         editor_group_layout.addLayout(editor_layout)
         layout_editor.addWidget(editor_group)
@@ -5832,9 +6384,7 @@ class MacroSettingsPanel(QWidget):
         self._page_stack.setCurrentIndex(0)
         self._update_tab_buttons()
         
-        layout.addWidget(self._page_stack, 1)
-        
-        # Load and apply saved HELXAIRO settings (after all UI is created)
+        # Load and apply saved HELXAIRO settings
         self._apply_saved_helxairo_settings()
 
     def _switch_tab(self, index: int):
@@ -5858,7 +6408,7 @@ class MacroSettingsPanel(QWidget):
                 btn.setStyleSheet("""
                     QPushButton {
                         background: #2a2a2a;
-                        color: #e0e0e0;
+                        color: #ffffff;
                         border: none;
                         border-top: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, 
                             stop:0 #cc47aa, stop:0.5 #ff0919, stop:1 #e89805);
@@ -5866,8 +6416,13 @@ class MacroSettingsPanel(QWidget):
                         border-top-right-radius: 6px;
                         border-bottom-left-radius: 0px;
                         border-bottom-right-radius: 0px;
-                        font-size: 14px;
-                        padding: 8px 12px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 13px;
+                        font-weight: bold;
+                        padding-top: 0px;
+                        padding-bottom: 3px;
+                        padding-left: 14px;
+                        padding-right: 14px;
                     }
                 """)
             else:
@@ -5878,8 +6433,12 @@ class MacroSettingsPanel(QWidget):
                         border: none;
                         border-top: 3px solid transparent;
                         border-radius: 0px;
-                        font-size: 14px;
-                        padding: 8px 12px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 13px;
+                        padding-top: 0px;
+                        padding-bottom: 3px;
+                        padding-left: 14px;
+                        padding-right: 14px;
                     }
                     QPushButton:hover {
                         background: rgba(255, 255, 255, 0.05);
@@ -6271,13 +6830,10 @@ class MacroSettingsPanel(QWidget):
     
     def _restore_defaults(self):
         """Restore all settings to factory defaults."""
-        reply = QMessageBox.question(
+        if show_custom_question_box(
             self, "Restore Defaults",
-            "Are you sure you want to restore all settings to defaults?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
+            "Are you sure you want to restore all settings to defaults?"
+        ):
             try:
                 # TODO: Implement full hardware reset when HID command is known
                 print("[HELXAIRO] Restoring factory defaults...")
@@ -7097,22 +7653,21 @@ class MacroSettingsPanel(QWidget):
             self._refresh_timer.start()
             print("[HELXAIRO] Refresh timer started")
             
-        # The _hw_poll_timer and _conn_check_timer are now managed by HardwareManager
-        # No need to start them here.
-            
-        # Init bridge if needed
-        if not self._bridge:
-            self._init_bridge()
-            
-        # Ensure bridge is running if initialized
-        if self._bridge and not self._bridge.is_running:
-            try:
-                self._bridge.start()
-                print("[HELXAIRO] Macro system started in showEvent")
-            except Exception as e:
-                print(f"[HELXAIRO] Failed to start macro bridge in showEvent: {e}")
+        # Defer macro system bridge init & data loading by 1s for zero-latency page switch
+        def _deferred_macro_init():
+            if not self._bridge:
+                self._init_bridge()
                 
-        self._load_data()
+            if self._bridge and not self._bridge.is_running:
+                try:
+                    self._bridge.start()
+                    print("[HELXAIRO] Macro system started (deferred)")
+                except Exception as e:
+                    print(f"[HELXAIRO] Failed to start macro bridge in showEvent: {e}")
+                    
+            self._load_data()
+
+        QTimer.singleShot(1000, _deferred_macro_init)
     
     def hideEvent(self, event):
         """Called when panel becomes hidden."""
@@ -7129,10 +7684,6 @@ class MacroSettingsPanel(QWidget):
         if not self._bridge or not self._bridge.profile_manager:
             return
         
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        check_icon_path = os.path.join(script_dir, "UI Icons", "check-icon.svg").replace("\\", "/")
-        uncheck_icon_path = os.path.join(script_dir, "UI Icons", "uncheck-icon.svg").replace("\\", "/")
-
         # Update each item's status in place
         for i in range(self.active_list.count()):
             item = self.active_list.item(i)
@@ -7144,8 +7695,7 @@ class MacroSettingsPanel(QWidget):
                 widget.macro = macro
                 widget.profile_name = prof_name
                 is_enabled = getattr(macro, 'enabled', True)
-                icon_path = check_icon_path if is_enabled else uncheck_icon_path
-                widget.status_icon.setPixmap(QPixmap(icon_path).scaled(16, 16, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                widget.status_icon.set_enabled_state(is_enabled)
                 if hasattr(widget, 'sub_lbl') and prof_name:
                     widget.sub_lbl.setText(f"Profile: {prof_name}")
         
@@ -7319,6 +7869,291 @@ class MacroSettingsPanel(QWidget):
                 
         if self._bridge and hasattr(self._bridge, 'reload_active_profile_macros'):
             self._bridge.reload_active_profile_macros()
+            
+        self._filter_macro_list()
+        
+        # Automatically select the first item and reveal keys/intervals in List of keys
+        if self.active_list.count() > 0:
+            self.active_list.setCurrentRow(0)
+
+    def _on_macro_selection_changed(self):
+        """Update List of keys (self.editor_keys_list) when macro selection changes."""
+        selected_items = self.active_list.selectedItems()
+        if not selected_items:
+            if hasattr(self, 'editor_keys_list'):
+                self.editor_keys_list.clear()
+        elif len(selected_items) == 1:
+            item = selected_items[0]
+            macro = item.data(Qt.UserRole + 1)
+            self._update_keys_list_for_macro(macro)
+        else:
+            macros = [item.data(Qt.UserRole + 1) for item in selected_items if item.data(Qt.UserRole + 1)]
+            self._update_keys_list_for_multiple_macros(macros)
+
+    def _update_keys_list_for_multiple_macros(self, macros):
+        """Populate List of keys (self.editor_keys_list) with unified macro container cards per selected macro."""
+        if not hasattr(self, 'editor_keys_list'):
+            return
+        self.editor_keys_list.clear()
+        if not macros:
+            return
+
+        for macro in macros:
+            macro_name = getattr(macro, 'name', 'Unnamed Macro')
+            actions = getattr(macro, 'actions', None) or getattr(macro, 'sequence', None)
+            steps_info = []
+
+            if actions and isinstance(actions, list) and len(actions) > 0:
+                for idx, act in enumerate(actions):
+                    if isinstance(act, dict):
+                        action_type = act.get('type', act.get('action', 'Key Event'))
+                        b = act.get('button')
+                        k = act.get('key', act.get('code', ''))
+                        delay_ms = act.get('delay', act.get('delay_ms', act.get('interval', 0)))
+                    else:
+                        action_type = str(getattr(act, 'type', getattr(act, 'action_type', 'Key Event')))
+                        b = getattr(act, 'button', None)
+                        k = getattr(act, 'key', None)
+                        delay_ms = getattr(act, 'delay', getattr(act, 'delay_ms', getattr(act, 'interval', 0)))
+
+                    if b:
+                        key_name = f"{str(b).capitalize()} Click"
+                    elif k:
+                        key_name = f"Key '{str(k).upper()}'"
+                    elif action_type:
+                        key_name = str(action_type).replace("_", " ").capitalize()
+                    else:
+                        key_name = "Key Action"
+
+                    delay_str = f"{delay_ms}ms" if delay_ms < 1000 else f"{delay_ms / 1000:.1f}s"
+                    steps_info.append((key_name, delay_str))
+            else:
+                target_name, int_str = self._get_single_action_info(macro)
+                steps_info.append((target_name, int_str))
+
+            step_count = len(steps_info)
+            item = QListWidgetItem()
+            widget = HelxairoMacroGroupCardWidget(macro_name, step_count, steps_info, list_item=item, list_widget=self.editor_keys_list)
+            item.setSizeHint(widget.sizeHint())
+            item.setData(Qt.UserRole, (macro, 0))
+            self.editor_keys_list.addItem(item)
+            self.editor_keys_list.setItemWidget(item, widget)
+
+    def _get_single_action_info(self, macro):
+        """Helper to extract single action target name and interval string."""
+        hold_b = getattr(macro, 'hold_button', None)
+        hold_k = getattr(macro, 'hold_key', None)
+        repeat_act = getattr(macro, 'repeat_action', None) or getattr(macro, 'on_action', None)
+        
+        target_name = ""
+        if hold_b:
+            target_name = f"{str(hold_b).capitalize()} Click"
+        elif hold_k:
+            target_name = f"Key '{str(hold_k).upper()}'"
+        elif repeat_act:
+            if isinstance(repeat_act, dict):
+                rb = repeat_act.get('button')
+                rk = repeat_act.get('key')
+            else:
+                rb = getattr(repeat_act, 'button', None)
+                rk = getattr(repeat_act, 'key', None)
+            
+            if rb:
+                target_name = f"{str(rb).capitalize()} Click"
+            elif rk:
+                target_name = f"Key '{str(rk).upper()}'"
+
+        if not target_name:
+            to_k = getattr(macro, 'to_key', getattr(macro, 'target_key', None))
+            to_b = getattr(macro, 'to_button', getattr(macro, 'target_button', None))
+            if to_k:
+                target_name = f"Key '{str(to_k).upper()}'"
+            elif to_b:
+                target_name = f"{str(to_b).capitalize()} Click"
+            else:
+                target_name = getattr(macro, 'name', 'Macro Action')
+
+        interval_ms = getattr(macro, 'repeat_interval_ms', None)
+        if interval_ms is None:
+            interval_ms = getattr(macro, 'interval_ms', 100)
+            
+        int_str = f"{interval_ms // 1000}s" if (interval_ms >= 1000 and interval_ms % 1000 == 0) else f"{interval_ms}ms"
+        return target_name, int_str
+
+    def _toggle_accordion_items(self, expanded: bool, items: list):
+        """Show or hide child step items for an accordion header."""
+        for item in items:
+            item.setHidden(not expanded)
+
+    def _update_keys_list_for_macro(self, macro):
+        """Populate List of keys (self.editor_keys_list) with unified macro container card."""
+        if not hasattr(self, 'editor_keys_list'):
+            return
+        self.editor_keys_list.clear()
+        if not macro:
+            return
+
+        macro_name = getattr(macro, 'name', 'Unnamed Macro')
+        actions = getattr(macro, 'actions', None) or getattr(macro, 'sequence', None)
+        steps_info = []
+
+        if actions and isinstance(actions, list) and len(actions) > 0:
+            for idx, act in enumerate(actions):
+                if isinstance(act, dict):
+                    action_type = act.get('type', act.get('action', 'Key Event'))
+                    b = act.get('button')
+                    k = act.get('key', act.get('code', ''))
+                    delay_ms = act.get('delay', act.get('delay_ms', act.get('interval', 0)))
+                else:
+                    action_type = str(getattr(act, 'type', getattr(act, 'action_type', 'Key Event')))
+                    b = getattr(act, 'button', None)
+                    k = getattr(act, 'key', None)
+                    delay_ms = getattr(act, 'delay', getattr(act, 'delay_ms', getattr(act, 'interval', 0)))
+
+                if b:
+                    key_name = f"{str(b).capitalize()} Click"
+                elif k:
+                    key_name = f"Key '{str(k).upper()}'"
+                elif action_type:
+                    key_name = str(action_type).replace("_", " ").capitalize()
+                else:
+                    key_name = "Key Action"
+
+                delay_str = f"{delay_ms}ms" if delay_ms < 1000 else f"{delay_ms / 1000:.1f}s"
+                steps_info.append((key_name, delay_str))
+        else:
+            target_name, int_str = self._get_single_action_info(macro)
+            steps_info.append((target_name, int_str))
+
+        step_count = len(steps_info)
+        item = QListWidgetItem()
+        widget = HelxairoMacroGroupCardWidget(macro_name, step_count, steps_info, list_item=item, list_widget=self.editor_keys_list)
+        item.setSizeHint(widget.sizeHint())
+        item.setData(Qt.UserRole, (macro, 0))
+        self.editor_keys_list.addItem(item)
+        self.editor_keys_list.setItemWidget(item, widget)
+
+    def _show_sort_menu(self):
+        """Show dropdown QMenu under sort button to re-order items in active_list."""
+        if not hasattr(self, 'macro_sort_btn'):
+            return
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: rgba(24, 26, 32, 0.95);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 18px;
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: rgba(255, 91, 6, 0.2);
+                color: #ffffff;
+            }
+        """)
+        
+        act_az = menu.addAction("Name (A - Z)")
+        act_za = menu.addAction("Name (Z - A)")
+        act_active = menu.addAction("Active First")
+        act_default = menu.addAction("Default Order")
+        
+        btn_pos = self.macro_sort_btn.mapToGlobal(QPoint(0, self.macro_sort_btn.height() + 4))
+        chosen = menu.exec(btn_pos)
+        
+        if chosen == act_az:
+            self._sort_macro_list("a_z")
+        elif chosen == act_za:
+            self._sort_macro_list("z_a")
+        elif chosen == act_active:
+            self._sort_macro_list("active")
+        elif chosen == act_default:
+            self._sort_macro_list("default")
+
+    def _sort_macro_list(self, criteria="a_z"):
+        """Sort items in self.active_list based on chosen criteria."""
+        if not hasattr(self, 'active_list'):
+            return
+        items_data = []
+        for i in range(self.active_list.count()):
+            item = self.active_list.item(i)
+            widget = self.active_list.itemWidget(item)
+            macro = item.data(Qt.UserRole + 1)
+            
+            name = ""
+            if macro and hasattr(macro, 'name') and macro.name:
+                name = macro.name
+            elif widget and hasattr(widget, '_macro') and hasattr(widget._macro, 'name'):
+                name = widget._macro.name
+            elif widget and hasattr(widget, 'name_lbl') and hasattr(widget.name_lbl, 'text'):
+                name = widget.name_lbl.text()
+            elif item.text():
+                name = item.text()
+
+            is_enabled = False
+            if macro and hasattr(macro, 'enabled'):
+                is_enabled = bool(macro.enabled)
+            elif widget and hasattr(widget, '_macro') and hasattr(widget._macro, 'enabled'):
+                is_enabled = bool(widget._macro.enabled)
+
+            items_data.append({
+                'name': name,
+                'enabled': is_enabled,
+                'orig_index': i,
+                'item': item,
+                'widget': widget
+            })
+
+        if criteria == "a_z":
+            items_data.sort(key=lambda x: x['name'].lower())
+        elif criteria == "z_a":
+            items_data.sort(key=lambda x: x['name'].lower(), reverse=True)
+        elif criteria == "active":
+            items_data.sort(key=lambda x: (not x['enabled'], x['name'].lower()))
+        elif criteria == "default":
+            items_data.sort(key=lambda x: x['orig_index'])
+
+        while self.active_list.count() > 0:
+            self.active_list.takeItem(0)
+
+        for entry in items_data:
+            item = entry['item']
+            widget = entry['widget']
+            self.active_list.addItem(item)
+            if widget:
+                self.active_list.setItemWidget(item, widget)
+
+        self._filter_macro_list()
+
+    def _filter_macro_list(self, text=None):
+        """Filter items in active_list based on search query."""
+        if not hasattr(self, 'active_list') or not hasattr(self, 'macro_search_input'):
+            return
+        query = (text if text is not None else self.macro_search_input.text()).strip().lower()
+        for i in range(self.active_list.count()):
+            item = self.active_list.item(i)
+            macro = item.data(Qt.UserRole + 1)
+            widget = self.active_list.itemWidget(item)
+            
+            name = ""
+            if macro and hasattr(macro, 'name') and macro.name:
+                name = macro.name
+            elif widget and hasattr(widget, '_macro') and hasattr(widget._macro, 'name'):
+                name = widget._macro.name
+            elif widget and hasattr(widget, 'name_lbl') and hasattr(widget.name_lbl, 'text'):
+                name = widget.name_lbl.text()
+            elif item.text():
+                name = item.text()
+                
+            if not query or query in name.lower():
+                item.setHidden(False)
+            else:
+                item.setHidden(True)
                 
     def _load_profiles(self):
         """Load profiles into list with SVG star icon for active profile."""
@@ -7557,6 +8392,35 @@ class MacroSettingsPanel(QWidget):
         self._load_macros()
         self.macros_changed.emit()
         
+    def _toggle_macro(self, macro):
+        """Toggle a specific macro's enabled state."""
+        if not macro:
+            print("[HELXAIRO-TOGGLE] ERR: _toggle_macro called with None macro!")
+            return
+        if not self._bridge:
+            self._init_bridge()
+            if not self._bridge:
+                print("[HELXAIRO-TOGGLE] ERR: _toggle_macro bridge is unavailable!")
+                return
+                
+        old_state = getattr(macro, 'enabled', True)
+        new_state = not old_state
+        macro.enabled = new_state
+        print(f"[HELXAIRO-TOGGLE] _toggle_macro: macro_id={macro.id}, name='{getattr(macro, 'name', '')}', state changed {old_state} -> {new_state}")
+        
+        if self._bridge.profile_manager:
+            self._bridge.profile_manager.save_all()
+            print("[HELXAIRO-TOGGLE] Saved profile manager to disk.")
+        if hasattr(self._bridge, 'reload_active_profile_macros'):
+            self._bridge.reload_active_profile_macros()
+            print("[HELXAIRO-TOGGLE] Engine reloaded active profile macros.")
+            
+        self._refresh_macro_status()
+        self.macros_changed.emit()
+        status_str = "Enabled" if new_state else "Disabled"
+        macro_name = getattr(macro, 'name', 'Macro')
+        FloatingToast.show_toast(self, f"Macro {status_str}", f"'{macro_name}' is now {status_str.lower()}.")
+
     def _toggle_selected_macro(self):
         """Toggle enabled status for all selected macros in active_list."""
         if not self._bridge:
@@ -7578,7 +8442,9 @@ class MacroSettingsPanel(QWidget):
         for item in selected_items:
             macro = item.data(Qt.UserRole + 1)
             if macro:
-                macro.enabled = not macro.enabled
+                old_st = getattr(macro, 'enabled', True)
+                macro.enabled = not old_st
+                print(f"[HELXAIRO-TOGGLE] _toggle_selected_macro: macro_id={macro.id}, {old_st} -> {macro.enabled}")
                 toggled_count += 1
                 
         if toggled_count > 0:
@@ -7586,7 +8452,7 @@ class MacroSettingsPanel(QWidget):
                 self._bridge.profile_manager.save_all()
             if hasattr(self._bridge, 'reload_active_profile_macros'):
                 self._bridge.reload_active_profile_macros()
-            self._load_macros()
+            self._refresh_macro_status()
             self.macros_changed.emit()
             FloatingToast.show_toast(self, "Macros Toggled", f"Toggled {toggled_count} selected macro(s).")
             
@@ -7661,13 +8527,10 @@ class MacroSettingsPanel(QWidget):
             FloatingToast.show_toast(self, "No Selection", "Please select macro(s) to delete.")
             return
             
-        reply = QMessageBox.question(
+        if show_custom_question_box(
             self, "Delete Selected Macros",
-            f"Are you sure you want to delete {len(selected_items)} selected macro(s)?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
+            f"Are you sure you want to delete {len(selected_items)} selected macro(s)?"
+        ):
             deleted_count = 0
             for item in selected_items:
                 macro_id = item.data(Qt.UserRole)
@@ -7746,9 +8609,7 @@ class MacroSettingsPanel(QWidget):
         else:
             msg = f"Are you sure you want to delete {len(valid_items)} selected profiles?"
 
-        reply = QMessageBox.question(self, "Delete Profile(s)", msg, QMessageBox.Yes | QMessageBox.No)
-
-        if reply == QMessageBox.Yes:
+        if show_custom_question_box(self, "Delete Profile(s)", msg):
             deleted_count = 0
             for item in valid_items:
                 profile_id = item.data(Qt.UserRole)

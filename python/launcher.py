@@ -2023,7 +2023,8 @@ DEFAULT_SETTINGS = {
     "start_minimised": False,
     "minimize_to_tray": True,
     "confirm_on_exit": True,
-    "developer_mode": False
+    "developer_mode": False,
+    "calculate_page_initialize": False
 }
 
 def load_settings():
@@ -4437,6 +4438,78 @@ def apply_custom_titlebar(widget, color_hex):
     except Exception as e:
         print(f"[Theme] Failed to apply custom title bar: {e}")
 
+class PageInitProfilerWindow(QWidget):
+    """
+    Standalone Top-Level Window Pop-up for Page Initialization Latency Profiling.
+    Pops up as a new independent OS window when navigating between pages.
+    
+    Component Name: PageInitProfilerWindow
+    """
+    def __init__(self, page_name: str, elapsed_ms: float):
+        super().__init__(None)  # Top-level standalone OS window
+        self.setObjectName("PageInitProfilerWindow")
+        self.setWindowTitle("Page Initialization Profiler")
+        self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
+        self.setFixedSize(420, 210)
+        self.setStyleSheet("background-color: #12141A; color: #FFFFFF; border: 1px solid #FF5B06; border-radius: 10px;")
+        
+        # Apply Windows 11 custom title bar color (#12141a)
+        apply_custom_titlebar(self, "#12141a")
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 18, 20, 18)
+        main_layout.setSpacing(10)
+        
+        title_lbl = QLabel("[Profiler] Page Initialization")
+        title_lbl.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 15px; font-weight: bold; color: #FFFFFF; border: none;")
+        main_layout.addWidget(title_lbl)
+        
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background-color: rgba(255, 91, 6, 0.4); border: none; max-height: 1px;")
+        main_layout.addWidget(sep)
+        
+        page_lbl = QLabel(f"Page: {page_name}")
+        page_lbl.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 12px; color: #E0E0E0; border: none;")
+        main_layout.addWidget(page_lbl)
+        
+        time_lbl = QLabel(f"Initialization Time: <span style='color: #FF5B06; font-weight: bold;'>{elapsed_ms:.2f} ms</span>")
+        time_lbl.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 13px; color: #FFFFFF; border: none;")
+        main_layout.addWidget(time_lbl)
+        
+        main_layout.addStretch()
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.setFixedSize(95, 30)
+        ok_btn.setCursor(Qt.PointingHandCursor)
+        ok_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 8px;
+                color: #E0E0E0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FF8000, stop:1 #FF5B06);
+                border: none;
+                color: #FFFFFF;
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #D94800, stop:1 #B33600);
+                border: none;
+                color: #FFFFFF;
+            }
+        """)
+        ok_btn.clicked.connect(self.close)
+        btn_layout.addWidget(ok_btn)
+        main_layout.addLayout(btn_layout)
+
+
 class GameLauncher(QWidget):
     # Class-level icon cache to avoid reloading same icons
     _icon_cache = {}
@@ -4499,6 +4572,32 @@ class GameLauncher(QWidget):
 
         # Setup deferred button animations (improves startup time)
         self._setup_deferred_button_animations()
+
+        # Pre-instantiate panel shells sequentially in idle ticks so panel switches are INSTANT (< 1ms)
+        QTimer.singleShot(300, lambda: self._ensure_panel_preloaded(1))   # HELXAIC - Music
+        QTimer.singleShot(600, lambda: self._ensure_panel_preloaded(2))   # HELXAIL - CPU
+        QTimer.singleShot(900, lambda: self._ensure_panel_preloaded(3))   # HELXAIR - Crosshair
+        QTimer.singleShot(1200, lambda: self._ensure_panel_preloaded(4))  # HELXAIRO - Macro
+        QTimer.singleShot(1500, lambda: self._ensure_panel_preloaded(5))  # HELXTATS - Hardware
+        QTimer.singleShot(1800, lambda: self._ensure_panel_preloaded(6))  # HELRCUS - Win Custom
+
+    def _ensure_panel_preloaded(self, index: int):
+        """Pre-instantiate panel shell safely in background idle time."""
+        try:
+            if index == 1 and not hasattr(self, 'music_panel'):
+                self._setup_music_panel()
+            elif index == 2 and not hasattr(self, 'cpu_panel'):
+                self._setup_cpu_panel()
+            elif index == 3 and not hasattr(self, 'crosshair_panel'):
+                self._setup_crosshair_panel()
+            elif index == 4 and not hasattr(self, 'macro_panel'):
+                self._setup_macro_panel()
+            elif index == 5 and not hasattr(self, 'hardware_panel'):
+                self._setup_hardware_panel()
+            elif index == 6 and not hasattr(self, 'wincustom_panel'):
+                self._setup_wincustom_panel()
+        except Exception as e:
+            print(f"[Startup] Panel {index} pre-load skipped: {e}")
 
     def _setup_deferred_button_animations(self):
         """Setup rotation animations for settings buttons after UI is visible.
@@ -4690,7 +4789,6 @@ class GameLauncher(QWidget):
     def __init__(self, parent=None, config_manager=None, start_minimised=False, has_tray_icon=False):
         super().__init__(parent)
         self.setObjectName("GameLauncherMain")
-        self.taskbar_button_clicked.connect(self._on_taskbar_button_clicked)
         self.current_edit_game = None  # Store the game being edited
         self._game_text_color = "#e0e0e0"  # Default light text, updated by apply_theme
         self._has_bg_image = False  # Track if custom background is set
@@ -6363,7 +6461,10 @@ class GameLauncher(QWidget):
     # SIDEBAR NAVIGATION METHODS
     # =============================================
     def switch_panel(self, index: int):
-        """Switch content panel based on sidebar selection with iOS-style animation."""
+        """Switch content panel based on sidebar selection with high-resolution page initialization latency profiling."""
+        is_profiling = self.settings.get("calculate_page_initialize", False)
+        t_start = time.perf_counter() if is_profiling else 0.0
+
         # Lazy-load Music panel at index 1
         if index == 1 and not hasattr(self, 'music_panel'):
             self._setup_music_panel()
@@ -6387,7 +6488,7 @@ class GameLauncher(QWidget):
         # Lazy-load Windows Customization panel at index 6
         if index == 6 and not hasattr(self, 'wincustom_panel'):
             self._setup_wincustom_panel()
-        
+
         target_widget = None
         if index == 0 and hasattr(self, 'home_panel'):
             target_widget = self.home_panel
@@ -6408,6 +6509,30 @@ class GameLauncher(QWidget):
             self.content_stack.setCurrentWidget(target_widget)
         else:
             self.content_stack.setCurrentIndex(index)
+
+        if is_profiling:
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+
+            page_names = {
+                0: "HELXAID - Game Launcher",
+                1: "HELXAIC - Music Player",
+                2: "HELXAIL - CPU Controller",
+                3: "HELXAIR - Crosshair Overlay",
+                4: "HELXAIRO - Macro Setting",
+                5: "HELXTATS - Booster & Hardware Stats",
+                6: "HELRCUS - Windows Customization",
+            }
+            page_label = page_names.get(index, f"Page Index {index}")
+
+            print(f"[Page Profiler] {page_label} initialized in {elapsed_ms:.2f} ms")
+
+            try:
+                self._profiler_win = PageInitProfilerWindow(page_label, elapsed_ms)
+                self._profiler_win.show()
+                self._profiler_win.raise_()
+                self._profiler_win.activateWindow()
+            except Exception as pe:
+                print(f"[Page Profiler Error] {pe}")
         
         # Clear focus from sidebar buttons so keyboard shortcuts work
         if index == 1:  # Music panel (index 1)
@@ -10553,18 +10678,18 @@ Stylesheet Selector:
         scroll_area.setStyleSheet("""
             QScrollArea { background: transparent; border: none; }
             QScrollBar:vertical {
-                background: rgba(0, 0, 0, 0.3);
-                width: 8px;
-                border-radius: 4px;
+                background: transparent;
+                width: 6px;
+                border-radius: 3px;
                 margin: 2px 0px 2px 0px;
             }
             QScrollBar::handle:vertical {
                 background: #FF5B06;
-                border-radius: 4px;
+                border-radius: 3px;
                 min-height: 35px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #FF7B36;
+                background: #FF5B06;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 height: 0px; background: none; border: none;
@@ -10787,18 +10912,27 @@ Stylesheet Selector:
         dev_mode_cb.setStyleSheet("color: #b3b3b3; font-size: 11px;")
         dev_layout.addWidget(dev_mode_cb)
 
+        # Sub-container holding separator & controls under Developer Mode (Dark Overlay Option A)
+        dev_sub_container = QFrame()
+        dev_sub_container.setObjectName("devSubContainer")
+        dev_sub_container_layout = QVBoxLayout(dev_sub_container)
+        dev_sub_container_layout.setContentsMargins(0, 2, 0, 2)
+        dev_sub_container_layout.setSpacing(6)
+
+        dev_opacity_effect = QGraphicsOpacityEffect(dev_sub_container)
+        dev_sub_container.setGraphicsEffect(dev_opacity_effect)
+
         # Horizontal separator line under Developer Mode toggle
         dev_sep = QFrame()
         dev_sep.setFrameShape(QFrame.HLine)
         dev_sep.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border: none; max-height: 1px;")
-        dev_layout.addWidget(dev_sep)
+        dev_sub_container_layout.addWidget(dev_sep)
 
         # Dev action buttons
         dev_btn_layout = QHBoxLayout()
         dev_btn_layout.setSpacing(8)
 
         uninstall_tools_btn = AnimatedButton("Uninstall External Tools")
-        uninstall_tools_btn.setEnabled(dev_mode_cb.isChecked())
         uninstall_tools_btn.setStyleSheet("""
             QPushButton {
                 background: rgba(200, 40, 40, 0.7);
@@ -10815,7 +10949,6 @@ Stylesheet Selector:
         dev_btn_layout.addWidget(uninstall_tools_btn)
 
         reset_appdata_btn = AnimatedButton("Reset AppData (Clean Install)")
-        reset_appdata_btn.setEnabled(dev_mode_cb.isChecked())
         reset_appdata_btn.setStyleSheet("""
             QPushButton {
                 background: rgba(180, 80, 20, 0.7);
@@ -10831,17 +10964,32 @@ Stylesheet Selector:
         reset_appdata_btn.clicked.connect(self.reset_appdata_clean_install)
         dev_btn_layout.addWidget(reset_appdata_btn)
 
-        dev_layout.addLayout(dev_btn_layout)
+        dev_sub_container_layout.addLayout(dev_btn_layout)
 
-        # Wire toggles so buttons enable/disable reactively without reopening dialog
-        dev_mode_cb.toggled.connect(uninstall_tools_btn.setEnabled)
-        dev_mode_cb.toggled.connect(reset_appdata_btn.setEnabled)
+        # Toggle for calculating page initialization / switch latency
+        calc_page_init_cb = AnimatedCheckBox("Calculate Page Initialize")
+        calc_page_init_cb.setChecked(self.settings.get("calculate_page_initialize", False))
+        dev_sub_container_layout.addWidget(calc_page_init_cb)
 
         # Toggle for turning off Psutil fallback scanning
         turn_off_psutil_cb = AnimatedCheckBox("Turn off Psutil")
         turn_off_psutil_cb.setChecked(self.settings.get("turn_off_psutil", False))
-        turn_off_psutil_cb.setStyleSheet("color: #b3b3b3; font-size: 11px;")
-        dev_layout.addWidget(turn_off_psutil_cb)
+        dev_sub_container_layout.addWidget(turn_off_psutil_cb)
+
+        dev_layout.addWidget(dev_sub_container)
+
+        # Dark Overlay State Updater (Option A - Fixed Layout Shift)
+        def _update_dev_mode_state(is_dev: bool):
+            uninstall_tools_btn.setEnabled(is_dev)
+            reset_appdata_btn.setEnabled(is_dev)
+            calc_page_init_cb.setEnabled(is_dev)
+            turn_off_psutil_cb.setEnabled(is_dev)
+            dev_opacity_effect.setOpacity(1.0 if is_dev else 0.35)
+
+        dev_mode_cb.toggled.connect(_update_dev_mode_state)
+
+        # Apply initial state
+        _update_dev_mode_state(dev_mode_cb.isChecked())
 
         layout.addWidget(dev_group)
 
@@ -10927,6 +11075,7 @@ Stylesheet Selector:
             new_opacity = opacity_slider.value() / 100.0
             new_init_zero_uac = init_zero_uac_cb.isChecked()
             new_dev = dev_mode_cb.isChecked()
+            new_calc_init = calc_page_init_cb.isChecked()
             new_psutil = turn_off_psutil_cb.isChecked()
             new_check = check_daily_cb.isChecked()
             new_startup = startup_cb.isChecked()
@@ -10944,6 +11093,7 @@ Stylesheet Selector:
                 new_full == self.isFullScreen() and
                 abs(new_opacity - self.settings.get("window_opacity", 1.0)) < 0.01 and
                 new_dev == self.settings.get("developer_mode", False) and
+                new_calc_init == self.settings.get("calculate_page_initialize", False) and
                 new_psutil == self.settings.get("turn_off_psutil", False) and
                 new_check == self.settings.get("check_version_daily", True) and
                 new_startup == orig_startup and
@@ -10969,6 +11119,7 @@ Stylesheet Selector:
             self.settings["window_fullscreen"] = new_full
             self.settings["window_opacity"] = new_opacity
             self.settings["developer_mode"] = new_dev
+            self.settings["calculate_page_initialize"] = new_calc_init
             self.settings["turn_off_psutil"] = new_psutil
             self.settings["check_version_daily"] = new_check
             self.settings["startup_delay"] = new_delay

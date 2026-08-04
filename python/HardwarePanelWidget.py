@@ -531,18 +531,19 @@ class HardwarePanelWidget(QWidget):
         # Track which pages have been created (for lazy loading)
         self._pages_created = [False] * 6
         
-        # Create ONLY the first page (Quick Setup) immediately - others are lazy loaded
+        # Create Page 0 (Quick Setup) immediately so HELXTATS is NEVER blank
         quick_setup_page = self._create_overview_page()
-        self._page_stack.addWidget(quick_setup_page)  # Index 0
+        self._page_stack.addWidget(quick_setup_page)
         self._pages_created[0] = True
         
-        # Add placeholder widgets for other pages (will be replaced on first visit)
+        # Add placeholder widgets for remaining pages 1-5 (populated lazily on tab click)
         for i in range(1, 6):
             placeholder = QWidget()
             placeholder.setObjectName(f"placeholder_{i}")
             self._page_stack.addWidget(placeholder)
         
         layout.addWidget(self._page_stack, stretch=1)
+        self._page_stack.setCurrentIndex(0)
         
         # Initial count update (will pull from config since others aren't loaded)
         self._update_total_items_count()
@@ -622,11 +623,12 @@ class HardwarePanelWidget(QWidget):
     def _create_page_lazy(self, index: int):
         """Create a page on-demand (lazy loading)."""
         page_creators = {
-            1: self._create_ram_page,      # Booster
-            2: self._create_cpu_page,      # CPU
-            3: self._create_drive_page,    # Drive
-            4: self._create_health_page,   # Health
-            5: self._create_network_page,  # Network
+            0: self._create_overview_page,  # Quick Setup
+            1: self._create_ram_page,       # Booster
+            2: self._create_cpu_page,       # CPU
+            3: self._create_drive_page,     # Drive
+            4: self._create_health_page,    # Health
+            5: self._create_network_page,   # Network
         }
         
         if index in page_creators:
@@ -641,6 +643,7 @@ class HardwarePanelWidget(QWidget):
             # Insert at correct position
             self._page_stack.insertWidget(index, new_page)
             self._pages_created[index] = True
+            self._page_stack.setCurrentIndex(index)
             print(f"[Hardware] Lazy loaded page {index}")
     
     def _reset_chart_histories(self):
@@ -4932,7 +4935,7 @@ class HardwarePanelWidget(QWidget):
 
     
     def showEvent(self, event):
-        """Start updates when visible, init NetworkMonitor on first show."""
+        """Start updates when visible, defer heavy NetworkMonitor and LHM launch."""
         super().showEvent(event)
         
         # Ensure background temp monitoring thread is running
@@ -4941,23 +4944,26 @@ class HardwarePanelWidget(QWidget):
         if not self._update_timer.isActive():
             self._update_timer.start(self.monitor.update_interval_ms)
         
-        # Initialize NetworkMonitor on first show to start collecting data immediately
-        if not hasattr(self, '_net_monitor_initialized') or not self._net_monitor_initialized:
-            try:
-                from NetworkMonitor import NetworkMonitor
-                self._net_monitor_initialized = True
-                self._net_monitor = NetworkMonitor(parent=None)
-                self._net_monitor.data_updated.connect(self._on_net_data_updated)
-                self._net_monitor.start()
-                print("[Hardware] NetworkMonitor initialized at startup")
-            except Exception as e:
-                print(f"[Hardware] Failed to initialize NetworkMonitor: {e}")
-                self._net_monitor_initialized = False
-            
-        # Auto-launch hardware monitor in background if it's not already running
-        if hasattr(self, '_is_hwmon_running') and not self._is_hwmon_running():
-            print("[Hardware] Auto-launching monitor silently in backend...")
-            self._start_librehwmon(silent_launch=True)
+        # Defer NetworkMonitor and LHM initialization by 1s for zero-latency page switch
+        def _deferred_show_tasks():
+            if not hasattr(self, '_net_monitor_initialized') or not self._net_monitor_initialized:
+                try:
+                    from NetworkMonitor import NetworkMonitor
+                    self._net_monitor_initialized = True
+                    self._net_monitor = NetworkMonitor(parent=None)
+                    self._net_monitor.data_updated.connect(self._on_net_data_updated)
+                    self._net_monitor.start()
+                    print("[Hardware] NetworkMonitor initialized (deferred)")
+                except Exception as e:
+                    print(f"[Hardware] Failed to initialize NetworkMonitor: {e}")
+                    self._net_monitor_initialized = False
+                
+            # Auto-launch hardware monitor in background if it's not already running
+            if hasattr(self, '_is_hwmon_running') and not self._is_hwmon_running():
+                print("[Hardware] Auto-launching monitor silently in backend...")
+                self._start_librehwmon(silent_launch=True)
+
+        QTimer.singleShot(1000, _deferred_show_tasks)
             
         if hasattr(self, '_boost_gradient_timer') and not self._boost_gradient_timer.isActive():
             self._boost_gradient_timer.start(17)

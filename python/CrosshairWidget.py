@@ -553,9 +553,9 @@ class CrosshairWidget(QWidget):
         # Create the overlay (hidden by default)
         self.overlay = CrosshairOverlay()
         
-        # Setup global hotkey listener
+        # Setup global hotkey listener (deferred by 1s for zero-latency page switch)
         if KEYBOARD_AVAILABLE:
-            self._setup_hotkey()
+            QTimer.singleShot(1000, self._setup_hotkey)
         
         self.setup_ui()
         self.load_ui_from_settings()

@@ -161,16 +161,8 @@ def is_ffmpeg_available() -> bool:
         return True
     
     # Check if ffmpeg is in PATH
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["ffmpeg", "-version"],
-            capture_output=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        )
-        return result.returncode == 0
-    except:
-        return False
+    import shutil
+    return shutil.which("ffmpeg") is not None or shutil.which("ffprobe") is not None
 
 
 def get_librehwmon_path() -> str:

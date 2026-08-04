@@ -4701,6 +4701,16 @@ class SplitResumeButton(QWidget):
         self.btn_main.clicked.connect(self.clicked.emit)
         self.act_resume.triggered.connect(lambda: self._select_pref("Resume"))
         self.act_resume_folder.triggered.connect(lambda: self._select_pref("Resume and folder"))
+        self.resume_menu.aboutToShow.connect(self._position_resume_menu)
+
+    def _position_resume_menu(self):
+        try:
+            from PySide6.QtCore import QPoint
+            w = self.resume_menu.sizeHint().width()
+            pos = self.mapToGlobal(QPoint(self.width() - w, self.height() + 2))
+            self.resume_menu.move(pos)
+        except Exception:
+            pass
         
     def _select_pref(self, pref_name):
         self._active_pref = pref_name
@@ -4708,12 +4718,15 @@ class SplitResumeButton(QWidget):
         self._settings.setValue("Music/resume_mode_pref", pref_name)
         self.adjustSize()
         if self.parent():
-            self.parent().adjustSize()
-            if self.parent().parent():
-                try:
-                    self.parent().move(self.parent().parent().width() - self.parent().width() - 20, 20)
-                except Exception:
-                    pass
+            if hasattr(self.parent(), 'update_position'):
+                self.parent().update_position()
+            else:
+                self.parent().adjustSize()
+                if self.parent().parent():
+                    try:
+                        self.parent().move(max(20, (self.parent().parent().width() - self.parent().width()) // 2), 20)
+                    except Exception:
+                        pass
 
     def get_preference(self):
         return self._active_pref
@@ -4894,14 +4907,38 @@ class ResumeNotificationWidget(QFrame):
             self.dismiss_clicked.emit()
 
     def set_track_title(self, title):
-        self.lbl_msg.setText(f"Resume: {title}?")
-        self.adjustSize()
+        self._full_title = title
         self.btn_resume.setEnabled(True)
         self.btn_dismiss.setEnabled(True)
         if self.graphicsEffect():
             self.graphicsEffect().setOpacity(1.0)
-        if self.parent():
-            self.move(self.parent().width() - self.width() - 20, 20)
+        self.update_position()
+
+    def update_position(self):
+        if not self.parent():
+            return
+        parent_w = self.parent().width()
+        max_allowed_w = max(280, parent_w - 40)
+        self.setMaximumWidth(max_allowed_w)
+        
+        if hasattr(self, '_full_title') and self._full_title:
+            from PySide6.QtGui import QFontMetrics
+            fm = QFontMetrics(self.lbl_msg.font())
+            btns_w = self.btn_resume.sizeHint().width() + self.btn_dismiss.sizeHint().width()
+            avail_lbl_w = max(60, max_allowed_w - btns_w - 60)
+            prefix = "Resume: "
+            suffix = " ?"
+            p_w = fm.horizontalAdvance(prefix)
+            s_w = fm.horizontalAdvance(suffix)
+            track_avail = max(20, avail_lbl_w - p_w - s_w)
+            elided_title = fm.elidedText(self._full_title, Qt.ElideRight, track_avail)
+            self.lbl_msg.setText(f"{prefix}{elided_title}{suffix}")
+            self.lbl_msg.setToolTip(f"Resume: {self._full_title}?")
+        
+        self.adjustSize()
+        w = self.width()
+        x = max(20, (parent_w - w) // 2)
+        self.move(x, 20)
 
     def animate_out(self, callback=None):
         """Fade out and hide the banner, then execute callback."""
@@ -5550,17 +5587,14 @@ class MusicPanelWidget(QWidget):
             self._setup_ffmpeg_required_ui()
             return
         
-        # Qt Multimedia player
-        self._player = QMediaPlayer()
-        self._audio_output = QAudioOutput()
-        self._player.setAudioOutput(self._audio_output)
-        self._audio_output.setVolume(1.0)  # Set initial volume to 100%
+        # Qt Multimedia player (lazy loaded on tick 0)
+        self._player = None
+        self._audio_output = None
+        QTimer.singleShot(0, self._ensure_player)
         
-        # Secondary player for crossfade
-        self._player2 = QMediaPlayer()
-        self._audio_output2 = QAudioOutput()
-        self._player2.setAudioOutput(self._audio_output2)
-        self._audio_output2.setVolume(0.0)  # Start silent
+        # Secondary player for crossfade (lazy loaded on demand)
+        self._player2 = None
+        self._audio_output2 = None
         
         # Crossfade state
         self._crossfade_enabled = True  # Enabled by default
@@ -5589,9 +5623,9 @@ class MusicPanelWidget(QWidget):
         self._subtitle_appearance_applied_once = False
         self._last_media_for_sub_auto_pick = None
         
-        # Discord Rich Presence
+        # Discord Rich Presence (deferred by 1s for zero-latency page switch)
         self._discord = None
-        self._init_discord()
+        QTimer.singleShot(1000, self._init_discord)
         
         # Config file for persistence (use AppData for bundled exe)
         appdata_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID")
@@ -5615,8 +5649,8 @@ class MusicPanelWidget(QWidget):
         # Ensure minimum height so PlayerBar never gets clipped
         self.setMinimumHeight(400)  # Menu(30) + Header(~200) + PlayerBar(75) + margin
         
-        # Restore last state (folder, track, position, volume)
-        self._load_last_state()
+        # Restore last state (deferred to singleShot for zero-latency UI show)
+        QTimer.singleShot(0, self._load_last_state)
         
         # If no playlist was loaded from the last state, ensure the default playlist's cover is still loaded
         if not getattr(self, '_playlist', None) and hasattr(self, 'header'):
@@ -5627,13 +5661,13 @@ class MusicPanelWidget(QWidget):
         if app:
             app.aboutToQuit.connect(self._save_state)
         
-        # Start global media key listener for hardware media keys
+        # Start global media key listener for hardware media keys (deferred by 1.5s)
         # (keyboard Fn keys, Bluetooth headphone/earbuds, USB controllers)
-        self._setup_media_key_service()
+        QTimer.singleShot(1500, self._setup_media_key_service)
         
-        # Monitor audio device changes to auto-switch when a new device
+        # Monitor audio device changes (deferred by 2s)
         # connects (e.g. Bluetooth headphones, USB DAC)
-        self._setup_audio_device_monitor()
+        QTimer.singleShot(2000, self._setup_audio_device_monitor)
         
         print("[Music] Native Qt MusicPanelWidget initialized")
 
@@ -5707,17 +5741,8 @@ class MusicPanelWidget(QWidget):
             from integrations.tools_downloader import is_ffmpeg_available
             return is_ffmpeg_available()
         except ImportError:
-            # Fallback: check if ffmpeg is in PATH
-            import subprocess
-            try:
-                result = subprocess.run(
-                    ["ffmpeg", "-version"],
-                    capture_output=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                )
-                return result.returncode == 0
-            except Exception:
-                return False
+            import shutil
+            return shutil.which("ffmpeg") is not None or shutil.which("ffprobe") is not None
     
     def _setup_ffmpeg_required_ui(self):
         """Setup placeholder UI when FFmpeg is not available."""
@@ -6441,6 +6466,7 @@ class MusicPanelWidget(QWidget):
         """)
 
     def _setup_ui(self):
+        from PySide6.QtCore import QTimer
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -6487,11 +6513,23 @@ class MusicPanelWidget(QWidget):
         
         self.stack.addWidget(playlist_page)
         
-        # === Page 1: Media Library ===
-        self.media_lib_page = MediaLibraryPage()
-        self.media_lib_page.folderSelected.connect(self._load_tracks_from_folder)
-        self.media_lib_page.tracksAddedToPlaylist.connect(self._append_tracks_to_playlist)
-        self.stack.addWidget(self.media_lib_page)
+        # === Page 1: Media Library (Deferred for zero-latency page load) ===
+        self.media_lib_placeholder = QWidget()
+        self.stack.addWidget(self.media_lib_placeholder)
+        
+        def _init_media_lib():
+            if hasattr(self, 'media_lib_placeholder') and self.media_lib_placeholder:
+                self.media_lib_page = MediaLibraryPage()
+                self.media_lib_page.folderSelected.connect(self._load_tracks_from_folder)
+                self.media_lib_page.tracksAddedToPlaylist.connect(self._append_tracks_to_playlist)
+                idx = self.stack.indexOf(self.media_lib_placeholder)
+                if idx >= 0:
+                    self.stack.removeWidget(self.media_lib_placeholder)
+                    self.media_lib_placeholder.deleteLater()
+                    self.media_lib_placeholder = None
+                    self.stack.insertWidget(idx, self.media_lib_page)
+
+        QTimer.singleShot(300, _init_media_lib)
 
         
         
@@ -6608,22 +6646,15 @@ class MusicPanelWidget(QWidget):
         # Clear QSS on handle since we paint manually
         self.main_splitter.setStyleSheet("QSplitter::handle { background: transparent; }")
         
-        # Keep gradient timer active for backward compat (not used since handle paints itself)
         self._splitter_gradient_offset = 0.0
-        self._splitter_gradient_timer = QTimer(self)
-        self._splitter_gradient_timer.start(80)
 
         # Add Sidebar to main_splitter directly
         self._create_music_sidebar(self.main_splitter)
         
         self.main_splitter.addWidget(self.stack)
 
-        # YouTube Panel (Initially Hidden)
-        self.dl_panel = UniversalDownloaderPanel(self)
-        self.dl_panel.hide()
-        self.dl_panel.closeRequested.connect(self._toggle_yt_panel)
-        self.dl_panel.downloadFinished.connect(self._on_yt_download_finished)
-        self.main_splitter.addWidget(self.dl_panel)
+        # YouTube Panel (Lazy loaded on demand)
+        self.dl_panel = None
 
         # Keep main content dominant when splitter moves
         # Index 0: Sidebar, Index 1: Stack, Index 2: YT Panel
@@ -6672,7 +6703,10 @@ class MusicPanelWidget(QWidget):
         self._update_yt_panel_constraints()
         
         if hasattr(self, 'resume_banner') and not self.resume_banner.isHidden():
-            self.resume_banner.move(self.width() - self.resume_banner.width() - 20, 20)
+            if hasattr(self.resume_banner, 'update_position'):
+                self.resume_banner.update_position()
+            else:
+                self.resume_banner.move(max(20, (self.width() - self.resume_banner.width()) // 2), 20)
             
         try:
             if getattr(self, '_is_fullscreen', False) and getattr(self, '_playerbar_overlay_enabled', False):
@@ -6688,7 +6722,8 @@ class MusicPanelWidget(QWidget):
         # Minimum width is 350px, maximum is 70% of total (capped at 450px)
         min_w = 350
         max_w = min(450, max(min_w, int(total_w * 0.7)))
-
+        if getattr(self, 'dl_panel', None) is None:
+            return
         self.dl_panel.setMinimumWidth(min_w)
         self.dl_panel.setMaximumWidth(max_w)
 
@@ -6889,12 +6924,18 @@ class MusicPanelWidget(QWidget):
         self.table.deleteAll.connect(self._clear_playlist)
         self.table.flattenGroup.connect(self._flatten_playlist_group)
         
-        # Player signals
-        self._player.positionChanged.connect(self._on_position)
-        self._player.durationChanged.connect(self._on_duration_changed)
-        self._player.playbackStateChanged.connect(self._on_state)
-        self._player.errorOccurred.connect(self._on_player_error)
-        self._player.mediaStatusChanged.connect(self._on_media_status)
+    def _ensure_player(self):
+        """Ensure main QMediaPlayer is initialized lazily."""
+        if getattr(self, '_player', None) is None:
+            self._player = QMediaPlayer()
+            self._audio_output = QAudioOutput()
+            self._player.setAudioOutput(self._audio_output)
+            self._audio_output.setVolume(getattr(self, '_user_volume', 1.0))
+            self._player.positionChanged.connect(self._on_position)
+            self._player.durationChanged.connect(self._on_duration_changed)
+            self._player.playbackStateChanged.connect(self._on_state)
+            self._player.errorOccurred.connect(self._on_player_error)
+            self._player.mediaStatusChanged.connect(self._on_media_status)
     
     def _on_select_all_tracks(self):
         from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
@@ -7033,7 +7074,6 @@ class MusicPanelWidget(QWidget):
         # Preferred Output submenu
         self._device_menu = audio_menu.addMenu("Preferred Output")
         self._device_menu.setObjectName("deviceMenu")
-        self._populate_audio_devices()
         self._device_menu.aboutToShow.connect(self._populate_audio_devices)
         
         audio_menu.addSeparator()
@@ -7283,6 +7323,7 @@ class MusicPanelWidget(QWidget):
     
     def _populate_audio_devices(self):
         """Populate the audio device submenu with available devices."""
+        self._ensure_player()
         from PySide6.QtMultimedia import QMediaDevices
         from PySide6.QtGui import QAction
         
@@ -7394,6 +7435,13 @@ class MusicPanelWidget(QWidget):
         
         print(f"[Music] Starting crossfade to: {next_track.get('title', 'Unknown')}")
         
+        # Ensure secondary player is initialized lazily
+        if self._player2 is None:
+            self._player2 = QMediaPlayer()
+            self._audio_output2 = QAudioOutput()
+            self._player2.setAudioOutput(self._audio_output2)
+            self._audio_output2.setVolume(0.0)
+            
         # Load next track into secondary player
         self._player2.setSource(QUrl.fromLocalFile(next_path))
         self._audio_output2.setVolume(0.0)
@@ -7598,9 +7646,22 @@ class MusicPanelWidget(QWidget):
         """Show audio output settings dialog."""
         self._open_settings()
     
+    def _ensure_dl_panel(self):
+        """Lazy load UniversalDownloaderPanel when requested."""
+        if getattr(self, 'dl_panel', None) is None:
+            self.dl_panel = UniversalDownloaderPanel(self)
+            self.dl_panel.hide()
+            self.dl_panel.closeRequested.connect(self._toggle_yt_panel)
+            self.dl_panel.downloadFinished.connect(self._on_yt_download_finished)
+            if hasattr(self, 'main_splitter'):
+                self.main_splitter.addWidget(self.dl_panel)
+                self.main_splitter.setStretchFactor(2, 0)
+                self._update_yt_panel_constraints()
+
     def _toggle_yt_panel(self):
         """Toggle the integrated YouTube downloader sidebar."""
-        if self.dl_panel.isVisible():
+        self._ensure_dl_panel()
+        if self.dl_panel and self.dl_panel.isVisible():
             self.dl_panel.hide()
             if hasattr(self, 'main_splitter'):
                 # Collapse YT panel, preserve sidebar

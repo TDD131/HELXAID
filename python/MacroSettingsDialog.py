@@ -17,6 +17,137 @@ from PySide6.QtGui import QIcon, QFont
 from PySide6.QtCore import Qt, Signal, QTimer
 
 
+def apply_custom_titlebar(widget, color_hex="#121212"):
+    """Apply Windows 11 custom title bar color and Windows 10 dark mode."""
+    import sys
+    if sys.platform != "win32":
+        return
+        
+    try:
+        import ctypes
+        hwnd = int(widget.winId())
+        set_window_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        
+        rendering_policy = ctypes.c_int(1)
+        result = set_window_attribute(hwnd, 20, ctypes.byref(rendering_policy), ctypes.sizeof(rendering_policy))
+        if result != 0:
+            set_window_attribute(hwnd, 19, ctypes.byref(rendering_policy), ctypes.sizeof(rendering_policy))
+            
+        if color_hex:
+            color_hex = color_hex.lstrip('#')
+            if len(color_hex) == 6:
+                r = color_hex[0:2]
+                g = color_hex[2:4]
+                b = color_hex[4:6]
+                bgr_hex = f"0x00{b}{g}{r}"
+                bg_color = ctypes.c_int(int(bgr_hex, 16))
+                set_window_attribute(hwnd, 35, ctypes.byref(bg_color), ctypes.sizeof(bg_color))
+                
+                text_color = ctypes.c_int(0x00E0E0E0)
+                set_window_attribute(hwnd, 36, ctypes.byref(text_color), ctypes.sizeof(text_color))
+    except Exception as e:
+        print(f"[Theme] Failed to apply custom title bar: {e}")
+
+
+def show_custom_question_box(parent, title: str, text: str) -> bool:
+    """
+    Custom dark QMessageBox question dialog with title bar set to #121212
+    and custom button hover styling (No button has transparent gray hover).
+    Returns True if Yes is clicked, False otherwise.
+    """
+    msg = QMessageBox(parent)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    msg.setIcon(QMessageBox.Question)
+    msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+    msg.setDefaultButton(QMessageBox.No)
+
+    apply_custom_titlebar(msg, "#121212")
+
+    msg.setStyleSheet("""
+        QMessageBox {
+            background-color: #121212;
+            color: #e0e0e0;
+        }
+        QMessageBox QLabel {
+            color: #e0e0e0;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 13px;
+            padding: 10px 15px;
+        }
+    """)
+
+    btn_style_base = """
+        QPushButton {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 6px 20px;
+            min-width: 75px;
+            min-height: 28px;
+            text-decoration: none;
+            outline: none;
+        }
+    """
+
+    yes_btn = msg.button(QMessageBox.Yes)
+    no_btn = msg.button(QMessageBox.No)
+
+    if yes_btn:
+        yes_btn.setText("Yes")
+        yes_btn.setCursor(Qt.PointingHandCursor)
+        yes_btn.setStyleSheet(btn_style_base + """
+            QPushButton:hover {
+                background: rgba(255, 91, 6, 0.4);
+                border-color: #FF5B06;
+                color: #ffffff;
+                text-decoration: none;
+            }
+            QPushButton:pressed {
+                background: rgba(255, 91, 6, 0.65);
+                border-color: #FF5B06;
+                color: #ffffff;
+                text-decoration: none;
+            }
+            QPushButton:focus {
+                outline: none;
+                border-color: #FF5B06;
+                text-decoration: none;
+            }
+        """)
+
+    if no_btn:
+        no_btn.setText("No")
+        no_btn.setCursor(Qt.PointingHandCursor)
+        no_btn.setStyleSheet(btn_style_base + """
+            QPushButton:hover {
+                background: rgba(160, 160, 160, 0.25);
+                border-color: rgba(255, 255, 255, 0.3);
+                color: #ffffff;
+                text-decoration: none;
+            }
+            QPushButton:pressed {
+                background: rgba(160, 160, 160, 0.4);
+                border-color: rgba(255, 255, 255, 0.4);
+                color: #ffffff;
+                text-decoration: none;
+            }
+            QPushButton:focus {
+                outline: none;
+                border-color: rgba(255, 255, 255, 0.3);
+                text-decoration: none;
+            }
+        """)
+
+    res = msg.exec()
+    return res == QMessageBox.Yes
+
+
+
 class SafeSpinBox(QSpinBox):
     """QSpinBox with 400ms hover delay protection before accepting mouse wheel scrolling."""
     def __init__(self, parent=None):
@@ -550,11 +681,7 @@ class MacroSettingsDialog(QDialog):
             
         macro_id = current.data(Qt.UserRole)
         
-        reply = QMessageBox.question(self, "Delete Macro",
-            "Are you sure you want to delete this macro?",
-            QMessageBox.Yes | QMessageBox.No)
-            
-        if reply == QMessageBox.Yes:
+        if show_custom_question_box(self, "Delete Macro", "Are you sure you want to delete this macro?"):
             self._bridge.profile_manager.remove_macro(macro_id)
             self._load_macros()
             self.macros_changed.emit()
@@ -577,11 +704,7 @@ class MacroSettingsDialog(QDialog):
             
         name = self.macro_table.item(row, 0).text()
         
-        reply = QMessageBox.question(self, "Delete Macro",
-            f"Delete macro '{name}'?",
-            QMessageBox.Yes | QMessageBox.No)
-            
-        if reply == QMessageBox.Yes:
+        if show_custom_question_box(self, "Delete Macro", f"Delete macro '{name}'?"):
             # Find and delete by name
             for profile in self._bridge.profile_manager.get_all_profiles():
                 macros = self._bridge.profile_manager.get_macros_for_profile(profile.id)
@@ -613,11 +736,7 @@ class MacroSettingsDialog(QDialog):
             QMessageBox.warning(self, "Cannot Delete", "Cannot delete the default profile.")
             return
             
-        reply = QMessageBox.question(self, "Delete Profile",
-            "Delete this profile?",
-            QMessageBox.Yes | QMessageBox.No)
-            
-        if reply == QMessageBox.Yes:
+        if show_custom_question_box(self, "Delete Profile", "Delete this profile?"):
             self._bridge.profile_manager.delete_profile(profile_id)
             self._load_profiles()
             
