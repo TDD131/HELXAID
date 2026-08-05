@@ -5715,6 +5715,8 @@ class GameLauncher(QWidget):
         self.sort_label.setObjectName("sortBarLabel")
         self.sort_label.setStyleSheet("font-size: 13px; color: #e0e0e0; font-weight: 500;")
         
+        down_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+        
         # Sort dropdown
         self.sort_combo = QComboBox()
         self.sort_combo.setObjectName("SortComboBox")
@@ -5723,44 +5725,51 @@ class GameLauncher(QWidget):
         self.sort_combo.setFixedHeight(30)
         self.sort_combo.currentTextChanged.connect(self.on_sort_changed)
         
-        self.sort_combo.setStyleSheet("""
-            QComboBox {
+        self.sort_combo.setStyleSheet(f"""
+            QComboBox {{
                 background: rgba(255, 255, 255, 0.1);
                 border: none;
                 border-radius: 8px;
-                padding: 3px 10px;
+                padding: 3px 26px 3px 10px;
                 color: #e0e0e0;
                 font-size: 12px;
                 font-weight: 500;
-            }
-            QComboBox:hover {
+            }}
+            QComboBox:hover {{
                 background: rgba(255, 255, 255, 0.2);
-            }
-            QComboBox::drop-down {
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
                 border: none;
-                width: 20px;
                 background: transparent;
-            }
-            QComboBox QAbstractItemView {
+            }}
+            QComboBox::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox QAbstractItemView {{
                 background: #1e2128;
                 border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
                 padding: 4px;
                 outline: 0px;
                 font-size: 12px;
-            }
-            QComboBox QAbstractItemView::item {
+            }}
+            QComboBox QAbstractItemView::item {{
                 min-height: 26px;
                 padding: 4px 8px;
                 background: transparent;
                 color: #e0e0e0;
                 border-radius: 4px;
-            }
+            }}
             QComboBox QAbstractItemView::item:hover,
-            QComboBox QAbstractItemView::item:selected {
-                 background-color: rgba(255, 255, 255, 0.12);
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
-            }
+            }}
         """)
         
         # Filter dropdown (All / Games / Utilities)
@@ -5775,44 +5784,51 @@ class GameLauncher(QWidget):
         self.filter_combo.setFixedHeight(30)
         self.filter_combo.currentTextChanged.connect(self.on_filter_changed)
         
-        self.filter_combo.setStyleSheet("""
-            QComboBox {
+        self.filter_combo.setStyleSheet(f"""
+            QComboBox {{
                 background: rgba(255, 255, 255, 0.1);
                 border: none;
                 border-radius: 8px;
-                padding: 3px 10px;
+                padding: 3px 26px 3px 10px;
                 color: #e0e0e0;
                 font-size: 12px;
                 font-weight: 500;
-            }
-            QComboBox:hover {
+            }}
+            QComboBox:hover {{
                 background: rgba(255, 255, 255, 0.2);
-            }
-            QComboBox::drop-down {
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
                 border: none;
-                width: 20px;
                 background: transparent;
-            }
-            QComboBox QAbstractItemView {
+            }}
+            QComboBox::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox QAbstractItemView {{
                 background: #1e2128;
                 border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
                 padding: 4px;
                 outline: 0px;
                 font-size: 12px;
-            }
-            QComboBox QAbstractItemView::item {
+            }}
+            QComboBox QAbstractItemView::item {{
                 min-height: 26px;
                 padding: 4px 8px;
                 background: transparent;
                 color: #e0e0e0;
                 border-radius: 4px;
-            }
+            }}
             QComboBox QAbstractItemView::item:hover,
-            QComboBox QAbstractItemView::item:selected {
-                 background-color: rgba(255, 255, 255, 0.12);
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
-            }
+            }}
         """)
         
         # Game counter label

@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QRadioButton, QFrame, QGraphicsOpacityEffect, QRubberBand, QApplication, QSizePolicy, QAbstractButton
 )
 from smooth_scroll import SmoothScrollArea
-from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen
+from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen, QTextDocument, QTextCursor
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize, QVariantAnimation, QAbstractAnimation
 # FurycubeHID is NOT imported here -- ButtonAction is lazy-imported where needed (line ~2989).
 # Loading this module at import time pulled in the hidapi DLL, adding ~200ms to startup.
@@ -662,26 +662,14 @@ class SmoothListScroller(QObject):
                         event.accept()
                         return True
 
-        elif event.type() == QEvent.MouseButtonPress:
-            if event.button() == Qt.LeftButton:
-                from PySide6.QtWidgets import QAbstractButton
-                clicked_widget = QApplication.widgetAt(QCursor.pos())
-                
-                # If user clicked on an action button (Toggle/Delete/Stop), preserve selection for the button handler
-                if clicked_widget and (isinstance(clicked_widget, QAbstractButton) or clicked_widget.inherits("QAbstractButton")):
-                    return super().eventFilter(watched, event)
-                    
-                local_pos = self.list_widget.mapFromGlobal(QCursor.pos())
-                if not self.list_widget.rect().contains(local_pos):
-                    if self.list_widget.selectedItems():
-                        self.list_widget.clearSelection()
-
         return super().eventFilter(watched, event)
 
 
 def enable_rubber_band_selection(list_widget: QListWidget):
     """Enables QRubberBand drag multi-selection with 60fps auto-scroll and silky smooth wheel scrolling."""
     list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    # NOTE FOR AGENTS / DEVELOPERS: DO NOT re-enable horizontal scrollbars for list_widget; keep ScrollBarAlwaysOff.
+    list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     list_widget._smoother = SmoothListScroller(list_widget)
     
     rubber_band = QRubberBand(QRubberBand.Rectangle, list_widget.viewport())
@@ -715,13 +703,28 @@ def enable_rubber_band_selection(list_widget: QListWidget):
         rubber_band.setGeometry(rect)
         
         modifiers = QApplication.keyboardModifiers()
-        for i in range(list_widget.count()):
-            item = list_widget.item(i)
-            item_rect = list_widget.visualItemRect(item)
-            if rect.intersects(item_rect):
-                item.setSelected(True)
-            elif not (modifiers & (Qt.ControlModifier | Qt.ShiftModifier)):
-                item.setSelected(False)
+        is_multi_modifier = bool(modifiers & (Qt.ControlModifier | Qt.ShiftModifier))
+        
+        list_widget.blockSignals(True)
+        selection_changed = False
+        try:
+            for i in range(list_widget.count()):
+                item = list_widget.item(i)
+                item_rect = list_widget.visualItemRect(item)
+                intersects = rect.intersects(item_rect)
+                if intersects:
+                    if not item.isSelected():
+                        item.setSelected(True)
+                        selection_changed = True
+                elif not is_multi_modifier:
+                    if item.isSelected():
+                        item.setSelected(False)
+                        selection_changed = True
+        finally:
+            list_widget.blockSignals(False)
+            
+        if selection_changed:
+            list_widget.itemSelectionChanged.emit()
 
     def _on_scroll_timer():
         step = getattr(list_widget, '_auto_scroll_step', 0)
@@ -779,7 +782,8 @@ def enable_rubber_band_selection(list_widget: QListWidget):
         orig_mouseMoveEvent(event)
         
     def _mouseReleaseEvent(event):
-        if event.button() == Qt.LeftButton and getattr(list_widget, '_rubber_band_active', False):
+        was_active = getattr(list_widget, '_rubber_band_active', False)
+        if event.button() == Qt.LeftButton and was_active:
             if scroll_timer.isActive():
                 scroll_timer.stop()
             list_widget._auto_scroll_step = 0
@@ -787,6 +791,7 @@ def enable_rubber_band_selection(list_widget: QListWidget):
             list_widget._rubber_band_active = False
             list_widget._rubber_band_origin = None
             list_widget._rubber_band_start_vbar = 0
+            list_widget.itemSelectionChanged.emit()
         orig_mouseReleaseEvent(event)
         
     list_widget.mousePressEvent = _mousePressEvent
@@ -1270,41 +1275,114 @@ class HelxairoMacroItemWidget(QFrame):
         self._setup_ui()
 
     def sizeHint(self):
-        """Fixed size hint matching QListWidget viewport width."""
+        """Dynamic size hint matching QListWidget viewport width and content height."""
         w = 0
         if self.list_widget and hasattr(self.list_widget, 'viewport'):
-            w = max(0, self.list_widget.viewport().width() - 4)
-        return QSize(w, 38)
+            w = max(0, self.list_widget.viewport().width() - 18)
+        h = 38
+        if hasattr(self, 'name_edit') and self.name_edit.isVisible():
+            h = max(38, self.name_edit.height() + 14)
+        elif hasattr(self, 'title_lbl') and hasattr(self, 'header_frame'):
+            total_w = self.width() if self.width() > 100 else (self.list_widget.viewport().width() - 20 if hasattr(self, 'list_widget') and self.list_widget and hasattr(self.list_widget, 'viewport') and self.list_widget.viewport().width() > 100 else 260)
+            status_w = self.status_icon.width() if hasattr(self, 'status_icon') and self.status_icon else 20
+            hotkey_w = self.hotkey_lbl.sizeHint().width() if hasattr(self, 'hotkey_lbl') and self.hotkey_lbl else 60
+            spacing = 32
+            avail_w = max(40, total_w - status_w - hotkey_w - spacing)
+            
+            lbl_h = self.title_lbl.heightForWidth(avail_w)
+            h = max(38, lbl_h + 14)
+        elif self.layout():
+            h = max(38, self.layout().sizeHint().height())
+        return QSize(w, h)
+
+    def set_selected_state(self, is_selected: bool):
+        """Update selected visual style of item card frame with inverted color theme."""
+        if getattr(self, '_is_selected', None) == is_selected:
+            return
+        self._is_selected = is_selected
+        if is_selected:
+            self.setStyleSheet("""
+                QFrame#HelxairoMacroItemWidget {
+                    background-color: #FFFFFF;
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 8px;
+                }
+                QFrame#HelxairoMacroItemWidget:hover {
+                    background-color: #F2F2F2;
+                    border-color: rgba(255, 91, 6, 0.35);
+                }
+                QFrame#MacroHeaderFrame {
+                    background: transparent;
+                    border: none;
+                }
+            """)
+            if hasattr(self, 'title_lbl'):
+                self.title_lbl.setStyleSheet("color: #000000; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent; padding: 0px; margin: 0px;")
+            if hasattr(self, 'name_edit'):
+                self.name_edit.setStyleSheet("""
+                    QTextEdit#MacroItemInlineEdit {
+                        background: transparent;
+                        color: #000000;
+                        border: none;
+                        padding: 0px;
+                        margin: 0px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 12px;
+                        font-weight: bold;
+                        selection-background-color: #000000;
+                        selection-color: #FFFFFF;
+                    }
+                """)
+            if hasattr(self, 'hotkey_lbl'):
+                self.hotkey_lbl.setStyleSheet("color: #333333; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent;")
+        else:
+            self.setStyleSheet("""
+                QFrame#HelxairoMacroItemWidget {
+                    background-color: rgba(255, 255, 255, 0.03);
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 8px;
+                }
+                QFrame#HelxairoMacroItemWidget:hover {
+                    background-color: rgba(255, 255, 255, 0.06);
+                    border-color: rgba(255, 91, 6, 0.35);
+                }
+                QFrame#MacroHeaderFrame {
+                    background: transparent;
+                    border: none;
+                }
+            """)
+            if hasattr(self, 'title_lbl'):
+                self.title_lbl.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent; padding: 0px; margin: 0px;")
+            if hasattr(self, 'name_edit'):
+                self.name_edit.setStyleSheet("""
+                    QTextEdit#MacroItemInlineEdit {
+                        background: transparent;
+                        color: #FFFFFF;
+                        border: none;
+                        padding: 0px;
+                        margin: 0px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 12px;
+                        font-weight: bold;
+                        selection-background-color: rgba(255, 91, 6, 0.4);
+                        selection-color: #FFFFFF;
+                    }
+                """)
+            if hasattr(self, 'hotkey_lbl'):
+                self.hotkey_lbl.setStyleSheet("color: #AAAAAA; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent;")
 
     def _setup_ui(self):
-        
-        self.setStyleSheet("""
-            QFrame#HelxairoMacroItemWidget {
-                background-color: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-            }
-            QFrame#HelxairoMacroItemWidget:hover {
-                background-color: rgba(255, 255, 255, 0.06);
-                border-color: rgba(255, 91, 6, 0.35);
-            }
-            QFrame#MacroHeaderFrame {
-                background: transparent;
-                border: none;
-            }
-        """)
-        
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 1, 10, 1)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Header Frame (Fixed 30px container)
+        # Header Frame (Dynamic container height)
         self.header_frame = QFrame()
         self.header_frame.setObjectName("MacroHeaderFrame")
-        self.header_frame.setFixedHeight(30)
+        self.header_frame.setMinimumHeight(30)
         
         header_layout = QHBoxLayout(self.header_frame)
-        header_layout.setContentsMargins(6, 2, 6, 2)
+        header_layout.setContentsMargins(10, 4, 10, 4)
         header_layout.setSpacing(8)
         
         # Status Icon (Pure Vector QPainter Toggle Button - Clickable to toggle macro on/off)
@@ -1313,11 +1391,24 @@ class HelxairoMacroItemWidget(QFrame):
         self.status_icon.clicked.connect(self._on_status_icon_clicked)
         header_layout.addWidget(self.status_icon, 0, Qt.AlignVCenter)
         
-        # Clean Name & Title
-        name = getattr(self.macro, 'name', 'Unnamed Macro')
-        for sym in ("✓", "○", "✔"):
-            if name.startswith(sym):
-                name = name[len(sym):].strip()
+        # Title Label for Display Mode (Native Qt.AlignVCenter for 100% vertical centering)
+        self.title_lbl = QLabel()
+        self.title_lbl.setObjectName("MacroItemTitle")
+        self.title_lbl.setWordWrap(True)
+        self.title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.title_lbl.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent; padding: 0px; margin: 0px;")
+        header_layout.addWidget(self.title_lbl, 1, Qt.AlignVCenter)
+
+        # Inline Name Edit Input (QTextEdit used when double-clicked to edit)
+        self.name_edit = QTextEdit()
+        self.name_edit.setObjectName("MacroItemInlineEdit")
+        self.name_edit.setMinimumHeight(24)
+        self.name_edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.name_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.name_edit.setVisible(False)
+        self.name_edit.textChanged.connect(self._adjust_edit_height)
+        self.name_edit.installEventFilter(self)
+        header_layout.addWidget(self.name_edit, 1, Qt.AlignVCenter)
         
         # Extract Hotkey
         trigger_str = ""
@@ -1330,15 +1421,14 @@ class HelxairoMacroItemWidget(QFrame):
         if not trigger_str:
             trigger_str = "No Hotkey"
             
-        display_name = f"{name}  |  {trigger_str}"
+        self.hotkey_lbl = QLabel(f"  |  {trigger_str}")
+        self.hotkey_lbl.setObjectName("MacroItemHotkey")
+        self.hotkey_lbl.setStyleSheet("color: #AAAAAA; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent;")
+        header_layout.addWidget(self.hotkey_lbl, 0, Qt.AlignVCenter)
         
-        self.name_lbl = QLabel(display_name)
-        self.name_lbl.setObjectName("MacroItemName")
-        self.name_lbl.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent;")
-        header_layout.addWidget(self.name_lbl, 0, Qt.AlignVCenter)
-        
-        header_layout.addStretch()
-        main_layout.addWidget(self.header_frame, 0, Qt.AlignVCenter)
+        main_layout.addWidget(self.header_frame, 1)
+        self._update_display_name()
+        self.set_selected_state(getattr(self, '_is_selected', False))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1368,20 +1458,195 @@ class HelxairoMacroItemWidget(QFrame):
             curr = curr.parent() if hasattr(curr, 'parent') else None
         return None
 
+    def _update_item_size_hint(self):
+        """Update QListWidgetItem size hint dynamically so QListWidget resizes item row height."""
+        if hasattr(self, 'list_item') and self.list_item and hasattr(self, 'list_widget') and self.list_widget:
+            self.updateGeometry()
+            new_size = self.sizeHint()
+            if self.list_item.sizeHint() != new_size:
+                self.list_item.setSizeHint(new_size)
+                if hasattr(self.list_widget, 'doItemsLayout'):
+                    self.list_widget.doItemsLayout()
+
+    def _shake_header_frame(self):
+        """Vibrate / Shake header_frame horizontally as visual error feedback when line limit is reached."""
+        target_widget = self.header_frame if hasattr(self, 'header_frame') and self.header_frame else self
+        if not target_widget:
+            return
+            
+        anim = QPropertyAnimation(target_widget, b"pos", self)
+        anim.setDuration(280)
+        orig_pos = target_widget.pos()
+        
+        anim.setKeyValueAt(0.0, orig_pos)
+        anim.setKeyValueAt(0.15, orig_pos + QPoint(-8, 0))
+        anim.setKeyValueAt(0.30, orig_pos + QPoint(8, 0))
+        anim.setKeyValueAt(0.45, orig_pos + QPoint(-6, 0))
+        anim.setKeyValueAt(0.60, orig_pos + QPoint(6, 0))
+        anim.setKeyValueAt(0.75, orig_pos + QPoint(-3, 0))
+        anim.setKeyValueAt(0.90, orig_pos + QPoint(3, 0))
+        anim.setKeyValueAt(1.0, orig_pos)
+        
+        self._shake_anim = anim
+        anim.start(QPropertyAnimation.DeleteWhenStopped)
+
+    def _show_line_limit_toast(self):
+        """Show standard FloatingToast notification and shake header_frame horizontally when 5-line limit is reached."""
+        self._shake_header_frame()
+        panel = self._find_macro_panel()
+        target = panel if panel else self.window()
+        if target:
+            FloatingToast.show_toast(target, "Limit Exceeded", "Maximum 5 lines allowed for macro title")
+
+    def _adjust_edit_height(self):
+        """Dynamically fit name_edit height to content so it expands like WhatsApp message bubble."""
+        if not hasattr(self, 'name_edit'):
+            return
+        if getattr(self, '_is_adjusting_height', False):
+            return
+        self._is_adjusting_height = True
+        try:
+            text = self.name_edit.toPlainText()
+            lines = text.split('\n')
+            if len(lines) > 5:
+                truncated = '\n'.join(lines[:5])
+                self.name_edit.blockSignals(True)
+                self.name_edit.setPlainText(truncated)
+                cursor = self.name_edit.textCursor()
+                cursor.movePosition(QTextCursor.End)
+                self.name_edit.setTextCursor(cursor)
+                self.name_edit.blockSignals(False)
+                self._show_line_limit_toast()
+
+            total_w = self.width() if self.width() > 100 else (self.list_widget.viewport().width() - 20 if hasattr(self, 'list_widget') and self.list_widget and hasattr(self.list_widget, 'viewport') and self.list_widget.viewport().width() > 100 else 260)
+            status_w = self.status_icon.width() if hasattr(self, 'status_icon') and self.status_icon else 20
+            hotkey_w = self.hotkey_lbl.sizeHint().width() if hasattr(self, 'hotkey_lbl') and self.hotkey_lbl else 60
+            spacing = 32
+            avail_w = max(40, total_w - status_w - hotkey_w - spacing)
+
+            doc = self.name_edit.document()
+            doc.setDocumentMargin(0)
+            doc.setTextWidth(avail_w)
+            raw_h = int(doc.size().height())
+
+            if len(lines) <= 1:
+                doc_h = max(18, min(20, raw_h))
+            else:
+                doc_h = max(24, raw_h + 4)
+
+            if self.name_edit.height() != doc_h:
+                self.name_edit.setFixedHeight(doc_h)
+                self._update_item_size_hint()
+        finally:
+            self._is_adjusting_height = False
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(30, self._adjust_edit_height)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if event.oldSize().width() > 0 and event.oldSize().width() != event.size().width():
+            if hasattr(self, 'name_edit'):
+                self._adjust_edit_height()
+
+    def _update_display_name(self):
+        name = getattr(self.macro, 'name', 'Unnamed Macro')
+        for sym in ("✓", "○", "✔"):
+            if name.startswith(sym):
+                name = name[len(sym):].strip()
+        
+        trigger_str = ""
+        trigger = getattr(self.macro, 'trigger', None)
+        if trigger:
+            if getattr(trigger, 'button', None):
+                trigger_str = trigger.button.upper()
+            elif getattr(trigger, 'key', None):
+                trigger_str = trigger.key.upper()
+        if not trigger_str:
+            trigger_str = "No Hotkey"
+            
+        if hasattr(self, 'title_lbl'):
+            self.title_lbl.setText(name)
+            self.title_lbl.setVisible(True)
+        if hasattr(self, 'name_edit'):
+            self.name_edit.setPlainText(name)
+            self.name_edit.setVisible(False)
+            self._adjust_edit_height()
+        self.hotkey_lbl.setText(f"  |  {trigger_str}")
+
+    def _start_inline_rename(self):
+        """Start inline renaming of macro title directly in item header."""
+        if getattr(self, '_is_renaming', False):
+            return
+        self._is_renaming = True
+        
+        name = getattr(self.macro, 'name', 'Unnamed Macro')
+        for sym in ("✓", "○", "✔"):
+            if name.startswith(sym):
+                name = name[len(sym):].strip()
+                
+        self.set_selected_state(True)
+        if hasattr(self, 'title_lbl'):
+            self.title_lbl.setVisible(False)
+        if hasattr(self, 'name_edit'):
+            self.name_edit.setVisible(True)
+            self.name_edit.setPlainText(name)
+            self._adjust_edit_height()
+            self.name_edit.setFocus()
+            self.name_edit.selectAll()
+
+    def _finish_inline_rename(self):
+        """Save inline renamed macro title and restore label view smoothly without reloading list."""
+        if not getattr(self, '_is_renaming', False):
+            return
+        self._is_renaming = False
+        
+        new_name = self.name_edit.toPlainText().strip() if hasattr(self, 'name_edit') else ""
+        if new_name and hasattr(self, 'macro') and self.macro:
+            self.macro.name = new_name
+            panel = self._find_macro_panel()
+            if panel and hasattr(panel, '_bridge') and panel._bridge and hasattr(panel._bridge, 'profile_manager') and panel._bridge.profile_manager:
+                panel._bridge.profile_manager.save_all()
+                    
+        self._update_display_name()
+        
+        if hasattr(self, 'list_widget') and self.list_widget and hasattr(self, 'list_item') and self.list_item:
+            self.list_widget.setCurrentItem(self.list_item)
+
+    def eventFilter(self, obj, event):
+        if obj is getattr(self, 'name_edit', None):
+            if event.type() == QEvent.FocusOut:
+                if getattr(self, '_is_renaming', False):
+                    self._finish_inline_rename()
+                return False
+            elif event.type() == QEvent.KeyPress:
+                if event.key() == Qt.Key_Escape:
+                    self._is_renaming = False
+                    self.name_edit.setReadOnly(True)
+                    self.name_edit.setTextInteractionFlags(Qt.NoTextInteraction)
+                    self._update_display_name()
+                    return True
+                elif event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                    if event.modifiers() & Qt.ShiftModifier:
+                        lines = self.name_edit.toPlainText().split('\n')
+                        if len(lines) >= 5:
+                            self._show_line_limit_toast()
+                            return True
+                    else:
+                        self._finish_inline_rename()
+                        return True
+        return super().eventFilter(obj, event)
+
     def _handle_click_action(self, count):
         self._click_timer.stop()
         self._click_count = 0
         if count == 1:
-            # 1x click: Select item only (already selected in mousePressEvent)
+            # 1x click: Select item only
             pass
-        elif count == 2:
-            # 2x click: Toggle expand/collapse accordion
-            self.toggle_expand()
-        elif count >= 3:
-            # 3x click: Open Edit Macro panel
-            panel = self._find_macro_panel()
-            if panel and hasattr(panel, '_edit_selected'):
-                panel._edit_selected()
+        elif count >= 2:
+            # 2x click: Rename title directly in item panel!
+            self._start_inline_rename()
 
     def _on_status_icon_clicked(self, *args):
         """Clicking on status toggle button directly toggles this macro's enable/disable state."""
@@ -1789,7 +2054,7 @@ class CpsResultOverlayPanel(QWidget):
         stats_row = QHBoxLayout()
         stats_row.setSpacing(12)
         
-        self.cps_stat = QLabel("AVG: <span style='color: #888;'>0.0</span>")
+        self.cps_stat = QLabel("CPS <span style='color: #888;'>0.0</span>")
         self.cps_stat.setObjectName("CpsStatBadge")
         self.cps_stat.setStyleSheet("""
             color: #E0E0E0;
@@ -1802,7 +2067,7 @@ class CpsResultOverlayPanel(QWidget):
             padding: 6px 12px;
         """)
         
-        self.peak_stat = QLabel("PEAK: <span style='color: #888;'>0.0</span>")
+        self.peak_stat = QLabel("PEAK <span style='color: #888;'>0.0</span>")
         self.peak_stat.setObjectName("PeakStatBadge")
         self.peak_stat.setStyleSheet("""
             color: #E0E0E0;
@@ -1815,7 +2080,7 @@ class CpsResultOverlayPanel(QWidget):
             padding: 6px 12px;
         """)
         
-        self.clicks_stat = QLabel("CLICKS: <span style='color: #888;'>0</span>")
+        self.clicks_stat = QLabel("CLICKS <span style='color: #888;'>0</span>")
         self.clicks_stat.setObjectName("ClicksStatBadge")
         self.clicks_stat.setStyleSheet("""
             color: #E0E0E0;
@@ -1907,9 +2172,9 @@ class CpsResultOverlayPanel(QWidget):
         cur_peak = self.peak_cps * ease
         cur_clicks = int(round(self.total_clicks * ease))
 
-        self.cps_stat.setText(f"AVG: <span style='color:{self.rank_color};'>{cur_cps:.1f}</span>")
-        self.peak_stat.setText(f"PEAK: <span style='color:#FDA903;'>{cur_peak:.1f}</span>")
-        self.clicks_stat.setText(f"CLICKS: <span style='color:#00FF66;'>{cur_clicks}</span>")
+        self.cps_stat.setText(f"CPS <span style='color:{self.rank_color};'>{cur_cps:.1f}</span>")
+        self.peak_stat.setText(f"PEAK <span style='color:#FDA903;'>{cur_peak:.1f}</span>")
+        self.clicks_stat.setText(f"CLICKS <span style='color:#00FF66;'>{cur_clicks}</span>")
 
         if progress >= 1.0:
             self._count_timer.stop()
@@ -1985,18 +2250,21 @@ class CpsBenchmarkPanel(QWidget):
         self._target_button = "left"  # left, right, middle, any
         self._start_time = 0.0
 
-        # Timer-based CPS sampling
+        # Timer-based CPS sampling & Microsecond Click Timestamps Ring-Buffer
         from collections import deque
         self._samples = deque()
+        self._click_timestamps = deque()
 
         # Background click-counter thread for autoclicker-proof counting.
         # At 1000+ CPS autoclicker SendInput generates WM_LBUTTONDOWN + WM_LBUTTONUP
         # that Qt must dispatch. 2000 Windows messages/s saturates the UI thread → freeze.
-        # Fix: daemon thread polls GetAsyncKeyState at ~0.5ms, counts press→release
-        # transitions. Qt timer (20ms) reads the atomic counter. mousePressEvent only
-        # used for first-click auto-start; once running, the thread does counting.
+        # Fix: daemon thread polls GetAsyncKeyState at ~0.5ms with Multimedia High-Resolution Timer.
         import ctypes, threading
         self._user32 = ctypes.windll.user32
+        try:
+            self._winmm = ctypes.windll.winmm
+        except Exception:
+            self._winmm = None
         self._click_counter_stop = threading.Event()
         self._click_counter_thread = None
         self._VK_LBUTTON = 0x01
@@ -2151,15 +2419,11 @@ class CpsBenchmarkPanel(QWidget):
         self.card_peak_val = self._create_metric_card("PEAK CPS", "0.0", "#FDA903")
         metrics_layout.addWidget(self.card_peak_val)
 
-        # Metric 3: Avg CPS
-        self.card_avg_val = self._create_metric_card("AVG CPS", "0.0", "#BB86FC")
-        metrics_layout.addWidget(self.card_avg_val)
-
-        # Metric 4: Total Clicks
+        # Metric 3: Total Clicks
         self.card_clicks_val = self._create_metric_card("TOTAL CLICKS", "0", "#00FF66")
         metrics_layout.addWidget(self.card_clicks_val)
 
-        # Metric 5: Timer Remaining
+        # Metric 4: Timer Remaining
         self.card_timer_val = self._create_metric_card("TIME LEFT", "5.0s", "#00E5FF")
         metrics_layout.addWidget(self.card_timer_val)
 
@@ -2389,7 +2653,7 @@ class CpsBenchmarkPanel(QWidget):
             card_layout.addStretch()
 
             # Center Stats summary
-            stats_lbl = QLabel(f"AVG: <span style='color:{item['color']}; font-weight:bold;'>{item['cps']:.1f}</span>  |  PEAK: <span style='color:#FDA903;'>{item['peak']:.1f}</span>  |  CLICKS: <span style='color:#00FF66;'>{item['clicks']}</span>")
+            stats_lbl = QLabel(f"CPS <span style='color:{item['color']}; font-weight:bold;'>{item['cps']:.1f}</span>  |  PEAK <span style='color:#FDA903;'>{item['peak']:.1f}</span>  |  CLICKS <span style='color:#00FF66;'>{item['clicks']}</span>")
             stats_lbl.setObjectName("CpsHistoryStats")
             stats_lbl.setFont(QFont("Orbitron", 9.5))
             stats_lbl.setStyleSheet("color: #CCCCCC; font-family: 'Orbitron', sans-serif; background: transparent;")
@@ -2437,31 +2701,46 @@ class CpsBenchmarkPanel(QWidget):
         return card
 
     def _click_counter_loop(self):
-        """Background thread: poll GetAsyncKeyState at ~0.5ms to count click transitions.
-        Runs as daemon — dies with main thread. Only counts buttons matching _target_button."""
+        """Background thread: poll GetAsyncKeyState at high precision to count click transitions.
+        Runs as daemon — dies with main thread. Pushes microsecond timestamps into _click_timestamps
+        for exact CPS & Peak CPS calculations without GUI timer quantization noise."""
         import time as _time
         get_key = self._user32.GetAsyncKeyState
         stop_ev = self._click_counter_stop
 
-        # Build list of VK codes to watch
-        if self._target_button == "any":
-            vk_list = [0x01, 0x02, 0x04]
-        else:
-            vk_list = [self._vk_map.get(self._target_button, 0x01)]
+        # Enable Windows Multimedia high-resolution timer (1ms period)
+        if hasattr(self, '_winmm') and self._winmm:
+            try:
+                self._winmm.timeBeginPeriod(1)
+            except Exception:
+                pass
 
-        prev_states = {vk: False for vk in vk_list}
+        try:
+            # Build list of VK codes to watch
+            if self._target_button == "any":
+                vk_list = [0x01, 0x02, 0x04]
+            else:
+                vk_list = [self._vk_map.get(self._target_button, 0x01)]
 
-        while not stop_ev.is_set():
-            for vk in vk_list:
-                state = get_key(vk)
-                pressed = bool(state & 0x8000)  # bit 15 = currently pressed
-                if pressed and not prev_states[vk]:
-                    # Transition: released → pressed = one click
-                    self._total_clicks += 1
-                prev_states[vk] = pressed
-            # ~0.5ms spin — fast enough to catch 1ms autoclicker transitions
-            # while using negligible CPU (spin-sleep hybrid)
-            _time.sleep(0.0005)
+            prev_states = {vk: False for vk in vk_list}
+
+            while not stop_ev.is_set():
+                now_ts = _time.perf_counter()
+                for vk in vk_list:
+                    state = get_key(vk)
+                    pressed = bool(state & 0x8000)  # bit 15 = currently pressed
+                    if pressed and not prev_states[vk]:
+                        # Transition: released → pressed = one click
+                        self._total_clicks += 1
+                        self._click_timestamps.append(now_ts)
+                    prev_states[vk] = pressed
+                _time.sleep(0.0005)
+        finally:
+            if hasattr(self, '_winmm') and self._winmm:
+                try:
+                    self._winmm.timeEndPeriod(1)
+                except Exception:
+                    pass
 
     def register_click(self, btn_name="left"):
         """Handle first click to auto-start benchmark. Once running, the background
@@ -2504,9 +2783,9 @@ class CpsBenchmarkPanel(QWidget):
 
     def _stop_click_counter(self):
         """Stop background click counter thread if running."""
-        if self._click_counter_stop:
+        if hasattr(self, '_click_counter_stop') and self._click_counter_stop:
             self._click_counter_stop.set()
-        if self._click_counter_thread and self._click_counter_thread.is_alive():
+        if hasattr(self, '_click_counter_thread') and self._click_counter_thread and self._click_counter_thread.is_alive():
             self._click_counter_thread.join(timeout=0.1)
         self._click_counter_thread = None
 
@@ -2518,6 +2797,8 @@ class CpsBenchmarkPanel(QWidget):
         self._is_testing = True
         self._start_time = time.perf_counter()
         self._samples.clear()
+        self._click_timestamps.clear()
+        self._click_timestamps.append(self._start_time)
         self._total_clicks = 1  # Count the click that triggered start
         self._peak_cps = 0.0
         self._current_cps = 0.0
@@ -2569,7 +2850,6 @@ class CpsBenchmarkPanel(QWidget):
         # Final avg CPS = Total Clicks / Duration
         if self._test_duration > 0:
             self._avg_cps = self._total_clicks / self._test_duration
-            self.card_avg_val.val_label.setText(f"{self._avg_cps:.1f}")
 
         # Final current CPS = last 1s window (already computed by _update_stats)
         self.card_cps_val.val_label.setText(f"{self._current_cps:.1f}")
@@ -2584,8 +2864,8 @@ class CpsBenchmarkPanel(QWidget):
             }
         """)
 
-        # Compute rank based on Average CPS achieved (No Emojis per UI Rules)
-        cps = self._avg_cps
+        # Compute rank based on Peak / Current CPS achieved (No Emojis per UI Rules)
+        cps = max(self._current_cps, self._peak_cps)
         if cps >= 100:
             badge = "GODLIKE MONSTER"
             star_rating = 5
@@ -2641,6 +2921,7 @@ class CpsBenchmarkPanel(QWidget):
         self.target_status_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         self.target_hint_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         self._samples.clear()
+        self._click_timestamps.clear()
         self._total_clicks = 0
         self._peak_cps = 0.0
         self._current_cps = 0.0
@@ -2649,7 +2930,6 @@ class CpsBenchmarkPanel(QWidget):
 
         self.card_cps_val.val_label.setText("0.0")
         self.card_peak_val.val_label.setText("0.0")
-        self.card_avg_val.val_label.setText("0.0")
         self.card_clicks_val.val_label.setText("0")
         
         if self._test_duration <= 0:
@@ -2674,38 +2954,43 @@ class CpsBenchmarkPanel(QWidget):
         """)
 
     def _update_stats(self):
-        """Update CPS metrics from background thread's click counter (runs every 20ms)."""
+        """Update CPS metrics from background thread's click counter (runs every 20ms).
+        Uses high-precision per-click microsecond timestamp deque to calculate:
+        - Current CPS: Sustained 1.0s sliding window CPS
+        - Burst CPS: 0.5s sliding window CPS
+        - Peak CPS: Highest legitimate sustained/burst CPS after warmup grace period (>= 0.3s)
+        """
         now = time.perf_counter()
 
         if self._is_testing:
             elapsed = max(0.001, now - self._start_time)
 
-            # Sample current click count
-            self._samples.append((now, self._total_clicks))
+            # Evict click timestamps older than 2.0 seconds
+            cutoff_2s = now - 2.0
+            while self._click_timestamps and self._click_timestamps[0] < cutoff_2s:
+                self._click_timestamps.popleft()
 
-            # Evict samples older than 1s
-            cutoff = now - 1.0
-            while self._samples and self._samples[0][0] < cutoff:
-                self._samples.popleft()
-
-            # 1. Current CPS: clicks gained across the 1s sample window
-            if len(self._samples) >= 2:
-                oldest_t, oldest_c = self._samples[0]
-                span = now - oldest_t
-                delta_clicks = self._total_clicks - oldest_c
-                if span > 0.01:
-                    self._current_cps = delta_clicks / span
-                else:
-                    self._current_cps = float(delta_clicks)
+            # 1. Calculate Current CPS (1.0s sliding window)
+            cutoff_1s = now - 1.0
+            clicks_in_1s = sum(1 for t in self._click_timestamps if t >= cutoff_1s)
+            if elapsed < 1.0:
+                self._current_cps = clicks_in_1s / elapsed
             else:
-                self._current_cps = float(self._total_clicks)
+                self._current_cps = float(clicks_in_1s)
 
-            # 2. Avg CPS: total clicks / elapsed
+            # 2. Calculate Burst CPS (0.5s sliding window)
+            cutoff_05s = now - 0.5
+            clicks_in_05s = sum(1 for t in self._click_timestamps if t >= cutoff_05s)
+            burst_cps = clicks_in_05s / 0.5
+
+            # 3. Calculate Avg CPS
             self._avg_cps = self._total_clicks / elapsed
 
-            # 3. Peak CPS: highest current CPS ever observed
-            if self._current_cps > self._peak_cps:
-                self._peak_cps = self._current_cps
+            # 4. Calculate Peak CPS (Warmup Grace Period of 0.3s & >= 3 clicks to prevent initial startup spikes)
+            if elapsed >= 0.3 and self._total_clicks >= 3:
+                achieved_max = max(self._current_cps, burst_cps)
+                if achieved_max > self._peak_cps:
+                    self._peak_cps = achieved_max
 
             # Handle countdown
             if self._test_duration > 0:
@@ -2717,8 +3002,21 @@ class CpsBenchmarkPanel(QWidget):
 
         self.card_cps_val.val_label.setText(f"{self._current_cps:.1f}")
         self.card_peak_val.val_label.setText(f"{self._peak_cps:.1f}")
-        self.card_avg_val.val_label.setText(f"{self._avg_cps:.1f}")
         self.card_clicks_val.val_label.setText(str(self._total_clicks))
+
+    def hideEvent(self, event):
+        """Cleanup background thread and timers when widget is hidden or tab changed."""
+        self._stop_click_counter()
+        if hasattr(self, '_timer') and self._timer.isActive():
+            self._timer.stop()
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        """Cleanup background thread and timers when widget is destroyed."""
+        self._stop_click_counter()
+        if hasattr(self, '_timer') and self._timer.isActive():
+            self._timer.stop()
+        super().closeEvent(event)
 
     def _on_btn_combo_changed(self, idx):
         maps = ["left", "right", "middle", "any"]
@@ -2744,526 +3042,7 @@ class CpsBenchmarkPanel(QWidget):
             self.result_banner.raise_()
 
 
-class HelxairoEditMacroOverlayPanel(QWidget):
-    """
-    Floating overlay panel for editing macro properties.
-    Matching HELXAIL floating guide style.
-    
-    Component Name: HelxairoEditMacroOverlayPanel
-    """
-    def __init__(self, macro, bridge, parent_panel):
-        super().__init__(parent_panel)
-        self.macro = macro
-        self.bridge = bridge
-        self.parent_panel = parent_panel
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.setObjectName("HelxairoEditMacroOverlayPanel")
-        
-        # Match parent bounds
-        self.setGeometry(0, 0, parent_panel.width(), parent_panel.height())
-        self._setup_ui()
-        self._load_macro_data()
-        
-        # Shortcut Esc (Smart handling: cancels typing/recording mode first, closes panel if idle)
-        self._esc_shortcut = QShortcut(QKeySequence("Escape"), self)
-        self._esc_shortcut.activated.connect(self._handle_esc)
 
-    def _setup_ui(self):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon.svg").replace('\\', '/')
-        close_icon_hover_path = os.path.join(script_dir, "UI Icons", "close-icon-hover.svg").replace('\\', '/')
-        
-        # Overlay background (semi-transparent dark backdrop)
-        self.setStyleSheet(f"""
-            QWidget#HelxairoEditMacroOverlayPanel {{
-                background-color: rgba(0, 0, 0, 0.70);
-            }}
-            QFrame#HelxairoEditMacroCard {{
-                background-color: rgba(22, 22, 26, 0.98);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 14px;
-            }}
-            QWidget#HelxairoEditTitleBar {{
-                background-color: rgba(14, 14, 16, 0.85);
-                border-top-left-radius: 14px;
-                border-top-right-radius: 14px;
-            }}
-            QLabel#HelxairoEditTitle {{
-                color: #FFFFFF;
-                font-size: 14px;
-                font-weight: bold;
-                font-family: 'Orbitron', sans-serif;
-            }}
-            QPushButton#HelxairoEditCloseBtn {{
-                background: transparent;
-                border: none;
-                image: url({close_icon_path});
-            }}
-            QPushButton#HelxairoEditCloseBtn:hover {{
-                image: url({close_icon_hover_path});
-            }}
-            QLabel.HelxairoFieldLabel {{
-                color: #AAAAAA;
-                font-size: 12px;
-                font-weight: bold;
-                font-family: 'Orbitron', sans-serif;
-            }}
-            QLineEdit#HelxairoEditNameInput {{
-                background-color: rgba(30, 30, 30, 0.85);
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                border-radius: 6px;
-                padding: 0px 10px;
-                min-height: 32px;
-                max-height: 32px;
-                height: 32px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 12px;
-            }}
-            QLineEdit#HelxairoEditNameInput:focus {{
-                border-color: #FF5B06;
-            }}
-            QSpinBox#HelxairoEditIntervalBox {{
-                background-color: rgba(30, 30, 30, 0.85);
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                border-radius: 6px;
-                padding: 0px 8px;
-                min-height: 32px;
-                max-height: 32px;
-                height: 32px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 12px;
-            }}
-            QComboBox#HelxairoEditActionCombo, QComboBox#HelxairoEditUnitCombo {{
-                background-color: rgba(30, 30, 30, 0.85);
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                border-radius: 6px;
-                padding: 0px 10px;
-                min-height: 32px;
-                max-height: 32px;
-                height: 32px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 12px;
-            }}
-            QComboBox#HelxairoEditActionCombo QAbstractItemView, QComboBox#HelxairoEditUnitCombo QAbstractItemView {{
-                background-color: #1a1a1e;
-                color: #FFFFFF;
-                selection-background-color: rgba(255, 255, 255, 0.12);
-            }}
-        """)
-
-        # Main centering layout
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Center card container
-        self.card = QFrame(self)
-        self.card.setObjectName("HelxairoEditMacroCard")
-        self.card.setFixedSize(480, 360)
-        
-        card_layout = QVBoxLayout(self.card)
-        card_layout.setContentsMargins(0, 0, 0, 20)
-        card_layout.setSpacing(16)
-        
-        # 1. Header Title Bar (Without X close button)
-        title_bar = QWidget()
-        title_bar.setObjectName("HelxairoEditTitleBar")
-        title_bar.setFixedHeight(44)
-        title_layout = QHBoxLayout(title_bar)
-        title_layout.setContentsMargins(16, 0, 16, 0)
-        
-        title_label = QLabel("Edit Macro Settings")
-        title_label.setObjectName("HelxairoEditTitle")
-        title_layout.addWidget(title_label)
-        
-        card_layout.addWidget(title_bar)
-        
-        # 2. Form Body Scroll Area
-        scroll_area = SmoothScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical {
-                background: rgba(20, 22, 28, 0.6);
-                width: 8px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: #FF5B06;
-                border-radius: 4px;
-                min-height: 30px;
-            }
-        """)
-
-        body_container = QWidget()
-        body_container.setStyleSheet("background: transparent;")
-        body_layout = QFormLayout(body_container)
-        body_layout.setContentsMargins(20, 8, 20, 8)
-        body_layout.setVerticalSpacing(16)
-        body_layout.setHorizontalSpacing(16)
-        
-        # Macro Name
-        lbl_name = QLabel("Macro Name")
-        lbl_name.setProperty("class", "HelxairoFieldLabel")
-        self.name_input = QLineEdit()
-        self.name_input.setObjectName("HelxairoEditNameInput")
-        self.name_input.setFixedHeight(32)
-        body_layout.addRow(lbl_name, self.name_input)
-
-        # Bound Apps (auto-switch applications)
-        lbl_apps = QLabel("Bound Apps")
-        lbl_apps.setProperty("class", "HelxairoFieldLabel")
-        lbl_apps.setToolTip("Auto-activate this profile when specified apps/games are running (comma-separated, e.g., gta5.exe, valorant.exe)")
-        self.bound_apps_input = QLineEdit()
-        self.bound_apps_input.setObjectName("HelxairoEditNameInput")
-        self.bound_apps_input.setPlaceholderText("e.g., gta5.exe, valorant.exe")
-        self.bound_apps_input.setToolTip("Auto-activate this profile when specified apps/games are running (comma-separated, e.g., gta5.exe, valorant.exe)")
-        self.bound_apps_input.setFixedHeight(32)
-        body_layout.addRow(lbl_apps, self.bound_apps_input)
-        
-        # Hotkey
-        lbl_hotkey = QLabel("Trigger Hotkey")
-        lbl_hotkey.setProperty("class", "HelxairoFieldLabel")
-        self.hotkey_btn = HotkeyRecordButton("F8")
-        self.hotkey_btn.setFixedHeight(32)
-        body_layout.addRow(lbl_hotkey, self.hotkey_btn)
-        
-        # Repeat Interval (SpinBox + Unit Combo)
-        lbl_interval = QLabel("Interval")
-        lbl_interval.setProperty("class", "HelxairoFieldLabel")
-        
-        interval_container = QWidget()
-        interval_layout = QHBoxLayout(interval_container)
-        interval_layout.setContentsMargins(0, 0, 0, 0)
-        interval_layout.setSpacing(8)
-        
-        self.interval_spin = AdaptiveSpinBox()
-        self.interval_spin.setObjectName("HelxairoEditIntervalBox")
-        self.interval_spin.setRange(1, 60000)
-        self.interval_spin.setSingleStep(5)
-        self.interval_spin.setFixedHeight(32)
-        
-        self.unit_combo = QComboBox()
-        self.unit_combo.setObjectName("HelxairoEditUnitCombo")
-        self.unit_combo.addItems(["ms", "s"])
-        self.unit_combo.setFixedWidth(70)
-        self.unit_combo.setFixedHeight(32)
-        self.unit_combo.currentTextChanged.connect(self._on_unit_changed)
-        
-        interval_layout.addWidget(self.interval_spin, 1)
-        interval_layout.addWidget(self.unit_combo, 0)
-        
-        body_layout.addRow(lbl_interval, interval_container)
-        
-        # Action Type (Auto-Click Key + Custom Key button)
-        lbl_action = QLabel("Auto-Click Key")
-        lbl_action.setProperty("class", "HelxairoFieldLabel")
-        
-        action_container = QWidget()
-        action_layout = QHBoxLayout(action_container)
-        action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setSpacing(8)
-        
-        self.action_combo = QComboBox()
-        self.action_combo.setObjectName("HelxairoEditActionCombo")
-        self.action_combo.addItems(["Left Click", "Right Click", "Middle Click", "Custom Key"])
-        self.action_combo.setFixedHeight(32)
-        self.action_combo.currentTextChanged.connect(self._on_action_type_changed)
-        
-        self.custom_key_btn = HotkeyRecordButton("E")
-        self.custom_key_btn.setFixedWidth(80)
-        self.custom_key_btn.setFixedHeight(32)
-        self.custom_key_btn.setVisible(False)
-        
-        action_layout.addWidget(self.action_combo, 1)
-        action_layout.addWidget(self.custom_key_btn, 0)
-        
-        body_layout.addRow(lbl_action, action_container)
-        
-        scroll_area.setWidget(body_container)
-        card_layout.addWidget(scroll_area, 1)
-        
-        # 3. Footer Action Buttons (Matching Editor sub-tab FadeHoverButton style)
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(20, 0, 20, 0)
-        btn_layout.setSpacing(12)
-        
-        cancel_btn = FadeHoverButton("Cancel", is_secondary=True, border_radius=8.0)
-        cancel_btn.setFixedSize(100, 36)
-        cancel_btn.clicked.connect(self.close)
-        
-        save_btn = FadeHoverButton("Save Changes", is_secondary=False, border_radius=8.0)
-        save_btn.setFixedSize(140, 36)
-        save_btn.clicked.connect(self._save_changes)
-        
-        btn_layout.addStretch()
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(save_btn)
-        
-        card_layout.addLayout(btn_layout)
-        
-        # Center card in outer layout
-        outer_layout.addStretch()
-        h_center = QHBoxLayout()
-        h_center.addStretch()
-        h_center.addWidget(self.card)
-        h_center.addStretch()
-        outer_layout.addLayout(h_center)
-        outer_layout.addStretch()
-
-    def _on_unit_changed(self, unit: str):
-        """Adjust spinbox range, step, and value when switching between ms and s (matching Quick Action Panel)."""
-        self.interval_spin.blockSignals(True)
-        val = self.interval_spin.value()
-        if unit == "s":
-            new_val = max(1, min(300, val // 1000 if val >= 1000 else 1))
-            self.interval_spin.setRange(1, 300)
-            self.interval_spin.setSingleStep(1)
-            self.interval_spin.setValue(new_val)
-        else:
-            if val <= 300:
-                new_val = max(1, val * 1000)
-            else:
-                new_val = max(1, val)
-            self.interval_spin.setRange(1, 60000)
-            self.interval_spin.setSingleStep(5)
-            self.interval_spin.setValue(new_val)
-        self.interval_spin.blockSignals(False)
-
-    def _on_action_type_changed(self, text: str):
-        """Show/hide custom key button when Custom Key is selected."""
-        is_custom = (text == "Custom Key")
-        self.custom_key_btn.setVisible(is_custom)
-
-    def _load_macro_data(self):
-        if not self.macro:
-            return
-            
-        # Clean name
-        name = getattr(self.macro, 'name', 'Macro')
-        for sym in ("✓", "○", "✔"):
-            if name.startswith(sym):
-                name = name[len(sym):].strip()
-        self.name_input.setText(name)
-        
-        # Bound Apps
-        if self.bridge and hasattr(self.bridge, 'profile_manager') and self.bridge.profile_manager:
-            prof = self.bridge.profile_manager.active_profile
-            if prof:
-                self.bound_apps_input.setText(", ".join(prof.bound_apps))
-        
-        # Hotkey
-        trigger = getattr(self.macro, 'trigger', None)
-        if trigger:
-            if getattr(trigger, 'button', None):
-                self.hotkey_btn.setHotkey(trigger.button.upper())
-            elif getattr(trigger, 'key', None):
-                self.hotkey_btn.setHotkey(trigger.key.upper())
-                
-        # Interval (matching Quick Action Panel range & 5ms step)
-        interval_ms = getattr(self.macro, 'repeat_interval_ms', 500)
-        if interval_ms is None and hasattr(self.macro, 'interval_ms'):
-            interval_ms = getattr(self.macro, 'interval_ms', 500)
-        if interval_ms is None:
-            interval_ms = 500
-            
-        self.unit_combo.blockSignals(True)
-        self.interval_spin.blockSignals(True)
-        if interval_ms >= 1000 and interval_ms % 1000 == 0:
-            self.unit_combo.setCurrentText("s")
-            self.interval_spin.setRange(1, 300)
-            self.interval_spin.setSingleStep(1)
-            self.interval_spin.setValue(min(300, interval_ms // 1000))
-        else:
-            self.unit_combo.setCurrentText("ms")
-            self.interval_spin.setRange(1, 60000)
-            self.interval_spin.setSingleStep(5)
-            self.interval_spin.setValue(max(1, min(60000, interval_ms)))
-        self.interval_spin.blockSignals(False)
-        self.unit_combo.blockSignals(False)
-        
-        # Action (Left, Right, Middle, or Custom Key)
-        hold_b = getattr(self.macro, 'hold_button', '') or ''
-        hold_k = getattr(self.macro, 'hold_key', '') or ''
-        
-        self.action_combo.blockSignals(True)
-        if hold_b.startswith("key:"):
-            key_val = hold_b[4:].strip().upper()
-            self.action_combo.setCurrentText("Custom Key")
-            self.custom_key_btn.setHotkey(key_val)
-            self.custom_key_btn.setVisible(True)
-        elif hold_k:
-            self.action_combo.setCurrentText("Custom Key")
-            self.custom_key_btn.setHotkey(hold_k.upper())
-            self.custom_key_btn.setVisible(True)
-        elif "right" in hold_b.lower():
-            self.action_combo.setCurrentText("Right Click")
-            self.custom_key_btn.setVisible(False)
-        elif "middle" in hold_b.lower():
-            self.action_combo.setCurrentText("Middle Click")
-            self.custom_key_btn.setVisible(False)
-        else:
-            self.action_combo.setCurrentText("Left Click")
-            self.custom_key_btn.setVisible(False)
-        self.action_combo.blockSignals(False)
-
-    def _save_changes(self):
-        if not self.macro:
-            self.close()
-            return
-
-        val = self.interval_spin.value()
-        final_ms = val * 1000 if self.unit_combo.currentText() == "s" else val
-        
-        if final_ms < 40 and not getattr(self, '_warning_acknowledged', False):
-            parent_window = self.window()
-            
-            def on_first_proceed():
-                if final_ms < 5 and not getattr(self, '_extreme_warning_acknowledged', False):
-                    def on_second_proceed():
-                        self._warning_acknowledged = True
-                        self._extreme_warning_acknowledged = True
-                        self._save_changes()
-                    panel2 = HelxairoLowIntervalWarningOverlayPanel(
-                        parent_window,
-                        on_second_proceed,
-                        title="Extreme Risk Warning",
-                        description="Intervals below 10ms carry a severe risk of system freezing, CPU overload, or hardware instability. We assume no responsibility for any system damage or issues, as you have been warned twice.\n\nDo you still wish to proceed at your own risk?",
-                        proceed_text="Proceed at Own Risk",
-                        is_extreme_risk=True
-                    )
-                    panel2.show()
-                    panel2.raise_()
-                else:
-                    self._warning_acknowledged = True
-                    self._save_changes()
-
-            warn_overlay = HelxairoLowIntervalWarningOverlayPanel(parent_window, on_first_proceed)
-            warn_overlay.show()
-            warn_overlay.raise_()
-            return
-
-        self._warning_acknowledged = False
-        self._extreme_warning_acknowledged = False
-        self._do_perform_save()
-
-    def _do_perform_save(self):
-        new_name = self.name_input.text().strip()
-        if new_name:
-            self.macro.name = new_name
-            
-        # Hotkey
-        new_hk = self.hotkey_btn.hotkey().lower()
-        if new_hk:
-            from macro_system.macros.base_macro import MacroTrigger, TriggerType
-            if new_hk in ("x1", "x2", "lbutton", "rbutton", "mbutton"):
-                self.macro.trigger = MacroTrigger(type=TriggerType.MOUSE_BUTTON, button=new_hk)
-            else:
-                self.macro.trigger = MacroTrigger(type=TriggerType.KEYBOARD_KEY, key=new_hk)
-                
-        # Interval (convert to ms based on unit selection)
-        val = self.interval_spin.value()
-        final_ms = val * 1000 if self.unit_combo.currentText() == "s" else val
-        
-        if hasattr(self.macro, 'repeat_interval_ms'):
-            self.macro.repeat_interval_ms = final_ms
-        if hasattr(self.macro, 'interval_ms'):
-            self.macro.interval_ms = final_ms
-            
-        # Action target
-        action_txt = self.action_combo.currentText()
-        from macro_system.macros.base_macro import MacroAction, ActionType
-        if action_txt == "Custom Key":
-            c_key = self.custom_key_btn.hotkey().lower().strip()
-            if hasattr(self.macro, 'hold_button'):
-                self.macro.hold_button = f"key:{c_key}"
-            if hasattr(self.macro, 'hold_key'):
-                self.macro.hold_key = c_key
-            if hasattr(self.macro, 'repeat_action') and self.macro.repeat_action:
-                self.macro.repeat_action.type = ActionType.KEY_TAP
-                self.macro.repeat_action.key = c_key
-                self.macro.repeat_action.button = None
-        else:
-            btn_name = "left"
-            if "right" in action_txt.lower():
-                btn_name = "right"
-            elif "middle" in action_txt.lower():
-                btn_name = "middle"
-            if hasattr(self.macro, 'hold_button'):
-                self.macro.hold_button = btn_name
-            if hasattr(self.macro, 'hold_key'):
-                self.macro.hold_key = None
-            if hasattr(self.macro, 'repeat_action') and self.macro.repeat_action:
-                self.macro.repeat_action.type = ActionType.MOUSE_CLICK
-                self.macro.repeat_action.button = btn_name
-                self.macro.repeat_action.key = None
-                
-        # Save Bound Apps to active profile
-        if self.bridge and hasattr(self.bridge, 'profile_manager') and self.bridge.profile_manager:
-            prof = self.bridge.profile_manager.active_profile
-            if prof:
-                apps_text = self.bound_apps_input.text()
-                prof.bound_apps = [a.strip() for a in apps_text.split(",") if a.strip()]
-                self.bridge.profile_manager.save_profile(prof)
-            self.bridge.profile_manager.save_all()
-            
-        if self.bridge and hasattr(self.bridge, 'reload_active_profile_macros'):
-            self.bridge.reload_active_profile_macros()
-            
-        # Reload macro list in parent panel
-        if hasattr(self.parent_panel, '_load_macros'):
-            self.parent_panel._load_macros()
-            
-        if hasattr(self.parent_panel, '_show_toast'):
-            self.parent_panel._show_toast("Macro updated successfully!", "success")
-            
-        self.close()
-
-    def _handle_esc(self):
-        """Smart Esc key handler: cancel typing/recording mode if active, otherwise close panel."""
-        focused = QApplication.focusWidget()
-        
-        # 1. Stop recording on any active HotkeyRecordButton
-        is_recording = False
-        for btn in (getattr(self, 'hotkey_btn', None), getattr(self, 'custom_key_btn', None)):
-            if btn and getattr(btn, '_recording', False):
-                btn._stop_recording_ui()
-                is_recording = True
-
-        # 2. Check if an input field currently has keyboard focus
-        is_input_focused = False
-        if focused and focused is not self:
-            parent_widget = focused.parent()
-            if isinstance(focused, (QLineEdit, QSpinBox, QAbstractSpinBox, QComboBox, HotkeyRecordButton)) or \
-               isinstance(parent_widget, (QSpinBox, QAbstractSpinBox, QComboBox)):
-                is_input_focused = True
-            focused.clearFocus()
-
-        # If user was typing or recording, only exit typing mode (do NOT close panel)
-        if is_input_focused or is_recording:
-            return
-
-        # If user was NOT in typing/recording mode, close the overlay panel
-        self.close()
-
-    def mousePressEvent(self, event):
-        focused = QApplication.focusWidget()
-        if focused and focused is not self:
-            focused.clearFocus()
-            
-        if hasattr(self, 'card') and self.card:
-            if not self.card.geometry().contains(event.pos()):
-                self.close()
-                return
-        super().mousePressEvent(event)
-
-    def resizeEvent(self, event):
-        if self.parent():
-            self.setGeometry(0, 0, self.parent().width(), self.parent().height())
-        super().resizeEvent(event)
 
 
 class MacroSettingsPanel(QWidget):
@@ -5333,11 +5112,32 @@ class MacroSettingsPanel(QWidget):
 
         self.active_list = QListWidget()
         self.active_list.setObjectName("helxairo_activeList")
+        # NOTE FOR AGENTS / DEVELOPERS: DO NOT EVER re-enable horizontal scrollbars on active_list.
+        # It must strictly remain ScrollBarAlwaysOff to prevent visual glitches and framedrops.
+        self.active_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.active_list.setMinimumHeight(330)
         self.active_list.setStyleSheet(_list_style + """
             QListWidget#helxairo_activeList {
                 border: none;
                 background: transparent;
+            }
+            QListWidget#helxairo_activeList QScrollBar:horizontal {
+                height: 0px;
+                background: transparent;
+            }
+            QListWidget#helxairo_activeList::item {
+                padding: 0px;
+                margin: 2px 14px 2px 0px;
+                background: transparent;
+                border: none;
+            }
+            QListWidget#helxairo_activeList::item:selected {
+                background: transparent;
+                border: none;
+            }
+            QListWidget#helxairo_activeList::item:hover {
+                background: transparent;
+                border: none;
             }
         """)
         enable_rubber_band_selection(self.active_list)
@@ -5346,12 +5146,13 @@ class MacroSettingsPanel(QWidget):
         
         def _on_active_list_resize(event):
             type(self.active_list).resizeEvent(self.active_list, event)
-            vp_w = max(0, self.active_list.viewport().width() - 4)
+            vp_w = max(0, self.active_list.viewport().width() - 18)
             for i in range(self.active_list.count()):
                 item = self.active_list.item(i)
                 w = self.active_list.itemWidget(item)
                 if item and w:
-                    item.setSizeHint(QSize(vp_w, 38))
+                    item_h = max(38, w.sizeHint().height())
+                    item.setSizeHint(QSize(vp_w, item_h))
             self.active_list.doItemsLayout()
 
         self.active_list.resizeEvent = _on_active_list_resize
@@ -7872,12 +7673,50 @@ class MacroSettingsPanel(QWidget):
             
         self._filter_macro_list()
         
-        # Automatically select the first item and reveal keys/intervals in List of keys
-        if self.active_list.count() > 0:
-            self.active_list.setCurrentRow(0)
+        # Ensure clean unselected state when sub-tab or profile is loaded
+        self.active_list.clearSelection()
+        self._on_macro_selection_changed()
+        QTimer.singleShot(60, self._recalculate_all_item_sizes)
+
+    def _recalculate_all_item_sizes(self):
+        """Recalculate item sizes for active_list after initial panel render."""
+        if not hasattr(self, 'active_list') or not self.active_list:
+            return
+        for i in range(self.active_list.count()):
+            item = self.active_list.item(i)
+            if item:
+                w = self.active_list.itemWidget(item)
+                if w and hasattr(w, '_adjust_edit_height'):
+                    w._adjust_edit_height()
+        self.active_list.doItemsLayout()
 
     def _on_macro_selection_changed(self):
-        """Update List of keys (self.editor_keys_list) when macro selection changes."""
+        """Update selected visual state across all HelxairoMacroItemWidget items and populate List of keys."""
+        if not hasattr(self, 'active_list') or not self.active_list:
+            return
+            
+        for i in range(self.active_list.count()):
+            item = self.active_list.item(i)
+            if item:
+                widget = self.active_list.itemWidget(item)
+                if widget and hasattr(widget, 'set_selected_state'):
+                    widget.set_selected_state(item.isSelected())
+
+        if getattr(self.active_list, '_rubber_band_active', False):
+            if not hasattr(self, '_keys_list_update_timer'):
+                self._keys_list_update_timer = QTimer(self)
+                self._keys_list_update_timer.setSingleShot(True)
+                self._keys_list_update_timer.setInterval(40)
+                self._keys_list_update_timer.timeout.connect(self._flush_keys_list_update)
+            self._keys_list_update_timer.start(40)
+        else:
+            if hasattr(self, '_keys_list_update_timer') and self._keys_list_update_timer.isActive():
+                self._keys_list_update_timer.stop()
+            self._flush_keys_list_update()
+
+    def _flush_keys_list_update(self):
+        if not hasattr(self, 'active_list') or not self.active_list:
+            return
         selected_items = self.active_list.selectedItems()
         if not selected_items:
             if hasattr(self, 'editor_keys_list'):
@@ -8076,59 +7915,55 @@ class MacroSettingsPanel(QWidget):
             self._sort_macro_list("default")
 
     def _sort_macro_list(self, criteria="a_z"):
-        """Sort items in self.active_list based on chosen criteria."""
-        if not hasattr(self, 'active_list'):
+        """Sort items in self.active_list based on chosen criteria safely."""
+        if not hasattr(self, 'active_list') or not self._bridge or not self._bridge.profile_manager:
             return
-        items_data = []
-        for i in range(self.active_list.count()):
-            item = self.active_list.item(i)
-            widget = self.active_list.itemWidget(item)
-            macro = item.data(Qt.UserRole + 1)
             
-            name = ""
-            if macro and hasattr(macro, 'name') and macro.name:
-                name = macro.name
-            elif widget and hasattr(widget, '_macro') and hasattr(widget._macro, 'name'):
-                name = widget._macro.name
-            elif widget and hasattr(widget, 'name_lbl') and hasattr(widget.name_lbl, 'text'):
-                name = widget.name_lbl.text()
-            elif item.text():
-                name = item.text()
+        active_prof = self._bridge.profile_manager.active_profile
+        if not active_prof:
+            profiles = self._bridge.profile_manager.get_all_profiles()
+            active_prof = profiles[0] if profiles else None
+        if not active_prof:
+            return
+            
+        macros = list(self._bridge.profile_manager.get_macros_for_profile(active_prof.id))
+        if not macros:
+            return
 
-            is_enabled = False
-            if macro and hasattr(macro, 'enabled'):
-                is_enabled = bool(macro.enabled)
-            elif widget and hasattr(widget, '_macro') and hasattr(widget._macro, 'enabled'):
-                is_enabled = bool(widget._macro.enabled)
-
-            items_data.append({
-                'name': name,
-                'enabled': is_enabled,
-                'orig_index': i,
-                'item': item,
-                'widget': widget
-            })
+        def _get_name(m):
+            n = getattr(m, 'name', '') or 'Unnamed'
+            for sym in ("✓", "○", "✔"):
+                if n.startswith(sym):
+                    n = n[len(sym):].strip()
+            return n.lower()
 
         if criteria == "a_z":
-            items_data.sort(key=lambda x: x['name'].lower())
+            macros.sort(key=_get_name)
         elif criteria == "z_a":
-            items_data.sort(key=lambda x: x['name'].lower(), reverse=True)
+            macros.sort(key=_get_name, reverse=True)
         elif criteria == "active":
-            items_data.sort(key=lambda x: (not x['enabled'], x['name'].lower()))
-        elif criteria == "default":
-            items_data.sort(key=lambda x: x['orig_index'])
+            macros.sort(key=lambda m: (not getattr(m, 'enabled', True), _get_name(m)))
 
-        while self.active_list.count() > 0:
-            self.active_list.takeItem(0)
+        self.active_list.blockSignals(True)
+        self.active_list.clear()
 
-        for entry in items_data:
-            item = entry['item']
-            widget = entry['widget']
-            self.active_list.addItem(item)
-            if widget:
+        for macro in macros:
+            try:
+                item = QListWidgetItem()
+                widget = HelxairoMacroItemWidget(macro, active_prof.name, item, self.active_list, parent=self.active_list)
+                item.setData(Qt.UserRole, macro.id)
+                item.setData(Qt.UserRole + 1, macro)
+                item.setSizeHint(widget.sizeHint())
+                self.active_list.addItem(item)
                 self.active_list.setItemWidget(item, widget)
+            except Exception as e:
+                print(f"[Sort] Error populating sorted item: {e}")
 
+        self.active_list.blockSignals(False)
         self._filter_macro_list()
+
+        self.active_list.clearSelection()
+        self._on_macro_selection_changed()
 
     def _filter_macro_list(self, text=None):
         """Filter items in active_list based on search query."""
@@ -8481,12 +8316,7 @@ class MacroSettingsPanel(QWidget):
         FloatingToast.show_toast(self, "All Macros Stopped", f"Disabled and stopped all active macros ({disabled_count} stopped).")
 
     def _edit_selected(self):
-        """Open floating edit panel for selected macro."""
-        if not self._bridge:
-            self._init_bridge()
-            if not self._bridge:
-                return
-                
+        """Start inline renaming for selected macro in active_list."""
         selected_items = self.active_list.selectedItems()
         if not selected_items:
             current = self.active_list.currentItem()
@@ -8497,18 +8327,13 @@ class MacroSettingsPanel(QWidget):
             FloatingToast.show_toast(self, "No Selection", "Please select a macro to edit.")
             return
             
-        macro = selected_items[0].data(Qt.UserRole + 1)
-        if not macro:
-            return
-            
-        overlay = HelxairoEditMacroOverlayPanel(macro, self._bridge, self)
-        overlay.show()
+        for item in selected_items:
+            widget = self.active_list.itemWidget(item)
+            if widget and hasattr(widget, '_start_inline_rename'):
+                widget._start_inline_rename()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        for child in self.children():
-            if isinstance(child, HelxairoEditMacroOverlayPanel):
-                child.setGeometry(0, 0, self.width(), self.height())
         
     def _delete_selected(self):
         """Delete all selected macros in active_list."""
