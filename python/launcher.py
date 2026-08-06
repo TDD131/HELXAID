@@ -2293,14 +2293,38 @@ def set_startup_enabled(enabled):
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             
-            # If we got Access Denied (not running as admin), we must elevate to create the task
+            # If we got Access Denied (not running as admin), check if Zero-UAC Helper Service is available
             if result.returncode != 0 and b"Access is denied" in result.stderr:
-                print("[Startup] Need elevation to create Scheduled Task, prompting UAC...")
-                # We use a powershell trick to hide the elevation prompt window if possible, but UAC will show
-                ps_cmd = f'schtasks.exe /Create /TN "{STARTUP_TASK_NAME}" /XML "{xml_path}" /F'
-                ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", f'-WindowStyle Hidden -Command "{ps_cmd}"', None, 0)
-                if ret <= 32:
-                    print(f"[Startup] Elevated task creation failed with code: {ret}")
+                executed_via_service = False
+                try:
+                    from integrations.cpu_controller import is_service_running, send_service_command
+                    if is_service_running():
+                        res = send_service_command({
+                            "action": "create_startup_task",
+                            "task_name": STARTUP_TASK_NAME,
+                            "xml_content": xml_config,
+                            "xml_path": xml_path
+                        })
+                        if not isinstance(res, dict) or res.get("status") != "success":
+                            # Fallback to batch command execution
+                            schtasks_cmd_str = f'schtasks.exe /Create /TN "{STARTUP_TASK_NAME}" /XML "{xml_path}" /F'
+                            res = send_service_command({"action": "exec_batch_commands", "commands": [schtasks_cmd_str]})
+
+                        if isinstance(res, dict) and res.get("status") == "success":
+                            print(f"[Startup] Scheduled Task created via Zero-UAC Service: {STARTUP_TASK_NAME}")
+                            executed_via_service = True
+                        else:
+                            print(f"[Startup] Zero-UAC service task creation response: {res}")
+                except Exception as svc_err:
+                    print(f"[Startup] Zero-UAC service startup task creation error: {svc_err}")
+
+                if not executed_via_service:
+                    print("[Startup] Need elevation to create Scheduled Task, prompting UAC...")
+                    # We use a powershell trick to hide the elevation prompt window if possible, but UAC will show
+                    ps_cmd = f'schtasks.exe /Create /TN "{STARTUP_TASK_NAME}" /XML "{xml_path}" /F'
+                    ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", f'-WindowStyle Hidden -Command "{ps_cmd}"', None, 0)
+                    if ret <= 32:
+                        print(f"[Startup] Elevated task creation failed with code: {ret}")
             else:
                 print(f"[Startup] Scheduled Task created: {STARTUP_TASK_NAME}")
                 
@@ -2319,9 +2343,30 @@ def set_startup_enabled(enabled):
             )
             
             if result.returncode != 0 and b"Access is denied" in result.stderr:
-                print("[Startup] Need elevation to delete Scheduled Task, prompting UAC...")
-                ps_cmd = f'schtasks.exe /Delete /TN "{STARTUP_TASK_NAME}" /F'
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", f'-WindowStyle Hidden -Command "{ps_cmd}"', None, 0)
+                executed_via_service = False
+                try:
+                    from integrations.cpu_controller import is_service_running, send_service_command
+                    if is_service_running():
+                        res = send_service_command({
+                            "action": "delete_startup_task",
+                            "task_name": STARTUP_TASK_NAME
+                        })
+                        if not isinstance(res, dict) or res.get("status") != "success":
+                            schtasks_cmd_str = f'schtasks.exe /Delete /TN "{STARTUP_TASK_NAME}" /F'
+                            res = send_service_command({"action": "exec_batch_commands", "commands": [schtasks_cmd_str]})
+
+                        if isinstance(res, dict) and res.get("status") == "success":
+                            print(f"[Startup] Scheduled Task removed via Zero-UAC Service: {STARTUP_TASK_NAME}")
+                            executed_via_service = True
+                        else:
+                            print(f"[Startup] Zero-UAC service task deletion response: {res}")
+                except Exception as svc_err:
+                    print(f"[Startup] Zero-UAC service startup task deletion error: {svc_err}")
+
+                if not executed_via_service:
+                    print("[Startup] Need elevation to delete Scheduled Task, prompting UAC...")
+                    ps_cmd = f'schtasks.exe /Delete /TN "{STARTUP_TASK_NAME}" /F'
+                    ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", f'-WindowStyle Hidden -Command "{ps_cmd}"', None, 0)
             else:
                 print(f"[Startup] Scheduled Task removed: {STARTUP_TASK_NAME}")
                 
@@ -4572,6 +4617,33 @@ class GameLauncher(QWidget):
 
         # Setup deferred button animations (improves startup time)
         self._setup_deferred_button_animations()
+
+        # Pre-instantiate panel widgets sequentially on idle timers so tab switching is instantaneous
+        def _prewarm_panel_step(step):
+            if not hasattr(self, 'content_stack'):
+                return
+            try:
+                if step == 1 and not hasattr(self, 'music_panel'):
+                    self._setup_music_panel()
+                elif step == 2 and not hasattr(self, 'cpu_panel'):
+                    self._setup_cpu_panel()
+                elif step == 3 and not hasattr(self, 'crosshair_panel'):
+                    self._setup_crosshair_panel()
+                elif step == 4 and not hasattr(self, 'macro_panel'):
+                    self._setup_macro_panel()
+                elif step == 5 and not hasattr(self, 'hardware_panel'):
+                    self._setup_hardware_panel()
+                elif step == 6 and not hasattr(self, 'wincustom_panel'):
+                    self._setup_wincustom_panel()
+            except Exception as pe:
+                print(f"[Panel Prewarm Step {step} Error] {pe}")
+
+        QTimer.singleShot(150, lambda: _prewarm_panel_step(1))
+        QTimer.singleShot(300, lambda: _prewarm_panel_step(2))
+        QTimer.singleShot(450, lambda: _prewarm_panel_step(3))
+        QTimer.singleShot(600, lambda: _prewarm_panel_step(4))
+        QTimer.singleShot(750, lambda: _prewarm_panel_step(5))
+        QTimer.singleShot(900, lambda: _prewarm_panel_step(6))
 
         # Pre-instantiate panel shells sequentially in idle ticks so panel switches are INSTANT (< 1ms)
         QTimer.singleShot(300, lambda: self._ensure_panel_preloaded(1))   # HELXAIC - Music
@@ -6888,6 +6960,8 @@ Stylesheet Selector:
     
     def _setup_music_panel(self):
         """Setup the music player panel using native Qt MusicPanelWidget."""
+        if hasattr(self, 'music_panel'):
+            return
         from integrations.tools_downloader import is_ffmpeg_available
         
         if not is_ffmpeg_available():
@@ -7194,6 +7268,8 @@ Stylesheet Selector:
 
     def _setup_cpu_panel(self):
         """Setup the CPU control panel with modern card-based design."""
+        if hasattr(self, 'cpu_panel'):
+            return
         self.cpu_panel = QWidget()
         self.cpu_panel.setObjectName("cpuPanel")
         layout = QVBoxLayout(self.cpu_panel)
@@ -8418,6 +8494,8 @@ Stylesheet Selector:
     
     def _setup_wincustom_panel(self):
         """Setup the Windows Customization (HELRCUS) panel."""
+        if hasattr(self, 'wincustom_panel'):
+            return
         # Ensure hardware panel placeholder exists at index 5 first
         if not hasattr(self, 'hardware_panel'):
             self._setup_hardware_panel()
@@ -8440,6 +8518,8 @@ Stylesheet Selector:
     
     def _setup_hardware_panel(self):
         """Setup the Hardware Monitor panel."""
+        if hasattr(self, 'hardware_panel'):
+            return
         from HardwarePanelWidget import HardwarePanelWidget
         
         # Check if LibreHardwareMonitor or HWiNFO is available - if not, show download prompt
@@ -8984,6 +9064,8 @@ Stylesheet Selector:
     
     def _setup_crosshair_panel(self):
         """Setup the Crosshair overlay panel."""
+        if hasattr(self, 'crosshair_panel'):
+            return
         from CrosshairWidget import CrosshairWidget
         self.crosshair_panel = CrosshairWidget()
         self.crosshair_panel.setStyleSheet("""
@@ -8996,6 +9078,8 @@ Stylesheet Selector:
     
     def _setup_macro_panel(self):
         """Setup the Macro settings panel."""
+        if hasattr(self, 'macro_panel'):
+            return
         try:
             if self.hw_manager is None:
                 from macro_system.integration.hardware_manager import get_hardware_manager
@@ -16248,6 +16332,28 @@ First Played: {first_played_formatted}
 
 
 if __name__ == "__main__":
+    # Pre-warm heavy panel modules in background thread so PyInstaller zipimport decompression happens before user interaction
+    def _bg_prewarm_modules():
+        import threading
+        def _import_job():
+            modules = [
+                'MusicPanelWidget',
+                'HardwarePanelWidget',
+                'MacroSettingsPanel',
+                'WindowsCustomPanel',
+                'CrosshairWidget',
+                'macro_system.integration.hardware_manager',
+            ]
+            for mod in modules:
+                try:
+                    __import__(mod)
+                except Exception:
+                    pass
+        t = threading.Thread(target=_import_job, daemon=True, name="HELXAID_ModulePrewarmer")
+        t.start()
+
+    _bg_prewarm_modules()
+
     # Suppress Qt warning messages (like QFont::setPointSize warnings)
     import warnings
     warnings.filterwarnings("ignore")

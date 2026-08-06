@@ -278,12 +278,13 @@ def send_service_command(payload_dict: dict) -> dict:
     try:
         import win32pipe
         import pywintypes
+        import time
+        import subprocess
         pipe_name = r'\\.\pipe\HelxaidCpuPipe'
         try:
             win32pipe.WaitNamedPipe(pipe_name, 100)
         except pywintypes.error:
             try:
-                import subprocess
                 subprocess.run(['net.exe', 'start', 'HelxaidHelperService'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=5)
                 win32pipe.WaitNamedPipe(pipe_name, 2000)
             except Exception:
@@ -297,21 +298,32 @@ def send_service_command(payload_dict: dict) -> dict:
         if res.get("status") == "error":
             err_msg = str(res.get("message", ""))
             if "Unknown action" in err_msg or "local variable" in err_msg or "UnboundLocalError" in err_msg:
-                print(f"[Service IPC] Detected outdated service code ({err_msg}). Auto-restarting background service...")
+                print(f"[Service IPC] Detected outdated service code ({err_msg}). Triggering background service restart...")
                 try:
                     restart_bytes = json.dumps({"action": "restart"}).encode('utf-8')
                     win32pipe.CallNamedPipe(pipe_name, restart_bytes, 65536, 1000)
                 except Exception:
                     pass
-                import time
+                
+                # Wait for service process to restart and recreate named pipe
                 time.sleep(1.0)
-                # Retry original command once on fresh service instance
-                try:
-                    win32pipe.WaitNamedPipe(pipe_name, 2000)
-                    retry_data = win32pipe.CallNamedPipe(pipe_name, payload_bytes, 65536, 15000)
-                    return json.loads(retry_data.decode('utf-8'))
-                except Exception as retry_err:
-                    print(f"[Service IPC] Auto-retry after restart failed: {retry_err}")
+                for attempt in range(1, 7):
+                    try:
+                        try:
+                            win32pipe.WaitNamedPipe(pipe_name, 500)
+                        except pywintypes.error:
+                            subprocess.run(['net.exe', 'start', 'HelxaidHelperService'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=5)
+                            win32pipe.WaitNamedPipe(pipe_name, 1500)
+
+                        retry_data = win32pipe.CallNamedPipe(pipe_name, payload_bytes, 65536, 15000)
+                        print(f"[Service IPC] Successfully reconnected to service after restart (attempt {attempt})")
+                        return json.loads(retry_data.decode('utf-8'))
+                    except pywintypes.error:
+                        print(f"[Service IPC] Waiting for restarted service (attempt {attempt}/6)...")
+                        time.sleep(1.0)
+                    except Exception as retry_err:
+                        print(f"[Service IPC] Auto-retry error (attempt {attempt}): {retry_err}")
+                        time.sleep(1.0)
         return res
     except Exception as e:
         return {"status": "error", "message": str(e)}

@@ -298,6 +298,46 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 except Exception as e:
                     return {"status": "error", "message": str(e)}
 
+            elif action == "create_startup_task":
+                task_name = data.get("task_name", "HELXAID_Startup")
+                xml_path = data.get("xml_path")
+                xml_content = data.get("xml_content")
+                
+                if xml_content:
+                    import tempfile
+                    xml_path = os.path.join(tempfile.gettempdir(), "helxaid_task_svc.xml")
+                    with open(xml_path, 'w', encoding='utf-16') as f:
+                        f.write(xml_content)
+                        
+                if not xml_path or not os.path.exists(xml_path):
+                    return {"status": "error", "message": f"XML task config path not found: {xml_path}"}
+
+                res = subprocess.run(
+                    ["schtasks.exe", "/Create", "/TN", task_name, "/XML", xml_path, "/F"],
+                    capture_output=True, text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=15
+                )
+                if res.returncode == 0:
+                    return {"status": "success", "message": f"Scheduled task '{task_name}' created successfully via Zero-UAC."}
+                else:
+                    err_msg = (res.stderr or res.stdout or "").strip()
+                    return {"status": "error", "message": f"schtasks error {res.returncode}: {err_msg}"}
+
+            elif action == "delete_startup_task":
+                task_name = data.get("task_name", "HELXAID_Startup")
+                res = subprocess.run(
+                    ["schtasks.exe", "/Delete", "/TN", task_name, "/F"],
+                    capture_output=True, text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=15
+                )
+                err_msg = (res.stderr or res.stdout or "").lower()
+                if res.returncode == 0 or "does not exist" in err_msg or "not found" in err_msg:
+                    return {"status": "success", "message": f"Scheduled task '{task_name}' deleted successfully via Zero-UAC."}
+                else:
+                    return {"status": "error", "message": f"schtasks error {res.returncode}: {(res.stderr or res.stdout or '').strip()}"}
+
             elif action == "exec_batch_commands":
                 commands = data.get("commands", [])
                 if not commands:
@@ -334,11 +374,18 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 return {"status": "success", "message": "pong"}
 
             elif action == "restart":
-                def _do_exit():
-                    time.sleep(0.1)
-                    os._exit(0)
+                def _do_restart():
+                    time.sleep(0.2)
+                    try:
+                        subprocess.Popen(
+                            ["cmd.exe", "/c", "timeout /t 1 /nobreak && net start HelxaidHelperService"],
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                    except Exception:
+                        pass
+                    os._exit(1)
                 import threading
-                threading.Thread(target=_do_exit, daemon=True).start()
+                threading.Thread(target=_do_restart, daemon=True).start()
                 return {"status": "success", "message": "Restarting service..."}
                 
             else:

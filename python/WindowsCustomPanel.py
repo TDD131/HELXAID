@@ -2334,7 +2334,7 @@ class WindowsCustomPanel(QWidget):
                 pass
         InvisibleLockScreen._overlay_shown = False
 
-        self._lock_overlay = LockScreenOverlay(self.window())
+        self._lock_overlay = LockScreenOverlay(None)
         self._lock_overlay.show()
 
     def _hide_lock_overlay(self):
