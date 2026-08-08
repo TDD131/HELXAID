@@ -10,18 +10,21 @@ Features:
 Component Name: HardwarePanelWidget
 """
 
+from PySide6.QtGui import QGradient
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QStackedWidget, QGridLayout, QSlider, QLineEdit,
     QScrollArea, QSizePolicy, QGraphicsDropShadowEffect, QProgressBar,
-    QCheckBox
+    QCheckBox, QGroupBox, QDialog, QListWidget, QListWidgetItem,
+    QGraphicsOpacityEffect
 )
 from AnimatedButton import AnimatedCheckBox
 from smooth_scroll import SmoothScrollArea, SmoothTableWidget
-from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot
+from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QThread, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QLinearGradient, 
-    QConicalGradient, QIntValidator, QPixmap
+    QConicalGradient, QIntValidator, QPixmap, QFontMetrics
 )
 
 import collections
@@ -55,6 +58,7 @@ class CircularGauge(QWidget):
     
     Component Name: CircularGauge
     """
+    clicked = Signal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,7 +69,78 @@ class CircularGauge(QWidget):
         self._subtitle = ""
         self._accent_color = QColor("#FF5B06")
         self._bg_color = QColor("#2a2a2a")
+        
+        self._show_text = True
+        self._is_animated = False
+        self._gradient_angle = 0
+        self._anim_timer = QTimer(self)
+        self._anim_timer.timeout.connect(self._update_animation)
+        
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self._opacity_effect.setOpacity(1.0)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._fade_anim = None
+
         self.setMinimumSize(200, 200)
+
+    def trigger_fade_transition(self, duration_ms: int = 220, on_midpoint_callback=None):
+        """
+        Soft pulse transition (1.0 -> 0.70 -> 1.0) to prevent fading to black.
+        """
+        if getattr(self, '_fade_anim', None) and self._fade_anim.state() == QPropertyAnimation.Running:
+            self._fade_anim.stop()
+
+        half_dur = max(30, duration_ms // 2)
+        anim_out = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        anim_out.setDuration(half_dur)
+        anim_out.setStartValue(self._opacity_effect.opacity())
+        anim_out.setEndValue(0.70)
+        anim_out.setEasingCurve(QEasingCurve.OutQuad)
+
+        def _on_fade_out_finished():
+            if on_midpoint_callback:
+                on_midpoint_callback()
+            anim_in = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+            anim_in.setDuration(half_dur)
+            anim_in.setStartValue(0.70)
+            anim_in.setEndValue(1.0)
+            anim_in.setEasingCurve(QEasingCurve.InQuad)
+            anim_in.start()
+            self._fade_anim = anim_in
+
+        anim_out.finished.connect(_on_fade_out_finished)
+        anim_out.start()
+        self._fade_anim = anim_out
+    
+    def setShowText(self, show: bool):
+        self._show_text = show
+        self.update()
+        
+    def setAnimated(self, animated: bool):
+        self._is_animated = animated
+        if animated and not self._anim_timer.isActive():
+            self._anim_timer.start(16)
+        elif not animated and not getattr(self, '_use_gradient_for_value', False) and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self.update()
+        
+    def setUseGradientForValue(self, use_gradient: bool):
+        self._use_gradient_for_value = use_gradient
+        if use_gradient and not self._anim_timer.isActive():
+            self._anim_timer.start(16)
+        elif not use_gradient and not getattr(self, '_is_animated', False) and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self.update()
+        
+    def _update_animation(self):
+        if getattr(self, '_clockwise', False):
+            self._gradient_angle = (self._gradient_angle - 4) % 360
+        else:
+            self._gradient_angle = (self._gradient_angle + 4) % 360
+        self.update()
+        
+    def setClockwise(self, clockwise: bool):
+        self._clockwise = clockwise
     
     def setValue(self, value: float):
         self._value = max(0, min(self._max_value, value))
@@ -82,6 +157,14 @@ class CircularGauge(QWidget):
     def setAccentColor(self, color: QColor):
         self._accent_color = color
         self.update()
+        
+    def setGrayscale(self, grayscale: bool):
+        self._is_grayscale = grayscale
+        self.update()
+
+    def setCenterText(self, text: str):
+        self._center_text = text
+        self.update()
     
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -96,42 +179,147 @@ class CircularGauge(QWidget):
         radius = (size - margin * 2) / 2
         
         # Background arc
+        is_animated = getattr(self, '_is_animated', False)
+        
         bg_pen = QPen(self._bg_color, arc_width, Qt.SolidLine, Qt.RoundCap)
         painter.setPen(bg_pen)
         rect = self.rect().adjusted(margin, margin, -margin, -margin)
         # Center the rect
         rect.moveCenter(self.rect().center())
-        painter.drawArc(rect, 225 * 16, -270 * 16)
+        
+        if is_animated:
+            painter.drawArc(rect, 0, 360 * 16)
+        else:
+            painter.drawArc(rect, 225 * 16, -270 * 16)
         
         # Value arc with gradient
-        if self._value > 0:
-            sweep = int(-270 * (self._value / self._max_value) * 16)
-            
-            # Create gradient for arc
-            gradient_pen = QPen(self._accent_color, arc_width, Qt.SolidLine, Qt.RoundCap)
-            painter.setPen(gradient_pen)
-            painter.drawArc(rect, 225 * 16, sweep)
+        if is_animated or self._value > 0:
+            if is_animated:
+                sweep = 360 * 16
+                if getattr(self, '_is_grayscale', False):
+                    # Perfectly symmetrical metallic silver linear gradient flowing to the left
+                    # Use a continuous accumulator to avoid origin jumps that cause Qt rendering stutter
+                    if not hasattr(self, '_linear_shift'):
+                        self._linear_shift = 0.0
+                    
+                    # Advance by the equivalent of 4 degrees
+                    step = (4.0 / 360.0) * rect.width()
+                    self._linear_shift += step
+                    
+                    # Wrap safely at exactly 100x width to prevent float overflow while maintaining perfect tiling
+                    wrap_limit = rect.width() * 100
+                    if self._linear_shift > wrap_limit:
+                        self._linear_shift -= wrap_limit
+                        
+                    x1 = rect.right() - self._linear_shift
+                    x2 = x1 - rect.width()
+                    
+                    # Use 0 for Y-coordinates to create a purely horizontal gradient vector
+                    gradient = QLinearGradient(x1, 0, x2, 0)
+                    gradient.setSpread(QGradient.RepeatSpread)
+                    gradient.setColorAt(0.0, QColor('#555555'))
+                    gradient.setColorAt(0.5, QColor('#737373'))
+                    gradient.setColorAt(1.0, QColor('#555555'))
+                else:
+                    gradient = QConicalGradient(rect.center(), self._gradient_angle)
+                    gradient.setColorAt(0.0, QColor('#ff3da7'))
+                    gradient.setColorAt(0.25, QColor('#ff0c2b'))
+                    gradient.setColorAt(0.5, QColor('#ff5700'))
+                    gradient.setColorAt(0.75, QColor('#ffab00'))
+                    gradient.setColorAt(1.0, QColor('#ff3da7'))
+                gradient_pen = QPen(QBrush(gradient), arc_width, Qt.SolidLine, Qt.RoundCap)
+                painter.setPen(gradient_pen)
+                painter.drawArc(rect, 0, sweep)
+            else:
+                sweep = int(-270 * (self._value / self._max_value) * 16)
+                if getattr(self, '_use_gradient_for_value', False):
+                    if not hasattr(self, '_linear_shift'):
+                        self._linear_shift = 0.0
+                    step = (4.0 / 360.0) * rect.width()
+                    self._linear_shift += step
+                    wrap_limit = rect.width() * 100
+                    if self._linear_shift > wrap_limit:
+                        self._linear_shift -= wrap_limit
+                    x1 = rect.right() - self._linear_shift
+                    x2 = x1 - rect.width()
+                    
+                    gradient = QLinearGradient(x1, 0, x2, 0)
+                    gradient.setSpread(QGradient.RepeatSpread)
+                    gradient.setColorAt(0.0, QColor('#ff3da7'))
+                    gradient.setColorAt(0.25, QColor('#ff0c2b'))
+                    gradient.setColorAt(0.5, QColor('#ff5700'))
+                    gradient.setColorAt(0.75, QColor('#ffab00'))
+                    gradient.setColorAt(1.0, QColor('#ff3da7'))
+                    gradient_pen = QPen(QBrush(gradient), arc_width, Qt.SolidLine, Qt.RoundCap)
+                else:
+                    gradient_pen = QPen(self._accent_color, arc_width, Qt.SolidLine, Qt.RoundCap)
+                painter.setPen(gradient_pen)
+                painter.drawArc(rect, 225 * 16, sweep)
         
-        # Center text - percentage (shifted slightly upward to align with 270-degree arc)
-        y_offset = int(-size * 0.07)
-        percent_rect = self.rect().translated(0, y_offset)
-        
-        painter.setPen(QColor("#ffffff"))
-        percent_font = QFont("Orbitron", int(size * 0.13), QFont.Bold)
-        painter.setFont(percent_font)
-        percent_text = f"{int(self._value)}%"
-        painter.drawText(percent_rect, Qt.AlignCenter, percent_text)
-        
-        # Subtitle below percentage
-        if self._subtitle:
-            painter.setPen(QColor("#888888"))
-            sub_font = QFont("Orbitron", int(size * 0.05))
-            painter.setFont(sub_font)
-            sub_rect = percent_rect.translated(0, int(size * 0.14))
-            painter.drawText(sub_rect, Qt.AlignCenter, self._subtitle)
+        if getattr(self, '_show_text', True):
+            center_txt = getattr(self, '_center_text', None)
+            if center_txt:
+                if "Scanning" in center_txt:
+                    font_size = int(size * 0.075)
+                    primary_color = QColor("#ffffff")
+                elif "GB" in center_txt or "MB" in center_txt or "KB" in center_txt or "B" in center_txt:
+                    font_size = int(size * 0.10)
+                    primary_color = QColor("#FF5B06")
+                elif center_txt == "CLEANED":
+                    font_size = int(size * 0.09)
+                    primary_color = QColor("#00FF66")
+                else:
+                    font_size = int(size * 0.09)
+                    primary_color = QColor("#ffffff")
+                
+                center_font = QFont("Orbitron", font_size, QFont.Bold)
+                fm = QFontMetrics(center_font)
+                max_width = int(size - margin * 2 - 28)
+                while fm.horizontalAdvance(center_txt) > max_width and font_size > 8:
+                    font_size -= 1
+                    center_font.setPointSize(font_size)
+                    fm = QFontMetrics(center_font)
+
+                painter.setPen(primary_color)
+                painter.setFont(center_font)
+                
+                if self._subtitle:
+                    y_offset = int(-size * 0.05)
+                    txt_rect = self.rect().translated(0, y_offset)
+                    painter.drawText(txt_rect, Qt.AlignCenter, center_txt)
+                    
+                    painter.setPen(QColor("#aaaaaa"))
+                    sub_font = QFont("Orbitron", int(size * 0.052))
+                    painter.setFont(sub_font)
+                    sub_rect = txt_rect.translated(0, int(size * 0.125))
+                    painter.drawText(sub_rect, Qt.AlignCenter, self._subtitle)
+                else:
+                    painter.drawText(self.rect(), Qt.AlignCenter, center_txt)
+            else:
+                # Center text - percentage (shifted slightly upward to align with 270-degree arc)
+                y_offset = int(-size * 0.07)
+                percent_rect = self.rect().translated(0, y_offset)
+                
+                painter.setPen(QColor("#ffffff"))
+                percent_font = QFont("Orbitron", int(size * 0.13), QFont.Bold)
+                painter.setFont(percent_font)
+                percent_text = f"{int(self._value)}%"
+                painter.drawText(percent_rect, Qt.AlignCenter, percent_text)
+                
+                # Subtitle below percentage
+                if self._subtitle:
+                    painter.setPen(QColor("#aaaaaa"))
+                    sub_font = QFont("Orbitron", int(size * 0.052))
+                    painter.setFont(sub_font)
+                    sub_rect = percent_rect.translated(0, int(size * 0.13))
+                    painter.drawText(sub_rect, Qt.AlignCenter, self._subtitle)
         
         painter.end()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 class TimeAxisItem(pg.AxisItem):
     def __init__(self, filter_mode, *args, **kwargs):
@@ -313,7 +501,7 @@ class NetworkDetailPanel(QWidget):
             y_max = max(10240, peak * 1.15)
             self.chart.getPlotItem().setYRange(0, y_max, padding=0)
 
-class StatsCard(QFrame):
+class StatsCard(QGroupBox):
     """
     Card widget for displaying stats with optional chart.
     
@@ -321,22 +509,15 @@ class StatsCard(QFrame):
     """
     
     def __init__(self, title: str, parent=None):
-        super().__init__(parent)
+        super().__init__(title, parent)
         self.setObjectName("StatsCard")
-        self._title = title
         self._setup_ui()
         self._apply_style()
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
+        layout.setContentsMargins(16, 20, 16, 12)
         layout.setSpacing(8)
-        
-        # Title
-        self.title_label = QLabel(self._title)
-        self.title_label.setObjectName("statsCardTitle")
-        self.title_label.setStyleSheet("color: #e0e0e0; font-size: 14px; font-weight: 600; background: transparent;")
-        layout.addWidget(self.title_label)
         
         # Content area (for chart or stats)
         self.content_widget = QWidget()
@@ -347,16 +528,28 @@ class StatsCard(QFrame):
         layout.addWidget(self.content_widget, stretch=1)
     
     def _apply_style(self):
-        # Apply style matching HELXAIL card style (rgba(255, 255, 255, 0.04)) with 1px border and hover effect
+        # Apply style matching HELXAIR/HELXAIRO groupbox style
         self.setProperty("class", "statsCard")
         self.setStyleSheet("""
-            QFrame[class="statsCard"], QFrame#StatsCard, QFrame#cpuUsageCard, QFrame#ramUsageCard, QFrame#networkUsageCard, QFrame#diskHealthCard {
+            QGroupBox[class="statsCard"], QGroupBox#StatsCard, QGroupBox#cpuUsageCard, QGroupBox#ramUsageCard, QGroupBox#networkUsageCard, QGroupBox#diskHealthCard {
                 background: rgba(255, 255, 255, 0.04);
                 border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 14px;
+                border-radius: 12px;
+                margin-top: 10px;
+                padding-top: 15px;
             }
-            QFrame[class="statsCard"]:hover, QFrame#StatsCard:hover, QFrame#cpuUsageCard:hover, QFrame#ramUsageCard:hover, QFrame#networkUsageCard:hover, QFrame#diskHealthCard:hover {
+            QGroupBox[class="statsCard"]:hover, QGroupBox#StatsCard:hover, QGroupBox#cpuUsageCard:hover, QGroupBox#ramUsageCard:hover, QGroupBox#networkUsageCard:hover, QGroupBox#diskHealthCard:hover {
                 border-color: rgba(255, 91, 6, 0.4);
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 14px;
+                font-weight: 600;
+                background: transparent;
             }
         """)
     
@@ -435,6 +628,1431 @@ class ProgressBarWidget(QWidget):
         painter.end()
 
 
+class DriveScanWorker(QThread):
+    """
+    Async junk scanner for Drive page.
+
+    Component Name: DriveScanWorker
+    """
+    scan_completed = Signal(dict)
+    scan_progress = Signal(str, int)
+
+    def run(self):
+        try:
+            from utils.drive_utils import scan_junk_categories
+            results = scan_junk_categories(progress_callback=self.scan_progress.emit)
+            self.scan_completed.emit(results)
+        except Exception as e:
+            self.scan_progress.emit(f"Scan failed: {e}", 100)
+            self.scan_completed.emit({})
+
+
+class DiskCleanWorker(QThread):
+    """
+    Async disk cleaner for Drive page.
+
+    Component Name: DiskCleanWorker
+    """
+    clean_completed = Signal(int, int, object)
+    clean_progress = Signal(str, int)
+
+    def __init__(self, selected_categories, parent=None):
+        super().__init__(parent)
+        self.selected_categories = list(selected_categories)
+
+    def run(self):
+        try:
+            from utils.drive_utils import clean_junk_categories
+            cleaned, skipped, errors = clean_junk_categories(
+                self.selected_categories,
+                progress_callback=self.clean_progress.emit,
+            )
+            self.clean_completed.emit(int(cleaned), int(skipped), errors)
+        except Exception as e:
+            self.clean_progress.emit(f"Clean failed: {e}", 100)
+            self.clean_completed.emit(0, 0, [str(e)])
+
+
+class DriveOverviewWidget(QWidget):
+    """
+    Storage hero summary for HELXTATS Drive page.
+
+    Component Name: DriveOverviewWidget
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DriveOverviewWidget")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("""
+            QWidget#DriveOverviewWidget {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+            }
+            QWidget#DriveOverviewWidget:hover {
+                border-color: rgba(255, 91, 6, 0.4);
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        cap_col = QVBoxLayout()
+        cap_col.setSpacing(2)
+        cap_title = QLabel("TOTAL STORAGE")
+        cap_title.setObjectName("driveTotalCapacityTitle")
+        cap_title.setStyleSheet("color: #888888; font-size: 10px; font-weight: 700; background: transparent;")
+        self.lbl_total_capacity = QLabel("0 B / 0 B")
+        self.lbl_total_capacity.setObjectName("driveTotalCapacity")
+        self.lbl_total_capacity.setStyleSheet("color: #ffffff; font-size: 20px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+        cap_col.addWidget(cap_title)
+        cap_col.addWidget(self.lbl_total_capacity)
+        layout.addLayout(cap_col)
+
+        sep = QFrame()
+        sep.setObjectName("driveOverviewSeparator")
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.08); max-height: 1px;")
+        layout.addWidget(sep)
+
+        sub_row = QHBoxLayout()
+        sub_row.setSpacing(12)
+
+        health_col = QVBoxLayout()
+        health_col.setSpacing(2)
+        health_title = QLabel("SMART HEALTH")
+        health_title.setObjectName("driveHealthScoreTitle")
+        health_title.setStyleSheet("color: #888888; font-size: 9px; font-weight: 700; background: transparent;")
+        self.lbl_health_score = QLabel("HEALTH UNKNOWN")
+        self.lbl_health_score.setObjectName("driveHealthScore")
+        self.lbl_health_score.setStyleSheet("color: #FFCC00; font-size: 14px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+        health_col.addWidget(health_title)
+        health_col.addWidget(self.lbl_health_score)
+        sub_row.addLayout(health_col, stretch=1)
+
+        io_col = QVBoxLayout()
+        io_col.setSpacing(2)
+        io_title = QLabel("LIVE I/O")
+        io_title.setObjectName("driveLiveIoTitle")
+        io_title.setStyleSheet("color: #888888; font-size: 9px; font-weight: 700; background: transparent;")
+        self.lbl_live_io = QLabel("R: 0.0 MB/s | W: 0.0 MB/s")
+        self.lbl_live_io.setObjectName("driveLiveIo")
+        self.lbl_live_io.setStyleSheet("color: #00E5FF; font-size: 13px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+        io_col.addWidget(io_title)
+        io_col.addWidget(self.lbl_live_io)
+        sub_row.addLayout(io_col, stretch=1)
+
+        layout.addLayout(sub_row)
+
+    def set_data(self, partitions, hardware, disk_io):
+        from utils.drive_utils import format_bytes
+        total = sum(int(p.get("total_bytes", 0)) for p in partitions)
+        used = sum(int(p.get("used_bytes", 0)) for p in partitions)
+        self.lbl_total_capacity.setText(f"{format_bytes(used)} / {format_bytes(total)}")
+
+        statuses = [str(info.get("smart_status", "")).lower() for info in hardware.values()]
+        if not statuses:
+            text, color = "HEALTH UNKNOWN", "#FFCC00"
+        elif any("critical" in s or "pred fail" in s for s in statuses):
+            text, color = "CRITICAL", "#FF3355"
+        elif any("warn" in s or "bad" in s or "fail" in s for s in statuses):
+            text, color = "WARNING", "#FFCC00"
+        else:
+            text, color = "100% HEALTHY", "#00FF66"
+        self.lbl_health_score.setText(text)
+        self.lbl_health_score.setStyleSheet(f"color: {color}; font-size: 18px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+
+        read_speed = float(disk_io.get("read_mbps", 0) or 0)
+        write_speed = float(disk_io.get("write_mbps", 0) or 0)
+        self.lbl_live_io.setText(f"R: {read_speed:.1f} MB/s | W: {write_speed:.1f} MB/s")
+
+
+class DriveVolumeCard(QWidget):
+    """
+    Per-volume storage card for HELXTATS Drive page.
+
+    Component Name: DriveVolumeCard
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DriveVolumeCard")
+        self.setStyleSheet("""
+            QWidget#DriveVolumeCard {
+                background-color: rgba(35, 35, 42, 0.5);
+                border-radius: 6px;
+            }
+            QWidget#DriveVolumeCard:hover {
+                background-color: rgba(45, 45, 52, 0.8);
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self.title_label = QLabel("(C:) Local Disk")
+        self.title_label.setObjectName("driveVolumeTitle")
+        self.title_label.setStyleSheet("color: #e0e0e0; font-size: 13px; font-weight: 800; background: transparent;")
+        top.addWidget(self.title_label)
+
+        self.type_badge = QLabel("Storage")
+        self.type_badge.setObjectName("driveVolumeTypeBadge")
+        self.type_badge.setStyleSheet("color: #00E5FF; background-color: rgba(0, 229, 255, 0.14); border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 800;")
+        top.addWidget(self.type_badge)
+
+        self.smart_badge = QLabel("Status Unknown")
+        self.smart_badge.setObjectName("driveVolumeSmartBadge")
+        self.smart_badge.setStyleSheet("color: #FFCC00; background-color: rgba(255, 204, 0, 0.14); border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 800;")
+        top.addWidget(self.smart_badge)
+        top.addStretch()
+        layout.addLayout(top)
+
+        self.usage_bar = ProgressBarWidget()
+        self.usage_bar.setObjectName("driveUsageBar")
+        layout.addWidget(self.usage_bar)
+
+        bottom = QHBoxLayout()
+        bottom.setSpacing(12)
+        self.fs_label = QLabel("FS: Unknown")
+        self.fs_label.setObjectName("driveVolumeFsLabel")
+        self.cluster_label = QLabel("Cluster: Unknown")
+        self.cluster_label.setObjectName("driveVolumeClusterLabel")
+        self.free_label = QLabel("Free: 0 B")
+        self.free_label.setObjectName("driveVolumeFreeLabel")
+        for label in (self.fs_label, self.cluster_label, self.free_label):
+            label.setStyleSheet("color: #888888; font-size: 10px; background: transparent;")
+            bottom.addWidget(label)
+        bottom.addStretch()
+        layout.addLayout(bottom)
+
+    def set_data(self, partition, hardware_info=None):
+        from utils.drive_utils import format_bytes
+        hardware_info = hardware_info or {}
+        letter = partition.get("letter") or partition.get("drive", "").rstrip("\\/")
+        label = partition.get("label") or "Local Disk"
+        self.title_label.setText(f"({letter}) {label}")
+
+        media_type = hardware_info.get("media_type") or partition.get("drive_type") or "Storage"
+        model = hardware_info.get("model") or "Unknown model"
+        self.type_badge.setText(str(media_type))
+        self.type_badge.setToolTip(model)
+
+        status = str(hardware_info.get("smart_status") or "Status Unknown")
+        temp = hardware_info.get("temperature")
+        if temp not in (None, "", 0, 0.0):
+            status_text = f"{status} • {float(temp):.0f}°C"
+        else:
+            status_text = status
+        lowered = status.lower()
+        if "ok" in lowered or "good" in lowered:
+            color = "#00FF66"
+            bg = "rgba(0, 255, 102, 0.14)"
+        elif "warn" in lowered:
+            color = "#FFCC00"
+            bg = "rgba(255, 204, 0, 0.14)"
+        elif "critical" in lowered or "fail" in lowered:
+            color = "#FF3355"
+            bg = "rgba(255, 51, 85, 0.14)"
+        else:
+            color = "#FFCC00"
+            bg = "rgba(255, 204, 0, 0.14)"
+        self.smart_badge.setText(status_text)
+        self.smart_badge.setStyleSheet(f"color: {color}; background-color: {bg}; border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 800;")
+
+        percent = float(partition.get("percent_used", 0) or 0)
+        used = int(partition.get("used_bytes", 0) or 0)
+        total = int(partition.get("total_bytes", 0) or 0)
+        free = int(partition.get("free_bytes", 0) or 0)
+        self.usage_bar.setValue(percent)
+        self.usage_bar.setLabel(letter)
+        self.usage_bar.setRightLabel(f"{format_bytes(used)} / {format_bytes(total)}")
+
+        cluster = int(partition.get("cluster_size", 0) or 0)
+        self.fs_label.setText(f"FS: {partition.get('filesystem') or 'Unknown'}")
+        self.cluster_label.setText(f"Cluster: {format_bytes(cluster) if cluster else 'Unknown'}")
+        self.free_label.setText(f"Free: {format_bytes(free)}")
+
+
+class JunkItemsFloatingPanel(QDialog):
+    """
+    Floating panel displaying individual junk paths matching the HELXTATS dark theme.
+
+    Component Name: JunkItemsFloatingPanel
+    """
+    def __init__(self, title="ITEMS", paths=None, parent=None):
+        super().__init__(parent)
+        self.setObjectName("JunkItemsFloatingPanel")
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(620, 380)
+        self._drag_pos = None
+
+        container = QFrame(self)
+        container.setObjectName("junkItemsContainer")
+        container.setStyleSheet("""
+            QFrame#junkItemsContainer {
+                background-color: #141414;
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(container)
+
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        # Header bar matching reference image with orange gradient
+        header_bar = QWidget()
+        header_bar.setObjectName("junkItemsHeaderBar")
+        header_bar.setFixedHeight(38)
+        header_bar.setStyleSheet("""
+            QWidget#junkItemsHeaderBar {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                border-top-left-radius: 7px;
+                border-top-right-radius: 7px;
+                border-bottom: none;
+            }
+        """)
+        header_layout = QHBoxLayout(header_bar)
+        header_layout.setContentsMargins(12, 0, 10, 0)
+        header_layout.setSpacing(8)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        tag_icon_path = os.path.join(script_dir, "UI Icons", "tag-icon.svg")
+        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon-white.svg")
+
+        icon_lbl = QLabel()
+        icon_lbl.setFixedSize(16, 16)
+        icon_lbl.setScaledContents(True)
+        if os.path.exists(tag_icon_path):
+            icon_lbl.setPixmap(QPixmap(tag_icon_path))
+        header_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
+
+        title_lbl = QLabel(str(title).upper())
+        title_lbl.setObjectName("junkItemsHeaderTitle")
+        title_lbl.setStyleSheet("color: #ffffff; font-family: 'Orbitron'; font-size: 12px; font-weight: 800; background: transparent;")
+        header_layout.addWidget(title_lbl, stretch=1, alignment=Qt.AlignVCenter)
+
+        btn_close = QPushButton()
+        btn_close.setObjectName("junkItemsCloseBtn")
+        btn_close.setFixedSize(24, 24)
+        btn_close.setCursor(Qt.PointingHandCursor)
+        if os.path.exists(close_icon_path):
+            btn_close.setIcon(QIcon(close_icon_path))
+            btn_close.setIconSize(QSize(14, 14))
+        btn_close.setStyleSheet("""
+            QPushButton#junkItemsCloseBtn {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+            QPushButton#junkItemsCloseBtn:hover {
+                background: rgba(0, 0, 0, 0.25);
+                border-radius: 4px;
+            }
+        """)
+        btn_close.clicked.connect(self.accept)
+        header_layout.addWidget(btn_close, alignment=Qt.AlignVCenter)
+
+        container_layout.addWidget(header_bar)
+
+        # High-performance virtualized list widget (handles 100,000+ items instantly without freezing)
+        list_widget = QListWidget()
+        list_widget.setObjectName("junkItemsListWidget")
+        list_widget.setSelectionMode(QListWidget.SingleSelection)
+        list_widget.setStyleSheet("""
+            QListWidget#junkItemsListWidget {
+                background: transparent;
+                border: none;
+                outline: none;
+                font-family: 'Orbitron', monospace;
+                font-size: 11px;
+                color: #e0e0e0;
+                padding: 6px;
+            }
+            QListWidget#junkItemsListWidget::item {
+                padding: 6px 8px;
+                border-radius: 4px;
+                margin-bottom: 2px;
+            }
+            QListWidget#junkItemsListWidget::item:hover {
+                background: rgba(255, 91, 6, 0.18);
+                color: #ffffff;
+            }
+            QListWidget#junkItemsListWidget::item:selected {
+                background: rgba(255, 91, 6, 0.3);
+                color: #ffffff;
+            }
+            QScrollBar:vertical { background: #181818; width: 6px; margin: 0px; }
+            QScrollBar::handle:vertical { background: #3a3a3a; min-height: 20px; border-radius: 3px; }
+            QScrollBar::handle:vertical:hover { background: #FF5B06; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        paths_list = [str(p) for p in paths] if paths else []
+        if not paths_list:
+            item = QListWidgetItem("No junk file paths scanned or found for this category.")
+            item.setFlags(Qt.NoItemFlags)
+            list_widget.addItem(item)
+        else:
+            list_widget.addItems(paths_list)
+
+        def _on_item_clicked(item):
+            path_str = item.text()
+            if not path_str or "No junk file paths" in path_str:
+                return
+            try:
+                import os, subprocess, threading
+                def _launch():
+                    target = os.path.abspath(path_str)
+                    if os.path.isfile(target):
+                        subprocess.Popen(f'explorer.exe /select,"{target}"')
+                    elif os.path.exists(target):
+                        subprocess.Popen(f'explorer.exe "{target}"')
+                    else:
+                        parent_dir = os.path.dirname(target)
+                        if os.path.exists(parent_dir):
+                            subprocess.Popen(f'explorer.exe "{parent_dir}"')
+                threading.Thread(target=_launch, daemon=True).start()
+            except Exception as err:
+                print(f"[JunkPaths] Error opening path: {err}")
+
+        list_widget.itemClicked.connect(_on_item_clicked)
+        container_layout.addWidget(list_widget, stretch=1)
+
+        if paths_list:
+            footer_lbl = QLabel(f"Total Items: {len(paths_list)}")
+            footer_lbl.setObjectName("junkItemsFooterLabel")
+            footer_lbl.setStyleSheet("color: #777777; font-family: 'Orbitron'; font-size: 10px; padding: 4px 12px 8px 12px; background: transparent;")
+            container_layout.addWidget(footer_lbl)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton and self._drag_pos is not None:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        event.accept()
+
+
+class DiskCleanerPanel(QWidget):
+    """
+    Tiered disk cleaner control panel with Hero Scan Panel and Category List.
+
+    Component Name: DiskCleanerPanel
+    """
+    scan_requested = Signal()
+    clean_requested = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DiskCleanerPanel")
+        self._category_rows = {}
+        self._is_scanned = False
+        self._is_scanning_active = False
+        self._scan_dot_step = 0
+        self._scan_dot_timer = QTimer(self)
+        self._scan_dot_timer.timeout.connect(self._animate_scan_dots)
+        self._hero_gradient_offset = 0.0
+        self._hero_gradient_timer = QTimer(self)
+        self._hero_gradient_timer.timeout.connect(self._update_hero_gradient)
+        self.setStyleSheet("QWidget#DiskCleanerPanel { background: transparent; }")
+
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(12)
+
+        # === LEFT PANEL: HERO SCAN PANEL (Booster-style with CircularGauge) ===
+        self.hero_panel = QWidget()
+        self.hero_panel.setObjectName("DriveScanHeroWidget")
+        self.hero_panel.setFixedWidth(240)
+        self.hero_panel.setStyleSheet("""
+            QWidget#DriveScanHeroWidget {
+                background: transparent;
+                border: none;
+            }
+        """)
+        hero_layout = QVBoxLayout(self.hero_panel)
+        hero_layout.setContentsMargins(14, 16, 14, 16)
+        hero_layout.setSpacing(10)
+
+        hero_title = QLabel("DISK CLEANER")
+        hero_title.setObjectName("driveCleanerHeroTitle")
+        hero_title.setStyleSheet("color: #e0e0e0; font-size: 14px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+        hero_title.setAlignment(Qt.AlignCenter)
+        hero_layout.addWidget(hero_title)
+
+        # Circular Gauge Widget (reused from top of HardwarePanelWidget)
+        self.hero_gauge = CircularGauge()
+        self.hero_gauge.setObjectName("driveCleanerHeroGauge")
+        self.hero_gauge.setFixedSize(180, 180)
+        self.hero_gauge.setShowText(True)
+        self.hero_gauge.setCenterText("SCAN")
+        self.hero_gauge.setAnimated(True)
+        self.hero_gauge.setSubtitle("Ready to Scan")
+        self.hero_gauge.setAccentColor(QColor("#FF5B06"))
+        hero_layout.addWidget(self.hero_gauge, 0, Qt.AlignCenter)
+        self.hero_gauge.setCursor(Qt.PointingHandCursor)
+        self.hero_gauge.clicked.connect(self._on_hero_action_clicked)
+        
+        self.hero_status_lbl = QLabel("Tier 1 selected by default")
+        self.hero_status_lbl.setObjectName("driveCleanerHeroStatus")
+        self.hero_status_lbl.setStyleSheet("color: #aaaaaa; font-size: 11px; background: transparent; font-family: 'Orbitron'; font-weight: 500;")
+        self.hero_status_lbl.setAlignment(Qt.AlignCenter)
+        self.hero_status_lbl.setWordWrap(True)
+        hero_layout.addWidget(self.hero_status_lbl)
+
+        self.btn_back_scan = QPushButton("BACK TO SCAN")
+        self.btn_back_scan.setObjectName("driveBackScanButton")
+        self.btn_back_scan.setFixedHeight(50)
+        self.btn_back_scan.setCursor(Qt.PointingHandCursor)
+        self.btn_back_scan.setStyleSheet("""
+            QPushButton#driveBackScanButton {
+                background: transparent;
+                color: #888888;
+                border: 1px solid #444;
+                border-radius: 6px;
+                height: 50px;
+                min-height: 50px;
+                max-height: 50px;
+                padding: 0px;
+                margin: 0px;
+                font-size: 11px;
+                font-weight: 700;
+                font-family: 'Orbitron';
+            }
+            QPushButton#driveBackScanButton:hover {
+                background: rgba(255, 255, 255, 0.05);
+                color: #cccccc;
+                border-color: #666;
+            }
+            QPushButton#driveBackScanButton:disabled {
+                color: #444444;
+                border-color: #333333;
+                background: transparent;
+            }
+        """)
+        self.btn_back_scan.clicked.connect(self._on_back_scan_clicked)
+        self.btn_back_scan.setEnabled(False)
+        hero_layout.addWidget(self.btn_back_scan)
+        
+        hero_layout.addStretch()
+        main_layout.addWidget(self.hero_panel, stretch=0)
+
+        # === RIGHT PANEL: CLEANUP CATEGORIES LIST ===
+        self.category_panel = QWidget()
+        self.category_panel.setObjectName("DriveCleanerCategoryPanel")
+        self.category_panel.setStyleSheet("""
+            QWidget#DriveCleanerCategoryPanel {
+                background: transparent;
+                border: none;
+            }
+        """)
+        cat_panel_layout = QVBoxLayout(self.category_panel)
+        cat_panel_layout.setContentsMargins(14, 14, 14, 14)
+        cat_panel_layout.setSpacing(10)
+
+        # Sub-tab bar (Booster tab style: Essential, System, Advanced, All Junk)
+        tab_bar = QWidget()
+        tab_bar.setObjectName("driveCleanerTabBar")
+        tab_bar.setFixedHeight(38)
+        tab_bar.setStyleSheet("""
+            QWidget#driveCleanerTabBar {
+                background: rgba(20, 20, 20, 0.8);
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+        """)
+        tab_bar_layout = QHBoxLayout(tab_bar)
+        tab_bar_layout.setContentsMargins(6, 0, 6, 0)
+        tab_bar_layout.setSpacing(4)
+
+        tab_names = ["System clean-up", "System tweaks", "Disk defragment"]
+        self._cleaner_tab_btns = []
+        self._current_cleaner_tab = 0
+
+        for i, name in enumerate(tab_names):
+            btn = QPushButton(name)
+            btn.setObjectName(f"driveCleanerTabBtn_{i}")
+            btn.setFixedHeight(30)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(f"Open {name}")
+            btn.clicked.connect(lambda checked, idx=i: self._switch_cleaner_tab(idx))
+            self._cleaner_tab_btns.append(btn)
+            tab_bar_layout.addWidget(btn)
+
+        tab_bar_layout.addStretch()
+        cat_panel_layout.addWidget(tab_bar)
+
+        # QStackedWidget for 3 Sub-Tabs
+        self.cleaner_stack = QStackedWidget()
+        self.cleaner_stack.setObjectName("driveCleanerStack")
+
+        # Page 0: System clean-up (Disk Cleaner Scroll Area)
+        scroll = SmoothScrollArea()
+        scroll.setObjectName("DriveCleanerScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical { background: #1e1e1e; width: 6px; margin: 0px; }
+            QScrollBar::handle:vertical { background: #444; min-height: 20px; border-radius: 3px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        self.category_container = QWidget()
+        self.category_container.setObjectName("driveCleanerCategoryContainer")
+        self.category_container.setStyleSheet("background: transparent;")
+        self.category_layout = QVBoxLayout(self.category_container)
+        self.category_layout.setContentsMargins(0, 0, 6, 0)
+        self.category_layout.setSpacing(6)
+
+        scroll.setWidget(self.category_container)
+
+        # Empty State View (shown before user scans)
+        self.empty_state_page = QWidget()
+        self.empty_state_page.setObjectName("driveCleanerEmptyStatePage")
+        empty_layout = QVBoxLayout(self.empty_state_page)
+        empty_layout.setContentsMargins(20, 30, 20, 30)
+        empty_layout.setSpacing(12)
+        empty_layout.setAlignment(Qt.AlignCenter)
+
+        self.empty_gauge = CircularGauge()
+        self.empty_gauge.setObjectName("driveCleanerEmptyGauge")
+        self.empty_gauge.setFixedSize(140, 140)
+        self.empty_gauge.setShowText(True)
+        self.empty_gauge.setCenterText("SCAN")
+        self.empty_gauge.setAnimated(True)
+        self.empty_gauge.setGrayscale(True)
+        empty_layout.addWidget(self.empty_gauge, 0, Qt.AlignCenter)
+
+        empty_title = QLabel("It's a little empty here.")
+        empty_title.setObjectName("driveEmptyTitle")
+        empty_title.setStyleSheet("color: #ffffff; font-size: 15px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
+        empty_title.setAlignment(Qt.AlignCenter)
+        empty_layout.addWidget(empty_title)
+
+        empty_subtitle = QLabel("Click SCAN to see more.")
+        empty_subtitle.setObjectName("driveEmptySubtitle")
+        empty_subtitle.setStyleSheet("color: #888888; font-size: 12px; font-weight: 500; font-family: 'Orbitron'; background: transparent;")
+        empty_subtitle.setAlignment(Qt.AlignCenter)
+        empty_layout.addWidget(empty_subtitle)
+
+        # View Stack for System clean-up page (Index 0: Empty State, Index 1: Category Table)
+        self.cleanup_view_stack = QStackedWidget()
+        self.cleanup_view_stack.setObjectName("driveCleanupViewStack")
+        self.cleanup_view_stack.addWidget(self.empty_state_page)
+        self.cleanup_view_stack.addWidget(scroll)
+
+        self.cleaner_stack.addWidget(self.cleanup_view_stack)
+
+        # Page 1: System tweaks (Placeholder for future tweaks)
+        tweaks_page = QWidget()
+        tweaks_page.setObjectName("driveSystemTweaksPage")
+        tweaks_layout = QVBoxLayout(tweaks_page)
+        tweaks_lbl = QLabel("System Tweaks coming soon...")
+        tweaks_lbl.setObjectName("driveSystemTweaksLabel")
+        tweaks_lbl.setStyleSheet("color: #888888; font-size: 13px; font-family: 'Orbitron'; background: transparent;")
+        tweaks_lbl.setAlignment(Qt.AlignCenter)
+        tweaks_layout.addWidget(tweaks_lbl)
+        self.cleaner_stack.addWidget(tweaks_page)
+
+        # Page 2: Disk defragment (Placeholder for future defrag tool)
+        defrag_page = QWidget()
+        defrag_page.setObjectName("driveDefragPage")
+        defrag_layout = QVBoxLayout(defrag_page)
+        defrag_lbl = QLabel("Disk Defragmentation coming soon...")
+        defrag_lbl.setObjectName("driveDefragLabel")
+        defrag_lbl.setStyleSheet("color: #888888; font-size: 13px; font-family: 'Orbitron'; background: transparent;")
+        defrag_lbl.setAlignment(Qt.AlignCenter)
+        defrag_layout.addWidget(defrag_lbl)
+        self.cleaner_stack.addWidget(defrag_page)
+
+        cat_panel_layout.addWidget(self.cleaner_stack, stretch=1)
+
+        self._build_categories()
+        self._switch_cleaner_tab(0)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setObjectName("driveCleanerProgress")
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background: rgba(60, 60, 60, 0.5); border: none; border-radius: 3px; }
+            QProgressBar::chunk { background: #FF5B06; border-radius: 3px; }
+        """)
+        cat_panel_layout.addWidget(self.progress_bar)
+
+        # Bottom Bar with Status Label & RESET TO DEFAULT button (matching essentialBottom in Booster tab)
+        bottom_bar = QFrame()
+        bottom_bar.setObjectName("driveCleanerBottomBar")
+        bottom_bar.setFixedHeight(50)
+        bottom_bar.setStyleSheet("""
+            QFrame#driveCleanerBottomBar {
+                background: rgba(30, 30, 30, 0.8);
+                border-top: 1px solid rgba(255, 255, 255, 0.08);
+                border-bottom-left-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }
+        """)
+        bottom_layout = QHBoxLayout(bottom_bar)
+        bottom_layout.setContentsMargins(15, 0, 15, 0)
+        bottom_layout.setSpacing(10)
+
+        self.status_label = QLabel("Tier 1 selected by default. Review before cleaning.")
+        self.status_label.setObjectName("driveCleanerStatusLabel")
+        self.status_label.setStyleSheet("color: #888888; font-size: 10px; background: transparent; font-family: 'Orbitron';")
+        self.status_label.setWordWrap(True)
+        bottom_layout.addWidget(self.status_label, stretch=1, alignment=Qt.AlignVCenter)
+
+        self.btn_reset = QPushButton("RESET TO DEFAULT")
+        self.btn_reset.setObjectName("driveCleanerResetBtn")
+        self.btn_reset.setFixedSize(170, 38)
+        self.btn_reset.setCursor(Qt.PointingHandCursor)
+        self.btn_reset.setToolTip("Reset all selections to default tier configuration")
+        self.btn_reset.setStyleSheet("""
+            QPushButton#driveCleanerResetBtn {
+                background: #3a3a3a;
+                color: #e0e0e0;
+                border: 1px solid #555;
+                border-radius: 4px;
+                font-family: 'Orbitron';
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton#driveCleanerResetBtn:hover {
+                background: #444;
+                border-color: #FF5B06;
+                color: #ffffff;
+            }
+            QPushButton#driveCleanerResetBtn:pressed {
+                background: #2a2a2a;
+            }
+        """)
+        self.btn_reset.clicked.connect(self._reset_cleanup_selections)
+        bottom_layout.addWidget(self.btn_reset, alignment=Qt.AlignVCenter)
+
+        cat_panel_layout.addWidget(bottom_bar)
+
+        main_layout.addWidget(self.category_panel, stretch=6)
+
+    def _reset_cleanup_selections(self):
+        """Reset all category row checkboxes to their default configuration."""
+        from utils.drive_utils import JUNK_CATEGORIES
+        default_map = {c.id: c.default for c in JUNK_CATEGORIES}
+
+        for cat_id, row_data in self._category_rows.items():
+            check = row_data.get("check")
+            if check and check.isEnabled():
+                cat_def = row_data.get("cat_default", default_map.get(cat_id, False))
+                check.blockSignals(True)
+                check.setChecked(bool(cat_def))
+                check.blockSignals(False)
+
+        # Also reset group / subgroup checkboxes to match
+        if hasattr(self, '_subgroup_rows'):
+            for sgid, subgrp in self._subgroup_rows.items():
+                child_rows = [r for r in self._category_rows.values() if r.get("subgroup_id") == sgid]
+                enabled_children = [r["check"] for r in child_rows if r["check"].isEnabled()]
+                if enabled_children:
+                    checked_count = sum(1 for c in enabled_children if c.isChecked())
+                    subgrp["check"].blockSignals(True)
+                    if checked_count == len(enabled_children):
+                        subgrp["check"].setCheckState(2)
+                    elif checked_count > 0:
+                        subgrp["check"].setCheckState(1)
+                    else:
+                        subgrp["check"].setCheckState(0)
+                    subgrp["check"].blockSignals(False)
+
+        if hasattr(self, '_group_rows'):
+            for group_id, grp in self._group_rows.items():
+                child_rows = [r for r in self._category_rows.values() if r.get("group_id") == group_id]
+                enabled_children = [r["check"] for r in child_rows if r["check"].isEnabled()]
+                if enabled_children:
+                    checked_count = sum(1 for c in enabled_children if c.isChecked())
+                    grp["check"].blockSignals(True)
+                    if checked_count == len(enabled_children):
+                        grp["check"].setCheckState(2)
+                    elif checked_count > 0:
+                        grp["check"].setCheckState(1)
+                    else:
+                        grp["check"].setCheckState(0)
+                    grp["check"].blockSignals(False)
+
+        self._recalculate_selected_junk()
+
+    def _animate_scan_dots(self):
+        if not getattr(self, '_is_scanning_active', False):
+            if hasattr(self, '_scan_dot_timer') and self._scan_dot_timer.isActive():
+                self._scan_dot_timer.stop()
+            return
+        self._scan_dot_step = (self._scan_dot_step % 3) + 1
+        dots = "." * self._scan_dot_step
+        self.hero_gauge.setCenterText(f"Scanning{dots}")
+        self.hero_status_lbl.setText(f"Scanning{dots}")
+
+    def _on_hero_action_clicked(self):
+        if not self._is_scanned:
+            def _start_scan_anim():
+                self._is_scanning_active = True
+                self._scan_dot_step = 1
+                self.hero_gauge.setCenterText("Scanning.")
+                self.hero_gauge.setSubtitle("0%")
+                self.hero_status_lbl.setText("Scanning system categories...")
+                self.hero_gauge.setAnimated(True)
+                self.hero_gauge.setGrayscale(True)
+                if not self._scan_dot_timer.isActive():
+                    self._scan_dot_timer.start(400)
+                self.scan_requested.emit()
+            self.hero_gauge.trigger_fade_transition(220, _start_scan_anim)
+        else:
+            selected = self.selected_category_ids()
+            if selected:
+                self.clean_requested.emit(selected)
+
+    def _update_hero_gradient(self):
+        if not getattr(self, '_is_scanned', False):
+            if hasattr(self, '_hero_gradient_timer') and self._hero_gradient_timer.isActive():
+                self._hero_gradient_timer.stop()
+            return
+        
+        colors = ['#ff3da7', '#ff0c2b', '#ff5700', '#ffab00', '#ff3da7']
+        self._hero_gradient_offset += 0.005
+        if self._hero_gradient_offset >= 1.0:
+            self._hero_gradient_offset = 0.0
+        
+        offset = self._hero_gradient_offset
+        num_colors = len(colors)
+        stops = []
+        for i, color in enumerate(colors):
+            base_pos = i / (num_colors - 1)
+            shifted_pos = (base_pos + offset) % 1.0
+            stops.append((shifted_pos, color))
+        
+        stops.sort(key=lambda x: x[0])
+        gradient_stops = ', '.join([f'stop:{pos:.3f} {color}' for pos, color in stops])
+        
+        # The hero gauge is already animated based on the scanning state.
+
+
+    def _on_back_scan_clicked(self):
+        def _reset_scan_state():
+            self._is_scanning_active = False
+            if hasattr(self, '_scan_dot_timer') and self._scan_dot_timer.isActive():
+                self._scan_dot_timer.stop()
+            self._is_scanned = False
+            for row in self._category_rows.values():
+                row["bytes"] = 0
+            self.progress_bar.setValue(0)
+            self._recalculate_selected_junk()
+        self.hero_gauge.trigger_fade_transition(220, _reset_scan_state)
+
+    def _recalculate_selected_junk(self):
+        from utils.drive_utils import format_bytes
+        selected_ids = self.selected_category_ids()
+        selected_bytes = sum(row["bytes"] for cat_id, row in self._category_rows.items() if cat_id in selected_ids)
+        total_scanned_bytes = sum(row["bytes"] for row in self._category_rows.values())
+
+        # 0. Update Category Rows Visibility
+        for cat_id, row in self._category_rows.items():
+            if self._is_scanned and row["bytes"] == 0:
+                row["row"].setVisible(False)
+            else:
+                row["row"].setVisible(True)
+
+        # 1. Update Subgroups (e.g. Windows Temp Files, Google Chrome)
+        if hasattr(self, '_subgroup_rows'):
+            for sgid, subgrp in self._subgroup_rows.items():
+                sg_total_bytes = sum(row["bytes"] for cat_id, row in self._category_rows.items() if row.get("subgroup_id") == sgid)
+                subgrp["size_lbl"].setText(format_bytes(sg_total_bytes) if (self._is_scanned or sg_total_bytes > 0) else "")
+                
+                # Hide empty subgroups when scanned
+                if self._is_scanned and sg_total_bytes == 0:
+                    subgrp["frame"].setVisible(False)
+                else:
+                    subgrp["frame"].setVisible(True)
+
+                child_rows = [row for cat_id, row in self._category_rows.items() if row.get("subgroup_id") == sgid]
+                enabled_children = [r["check"] for r in child_rows if r["check"].isEnabled()]
+                if enabled_children:
+                    checked_count = sum(1 for c in enabled_children if c.isChecked())
+                    subgrp["check"].blockSignals(True)
+                    if checked_count == len(enabled_children):
+                        subgrp["check"].setCheckState(2)
+                    elif checked_count > 0:
+                        subgrp["check"].setCheckState(1)
+                    else:
+                        subgrp["check"].setCheckState(0)
+                    subgrp["check"].blockSignals(False)
+
+        # 2. Update Main Groups (e.g. System, Browser)
+        if hasattr(self, '_group_rows'):
+            for group_id, grp in self._group_rows.items():
+                group_total_bytes = sum(row["bytes"] for cat_id, row in self._category_rows.items() if row["group_id"] == group_id)
+                grp["size_lbl"].setText(format_bytes(group_total_bytes) if (self._is_scanned or group_total_bytes > 0) else "")
+                
+                # Hide empty main groups when scanned
+                if self._is_scanned and group_total_bytes == 0:
+                    grp["frame"].setVisible(False)
+                else:
+                    grp["frame"].setVisible(True)
+
+                child_rows = [row for cat_id, row in self._category_rows.items() if row["group_id"] == group_id]
+                enabled_children = [r["check"] for r in child_rows if r["check"].isEnabled()]
+                if enabled_children:
+                    checked_count = sum(1 for c in enabled_children if c.isChecked())
+                    grp["check"].blockSignals(True)
+                    if checked_count == len(enabled_children):
+                        grp["check"].setCheckState(2)
+                    elif checked_count > 0:
+                        grp["check"].setCheckState(1)
+                    else:
+                        grp["check"].setCheckState(0)
+                    grp["check"].blockSignals(False)
+
+        if total_scanned_bytes > 0:
+            percent = min(100, int((selected_bytes / total_scanned_bytes) * 100))
+            self.hero_gauge.setValue(percent)
+            self.hero_gauge.setCenterText(format_bytes(selected_bytes))
+            self.hero_gauge.setSubtitle("CLEAN NOW")
+        elif self._is_scanned:
+            self.hero_gauge.setValue(0)
+            self.hero_gauge.setCenterText("0 B")
+            self.hero_gauge.setSubtitle("0 B Junk")
+        else:
+            self.hero_gauge.setCenterText("SCAN")
+            self.hero_gauge.setSubtitle("Ready to scan")
+
+        if hasattr(self, 'cleanup_view_stack'):
+            self.cleanup_view_stack.setCurrentIndex(1 if self._is_scanned else 0)
+
+        if self._is_scanned:
+            cat_str = "category" if len(selected_ids) == 1 else "categories"
+            self.hero_status_lbl.setText(f"Click to clean {len(selected_ids)} {cat_str}\n({format_bytes(selected_bytes)})")
+            self.hero_gauge.setEnabled(bool(selected_ids))
+            if not self._hero_gradient_timer.isActive():
+                self._hero_gradient_timer.start(17)
+            self._update_hero_gradient()
+            self.btn_back_scan.setEnabled(True)
+            self.hero_gauge.setAnimated(False)
+            self.hero_gauge.setGrayscale(False)
+            self.hero_gauge.setClockwise(False)
+            self.hero_gauge.setUseGradientForValue(True)
+        else:
+            if self._hero_gradient_timer.isActive():
+                self._hero_gradient_timer.stop()
+            cat_str = "category" if len(selected_ids) == 1 else "categories"
+            self.hero_status_lbl.setText(f"Ready to scan\n{len(selected_ids)} {cat_str}")
+            self.btn_back_scan.setEnabled(False)
+            self.hero_gauge.setAnimated(True)
+            self.hero_gauge.setGrayscale(True)
+            self.hero_gauge.setClockwise(False)
+            self.hero_gauge.setUseGradientForValue(False)
+
+    def _create_category_row(self, cat, admin):
+        cat_id = cat["id"] if isinstance(cat, dict) else cat.id
+        cat_name = cat["name"] if isinstance(cat, dict) else cat.name
+        cat_tier = cat.get("tier", 1) if isinstance(cat, dict) else cat.tier
+        cat_default = cat.get("default", True) if isinstance(cat, dict) else cat.default
+        cat_req_admin = cat.get("requires_admin", False) if isinstance(cat, dict) else cat.requires_admin
+        gid = cat.get("group_id", "system") if isinstance(cat, dict) else getattr(cat, "group_id", "system")
+        sgid = cat.get("subgroup_id") if isinstance(cat, dict) else getattr(cat, "subgroup_id", None)
+
+        row = QFrame()
+        row.setObjectName(f"driveCleanRow_{cat_id}")
+        row.setFixedHeight(35)
+        row.setStyleSheet("""
+            QFrame#driveCleanRow_%s {
+                background: transparent;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            }
+            QFrame#driveCleanRow_%s:hover {
+                background: rgba(255, 91, 6, 0.08);
+            }
+        """ % (cat_id, cat_id))
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(8, 0, 15, 0)
+        row_layout.setSpacing(8)
+
+        # Placeholder to align CheckBox with parent headers that have a 16px arrow button
+        dummy_arrow = QWidget()
+        dummy_arrow.setObjectName(f"driveCleanDummyArrow_{cat_id}")
+        dummy_arrow.setFixedSize(16, 16)
+        dummy_arrow.setStyleSheet("background: transparent;")
+        row_layout.addWidget(dummy_arrow, alignment=Qt.AlignVCenter)
+
+        cb = AnimatedCheckBox()
+        cb.setObjectName(f"driveCleanCheck_{cat_id}")
+        cb.setChecked(bool(cat_default))
+        cb.setEnabled(True) # Enabled unconditionally since Zero-UAC handles elevated tasks
+        cb.setStyleSheet("background: transparent;")
+        cb.toggled.connect(lambda checked: self._recalculate_selected_junk())
+        row_layout.addWidget(cb, alignment=Qt.AlignVCenter)
+
+        name = QLabel(cat_name)
+        name.setObjectName(f"driveCleanName_{cat_id}")
+        name.setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: 600; font-family: 'Orbitron'; background: transparent;")
+        row_layout.addWidget(name, stretch=1, alignment=Qt.AlignVCenter)
+
+        if cat_req_admin and not admin:
+            badge = QLabel("Zero-UAC")
+            badge.setObjectName(f"driveCleanBadge_{cat_id}")
+            badge.setStyleSheet("color: #FFCC00; background-color: rgba(255, 204, 0, 0.12); border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 800;")
+            row_layout.addWidget(badge, alignment=Qt.AlignVCenter)
+        else:
+            badge = None
+
+        # Folder inspect button positioned immediately to the left of the total size label
+        btn_folder = QPushButton()
+        btn_folder.setObjectName(f"driveCleanFolderBtn_{cat_id}")
+        btn_folder.setFixedSize(22, 22)
+        btn_folder.setCursor(Qt.PointingHandCursor)
+        btn_folder.setToolTip(f"Inspect junk paths for {cat_name}")
+        folder_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon-white.svg")
+        if os.path.exists(folder_icon_path):
+            btn_folder.setIcon(QIcon(folder_icon_path))
+            btn_folder.setIconSize(QSize(13, 13))
+        else:
+            btn_folder.setText("📁")
+        btn_folder.setStyleSheet("""
+            QPushButton#driveCleanFolderBtn_%s {
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 2px;
+            }
+            QPushButton#driveCleanFolderBtn_%s:hover {
+                background: rgba(255, 91, 6, 0.25);
+            }
+        """ % (cat_id, cat_id))
+        btn_folder.clicked.connect(lambda checked=False, cid=cat_id: self._show_junk_items_panel(cid))
+        row_layout.addWidget(btn_folder, alignment=Qt.AlignVCenter)
+
+        size = QLabel("—")
+        size.setObjectName(f"driveCleanSize_{cat_id}")
+        size.setStyleSheet("color: #888888; font-size: 11px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
+        size.setMinimumWidth(80)
+        size.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        row_layout.addWidget(size, alignment=Qt.AlignVCenter)
+
+        self._category_rows[cat_id] = {
+            "row": row,
+            "check": cb,
+            "size": size,
+            "badge": badge,
+            "name": cat_name,
+            "btn_folder": btn_folder,
+            "tier": cat_tier,
+            "cat_default": cat_default,
+            "group_id": gid,
+            "subgroup_id": sgid,
+            "bytes": 0,
+            "paths": [],
+        }
+        return row, cat_id
+
+    def _build_categories(self):
+        import os
+        from PySide6.QtGui import QIcon, QPixmap
+        from PySide6.QtCore import QSize
+        from utils.drive_utils import get_junk_categories, is_admin
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        down_icon_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg")
+        right_icon_path = os.path.join(script_dir, "UI Icons", "right-arrow-triangle.svg")
+        down_icon = QIcon(down_icon_path)
+        right_icon = QIcon(right_icon_path)
+
+        admin = is_admin()
+        categories = get_junk_categories()
+
+        # Group categories by group_id -> subgroup_id
+        groups_map = {}
+        for cat in categories:
+            gid = cat.get("group_id", "system") if isinstance(cat, dict) else getattr(cat, "group_id", "system")
+            gname = cat.get("group_name", "System") if isinstance(cat, dict) else getattr(cat, "group_name", "System")
+            sgid = cat.get("subgroup_id") if isinstance(cat, dict) else getattr(cat, "subgroup_id", None)
+            sgname = cat.get("subgroup_name") if isinstance(cat, dict) else getattr(cat, "subgroup_name", None)
+
+            if gid not in groups_map:
+                groups_map[gid] = {"name": gname, "direct_items": [], "subgroups": {}}
+
+            if sgid:
+                if sgid not in groups_map[gid]["subgroups"]:
+                    groups_map[gid]["subgroups"][sgid] = {"name": sgname, "items": []}
+                groups_map[gid]["subgroups"][sgid]["items"].append(cat)
+            else:
+                groups_map[gid]["direct_items"].append(cat)
+
+        self._group_rows = {}
+        self._subgroup_rows = {}
+
+        for gid, grp_info in groups_map.items():
+            group_frame = QFrame()
+            group_frame.setObjectName(f"driveGroupFrame_{gid}")
+            group_frame.setStyleSheet("""
+                QFrame#driveGroupFrame_%s {
+                    background-color: transparent;
+                    border: none;
+                }
+            """ % gid)
+            group_layout = QVBoxLayout(group_frame)
+            group_layout.setContentsMargins(0, 0, 0, 0)
+            group_layout.setSpacing(0)
+
+            # --- Main Group Header Row ---
+            header_row = QWidget()
+            header_row.setObjectName(f"driveGroupHeader_{gid}")
+            header_row.setFixedHeight(35)
+            header_row.setStyleSheet("""
+                QWidget#driveGroupHeader_%s {
+                    background: rgba(40, 40, 40, 0.9);
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                }
+            """ % gid)
+            header_layout = QHBoxLayout(header_row)
+            header_layout.setContentsMargins(8, 0, 15, 0)
+            header_layout.setSpacing(8)
+
+            btn_toggle = QLabel()
+            btn_toggle.setObjectName(f"driveGroupToggleBtn_{gid}")
+            btn_toggle.setFixedSize(16, 16)
+            btn_toggle.setScaledContents(True)
+            btn_toggle.setPixmap(QPixmap(down_icon_path))
+            btn_toggle.setCursor(Qt.PointingHandCursor)
+
+            grp_cb = AnimatedCheckBox()
+            grp_cb.setObjectName(f"driveGroupCheck_{gid}")
+            grp_cb.setChecked(True)
+            grp_cb.setStyleSheet("background: transparent;")
+
+            grp_title = QLabel(grp_info["name"])
+            grp_title.setObjectName(f"driveGroupTitle_{gid}")
+            grp_title.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+
+            grp_size = QLabel("")
+            grp_size.setObjectName(f"driveGroupSize_{gid}")
+            grp_size.setStyleSheet("color: #ffffff; font-size: 11px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+
+            header_layout.addWidget(btn_toggle, alignment=Qt.AlignVCenter)
+            header_layout.addWidget(grp_cb, alignment=Qt.AlignVCenter)
+            header_layout.addWidget(grp_title, alignment=Qt.AlignVCenter)
+            header_layout.addStretch()
+            header_layout.addWidget(grp_size, alignment=Qt.AlignVCenter)
+            group_layout.addWidget(header_row)
+
+            # --- Main Group Content Container ---
+            child_container = QWidget()
+            child_container.setObjectName(f"driveGroupChildContainer_{gid}")
+            child_layout = QVBoxLayout(child_container)
+            child_layout.setContentsMargins(18, 0, 0, 0)
+            child_layout.setSpacing(0)
+
+            def _toggle_main(e, container=child_container, btn=btn_toggle):
+                container.setVisible(not container.isVisible())
+                btn.setPixmap(QPixmap(down_icon_path) if container.isVisible() else QPixmap(right_icon_path))
+            btn_toggle.mousePressEvent = _toggle_main
+
+            def _on_main_group_toggled(checked, group_id=gid):
+                for cat_id, row_data in self._category_rows.items():
+                    if row_data["group_id"] == group_id and row_data["check"].isEnabled():
+                        row_data["check"].blockSignals(True)
+                        row_data["check"].setChecked(checked)
+                        row_data["check"].blockSignals(False)
+                self._recalculate_selected_junk()
+
+            grp_cb.toggled.connect(_on_main_group_toggled)
+
+            # 1) Direct Items under Main Group (e.g. Recycle Bin)
+            for cat in grp_info["direct_items"]:
+                row, cat_id = self._create_category_row(cat, admin)
+                child_layout.addWidget(row)
+
+            # 2) Subgroups under Main Group (e.g. Windows Temp Files)
+            for sgid, subgrp_info in grp_info["subgroups"].items():
+                sub_frame = QFrame()
+                sub_frame.setObjectName(f"driveSubGroupFrame_{sgid}")
+                sub_frame.setStyleSheet("""
+                    QFrame#driveSubGroupFrame_%s {
+                        background-color: transparent;
+                        border: none;
+                    }
+                """ % sgid)
+                sub_layout = QVBoxLayout(sub_frame)
+                sub_layout.setContentsMargins(0, 0, 0, 0)
+                sub_layout.setSpacing(0)
+
+                sub_header = QWidget()
+                sub_header.setObjectName(f"driveSubGroupHeader_{sgid}")
+                sub_header.setFixedHeight(35)
+                sub_header.setStyleSheet("""
+                    QWidget#driveSubGroupHeader_%s {
+                        background: rgba(40, 40, 40, 0.9);
+                        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                    }
+                    QWidget#driveSubGroupHeader_%s:hover {
+                        background: rgba(255, 91, 6, 0.15);
+                    }
+                """ % (sgid, sgid))
+                sub_h_layout = QHBoxLayout(sub_header)
+                sub_h_layout.setContentsMargins(8, 0, 15, 0)
+                sub_h_layout.setSpacing(8)
+
+                btn_sub_toggle = QLabel()
+                btn_sub_toggle.setObjectName(f"driveSubGroupToggleBtn_{sgid}")
+                btn_sub_toggle.setFixedSize(16, 16)
+                btn_sub_toggle.setScaledContents(True)
+                btn_sub_toggle.setPixmap(QPixmap(down_icon_path))
+                btn_sub_toggle.setCursor(Qt.PointingHandCursor)
+
+                sub_cb = AnimatedCheckBox()
+                sub_cb.setObjectName(f"driveSubGroupCheck_{sgid}")
+                sub_cb.setChecked(True)
+                sub_cb.setStyleSheet("background: transparent;")
+
+                sub_h_layout.addWidget(btn_sub_toggle, alignment=Qt.AlignVCenter)
+                sub_h_layout.addWidget(sub_cb, alignment=Qt.AlignVCenter)
+
+                sub_title = QLabel(subgrp_info["name"])
+                sub_title.setObjectName(f"driveSubGroupTitle_{sgid}")
+                sub_title.setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
+                sub_h_layout.addWidget(sub_title, alignment=Qt.AlignVCenter)
+
+                SUBGROUP_ICON_MAP = {
+                    "chrome": "chrome.png",
+                    "edge": "edge.png",
+                    "brave": "brave.png",
+                    "firefox": "firefox.png",
+                    "opera": "opera.png",
+                    "vivaldi": "vivaldi.png",
+                }
+                icon_filename = SUBGROUP_ICON_MAP.get(sgid)
+                if icon_filename:
+                    icon_path = os.path.join(script_dir, "UI Icons", icon_filename)
+                    if os.path.exists(icon_path):
+                        sub_icon_lbl = QLabel()
+                        sub_icon_lbl.setObjectName(f"driveSubGroupIcon_{sgid}")
+                        sub_icon_lbl.setFixedSize(18, 18)
+                        pix = QPixmap(icon_path).scaled(18, 18, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        sub_icon_lbl.setPixmap(pix)
+                        sub_icon_lbl.setStyleSheet("background: transparent;")
+                        sub_h_layout.addWidget(sub_icon_lbl, alignment=Qt.AlignVCenter)
+
+                sub_size = QLabel("")
+                sub_size.setObjectName(f"driveSubGroupSize_{sgid}")
+                sub_size.setStyleSheet("color: #ffffff; font-size: 10px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
+
+                sub_h_layout.addWidget(btn_sub_toggle, alignment=Qt.AlignVCenter)
+                sub_h_layout.addWidget(sub_cb, alignment=Qt.AlignVCenter)
+                sub_h_layout.addWidget(sub_title, alignment=Qt.AlignVCenter)
+                sub_h_layout.addStretch()
+                sub_h_layout.addWidget(sub_size, alignment=Qt.AlignVCenter)
+                sub_layout.addWidget(sub_header)
+
+                sub_child_container = QWidget()
+                sub_child_container.setObjectName(f"driveSubGroupChildContainer_{sgid}")
+                sub_child_layout = QVBoxLayout(sub_child_container)
+                sub_child_layout.setContentsMargins(18, 0, 0, 0)
+                sub_child_layout.setSpacing(0)
+
+                def _toggle_sub(e, container=sub_child_container, btn=btn_sub_toggle):
+                    container.setVisible(not container.isVisible())
+                    btn.setPixmap(QPixmap(down_icon_path) if container.isVisible() else QPixmap(right_icon_path))
+                btn_sub_toggle.mousePressEvent = _toggle_sub
+
+                def _on_subgroup_toggled(checked, subgroup_id=sgid):
+                    for cat_id, row_data in self._category_rows.items():
+                        if row_data.get("subgroup_id") == subgroup_id and row_data["check"].isEnabled():
+                            row_data["check"].blockSignals(True)
+                            row_data["check"].setChecked(checked)
+                            row_data["check"].blockSignals(False)
+                    self._recalculate_selected_junk()
+
+                sub_cb.toggled.connect(_on_subgroup_toggled)
+
+                for cat in subgrp_info["items"]:
+                    row, cat_id = self._create_category_row(cat, admin)
+                    sub_child_layout.addWidget(row)
+
+                sub_layout.addWidget(sub_child_container)
+                child_layout.addWidget(sub_frame)
+
+                self._subgroup_rows[sgid] = {
+                    "frame": sub_frame,
+                    "check": sub_cb,
+                    "size_lbl": sub_size,
+                    "title_lbl": sub_title,
+                    "container": sub_child_container,
+                    "group_id": gid,
+                }
+
+            group_layout.addWidget(child_container)
+            self.category_layout.addWidget(group_frame)
+            self._group_rows[gid] = {
+                "frame": group_frame,
+                "check": grp_cb,
+                "size_lbl": grp_size,
+                "title_lbl": grp_title,
+                "container": child_container,
+            }
+
+        self.category_layout.addStretch()
+        self._recalculate_selected_junk()
+
+    def _switch_cleaner_tab(self, index):
+        """Switch sub-tab between System clean-up, System tweaks, and Disk defragment."""
+        self._current_cleaner_tab = index
+        self._update_cleaner_tab_buttons()
+        self.cleaner_stack.setCurrentIndex(index)
+        if index == 0:
+            # Ensure all categories are visible in System clean-up page
+            for cat_id, data in self._category_rows.items():
+                data["row"].setVisible(True)
+
+    def _update_cleaner_tab_buttons(self):
+        """Update sub-tab button styles matching the Booster tab top-gradient indicator."""
+        for i, btn in enumerate(self._cleaner_tab_btns):
+            if i == self._current_cleaner_tab:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: #2a2a2a;
+                        color: #ffffff;
+                        border: none;
+                        border-top: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #cc47aa, stop:0.5 #ff0919, stop:1 #e89805);
+                        border-top-left-radius: 6px;
+                        border-top-right-radius: 6px;
+                        border-bottom-left-radius: 0px;
+                        border-bottom-right-radius: 0px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 11px;
+                        font-weight: 700;
+                        padding: 4px 12px;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: transparent;
+                        color: #888888;
+                        border: none;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 11px;
+                        font-weight: 600;
+                        padding: 4px 12px;
+                    }
+                    QPushButton:hover {
+                        color: #cccccc;
+                        background: rgba(255, 255, 255, 0.05);
+                    }
+                """)
+
+    def selected_category_ids(self):
+        return [cat_id for cat_id, row in self._category_rows.items() if row["check"].isChecked() and row["check"].isEnabled()]
+
+    def selected_has_tier3(self):
+        return any(row["tier"] >= 3 and row["check"].isChecked() for row in self._category_rows.values())
+
+    def set_busy(self, busy, text="Working...", percent=0):
+        self.progress_bar.setValue(percent)
+        self.status_label.setText(text)
+        self.hero_gauge.setEnabled(not busy)
+        self.hero_status_lbl.setText("Scanning..." if not self._is_scanned else "Cleaning...")
+        if busy:
+            self.hero_gauge.setAnimated(True)
+            self.hero_gauge.setGrayscale(False)
+            self.hero_gauge.setClockwise(True)
+            self.hero_gauge.setUseGradientForValue(False)
+
+    def update_progress(self, text, percent):
+        self.progress_bar.setValue(max(0, min(100, int(percent))))
+        self.status_label.setText(text)
+        if getattr(self, '_is_scanning_active', False):
+            self.hero_gauge.setSubtitle(f"{int(percent)}%")
+
+    def _show_junk_items_panel(self, cat_id):
+        row_data = self._category_rows.get(cat_id)
+        if not row_data:
+            return
+        cat_name = row_data.get("name", "ITEMS")
+        paths = row_data.get("paths", [])
+        if not paths:
+            from utils.drive_utils import JUNK_CATEGORIES, _expanded_paths
+            orig_cat = next((c for c in JUNK_CATEGORIES if c.id == cat_id), None)
+            if orig_cat:
+                paths = _expanded_paths(orig_cat.paths)
+
+        panel = JunkItemsFloatingPanel(title=f"ITEMS", paths=paths, parent=self.window() or self)
+        parent_win = self.window() or self
+        geo = parent_win.geometry()
+        x = geo.x() + (geo.width() - panel.width()) // 2
+        y = geo.y() + (geo.height() - panel.height()) // 2
+        panel.move(x, y)
+        panel.exec()
+
+    def update_results(self, results):
+        from utils.drive_utils import format_bytes
+        def _apply_scanned_results():
+            self._is_scanning_active = False
+            if hasattr(self, '_scan_dot_timer') and self._scan_dot_timer.isActive():
+                self._scan_dot_timer.stop()
+            self._is_scanned = True
+            total = 0
+            for cat_id, row in self._category_rows.items():
+                data = results.get(cat_id, {})
+                bytes_found = int(data.get("bytes", 0) or 0)
+                row["bytes"] = bytes_found
+                row["paths"] = data.get("paths", [])
+                row["size"].setText(format_bytes(bytes_found))
+                if data.get("admin_required") and row.get("badge") is not None:
+                    row["badge"].setText("Zero-UAC")
+                total += bytes_found
+
+            self.progress_bar.setValue(100)
+            self.status_label.setText("Scan complete. Review categories before cleaning.")
+            self._recalculate_selected_junk()
+
+        self.hero_gauge.trigger_fade_transition(220, _apply_scanned_results)
+
+    def finish_clean(self, cleaned, skipped, errors):
+        from utils.drive_utils import format_bytes
+        freed = format_bytes(cleaned)
+        def _apply_cleaned_state():
+            self._is_scanning_active = False
+            if hasattr(self, '_scan_dot_timer') and self._scan_dot_timer.isActive():
+                self._scan_dot_timer.stop()
+            self._is_scanned = False
+            self.hero_status_lbl.setText(f"Cleaned {freed}!")
+            self.btn_back_scan.setEnabled(False)
+            self.hero_gauge.setEnabled(True)
+            self.hero_gauge.setValue(0)
+            self.hero_gauge.setSubtitle(f"Cleaned {freed}")
+            self.hero_gauge.setCenterText("SCAN")
+            self.progress_bar.setValue(0)
+            for cat_id in self.selected_category_ids():
+                if cat_id in self._category_rows:
+                    self._category_rows[cat_id]["bytes"] = 0
+                    self._category_rows[cat_id]["size"].setText("0 B")
+
+            self._recalculate_selected_junk()
+
+        self.hero_gauge.trigger_fade_transition(220, _apply_cleaned_state)
+
+
 # ============================================
 # MAIN HARDWARE PANEL
 # ============================================
@@ -503,7 +2121,11 @@ class HardwarePanelWidget(QWidget):
         self._drive_color_map = {}  # drive letter -> fixed color
         self._disk_details = {}  # Cache for disk model/type info (fetched once)
         self._disk_details_fetched = False
-        
+        self._drive_hardware_info = {}
+        self._drive_volume_cards = {}
+        self._drive_scan_worker = None
+        self._drive_clean_worker = None
+
         self._setup_ui()
         self._apply_style()
 
@@ -844,11 +2466,13 @@ class HardwarePanelWidget(QWidget):
         self._ram_tab_stack = QStackedWidget()
         self._ram_tab_stack.setObjectName("ramTabStack")
         
-        # Add 4 tab pages
+        # Add 4 tab pages (Lazy Loading: only Essential tab is created eagerly)
+        self._ram_subtabs_created = [True, False, False, False]
         self._ram_tab_stack.addWidget(self._create_essential_tab())
-        self._ram_tab_stack.addWidget(self._create_processes_tab())
-        self._ram_tab_stack.addWidget(self._create_basic_services_tab())
-        self._ram_tab_stack.addWidget(self._create_advanced_services_tab())
+        for _ in range(3):
+            placeholder = QWidget()
+            placeholder.setStyleSheet("background: transparent;")
+            self._ram_tab_stack.addWidget(placeholder)
         
         right_layout.addWidget(self._ram_tab_stack, stretch=1)
         
@@ -1246,6 +2870,8 @@ class HardwarePanelWidget(QWidget):
     def _update_boost_btn_gradient(self):
         """Update the gradient offset for animated STOP button."""
         if not getattr(self, '_is_boosting', False):
+            if hasattr(self, '_boost_gradient_timer') and self._boost_gradient_timer is not None:
+                self._boost_gradient_timer.stop()
             return
         
         # OMEN gradient colors (extended for seamless loop)
@@ -1769,10 +3395,27 @@ class HardwarePanelWidget(QWidget):
         print("[Boost] Service statuses refreshed in UI")
     
     def _switch_ram_tab(self, index: int):
-        """Switch to specified RAM tab."""
-        self._current_ram_tab = index
-        self._ram_tab_stack.setCurrentIndex(index)
-        self._update_ram_tab_buttons()
+        """Switch to specified RAM tab (with lazy loading)."""
+        if 0 <= index < 4:
+            subtabs_created = getattr(self, '_ram_subtabs_created', [True]*4)
+            if not subtabs_created[index]:
+                creators = {
+                    1: self._create_processes_tab,
+                    2: self._create_basic_services_tab,
+                    3: self._create_advanced_services_tab
+                }
+                if index in creators:
+                    new_tab = creators[index]()
+                    old_widget = self._ram_tab_stack.widget(index)
+                    self._ram_tab_stack.removeWidget(old_widget)
+                    old_widget.deleteLater()
+                    self._ram_tab_stack.insertWidget(index, new_tab)
+                    self._ram_subtabs_created[index] = True
+                    self._load_custom_preset_settings()
+
+            self._current_ram_tab = index
+            self._ram_tab_stack.setCurrentIndex(index)
+            self._update_ram_tab_buttons()
         
         # Refresh overlay if boosting is active
         if getattr(self, '_is_boosting', False):
@@ -2585,8 +4228,9 @@ class HardwarePanelWidget(QWidget):
         
         page_layout.addWidget(bottom)
         
-        # Populate on load
-        self._populate_processes_tab()
+        # Populate processes list asynchronously/deferred to keep tab creation < 10ms
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(20, self._populate_processes_tab)
         
         return page
     
@@ -3275,10 +4919,12 @@ class HardwarePanelWidget(QWidget):
         layout.setContentsMargins(0, 10, 0, 0)
         
         title = QLabel("CPU Details")
+        title.setObjectName("cpuDetailsTitle")
         title.setStyleSheet("color: #e0e0e0; font-size: 18px; font-weight: 600; background: transparent;")
         layout.addWidget(title)
         
         placeholder = QLabel("CPU detailed view coming soon...")
+        placeholder.setObjectName("cpuPlaceholder")
         placeholder.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
         placeholder.setAlignment(Qt.AlignCenter)
         layout.addWidget(placeholder, stretch=1)
@@ -3286,23 +4932,212 @@ class HardwarePanelWidget(QWidget):
         return page
     
     def _create_drive_page(self):
-        """Create Drive detailed page."""
+        """Create Drive detailed page (Option A Layout: Top Split Total Storage | Drive Volumes).
+
+        Component Name: DrivePage
+        """
         page = QWidget()
         page.setObjectName("drivePage")
+        page.setStyleSheet("background: transparent;")
+        
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 10, 0, 0)
-        
-        title = QLabel("Drive Details")
-        title.setStyleSheet("color: #e0e0e0; font-size: 18px; font-weight: 600; background: transparent;")
-        layout.addWidget(title)
-        
-        placeholder = QLabel("Drive detailed view coming soon...")
-        placeholder.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
-        placeholder.setAlignment(Qt.AlignCenter)
-        layout.addWidget(placeholder, stretch=1)
-        
+        layout.setSpacing(12)
+
+        # === TOP ROW: Total Storage Card (Left) + Drive Volumes Panel (Right) ===
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(12)
+
+        # 1. Total Storage Overview Card (Left side of top row)
+        self.drive_overview = DriveOverviewWidget()
+        self.drive_overview.setMaximumWidth(360)
+        top_row.addWidget(self.drive_overview)
+
+        # 2. Drive Volumes Panel (Right side of top row, side-by-side with Total Storage)
+        volumes_panel = QWidget()
+        volumes_panel.setObjectName("DriveVolumeListPanel")
+        volumes_panel.setAttribute(Qt.WA_StyledBackground, True)
+        volumes_panel.setStyleSheet("""
+            QWidget#DriveVolumeListPanel {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+            }
+            QWidget#DriveVolumeListPanel:hover {
+                border-color: rgba(255, 91, 6, 0.4);
+            }
+        """)
+        volumes_layout = QVBoxLayout(volumes_panel)
+        volumes_layout.setContentsMargins(14, 12, 14, 12)
+        volumes_layout.setSpacing(8)
+
+        title_row = QHBoxLayout()
+        volumes_title = QLabel("DRIVE VOLUMES")
+        volumes_title.setObjectName("driveVolumesTitle")
+        volumes_title.setStyleSheet("color: #e0e0e0; font-size: 13px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+        title_row.addWidget(volumes_title)
+        title_row.addStretch()
+        self.drive_refresh_label = QLabel("Live")
+        self.drive_refresh_label.setObjectName("driveRefreshLabel")
+        self.drive_refresh_label.setStyleSheet("color: #00E5FF; font-size: 10px; font-weight: 800; background: transparent;")
+        title_row.addWidget(self.drive_refresh_label)
+        volumes_layout.addLayout(title_row)
+
+        scroll = SmoothScrollArea()
+        scroll.setObjectName("DriveVolumeScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical { background: #1e1e1e; width: 6px; margin: 0px; }
+            QScrollBar::handle:vertical { background: #444; min-height: 20px; border-radius: 3px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+        self.drive_volume_container = QWidget()
+        self.drive_volume_container.setObjectName("DriveVolumeContainer")
+        self.drive_volume_container.setStyleSheet("background: transparent;")
+        self.drive_volume_layout = QVBoxLayout(self.drive_volume_container)
+        self.drive_volume_layout.setContentsMargins(0, 0, 6, 0)
+        self.drive_volume_layout.setSpacing(8)
+        self.drive_volume_layout.addStretch()
+        scroll.setWidget(self.drive_volume_container)
+        volumes_layout.addWidget(scroll, stretch=1)
+
+        top_row.addWidget(volumes_panel, stretch=1)
+        layout.addLayout(top_row, stretch=0)
+
+        # === BOTTOM ROW: Disk Cleaner (Full Width) ===
+        self.drive_cleaner = DiskCleanerPanel()
+        self.drive_cleaner.scan_requested.connect(self._start_drive_scan)
+        self.drive_cleaner.clean_requested.connect(self._start_drive_clean)
+        layout.addWidget(self.drive_cleaner, stretch=1)
+
+        self._drive_refresh_counter = 999
+        self._update_drive_metrics_from_snapshot([], {"read_mbps": 0, "write_mbps": 0})
         return page
-    
+
+    def _get_drive_hw_for_partition(self, partition):
+        drive = partition.get("drive", "")
+        letter = partition.get("letter", "")
+        candidates = [drive, letter, f"{letter}\\" if letter else "", f"{letter}\\\\" if letter else ""]
+        for key in candidates:
+            if key in self._drive_hardware_info:
+                return self._drive_hardware_info[key]
+        return next(iter(self._drive_hardware_info.values()), {}) if len(self._drive_hardware_info) == 1 else {}
+
+    def _merge_drive_snapshot(self, partitions, disks):
+        by_drive = {str(disk.get("drive", "")).rstrip("\\/").upper(): disk for disk in disks}
+        for partition in partitions:
+            key = str(partition.get("drive", "")).rstrip("\\/").upper()
+            disk = by_drive.get(key)
+            if not disk:
+                continue
+            total = int(float(disk.get("total", 0) or 0) * (1024 ** 3))
+            used = int(float(disk.get("used", 0) or 0) * (1024 ** 3))
+            free = int(float(disk.get("free", 0) or 0) * (1024 ** 3))
+            if total > 0:
+                partition["total_bytes"] = total
+                partition["used_bytes"] = used
+                partition["free_bytes"] = free
+                partition["percent_used"] = float(disk.get("percent", 0) or 0)
+                partition["filesystem"] = disk.get("fstype") or partition.get("filesystem") or "Unknown"
+        return partitions
+
+    def _render_drive_cards(self, partitions):
+        if not hasattr(self, "drive_volume_layout"):
+            return
+        current = set()
+        for partition in partitions:
+            drive = partition.get("drive") or partition.get("letter")
+            if not drive:
+                continue
+            current.add(drive)
+            card = self._drive_volume_cards.get(drive)
+            if card is None:
+                card = DriveVolumeCard()
+                self.drive_volume_layout.insertWidget(max(0, self.drive_volume_layout.count() - 1), card)
+                self._drive_volume_cards[drive] = card
+            card.set_data(partition, self._get_drive_hw_for_partition(partition))
+
+        for drive in list(self._drive_volume_cards.keys()):
+            if drive in current:
+                continue
+            card = self._drive_volume_cards.pop(drive)
+            self.drive_volume_layout.removeWidget(card)
+            card.deleteLater()
+
+    def _update_drive_metrics_from_snapshot(self, disks, disk_io):
+        if not hasattr(self, "drive_overview"):
+            return
+        try:
+            from utils.drive_utils import get_drive_partitions_info, get_drive_hardware_info
+            self._drive_refresh_counter = getattr(self, "_drive_refresh_counter", 0) + 1
+            should_refresh = self._drive_refresh_counter >= 10 or not getattr(self, "_drive_partitions", None)
+            if should_refresh:
+                self._drive_refresh_counter = 0
+                self._drive_partitions = get_drive_partitions_info()
+                if not self._drive_hardware_info:
+                    self._drive_hardware_info = get_drive_hardware_info()
+
+            partitions = [dict(p) for p in getattr(self, "_drive_partitions", [])]
+            partitions = self._merge_drive_snapshot(partitions, disks or [])
+            self._drive_partitions = partitions
+            self._render_drive_cards(partitions)
+            self.drive_overview.set_data(partitions, self._drive_hardware_info, disk_io or {})
+            if hasattr(self, "drive_refresh_label"):
+                self.drive_refresh_label.setText(f"{len(partitions)} volumes")
+        except Exception as e:
+            if hasattr(self, "drive_refresh_label"):
+                self.drive_refresh_label.setText("Drive scan unavailable")
+            print(f"[Drive] Update error: {e}")
+
+    def _start_drive_scan(self):
+        if getattr(self, '_drive_scan_worker', None) and self._drive_scan_worker.isRunning():
+            return
+        self.drive_cleaner.set_busy(True, "Scanning junk files...", 0)
+        self._drive_scan_worker = DriveScanWorker(self)
+        self._drive_scan_worker.scan_progress.connect(self.drive_cleaner.update_progress)
+        self._drive_scan_worker.scan_completed.connect(self._on_drive_scan_complete)
+        self._drive_scan_worker.finished.connect(self._drive_scan_worker.deleteLater)
+        self._drive_scan_worker.start()
+
+    def _on_drive_scan_complete(self, results):
+        if hasattr(self, "drive_cleaner"):
+            self.drive_cleaner.update_results(results)
+        self._drive_scan_worker = None
+
+    def _start_drive_clean(self, selected_categories):
+        if self._drive_clean_worker and self._drive_clean_worker.isRunning():
+            return
+        if not selected_categories:
+            self.drive_cleaner.update_progress("Select at least one category first.", 0)
+            return
+        if self.drive_cleaner.selected_has_tier3():
+            from PySide6.QtWidgets import QMessageBox
+            reply = QMessageBox.question(
+                self,
+                "Confirm Advanced Cleanup",
+                "Tier 3 cleanup can remove advanced Windows cache/log files. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        self.drive_cleaner.set_busy(True, "Cleaning selected categories...", 0)
+        self._drive_clean_worker = DiskCleanWorker(selected_categories, self)
+        self._drive_clean_worker.clean_progress.connect(self.drive_cleaner.update_progress)
+        self._drive_clean_worker.clean_completed.connect(self._on_drive_clean_complete)
+        self._drive_clean_worker.finished.connect(self._drive_clean_worker.deleteLater)
+        self._drive_clean_worker.start()
+
+    def _on_drive_clean_complete(self, cleaned, skipped, errors):
+        if hasattr(self, "drive_cleaner"):
+            self.drive_cleaner.finish_clean(cleaned, skipped, errors)
+        self._drive_clean_worker = None
+        self._drive_refresh_counter = 999
+        self._update_drive_metrics_from_snapshot([], {"read_mbps": 0, "write_mbps": 0})
+
     def _create_health_page(self):
         """Create Health detailed page."""
         page = QWidget()
@@ -3311,10 +5146,12 @@ class HardwarePanelWidget(QWidget):
         layout.setContentsMargins(0, 10, 0, 0)
         
         title = QLabel("Hardware Health")
+        title.setObjectName("healthDetailsTitle")
         title.setStyleSheet("color: #e0e0e0; font-size: 18px; font-weight: 600; background: transparent;")
         layout.addWidget(title)
         
         placeholder = QLabel("Health detailed view coming soon...")
+        placeholder.setObjectName("healthPlaceholder")
         placeholder.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
         placeholder.setAlignment(Qt.AlignCenter)
         layout.addWidget(placeholder, stretch=1)
@@ -4676,19 +6513,21 @@ class HardwarePanelWidget(QWidget):
                 
                 bar_label = self._disk_bar_widgets[drive]
                 bar_label.setText(f"{drive} {percent:.1f}%        {used:.1f} GB / {total:.1f} GB")
-                bar_label.setStyleSheet(f"""
-                    QLabel {{
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 rgba(255,107,53,0.7), stop:{stop1} rgba(255,107,53,0.7), 
-                            stop:{stop2} rgba(40,40,40,0.8), stop:1 rgba(40,40,40,0.8));
-                        border: 1px solid rgba(100,100,100,0.4);
-                        border-radius: 4px;
-                        color: #e0e0e0;
-                        font-size: 10px;
-                        font-weight: 600;
-                        padding-left: 8px;
-                    }}
-                """)
+                if abs(getattr(bar_label, '_last_percent', -1.0) - percent) >= 0.5:
+                    bar_label._last_percent = percent
+                    bar_label.setStyleSheet(f"""
+                        QLabel {{
+                            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                                stop:0 rgba(255,107,53,0.7), stop:{stop1} rgba(255,107,53,0.7), 
+                                stop:{stop2} rgba(40,40,40,0.8), stop:1 rgba(40,40,40,0.8));
+                            border: 1px solid rgba(100,100,100,0.4);
+                            border-radius: 4px;
+                            color: #e0e0e0;
+                            font-size: 10px;
+                            font-weight: 600;
+                            padding-left: 8px;
+                        }}
+                    """)
             
             # Remove bars for drives that disappeared
             for drive in list(self._disk_bar_widgets.keys()):
@@ -4697,17 +6536,13 @@ class HardwarePanelWidget(QWidget):
                     self.disk_bars_container.removeWidget(widget)
                     widget.deleteLater()
 
-            
+            self._update_drive_metrics_from_snapshot(disks, disk_io)
+
+
             # Network
             net = snapshot["network"]
             self.download_label.setText(f"↓ {net['download_mbps']:.1f} Mbps")
             self.upload_label.setText(f"↑ {net['upload_mbps']:.1f} Mbps")
-            
-            # Disk S.M.A.R.T - clear and rebuild
-            while self.disk_health_container.count():
-                item = self.disk_health_container.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
             
             # Fetch disk SMART info once
             if not getattr(self, '_disk_smart_fetched', False):
@@ -4715,95 +6550,104 @@ class HardwarePanelWidget(QWidget):
                 self._disk_smart_fetched = True
             
             display_disks = getattr(self, '_smart_disks', [])
+            if not hasattr(self, '_smart_disk_row_widgets'):
+                self._smart_disk_row_widgets = {}
             
             for pdisk in display_disks:
-                # Create a row for each physical disk
-                disk_row = QWidget()
-                disk_row.setStyleSheet("background: transparent;")
-                main_layout = QVBoxLayout()
-                main_layout.setContentsMargins(8, 6, 8, 6)
-                main_layout.setSpacing(4)
-                
-                # Row 1: Model name + status etc
-                top_row = QHBoxLayout()
-                top_row.setSpacing(8)
-                
                 model_name = pdisk['model']
-                if len(model_name) > 30:
-                    model_name = model_name[:27] + "..."
-                drive_label = QLabel(model_name)
-                drive_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 600; background: transparent;")
-                top_row.addWidget(drive_label, alignment=Qt.AlignVCenter)
-                
-                # Health status
+                disk_key = pdisk.get('device', model_name)
+                health_pct = pdisk['health_percent']
                 status_color = "#4ade80" if pdisk['status'] == "OK" else "#f97316" if pdisk['status'] == "Warning" else "#ef4444"
-                health_label = QLabel(pdisk['status'])
-                health_label.setStyleSheet(f"color: {status_color}; font-size: 10px; font-weight: 600; background: transparent;")
-                top_row.addWidget(health_label, alignment=Qt.AlignVCenter)
                 
-                # Disk type badge (SSD/HDD)
-                disk_type = pdisk['type']
-                type_color = "#22d3ee" if disk_type == 'SSD' else "#fbbf24"
-                type_label = QLabel(disk_type)
-                type_label.setStyleSheet(f"""
-                    color: {type_color}; 
-                    font-size: 9px; 
-                    font-weight: bold;
-                    background: rgba({34 if disk_type == 'SSD' else 251}, {211 if disk_type == 'SSD' else 191}, {238 if disk_type == 'SSD' else 36}, 0.2);
-                    padding: 1px 4px;
-                    border-radius: 3px;
-                """)
-                top_row.addWidget(type_label, alignment=Qt.AlignVCenter)
-                
-                # Temperature
-                if pdisk['temp'] > 0:
-                    temp_label = QLabel(f"{pdisk['temp']:.0f}°C")
+                if disk_key not in self._smart_disk_row_widgets:
+                    # Create row ONCE (Object Pooling)
+                    disk_row = QWidget()
+                    disk_row.setStyleSheet("background: transparent;")
+                    main_layout = QVBoxLayout()
+                    main_layout.setContentsMargins(8, 6, 8, 6)
+                    main_layout.setSpacing(4)
+                    
+                    top_row = QHBoxLayout()
+                    top_row.setSpacing(8)
+                    
+                    disp_name = model_name if len(model_name) <= 30 else model_name[:27] + "..."
+                    drive_label = QLabel(disp_name)
+                    drive_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 600; background: transparent;")
+                    top_row.addWidget(drive_label, alignment=Qt.AlignVCenter)
+                    
+                    health_label = QLabel(pdisk['status'])
+                    health_label.setStyleSheet(f"color: {status_color}; font-size: 10px; font-weight: 600; background: transparent;")
+                    top_row.addWidget(health_label, alignment=Qt.AlignVCenter)
+                    
+                    disk_type = pdisk['type']
+                    type_color = "#22d3ee" if disk_type == 'SSD' else "#fbbf24"
+                    type_label = QLabel(disk_type)
+                    type_label.setStyleSheet(f"""
+                        color: {type_color}; 
+                        font-size: 9px; 
+                        font-weight: bold;
+                        background: rgba({34 if disk_type == 'SSD' else 251}, {211 if disk_type == 'SSD' else 191}, {238 if disk_type == 'SSD' else 36}, 0.2);
+                        padding: 1px 4px;
+                        border-radius: 3px;
+                    """)
+                    top_row.addWidget(type_label, alignment=Qt.AlignVCenter)
+                    
+                    temp_label = QLabel(f"{pdisk['temp']:.0f}°C" if pdisk['temp'] > 0 else "")
                     temp_label.setStyleSheet("color: #60a5fa; font-size: 9px; background: transparent; font-weight: bold;")
                     top_row.addWidget(temp_label, alignment=Qt.AlignVCenter)
-                
-                top_row.addStretch()
-                
-                # Health percentage (right side)
-                health_pct = pdisk['health_percent']
-                health_label_value = QLabel(f"{health_pct:.0f}%")
-                health_label_value.setStyleSheet(f"color: {status_color}; font-size: 11px; font-weight: 600; background: transparent;")
-                top_row.addWidget(health_label_value, alignment=Qt.AlignVCenter)
-                
-                top_widget = QWidget()
-                top_widget.setLayout(top_row)
-                top_widget.setStyleSheet("background: transparent;")
-                main_layout.addWidget(top_widget)
-                
-                # Row 2: Progress bar (Health left)
-                bar_row = QHBoxLayout()
-                bar_row.setSpacing(10)
-                
-                bar = QProgressBar()
-                bar.setFixedHeight(6)
-                bar.setValue(int(health_pct))
-                bar.setTextVisible(False)
-                bar.setStyleSheet(f"""
-                    QProgressBar {{
-                        background: rgba(60, 60, 60, 0.5);
-                        border-radius: 3px;
-                        border: none;
-                    }}
-                    QProgressBar::chunk {{
-                        background: {status_color};
-                        border-radius: 3px;
-                    }}
-                """)
-                bar_row.addWidget(bar, stretch=1)
-                
-                bar_widget = QWidget()
-                bar_widget.setLayout(bar_row)
-                bar_widget.setStyleSheet("background: transparent;")
-                main_layout.addWidget(bar_widget)
-                
-                disk_row.setLayout(main_layout)
-                self.disk_health_container.addWidget(disk_row)
-                
-            self.disk_health_container.addStretch()
+                    
+                    top_row.addStretch()
+                    
+                    health_label_value = QLabel(f"{health_pct:.0f}%")
+                    health_label_value.setStyleSheet(f"color: {status_color}; font-size: 11px; font-weight: 600; background: transparent;")
+                    top_row.addWidget(health_label_value, alignment=Qt.AlignVCenter)
+                    
+                    top_widget = QWidget()
+                    top_widget.setLayout(top_row)
+                    top_widget.setStyleSheet("background: transparent;")
+                    main_layout.addWidget(top_widget)
+                    
+                    bar_row = QHBoxLayout()
+                    bar_row.setSpacing(10)
+                    bar = QProgressBar()
+                    bar.setFixedHeight(6)
+                    bar.setValue(int(health_pct))
+                    bar.setTextVisible(False)
+                    bar.setStyleSheet(f"""
+                        QProgressBar {{
+                            background: rgba(60, 60, 60, 0.5);
+                            border-radius: 3px;
+                            border: none;
+                        }}
+                        QProgressBar::chunk {{
+                            background: {status_color};
+                            border-radius: 3px;
+                        }}
+                    """)
+                    bar_row.addWidget(bar, stretch=1)
+                    
+                    bar_widget = QWidget()
+                    bar_widget.setLayout(bar_row)
+                    bar_widget.setStyleSheet("background: transparent;")
+                    main_layout.addWidget(bar_widget)
+                    
+                    disk_row.setLayout(main_layout)
+                    self.disk_health_container.addWidget(disk_row)
+                    
+                    self._smart_disk_row_widgets[disk_key] = {
+                        'temp_lbl': temp_label,
+                        'health_lbl': health_label,
+                        'pct_lbl': health_label_value,
+                        'bar': bar
+                    }
+                else:
+                    # Update existing pooled widget (Zero widget allocation)
+                    w_dict = self._smart_disk_row_widgets[disk_key]
+                    if pdisk['temp'] > 0:
+                        w_dict['temp_lbl'].setText(f"{pdisk['temp']:.0f}°C")
+                    w_dict['health_lbl'].setText(pdisk['status'])
+                    w_dict['pct_lbl'].setText(f"{health_pct:.0f}%")
+                    w_dict['bar'].setValue(int(health_pct))
             
             # Temps and Hardware Stats from LHM
             temps = snapshot["temps"]
@@ -4823,55 +6667,73 @@ class HardwarePanelWidget(QWidget):
             if cpu_temp > 0:
                 self.cpu_temp_value.setText(f"{cpu_temp:.0f}°C")
                 color = "#4ade80" if cpu_temp < 70 else "#f97316" if cpu_temp < 85 else "#ef4444"
-                self.cpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
+                if getattr(self, '_cpu_temp_color', '') != color:
+                    self._cpu_temp_color = color
+                    self.cpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
             
             # CPU Load
             if cpu_load > 0:
                 self.cpu_load_value.setText(f"{cpu_load:.0f}%")
                 color = "#60a5fa" if cpu_load < 80 else "#f97316" if cpu_load < 95 else "#ef4444"
-                self.cpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+                if getattr(self, '_cpu_load_color', '') != color:
+                    self._cpu_load_color = color
+                    self.cpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
             # CPU Power
             if cpu_power > 0:
                 self.cpu_power_value.setText(f"{cpu_power:.0f}W")
                 color = "#fbbf24" if cpu_power < 45 else "#f97316" if cpu_power < 65 else "#ef4444"
-                self.cpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+                if getattr(self, '_cpu_power_color', '') != color:
+                    self._cpu_power_color = color
+                    self.cpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
             # iGPU Temp
             if igpu_temp > 0:
                 self.igpu_temp_value.setText(f"{igpu_temp:.0f}°C")
                 color = "#4ade80" if igpu_temp < 75 else "#f97316" if igpu_temp < 90 else "#ef4444"
-                self.igpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
+                if getattr(self, '_igpu_temp_color', '') != color:
+                    self._igpu_temp_color = color
+                    self.igpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
             
             # iGPU Load
             if igpu_load > 0:
                 self.igpu_load_value.setText(f"{igpu_load:.0f}%")
                 color = "#60a5fa" if igpu_load < 80 else "#f97316" if igpu_load < 95 else "#ef4444"
-                self.igpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+                if getattr(self, '_igpu_load_color', '') != color:
+                    self._igpu_load_color = color
+                    self.igpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
             # iGPU Power
             if igpu_power > 0:
                 self.igpu_power_value.setText(f"{igpu_power:.0f}W")
                 color = "#fbbf24" if igpu_power < 30 else "#f97316" if igpu_power < 50 else "#ef4444"
-                self.igpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+                if getattr(self, '_igpu_power_color', '') != color:
+                    self._igpu_power_color = color
+                    self.igpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
             # dGPU Temp
             if dgpu_temp > 0:
                 self.dgpu_temp_value.setText(f"{dgpu_temp:.0f}°C")
                 color = "#4ade80" if dgpu_temp < 75 else "#f97316" if dgpu_temp < 90 else "#ef4444"
-                self.dgpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
+                if getattr(self, '_dgpu_temp_color', '') != color:
+                    self._dgpu_temp_color = color
+                    self.dgpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
             
             # dGPU Load
             if dgpu_load > 0:
                 self.dgpu_load_value.setText(f"{dgpu_load:.0f}%")
                 color = "#a78bfa" if dgpu_load < 80 else "#f97316" if dgpu_load < 95 else "#ef4444"
-                self.dgpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+                if getattr(self, '_dgpu_load_color', '') != color:
+                    self._dgpu_load_color = color
+                    self.dgpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
             # dGPU Power
             if dgpu_power > 0:
                 self.dgpu_power_value.setText(f"{dgpu_power:.0f}W")
                 color = "#fbbf24" if dgpu_power < 60 else "#f97316" if dgpu_power < 120 else "#ef4444"
-                self.dgpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
+                if getattr(self, '_dgpu_power_color', '') != color:
+                    self._dgpu_power_color = color
+                    self.dgpu_power_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
         
         
             # Auto-refresh Processes list every 3 seconds (6 intervals at 500ms)
@@ -4958,15 +6820,14 @@ class HardwarePanelWidget(QWidget):
                     print(f"[Hardware] Failed to initialize NetworkMonitor: {e}")
                     self._net_monitor_initialized = False
                 
-            # Auto-launch hardware monitor in background if it's not already running
-            if hasattr(self, '_is_hwmon_running') and not self._is_hwmon_running():
-                print("[Hardware] Auto-launching monitor silently in backend...")
-                self._start_librehwmon(silent_launch=True)
+            # Hardware monitoring uses native hardware_wrapper.py (psutil/WMI/ctypes) by default.
+            # External monitors (LHM/HWiNFO) are launched on-demand via explicit user button click.
+            pass
 
         QTimer.singleShot(1000, _deferred_show_tasks)
             
-        if hasattr(self, '_boost_gradient_timer') and not self._boost_gradient_timer.isActive():
-            self._boost_gradient_timer.start(17)
+        if getattr(self, '_is_boosting', False) and hasattr(self, '_boost_gradient_timer') and not self._boost_gradient_timer.isActive():
+            self._boost_gradient_timer.start(33)
     
     def hideEvent(self, event):
         """Stop updates when hidden."""

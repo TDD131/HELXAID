@@ -9235,8 +9235,9 @@ class MusicPanelWidget(QWidget):
                         from PySide6.QtMultimedia import QMediaDevices
                         for device in QMediaDevices.audioOutputs():
                             if device.id().data().decode('utf-8', 'ignore') == device_id:
-                                self._audio_output.setDevice(device)
-                                if hasattr(self, '_audio_output2'):
+                                if getattr(self, '_audio_output', None) is not None:
+                                    self._audio_output.setDevice(device)
+                                if getattr(self, '_audio_output2', None) is not None:
                                     self._audio_output2.setDevice(device)
                                 break
                                 

@@ -6824,6 +6824,7 @@ class GameLauncher(QWidget):
                 component_name = "Games Scroll Area"
                 code_ref = "self.games_scroll"
             
+            selector_text = f"{widget_type}#{widget.objectName()}" if widget.objectName() else f"<{widget_type}: set objectName first>"
             info = f"""Component Inspector
 
 Component: {component_name}
@@ -6836,9 +6837,24 @@ Hierarchy (child → parent):
 {chr(10).join(f"  {i}. {h}" for i, h in enumerate(hierarchy[:5]))}
 
 Stylesheet Selector:
-  {widget_type}#{widget.objectName() if widget.objectName() else '<set objectName first>'}
+  {selector_text}
 """
-            QMessageBox.information(self, "Component Inspector (F12)", info)
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Information)
+            msg.setWindowTitle("Component Inspector (F12) - HELXAID")
+            msg.setText(info)
+            msg.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            
+            # Auto copy to clipboard for convenience
+            from PySide6.QtWidgets import QApplication
+            QApplication.clipboard().setText(info)
+            
+            copy_btn = msg.addButton("Copy Info", QMessageBox.ActionRole)
+            msg.addButton(QMessageBox.Ok)
+            
+            msg.exec_()
+            if msg.clickedButton() == copy_btn:
+                QApplication.clipboard().setText(info)
         else:
             QMessageBox.information(self, "Component Inspector", "No widget under cursor")
 
@@ -6957,7 +6973,7 @@ Stylesheet Selector:
                 font-size: 24px;
             }}
         """)
-    
+        
     def _setup_music_panel(self):
         """Setup the music player panel using native Qt MusicPanelWidget."""
         if hasattr(self, 'music_panel'):

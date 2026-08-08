@@ -36,6 +36,34 @@ except ImportError:
     HWINFO_AVAILABLE = False
     print("[Hardware] HWiNFO reader not available")
 
+def _query_wmi_fast(namespace: str, query: str) -> list:
+    """
+    Query WMI directly using pywin32 COM interface without spawning powershell.exe processes.
+    Sub-millisecond execution, 0% CPU process creation overhead.
+    """
+    if os.name != 'nt':
+        return []
+    try:
+        import win32com.client
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+            
+        locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+        services = locator.ConnectServer(".", f"root\\{namespace}")
+        results = services.ExecQuery(query)
+        items = []
+        for obj in results:
+            item = {}
+            for prop in obj.Properties_:
+                item[prop.Name] = prop.Value
+            items.append(item)
+        return items
+    except Exception:
+        return []
+
 
 class HardwareMonitor:
     """
@@ -200,73 +228,77 @@ class HardwareMonitor:
         except Exception:
             pass
         
-        # Priority 2: Try LHM/OHM via WMI if HWiNFO didn't provide data
+        # Priority 2: Try LHM/OHM via fast COM WMI (zero powershell processes)
         if status == "unavailable":
             for namespace in ['LibreHardwareMonitor', 'OpenHardwareMonitor']:
                 if cpu_temp > 0:
                     break
                 try:
-                    ps_script = f'''
-$sensors = Get-WmiObject -Namespace root/{namespace} -Class Sensor -ErrorAction SilentlyContinue | Select-Object Name, SensorType, Value
-if ($sensors) {{
-    $result = @{{
-        cpu_temp = ($sensors | Where-Object {{$_.SensorType -eq 'Temperature' -and ($_.Name -like '*CPU*' -or $_.Name -like 'Core*' -or $_.Name -like '*Package*')}} | Select-Object -First 1).Value
-        gpu_temp = ($sensors | Where-Object {{$_.SensorType -eq 'Temperature' -and $_.Name -like '*GPU*'}} | Select-Object -First 1).Value
-        cpu_load = ($sensors | Where-Object {{$_.SensorType -eq 'Load' -and ($_.Name -like '*CPU*' -or $_.Name -like '*Total*')}} | Select-Object -First 1).Value
-        gpu_load = ($sensors | Where-Object {{$_.SensorType -eq 'Load' -and $_.Name -like '*GPU*'}} | Select-Object -First 1).Value
-        fans = @($sensors | Where-Object {{$_.SensorType -eq 'Fan'}} | Select-Object Name, Value)
-        power = ($sensors | Where-Object {{$_.SensorType -eq 'Power' -and $_.Name -like '*Package*'}} | Select-Object -First 1).Value
-        cpu_clock = ($sensors | Where-Object {{$_.SensorType -eq 'Clock' -and ($_.Name -like '*Core*' -or $_.Name -like '*CPU*')}} | Measure-Object -Property Value -Average).Average
-    }}
-    $result | ConvertTo-Json -Compress
-}}
-'''
-                    # Use Popen + communicate to properly kill on timeout (prevents orphan processes)
-                    proc = subprocess.Popen(
-                        ['powershell', '-NoProfile', '-Command', ps_script],
-                        cwd='C:\\',
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                        text=True, close_fds=True, creationflags=subprocess.CREATE_NO_WINDOW
-                    )
-                    try:
-                        stdout, _ = proc.communicate(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
-                        proc.communicate()  # Reap the process
-                        continue
-                    
-                    if proc.returncode == 0 and stdout.strip():
-                        try:
-                            data = json.loads(stdout.strip())
-                            cpu_temp = float(data.get('cpu_temp') or 0)
-                            gpu_temp = float(data.get('gpu_temp') or 0)
-                            cpu_load = float(data.get('cpu_load') or 0)
-                            gpu_load = float(data.get('gpu_load') or 0)
-                            power = float(data.get('power') or 0)
-                            cpu_clock = float(data.get('cpu_clock') or 0)
+                    sensors = _query_wmi_fast(namespace, "SELECT Name, SensorType, Value FROM Sensor")
+                    if sensors:
+                        cpu_prio = 0
+                        for s in sensors:
+                            stype = str(s.get('SensorType', ''))
+                            sname = str(s.get('Name', ''))
+                            sval = float(s.get('Value') or 0)
+                            sname_u = sname.upper()
                             
-                            fans_data = data.get('fans', [])
-                            if isinstance(fans_data, list):
-                                for f in fans_data:
-                                    fname = str(f.get('Name', '')).lower()
-                                    fval = float(f.get('Value', 0))
-                                    if "cpu" in fname:
-                                        cpu_fan_speed = max(cpu_fan_speed, fval)
-                                    elif "gpu" in fname:
-                                        if gpu_fan_speed == 0:  # Only override if pynvml failed
-                                            gpu_fan_speed = max(gpu_fan_speed, fval)
-                                    else:
-                                        sys_fan_speed = max(sys_fan_speed, fval)
-                                        
-                            fan_speed = cpu_fan_speed or sys_fan_speed or gpu_fan_speed
+                            if stype == 'Temperature':
+                                # Exclude GPU sensors from CPU matching
+                                if 'GPU' in sname_u:
+                                    if gpu_temp == 0 or 'CORE' in sname_u:
+                                        gpu_temp = sval
+                                else:
+                                    # CPU Temperature Priority: Tctl/Tdie/Package > CPU > Core
+                                    if ('TCTL' in sname_u or 'TDIE' in sname_u or 'PACKAGE' in sname_u) and cpu_prio < 3:
+                                        cpu_temp = sval
+                                        cpu_prio = 3
+                                    elif 'CPU' in sname_u and cpu_prio < 2:
+                                        cpu_temp = sval
+                                        cpu_prio = 2
+                                    elif 'CORE' in sname_u and cpu_prio < 1:
+                                        cpu_temp = sval
+                                        cpu_prio = 1
 
-                            if cpu_temp > 0 or gpu_temp > 0:
-                                status = "lhm"
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            pass
-                            
+                            elif stype == 'Load':
+                                if 'GPU' in sname_u:
+                                    if gpu_load == 0 or 'CORE' in sname_u:
+                                        gpu_load = sval
+                                else:
+                                    if ('CPU' in sname_u or 'TOTAL' in sname_u) and cpu_load == 0:
+                                        cpu_load = sval
+
+                            elif stype == 'Power':
+                                if 'GPU' in sname_u:
+                                    gpu_power = sval
+                                elif ('CPU' in sname_u or 'PACKAGE' in sname_u) and power == 0:
+                                    power = sval
+
+                            elif stype == 'Clock':
+                                if 'GPU' in sname_u:
+                                    pass
+                                elif 'CORE' in sname_u or 'CPU' in sname_u:
+                                    if cpu_clock == 0:
+                                        cpu_clock = sval
+                                    else:
+                                        cpu_clock = (cpu_clock + sval) / 2.0
+
+                            elif stype == 'Fan':
+                                fname = sname.lower()
+                                if 'cpu' in fname:
+                                    cpu_fan_speed = max(cpu_fan_speed, sval)
+                                elif 'gpu' in fname:
+                                    if gpu_fan_speed == 0:
+                                        gpu_fan_speed = max(gpu_fan_speed, sval)
+                                else:
+                                    sys_fan_speed = max(sys_fan_speed, sval)
+                        
+                        fan_speed = cpu_fan_speed or sys_fan_speed or gpu_fan_speed
+                        if cpu_temp > 0 or gpu_temp > 0:
+                            status = "lhm_com"
                 except Exception:
                     pass
+
         
         # Helper: Map generic gpu to igpu or duplicate
         if dgpu_temp > 0 and abs(gpu_temp - dgpu_temp) < 2 and abs(gpu_load - dgpu_load) < 5:
@@ -529,159 +561,110 @@ if ($sensors) {{
     
     def get_smart_disks(self) -> List[Dict]:
         """
-        Get Physical Disk S.M.A.R.T info (Health, Temperature) via LibreHardwareMonitor.
+        Get Physical Disk S.M.A.R.T info (Health, Temperature) via COM WMI / WinAPI without spawning powershell.
         """
         smart_disks = []
         if os.name != 'nt':
             return smart_disks
-        
+
+        # 1. Try LHM via COM WMI
         try:
-            ps_script = '''
-$result = @()
-$lhm_hw = Get-WmiObject -Namespace root/LibreHardwareMonitor -Class Hardware -ErrorAction SilentlyContinue | Where-Object HardwareType -eq 'Storage'
-if ($lhm_hw) {
-    try {
-        $sensors = Get-WmiObject -Namespace root/LibreHardwareMonitor -Class Sensor -ErrorAction SilentlyContinue
-        foreach ($hw in $lhm_hw) {
-            $id = $hw.Identifier
-            $hw_sensors = $sensors | Where-Object { $_.Identifier -like "$id*" }
-            
-            $temp_val = 0
-            $health_pct = 100
-            
-            # Find temperature
-            $temp_sensor = $hw_sensors | Where-Object { $_.SensorType -eq 'Temperature' } | Select-Object -First 1
-            if ($temp_sensor -ne $null) { $temp_val = $temp_sensor.Value }
-            
-            # Find health
-            $pct_used = $hw_sensors | Where-Object { $_.Name -match 'Percentage Used|Degradation' } | Select-Object -First 1
-            $rem_life = $hw_sensors | Where-Object { $_.Name -match 'Remaining Life|Available Spare' } | Select-Object -First 1
-            
-            if ($pct_used -ne $null) {
-                # Wear level is 'Percentage Used', health is 100 - wear
-                $health_pct = 100 - $pct_used.Value
-            } elseif ($rem_life -ne $null) {
-                $health_pct = $rem_life.Value
-            }
-            
-            if ($health_pct -lt 0) { $health_pct = 0 }
-            if ($health_pct -gt 100) { $health_pct = 100 }
-            
-            $model_name = $hw.Name
-            $is_ssd = ($model_name -match "NVMe|SSD|M\.2|WD.*|Samsung.*EVO|KINGSTON|Crucial")
-            
-            $status = "OK"
-            if ($health_pct -lt 20) { $status = "Warning" }
-            if ($health_pct -lt 5) { $status = "Critical" }
-            
-            $result += @{
-                model = $model_name
-                temp = [math]::Round($temp_val, 0)
-                health_percent = [math]::Round($health_pct, 0)
-                status = $status
-                type = if ($is_ssd) { "SSD" } else { "HDD" }
-            }
-        }
-    } catch {}
-} else {
-    try {
-        $phys = Get-PhysicalDisk -ErrorAction SilentlyContinue
-        foreach ($p in $phys) {
-            $health = 100
-            if ($p.HealthStatus -ne "Healthy") { $health = 50 }
-            $result += @{
-                model = $p.FriendlyName
-                temp = 0
-                health_percent = $health
-                status = $p.HealthStatus
-                type = if ($p.MediaType -match "SSD") { "SSD" } else { "HDD" }
-            }
-        }
-    } catch {}
-}
-$result | ConvertTo-Json -Compress
-'''
-            res = subprocess.run(
-                ['powershell', '-NoProfile', '-Command', ps_script],
-                cwd='C:\\', close_fds=True,
-                capture_output=True, text=True, timeout=8,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-            
-            if res.returncode == 0 and res.stdout.strip():
-                import json
-                data = json.loads(res.stdout.strip())
-                if isinstance(data, dict):
-                    data = [data]
-                if isinstance(data, list):
-                    for item in data:
-                        smart_disks.append({
-                            'model': item.get('model', 'Unknown'),
-                            'temp': float(item.get('temp', 0)),
-                            'health_percent': float(item.get('health_percent', 100)),
-                            'status': item.get('status', 'OK'),
-                            'type': str(item.get('type', 'HDD')).upper()
-                        })
-        except Exception as e:
-            print(f"[Hardware] SMART disks error: {e}")
-        
+            lhm_hw = _query_wmi_fast("LibreHardwareMonitor", "SELECT Identifier, Name FROM Hardware WHERE HardwareType='Storage'")
+            if lhm_hw:
+                sensors = _query_wmi_fast("LibreHardwareMonitor", "SELECT Identifier, Name, SensorType, Value FROM Sensor")
+                for hw in lhm_hw:
+                    hw_id = str(hw.get('Identifier', ''))
+                    model_name = str(hw.get('Name', 'Unknown'))
+                    hw_sensors = [s for s in sensors if str(s.get('Identifier', '')).startswith(hw_id)]
+                    
+                    temp_val = 0.0
+                    health_pct = 100.0
+                    
+                    for s in hw_sensors:
+                        stype = str(s.get('SensorType', ''))
+                        sname = str(s.get('Name', ''))
+                        sval = float(s.get('Value') or 0)
+                        
+                        if stype == 'Temperature' and temp_val == 0:
+                            temp_val = sval
+                        elif 'Percentage Used' in sname or 'Degradation' in sname:
+                            health_pct = max(0.0, min(100.0, 100.0 - sval))
+                        elif 'Remaining Life' in sname or 'Available Spare' in sname:
+                            health_pct = max(0.0, min(100.0, sval))
+                            
+                    is_ssd = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "WD", "SAMSUNG", "KINGSTON", "CRUCIAL"])
+                    status_str = "OK"
+                    if health_pct < 20: status_str = "Warning"
+                    if health_pct < 5: status_str = "Critical"
+                    
+                    smart_disks.append({
+                        'model': model_name,
+                        'temp': round(temp_val, 0),
+                        'health_percent': round(health_pct, 0),
+                        'status': status_str,
+                        'type': "SSD" if is_ssd else "HDD"
+                    })
+        except Exception:
+            pass
+
+        # 2. Fallback: Standard Win32_DiskDrive COM query if empty
+        if not smart_disks:
+            try:
+                disks = _query_wmi_fast("cimv2", "SELECT Model, Status, MediaType FROM Win32_DiskDrive")
+                failures = _query_wmi_fast("wmi", "SELECT Active, PredictFailure FROM MSStorageDriver_FailurePredictStatus")
+                predict_failed = any(f.get('PredictFailure', False) for f in failures)
+                
+                for d in disks:
+                    model_name = str(d.get('Model', 'Disk Drive'))
+                    media_type = str(d.get('MediaType', '')).upper()
+                    is_ssd = "SSD" in media_type or any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "WD", "SAMSUNG", "KINGSTON", "CRUCIAL"])
+                    
+                    health_pct = 50.0 if predict_failed else 100.0
+                    status_str = "Warning" if predict_failed else "OK"
+                    
+                    smart_disks.append({
+                        'model': model_name,
+                        'temp': 0.0,
+                        'health_percent': health_pct,
+                        'status': status_str,
+                        'type': "SSD" if is_ssd else "HDD"
+                    })
+            except Exception as e:
+                print(f"[Hardware] SMART disks error: {e}")
+
         return smart_disks
 
     def get_disk_details(self) -> Dict[str, Dict]:
         """
-        Get detailed disk info (model, type, serial) via WMI.
-        
-        Returns:
-            Dict mapping drive letter to disk details
+        Get detailed disk info (model, type, size, free) via fast COM WMI or psutil.
         """
         details = {}
-        
         if os.name != 'nt':
             return details
-        
-        try:
-            # Simple PowerShell script to get disk info
-            ps_script = '''
-$result = @{}
-$physicalDisks = Get-WmiObject Win32_DiskDrive
-$physicalDisk = $physicalDisks | Select-Object -First 1
-$model = if ($physicalDisk) { $physicalDisk.Model } else { "Unknown" }
-$isNVMe = $model -match "NVMe|SSD|M\.2|WD_BLACK|Samsung.*EVO|KINGSTON|Crucial"
 
-# Get all logical disks
-Get-WmiObject Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
-    $result[$_.DeviceID] = @{
-        model = $model
-        type = if ($isNVMe) { "SSD" } else { "HDD" }
-        size = [math]::Round($_.Size / 1GB, 0)
-        free = [math]::Round($_.FreeSpace / 1GB, 0)
-    }
-}
-$result | ConvertTo-Json -Compress
-'''
-            
-            result = subprocess.run(
-                ['powershell', '-NoProfile', '-Command', ps_script],
-                cwd='C:\\', close_fds=True,
-                capture_output=True, text=True, timeout=8,
-                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
-            )
-            
-            if result.returncode == 0 and result.stdout.strip():
-                import json
-                data = json.loads(result.stdout.strip())
-                if isinstance(data, dict):
-                    for drive, info in data.items():
-                        if isinstance(info, dict):
-                            details[drive + '\\'] = {
-                                'model': info.get('model', 'Unknown'),
-                                'type': info.get('type', 'HDD'),
-                                'size': info.get('size', 0),
-                                'free': info.get('free', 0)
+        try:
+            physical_disks = _query_wmi_fast("cimv2", "SELECT Model FROM Win32_DiskDrive")
+            model_name = str(physical_disks[0].get('Model', 'Unknown')) if physical_disks else "Unknown"
+            is_nvme = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "WD_BLACK", "SAMSUNG", "KINGSTON", "CRUCIAL"])
+            disk_type = "SSD" if is_nvme else "HDD"
+
+            if PSUTIL_AVAILABLE:
+                for part in psutil.disk_partitions():
+                    drive_letter = part.mountpoint
+                    if 'fixed' in part.opts or part.fstype or (os.name == 'nt' and drive_letter.endswith(':\\')):
+                        try:
+                            usage = psutil.disk_usage(drive_letter)
+                            details[drive_letter] = {
+                                'model': model_name,
+                                'type': disk_type,
+                                'size': round(usage.total / (1024**3), 0),
+                                'free': round(usage.free / (1024**3), 0)
                             }
+                        except Exception:
+                            pass
         except Exception as e:
             print(f"[Hardware] Disk details error: {e}")
-        
+
         return details
     
     def get_disk_io_speed(self) -> Dict:

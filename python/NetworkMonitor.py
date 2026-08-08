@@ -396,15 +396,23 @@ class NetworkMonitor(QThread):
             print(f"[NetworkMonitor] Baseline update error: {e}")
 
     def _is_psutil_disabled(self) -> bool:
+        now = time.time()
+        if hasattr(self, '_psutil_disabled_cache') and (now - getattr(self, '_psutil_disabled_cache_time', 0)) < 10.0:
+            return self._psutil_disabled_cache
+        
+        val = False
         try:
             settings_path = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID", "settings.json")
             if os.path.exists(settings_path):
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    return bool(data.get("turn_off_psutil", False))
+                    val = bool(data.get("turn_off_psutil", False))
         except Exception:
             pass
-        return False
+            
+        self._psutil_disabled_cache = val
+        self._psutil_disabled_cache_time = now
+        return val
 
     def run(self):
         self._running = True

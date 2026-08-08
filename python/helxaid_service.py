@@ -338,6 +338,76 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 else:
                     return {"status": "error", "message": f"schtasks error {res.returncode}: {(res.stderr or res.stdout or '').strip()}"}
 
+            elif action == "scan_disk_category":
+                try:
+                    from utils.drive_utils import _as_category_dicts, _iter_files, MAX_COLLECTED_PATHS
+                    import os
+                    cat_id = data.get("cat_id")
+                    collect_paths = data.get("collect_paths", True)
+                    all_cats = {cat["id"]: cat for cat in _as_category_dicts(None)}
+                    if cat_id not in all_cats:
+                        return {"status": "error", "message": f"Category {cat_id} not found"}
+                    
+                    cat = all_cats[cat_id]
+                    result = {
+                        "status": "success",
+                        "bytes": 0,
+                        "file_count": 0,
+                        "paths": [],
+                        "path_count_truncated": False
+                    }
+                    
+                    for file_path in _iter_files(cat.get("paths", [])):
+                        try:
+                            size = os.path.getsize(file_path)
+                        except (PermissionError, OSError):
+                            size = 0
+                        result["bytes"] += size
+                        result["file_count"] += 1
+                        if collect_paths and len(result["paths"]) < MAX_COLLECTED_PATHS:
+                            result["paths"].append(file_path)
+                        elif collect_paths:
+                            result["path_count_truncated"] = True
+                            
+                    return result
+                except Exception as e:
+                    return {"status": "error", "message": f"Scan failed: {str(e)}"}
+            
+            elif action == "clean_disk_category":
+                try:
+                    from utils.drive_utils import _as_category_dicts, _iter_files, _remove_empty_dirs
+                    import os
+                    cat_id = data.get("cat_id")
+                    all_cats = {cat["id"]: cat for cat in _as_category_dicts(None)}
+                    if cat_id not in all_cats:
+                        return {"status": "error", "message": f"Category {cat_id} not found"}
+                        
+                    cat = all_cats[cat_id]
+                    result = {
+                        "status": "success",
+                        "cleaned_bytes": 0,
+                        "skipped_bytes": 0,
+                        "errors": []
+                    }
+                    
+                    for file_path in _iter_files(cat.get("paths", [])):
+                        try:
+                            size = os.path.getsize(file_path)
+                        except (PermissionError, OSError):
+                            size = 0
+                        try:
+                            os.remove(file_path)
+                            result["cleaned_bytes"] += size
+                        except (PermissionError, OSError) as exc:
+                            result["skipped_bytes"] += size
+                            if len(result["errors"]) < 25:
+                                result["errors"].append(f"{file_path}: {exc}")
+                                
+                    _remove_empty_dirs(cat.get("paths", []))
+                    return result
+                except Exception as e:
+                    return {"status": "error", "message": f"Clean failed: {str(e)}"}
+
             elif action == "exec_batch_commands":
                 commands = data.get("commands", [])
                 if not commands:
@@ -406,7 +476,7 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                     win32pipe.PIPE_ACCESS_DUPLEX,
                     win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_READMODE_MESSAGE | win32pipe.PIPE_WAIT,
                     win32pipe.PIPE_UNLIMITED_INSTANCES, 
-                    65536, 65536,
+                    1048576, 1048576,
                     0,
                     sa
                 )

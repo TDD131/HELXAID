@@ -6,6 +6,7 @@ Features:
 - Text color transition from white to black
 - Only applies sliding effect to text buttons (no icon)
 """
+from PySide6.QtCore import QVariantAnimation
 from PySide6.QtWidgets import QPushButton
 from PySide6.QtCore import QSize, QTimer, Property, QPropertyAnimation, QEasingCurve, Qt, QRectF, Signal
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QIcon, QLinearGradient, QFontMetrics
@@ -353,22 +354,50 @@ class AnimatedCheckBox(QAbstractButton):
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)
         
+        self._check_state = 2 if self.isChecked() else 0 # 0: Unchecked, 1: PartiallyChecked (-), 2: Checked (v)
         self._progress = 1.0 if self.isChecked() else 0.0
         
         from PySide6.QtCore import QVariantAnimation, QEasingCurve
         self._anim = QVariantAnimation(self)
-        self._anim.setDuration(150)
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
-        self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._anim.setDuration(140)
+        self._anim.setEasingCurve(QEasingCurve.OutQuad)
         self._anim.valueChanged.connect(self._update_anim)
         
         self.toggled.connect(self._on_toggled)
 
-    def setChecked(self, checked):
+    def _animate_to(self, target: float):
+        if hasattr(self, '_anim'):
+            if self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            
+            if abs(self._progress - target) < 0.001:
+                self._progress = target
+                self.update()
+                return
+
+            self._anim.setDirection(QVariantAnimation.Forward)
+            self._anim.setStartValue(self._progress)
+            self._anim.setEndValue(target)
+            self._anim.start()
+
+    def setCheckState(self, state: int):
+        """Set state: 0=Unchecked, 1=PartiallyChecked (-), 2=Checked (v)."""
+        self._check_state = state
+        is_chk = (state != 0)
+        self.blockSignals(True)
+        super().setChecked(is_chk)
+        self.blockSignals(False)
+        self._animate_to(1.0 if is_chk else 0.0)
+
+    def checkState(self) -> int:
+        return getattr(self, '_check_state', 2 if self.isChecked() else 0)
+
+    def setChecked(self, checked: bool):
+        self._check_state = 2 if checked else 0
+        self.blockSignals(True)
         super().setChecked(checked)
-        self._progress = 1.0 if checked else 0.0
-        self.update()
+        self.blockSignals(False)
+        self._animate_to(1.0 if checked else 0.0)
 
     def sizeHint(self):
         from PySide6.QtCore import QSize
@@ -386,10 +415,15 @@ class AnimatedCheckBox(QAbstractButton):
         self.update()
         
     def _on_toggled(self, checked):
-        from PySide6.QtCore import QAbstractAnimation
-        self._anim.setDirection(QAbstractAnimation.Forward if checked else QAbstractAnimation.Backward)
-        self._anim.start()
-        self.stateChanged.emit(2 if checked else 0)
+        if getattr(self, '_check_state', 0) == 1 and checked:
+            self._check_state = 2
+        elif not checked:
+            self._check_state = 0
+        elif checked and getattr(self, '_check_state', 0) == 0:
+            self._check_state = 2
+
+        self._animate_to(1.0 if checked else 0.0)
+        self.stateChanged.emit(self._check_state)
         
     def paintEvent(self, event):
         from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath, QBrush
@@ -426,42 +460,45 @@ class AnimatedCheckBox(QAbstractButton):
         p.setBrush(QBrush(bg_color))
         p.drawRoundedRect(box_rect, 4, 4)
         
-        # Checkmark draw animation
+        # Checkmark / Dash draw animation
         if self._progress > 0:
             p.setPen(QPen(QColor(255, 255, 255, 255), 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
             
-            # Start point
-            p1 = (box_rect.x() + 4, box_rect.y() + 9)
-            # Middle point
-            p2 = (box_rect.x() + 8, box_rect.y() + 13)
-            # End point
-            p3 = (box_rect.x() + 15, box_rect.y() + 5)
-            
-            # Segment lengths
-            l1 = 5.65 # approx length of segment 1
-            l2 = 10.63 # approx length of segment 2
-            total_l = l1 + l2
-            
-            threshold = l1 / total_l # approx 0.35
-            
-            path = QPainterPath()
-            path.moveTo(*p1)
-            
-            if self._progress <= threshold:
-                # Drawing first segment
-                t = self._progress / threshold
-                cur_x = p1[0] + (p2[0] - p1[0]) * t
-                cur_y = p1[1] + (p2[1] - p1[1]) * t
-                path.lineTo(cur_x, cur_y)
+            if getattr(self, '_check_state', 2) == 1:
+                # Partially checked (-) horizontal line
+                line_y = box_rect.y() + box_size / 2.0
+                start_x = box_rect.x() + 4
+                end_x = box_rect.x() + box_size - 4
+                cur_end_x = start_x + (end_x - start_x) * self._progress
+                p.drawLine(int(start_x), int(line_y), int(cur_end_x), int(line_y))
             else:
-                # First segment complete, drawing second segment
-                path.lineTo(*p2)
-                t = (self._progress - threshold) / (1.0 - threshold)
-                cur_x = p2[0] + (p3[0] - p2[0]) * t
-                cur_y = p2[1] + (p3[1] - p2[1]) * t
-                path.lineTo(cur_x, cur_y)
+                # Checkmark (v)
+                p1 = (box_rect.x() + 4, box_rect.y() + 9)
+                p2 = (box_rect.x() + 8, box_rect.y() + 13)
+                p3 = (box_rect.x() + 15, box_rect.y() + 5)
                 
-            p.drawPath(path)
+                l1 = 5.65 # approx length of segment 1
+                l2 = 10.63 # approx length of segment 2
+                total_l = l1 + l2
+                
+                threshold = l1 / total_l # approx 0.35
+                
+                path = QPainterPath()
+                path.moveTo(*p1)
+                
+                if self._progress <= threshold:
+                    t = self._progress / threshold
+                    cur_x = p1[0] + (p2[0] - p1[0]) * t
+                    cur_y = p1[1] + (p2[1] - p1[1]) * t
+                    path.lineTo(cur_x, cur_y)
+                else:
+                    path.lineTo(*p2)
+                    t = (self._progress - threshold) / (1.0 - threshold)
+                    cur_x = p2[0] + (p3[0] - p2[0]) * t
+                    cur_y = p2[1] + (p3[1] - p2[1]) * t
+                    path.lineTo(cur_x, cur_y)
+                    
+                p.drawPath(path)
             
         # Text
         p.setPen(QColor("#e0e0e0"))
