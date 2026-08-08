@@ -1525,16 +1525,19 @@ class DiskCleanerPanel(QWidget):
                         grp["check"].setCheckState(0)
                     grp["check"].blockSignals(False)
 
-        if total_scanned_bytes > 0:
-            percent = min(100, int((selected_bytes / total_scanned_bytes) * 100))
-            self.hero_gauge.setValue(percent)
-            self.hero_gauge.setCenterText(format_bytes(selected_bytes))
-            self.hero_gauge.setSubtitle("CLEAN NOW")
-        elif self._is_scanned:
-            self.hero_gauge.setValue(0)
-            self.hero_gauge.setCenterText("0 B")
-            self.hero_gauge.setSubtitle("0 B Junk")
+        if self._is_scanned:
+            if total_scanned_bytes > 0 and selected_bytes > 0:
+                calc_pct = (selected_bytes / total_scanned_bytes) * 100
+                percent = max(1, min(100, int(calc_pct)))
+                self.hero_gauge.setValue(percent)
+                self.hero_gauge.setCenterText(format_bytes(selected_bytes))
+                self.hero_gauge.setSubtitle("CLEAN NOW")
+            else:
+                self.hero_gauge.setValue(0)
+                self.hero_gauge.setCenterText("0 B")
+                self.hero_gauge.setSubtitle("0 B Junk")
         else:
+            self.hero_gauge.setValue(0)
             self.hero_gauge.setCenterText("SCAN")
             self.hero_gauge.setSubtitle("Ready to scan")
 
