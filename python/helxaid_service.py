@@ -209,7 +209,175 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                     err_detail = stderr or output or "no output"
                     return {"status": "error", "message": f"RyzenAdj error {result.returncode}: {err_detail}"}
                     
+            elif action == "restart_self":
+                # Restart the service itself to pick up code changes
+                try:
+                    subprocess.Popen(
+                        ['sc.exe', 'stop', 'HelxaidHelperService'],
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    import time as _time
+                    _time.sleep(1.5)
+                    subprocess.Popen(
+                        ['sc.exe', 'start', 'HelxaidHelperService'],
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                    return {"status": "success", "message": "Service restart initiated."}
+                except Exception as e:
+                    return {"status": "error", "message": str(e)}
+
+            elif action == "get_drive_health":
+                import ctypes, ctypes.wintypes, struct, json as js
+
+                debug_log = []  # Returned in response so main app can print it
+
+                GENERIC_READ = 0x80000000
+                GENERIC_WRITE = 0x40000000
+                FILE_SHARE_READ = 0x00000001
+                FILE_SHARE_WRITE = 0x00000002
+                OPEN_EXISTING = 3
+                IOCTL_STORAGE_QUERY_PROPERTY = 0x002D1400
+                StorageDeviceProtocolSpecificProperty = 49
+                ProtocolTypeNvme = 3
+                NVMeDataTypeLogPage = 2
+
+                kernel32 = ctypes.windll.kernel32
+                # Set return type properly so INVALID_HANDLE_VALUE comparison works
+                kernel32.CreateFileW.restype = ctypes.wintypes.HANDLE
+                INVALID_HANDLE_VALUE = ctypes.wintypes.HANDLE(-1).value
+
+                def _read_nvme_smart(drive_idx):
+                    path = f"\\\\.\\PhysicalDrive{drive_idx}"
+                    debug_log.append(f"[NVMe] Opening: {path}")
+                    hnd = kernel32.CreateFileW(
+                        path, GENERIC_READ | GENERIC_WRITE,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        None, OPEN_EXISTING, 0, None
+                    )
+                    last_err = ctypes.GetLastError()
+                    debug_log.append(f"[NVMe] hnd={hnd} INVALID={INVALID_HANDLE_VALUE} LastError={last_err}")
+                    if hnd is None or hnd == INVALID_HANDLE_VALUE or hnd == -1:
+                        debug_log.append(f"[NVMe] FAILED to open {path}, err={last_err}")
+                        return None
+                    debug_log.append(f"[NVMe] Handle OK for {path}")
+                    try:
+                        in_buf_size = 40 + 512
+                        out_buf_size = 40 + 512
+                        in_buf = (ctypes.c_byte * in_buf_size)()
+                        out_buf = (ctypes.c_byte * out_buf_size)()
+                        bytes_returned = ctypes.c_ulong(0)
+
+                        struct.pack_into('<II', in_buf, 0, StorageDeviceProtocolSpecificProperty, 0)
+                        struct.pack_into('<IIIIIIII', in_buf, 8,
+                            ProtocolTypeNvme, NVMeDataTypeLogPage,
+                            0x02, 0, 40, 512, 0, 0
+                        )
+                        ok = kernel32.DeviceIoControl(
+                            hnd, IOCTL_STORAGE_QUERY_PROPERTY,
+                            in_buf, in_buf_size,
+                            out_buf, out_buf_size,
+                            ctypes.byref(bytes_returned), None
+                        )
+                        ioctl_err = ctypes.GetLastError()
+                        debug_log.append(f"[NVMe] IOCTL ok={ok}, bytes={bytes_returned.value}, err={ioctl_err}")
+                        if ok:
+                            pct = out_buf[40 + 5]
+                            temp_k = struct.unpack_from('<H', out_buf, 40 + 1)[0]
+                            temp_c = max(0, temp_k - 273)
+                            debug_log.append(f"[NVMe] Drive{drive_idx}: pct_used={pct}, temp={temp_c}C, raw[40:48]={list(out_buf[40:48])}")
+                            return {"percentage_used": int(pct), "temperature": temp_c, "type": "nvme"}
+                        debug_log.append(f"[NVMe] IOCTL returned False for Drive{drive_idx}")
+                        return None
+                    except Exception as ex:
+                        debug_log.append(f"[NVMe] Exception: {ex}")
+                        return None
+                    finally:
+                        kernel32.CloseHandle(hnd)
+
+                def _read_ata_smart(drive_idx):
+                    debug_log.append(f"[ATA] Reading SMART disk{drive_idx}")
+                    try:
+                        import win32com.client
+                        locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+                        svc = locator.ConnectServer(".", "root\\wmi")
+                        data_items = list(svc.ExecQuery("SELECT InstanceName, VendorSpecific FROM MSStorageDriver_FailurePredictData"))
+                        debug_log.append(f"[ATA] Found {len(data_items)} instances")
+                        target_idx = str(drive_idx)
+                        smart_data = None
+                        for item in data_items:
+                            iname = str(getattr(item, "InstanceName", "") or "")
+                            debug_log.append(f"[ATA]  Instance: {iname}")
+                            if f"disk{target_idx}" in iname.lower() or f"physicaldrive{target_idx}" in iname.lower():
+                                vs = getattr(item, "VendorSpecific", None)
+                                if vs:
+                                    smart_data = list(vs)
+                                    debug_log.append(f"[ATA]  Matched! len={len(smart_data)}")
+                                break
+                        if not smart_data or len(smart_data) < 362:
+                            debug_log.append(f"[ATA] No valid data for disk{drive_idx}")
+                            return None
+                        attrs = {}
+                        for i in range(30):
+                            offset = 2 + i * 12
+                            attr_id = smart_data[offset]
+                            if attr_id == 0:
+                                continue
+                            raw_bytes = bytes(smart_data[offset+5:offset+12]).ljust(8, b'\x00')
+                            attrs[attr_id] = struct.unpack_from('<Q', raw_bytes)[0] & 0xFFFFFFFF
+                        debug_log.append(f"[ATA] disk{drive_idx}: ID5={attrs.get(5,0)} ID197={attrs.get(197,0)} ID198={attrs.get(198,0)}")
+                        return {"attrs": attrs, "type": "ata"}
+                    except Exception as ex:
+                        debug_log.append(f"[ATA] Exception: {ex}")
+                        return None
+
+                counters = {}
+                try:
+                    ps_list = subprocess.run(
+                        ['powershell.exe', '-NoProfile', '-Command',
+                         'Get-WmiObject -Namespace root\\microsoft\\windows\\storage -Class MSFT_PhysicalDisk | Select-Object DeviceId, MediaType, BusType | ConvertTo-Json'],
+                        capture_output=True, text=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=8
+                    )
+                    debug_log.append(f"PS rc={ps_list.returncode}, out={ps_list.stdout[:200]}")
+                    disk_list = []
+                    if ps_list.returncode == 0 and ps_list.stdout.strip():
+                        raw_list = js.loads(ps_list.stdout.strip())
+                        if isinstance(raw_list, dict):
+                            raw_list = [raw_list]
+                        disk_list = raw_list
+
+                    for disk_entry in disk_list:
+                        dev_id = str(disk_entry.get("DeviceId", ""))
+                        bus_type = int(disk_entry.get("BusType") or 0)
+                        wear = 0
+                        temperature = 0
+                        debug_log.append(f"Disk DeviceId={dev_id} BusType={bus_type}")
+
+                        if bus_type == 17:
+                            nvme = _read_nvme_smart(dev_id)
+                            if nvme:
+                                wear = nvme["percentage_used"]
+                                temperature = nvme["temperature"]
+                        else:
+                            ata = _read_ata_smart(dev_id)
+                            if ata:
+                                attrs = ata["attrs"]
+                                temperature = int(attrs.get(194, attrs.get(190, 0)) & 0xFF)
+                                reallocated = int(attrs.get(5, 0))
+                                pending = int(attrs.get(197, 0))
+                                uncorrectable = int(attrs.get(198, 0))
+                                wear = min(99, reallocated * 3 + pending * 2 + uncorrectable * 5)
+
+                        debug_log.append(f"  -> Wear={wear} Temp={temperature}")
+                        counters[dev_id] = {"DeviceId": dev_id, "Wear": wear, "Temperature": temperature}
+
+                    return {"status": "success", "counters": counters, "debug": debug_log}
+                except Exception as e:
+                    debug_log.append(f"TOP EXCEPTION: {e}")
+                    return {"status": "error", "message": str(e), "debug": debug_log}
+
             elif action in ("launch_lhm", "launch_tool"):
+
                 exe_path = data.get("exe_path")
                 silent = data.get("silent", False)
                 if not exe_path or not os.path.exists(exe_path):

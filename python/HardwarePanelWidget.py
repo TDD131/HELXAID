@@ -10,6 +10,7 @@ Features:
 Component Name: HardwarePanelWidget
 """
 
+from PySide6.QtWidgets import QComboBox
 from PySide6.QtGui import QGradient
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -675,7 +676,7 @@ class DiskCleanWorker(QThread):
 
 class DriveOverviewWidget(QWidget):
     """
-    Storage hero summary for HELXTATS Drive page.
+    Storage hero summary for HELXTATS Drive page with physical drive selector dropdown.
 
     Component Name: DriveOverviewWidget
     """
@@ -694,78 +695,221 @@ class DriveOverviewWidget(QWidget):
             }
         """)
 
+        self._latest_partitions = []
+        self._latest_hardware = {}
+        self._latest_disk_io = {}
+        self._latest_physical_disks = []
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(10)
+        layout.setSpacing(0)
 
         cap_col = QVBoxLayout()
-        cap_col.setSpacing(2)
-        cap_title = QLabel("TOTAL STORAGE")
-        cap_title.setObjectName("driveTotalCapacityTitle")
-        cap_title.setStyleSheet("color: #888888; font-size: 10px; font-weight: 700; background: transparent;")
+        cap_col.setSpacing(6)
+        cap_col.setAlignment(Qt.AlignTop)
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+
+        self.combo_drive_selector = QComboBox()
+        self.combo_drive_selector.setObjectName("driveOverviewSelector")
+        self.combo_drive_selector.setFixedHeight(24)
+        self.combo_drive_selector.setCursor(Qt.PointingHandCursor)
+        self.combo_drive_selector.setStyleSheet("""
+            QComboBox#driveOverviewSelector {
+                background: rgba(255, 255, 255, 0.08);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                padding-left: 10px;
+                padding-right: 26px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: 700;
+            }
+            QComboBox#driveOverviewSelector:hover {
+                background: rgba(255, 255, 255, 0.14);
+                border-color: rgba(255, 255, 255, 0.25);
+                color: #ffffff;
+            }
+            QComboBox#driveOverviewSelector::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border: none;
+                background: transparent;
+            }
+            QComboBox#driveOverviewSelector::down-arrow {
+                subcontrol-origin: content;
+                subcontrol-position: center;
+                image: url("%s");
+                width: 10px;
+                height: 10px;
+            }
+            QComboBox#driveOverviewSelector QAbstractItemView {
+                background: rgba(18, 20, 26, 0.95);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 6px;
+                padding: 4px;
+                outline: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+            QComboBox#driveOverviewSelector QAbstractItemView::item {
+                min-height: 24px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }
+            QComboBox#driveOverviewSelector QAbstractItemView::item:hover,
+            QComboBox#driveOverviewSelector QAbstractItemView::item:selected {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }
+        """ % down_arrow_path)
+        self.combo_drive_selector.addItem("TOTAL STORAGE")
+        self.combo_drive_selector.currentIndexChanged.connect(self._on_selector_changed)
+
+        self.lbl_disk_type = QLabel("STORAGE")
+        self.lbl_disk_type.setObjectName("driveDiskTypeLabel")
+        self.lbl_disk_type.setStyleSheet("color: #888888; font-size: 9px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
+
         self.lbl_total_capacity = QLabel("0 B / 0 B")
         self.lbl_total_capacity.setObjectName("driveTotalCapacity")
         self.lbl_total_capacity.setStyleSheet("color: #ffffff; font-size: 20px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
-        cap_col.addWidget(cap_title)
+        cap_col.addWidget(self.combo_drive_selector, alignment=Qt.AlignLeft)
+        cap_col.addWidget(self.lbl_disk_type)
         cap_col.addWidget(self.lbl_total_capacity)
         layout.addLayout(cap_col)
 
-        sep = QFrame()
-        sep.setObjectName("driveOverviewSeparator")
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet("color: rgba(255, 255, 255, 0.08); background: rgba(255, 255, 255, 0.08); max-height: 1px;")
-        layout.addWidget(sep)
+        layout.addStretch(1)
 
-        sub_row = QHBoxLayout()
-        sub_row.setSpacing(12)
+        bottom_col = QVBoxLayout()
+        bottom_col.setSpacing(8)
 
-        health_col = QVBoxLayout()
-        health_col.setSpacing(2)
-        health_title = QLabel("SMART HEALTH")
-        health_title.setObjectName("driveHealthScoreTitle")
-        health_title.setStyleSheet("color: #888888; font-size: 9px; font-weight: 700; background: transparent;")
+        self.lbl_health_title = QLabel("SMART HEALTH")
+        self.lbl_health_title.setObjectName("driveHealthScoreTitle")
+        self.lbl_health_title.setStyleSheet("color: #888888; font-size: 9px; font-weight: 700; background: transparent;")
         self.lbl_health_score = QLabel("HEALTH UNKNOWN")
         self.lbl_health_score.setObjectName("driveHealthScore")
         self.lbl_health_score.setStyleSheet("color: #FFCC00; font-size: 14px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
-        health_col.addWidget(health_title)
-        health_col.addWidget(self.lbl_health_score)
-        sub_row.addLayout(health_col, stretch=1)
 
-        io_col = QVBoxLayout()
-        io_col.setSpacing(2)
-        io_title = QLabel("LIVE I/O")
-        io_title.setObjectName("driveLiveIoTitle")
-        io_title.setStyleSheet("color: #888888; font-size: 9px; font-weight: 700; background: transparent;")
+        health_col = QVBoxLayout()
+        health_col.setSpacing(2)
+        health_col.addWidget(self.lbl_health_title)
+        health_col.addWidget(self.lbl_health_score)
+        bottom_col.addLayout(health_col)
+
+        self.lbl_io_title = QLabel("LIVE I/O")
+        self.lbl_io_title.setObjectName("driveLiveIoTitle")
+        self.lbl_io_title.setStyleSheet("color: #888888; font-size: 9px; font-weight: 700; background: transparent;")
         self.lbl_live_io = QLabel("R: 0.0 MB/s | W: 0.0 MB/s")
         self.lbl_live_io.setObjectName("driveLiveIo")
         self.lbl_live_io.setStyleSheet("color: #00E5FF; font-size: 13px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
-        io_col.addWidget(io_title)
+
+        io_col = QVBoxLayout()
+        io_col.setSpacing(2)
+        io_col.addWidget(self.lbl_io_title)
         io_col.addWidget(self.lbl_live_io)
-        sub_row.addLayout(io_col, stretch=1)
+        bottom_col.addLayout(io_col)
 
-        layout.addLayout(sub_row)
+        layout.addLayout(bottom_col)
 
-    def set_data(self, partitions, hardware, disk_io):
+    def _on_selector_changed(self, index):
+        self._update_display()
+
+    def set_data(self, partitions, hardware, disk_io, physical_disks=None):
         from utils.drive_utils import format_bytes
-        total = sum(int(p.get("total_bytes", 0)) for p in partitions)
-        used = sum(int(p.get("used_bytes", 0)) for p in partitions)
-        self.lbl_total_capacity.setText(f"{format_bytes(used)} / {format_bytes(total)}")
+        self._latest_partitions = partitions or []
+        self._latest_hardware = hardware or {}
+        self._latest_disk_io = disk_io or {}
 
-        statuses = [str(info.get("smart_status", "")).lower() for info in hardware.values()]
-        if not statuses:
-            text, color = "HEALTH UNKNOWN", "#FFCC00"
-        elif any("critical" in s or "pred fail" in s for s in statuses):
-            text, color = "CRITICAL", "#FF3355"
-        elif any("warn" in s or "bad" in s or "fail" in s for s in statuses):
-            text, color = "WARNING", "#FFCC00"
+        if physical_disks is not None:
+            self._latest_physical_disks = physical_disks
+            if self.combo_drive_selector.count() != len(physical_disks) + 1:
+                self.combo_drive_selector.blockSignals(True)
+                curr_idx = self.combo_drive_selector.currentIndex()
+                self.combo_drive_selector.clear()
+                self.combo_drive_selector.addItem("TOTAL STORAGE")
+                for d in physical_disks:
+                    d_label = f"Drive {d['index']}: {d['model']}"
+                    self.combo_drive_selector.addItem(d_label)
+                if curr_idx < self.combo_drive_selector.count():
+                    self.combo_drive_selector.setCurrentIndex(curr_idx)
+                self.combo_drive_selector.blockSignals(False)
+
+        self._update_display()
+
+    def _update_display(self):
+        from utils.drive_utils import format_bytes
+        idx = self.combo_drive_selector.currentIndex()
+
+        if idx <= 0 or not self._latest_physical_disks or idx > len(self._latest_physical_disks):
+            # Aggregated Total Storage View — hide SMART HEALTH and LIVE I/O
+            self.lbl_health_title.setVisible(False)
+            self.lbl_health_score.setVisible(False)
+            self.lbl_io_title.setVisible(False)
+            self.lbl_live_io.setVisible(False)
+
+            media_types = set()
+            for d in self._latest_physical_disks:
+                if d.get("media_type"):
+                    media_types.add(d["media_type"].upper())
+            if not media_types:
+                type_str = "SYSTEM STORAGE"
+            elif len(media_types) == 1:
+                type_str = f"{next(iter(media_types))} STORAGE"
+            else:
+                type_str = "HYBRID STORAGE"
+            self.lbl_disk_type.setText(type_str)
+
+            total = sum(int(p.get("total_bytes", 0)) for p in self._latest_partitions)
+            used = sum(int(p.get("used_bytes", 0)) for p in self._latest_partitions)
+            self.lbl_total_capacity.setText(f"{format_bytes(used)} / {format_bytes(total)}")
         else:
-            text, color = "100% HEALTHY", "#00FF66"
-        self.lbl_health_score.setText(text)
-        self.lbl_health_score.setStyleSheet(f"color: {color}; font-size: 18px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+            # Selected Physical Drive View — show SMART HEALTH and LIVE I/O
+            self.lbl_health_title.setVisible(True)
+            self.lbl_health_score.setVisible(True)
+            self.lbl_io_title.setVisible(True)
+            self.lbl_live_io.setVisible(True)
 
-        read_speed = float(disk_io.get("read_mbps", 0) or 0)
-        write_speed = float(disk_io.get("write_mbps", 0) or 0)
-        self.lbl_live_io.setText(f"R: {read_speed:.1f} MB/s | W: {write_speed:.1f} MB/s")
+            target_disk = self._latest_physical_disks[idx - 1]
+            logicals = target_disk.get("logicals", [])
+
+            mtype = str(target_disk.get("media_type", "DISK")).upper()
+            self.lbl_disk_type.setText(mtype)
+
+            matching_partitions = [
+                p for p in self._latest_partitions
+                if (p.get("drive") in logicals or p.get("letter") in [l.rstrip("\\") for l in logicals])
+            ]
+
+            used = sum(int(p.get("used_bytes", 0)) for p in matching_partitions)
+            total = target_disk.get("size_bytes", 0)
+            if total <= 0:
+                total = sum(int(p.get("total_bytes", 0)) for p in matching_partitions)
+
+            self.lbl_total_capacity.setText(f"{format_bytes(used)} / {format_bytes(total)}")
+
+            smart_status = str(target_disk.get("smart_status", "OK")).upper()
+            health_text = target_disk.get("health_text", "")
+            health_pct = target_disk.get("health_pct", 100)
+
+            if health_pct >= 90 and "CRITICAL" not in smart_status and "WARN" not in smart_status:
+                color = "#00FF66"
+            elif health_pct >= 60 and "CRITICAL" not in smart_status:
+                color = "#FFCC00"
+            else:
+                color = "#FF3355"
+
+            self.lbl_health_score.setText(health_text)
+            self.lbl_health_score.setStyleSheet(f"color: {color}; font-size: 18px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+
+            read_speed = float(self._latest_disk_io.get("read_mbps", 0) or 0)
+            write_speed = float(self._latest_disk_io.get("write_mbps", 0) or 0)
+            self.lbl_live_io.setText(f"R: {read_speed:.1f} MB/s | W: {write_speed:.1f} MB/s")
 
 
 class DriveVolumeCard(QWidget):
@@ -1300,7 +1444,7 @@ class DiskCleanerPanel(QWidget):
         # Bottom Bar with Status Label & RESET TO DEFAULT button (matching essentialBottom in Booster tab)
         bottom_bar = QFrame()
         bottom_bar.setObjectName("driveCleanerBottomBar")
-        bottom_bar.setFixedHeight(50)
+        bottom_bar.setFixedHeight(58)
         bottom_bar.setStyleSheet("""
             QFrame#driveCleanerBottomBar {
                 background: rgba(30, 30, 30, 0.8);
@@ -1310,7 +1454,7 @@ class DiskCleanerPanel(QWidget):
             }
         """)
         bottom_layout = QHBoxLayout(bottom_bar)
-        bottom_layout.setContentsMargins(15, 0, 15, 0)
+        bottom_layout.setContentsMargins(15, 8, 15, 8)
         bottom_layout.setSpacing(10)
 
         self.status_label = QLabel("Tier 1 selected by default. Review before cleaning.")
@@ -1470,10 +1614,7 @@ class DiskCleanerPanel(QWidget):
 
         # 0. Update Category Rows Visibility
         for cat_id, row in self._category_rows.items():
-            if self._is_scanned and row["bytes"] == 0:
-                row["row"].setVisible(False)
-            else:
-                row["row"].setVisible(True)
+            row["row"].setVisible(True)
 
         # 1. Update Subgroups (e.g. Windows Temp Files, Google Chrome)
         if hasattr(self, '_subgroup_rows'):
@@ -5073,20 +5214,27 @@ class HardwarePanelWidget(QWidget):
         if not hasattr(self, "drive_overview"):
             return
         try:
-            from utils.drive_utils import get_drive_partitions_info, get_drive_hardware_info
+            from utils.drive_utils import get_drive_partitions_info, get_drive_hardware_info, get_physical_disks_info
             self._drive_refresh_counter = getattr(self, "_drive_refresh_counter", 0) + 1
             should_refresh = self._drive_refresh_counter >= 10 or not getattr(self, "_drive_partitions", None)
             if should_refresh:
                 self._drive_refresh_counter = 0
                 self._drive_partitions = get_drive_partitions_info()
-                if not self._drive_hardware_info:
+                if not getattr(self, "_drive_hardware_info", None):
                     self._drive_hardware_info = get_drive_hardware_info()
+                if not getattr(self, "_drive_physical_disks", None):
+                    self._drive_physical_disks = get_physical_disks_info()
 
             partitions = [dict(p) for p in getattr(self, "_drive_partitions", [])]
             partitions = self._merge_drive_snapshot(partitions, disks or [])
             self._drive_partitions = partitions
             self._render_drive_cards(partitions)
-            self.drive_overview.set_data(partitions, self._drive_hardware_info, disk_io or {})
+            self.drive_overview.set_data(
+                partitions, 
+                getattr(self, "_drive_hardware_info", {}), 
+                disk_io or {},
+                getattr(self, "_drive_physical_disks", [])
+            )
             if hasattr(self, "drive_refresh_label"):
                 self.drive_refresh_label.setText(f"{len(partitions)} volumes")
         except Exception as e:

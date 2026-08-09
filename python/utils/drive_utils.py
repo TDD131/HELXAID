@@ -1406,6 +1406,130 @@ def get_drive_hardware_info() -> Dict[str, Dict]:
     return hardware
 
 
+def get_physical_disks_info() -> List[Dict]:
+    """
+    Query physical disk drive objects from WMI and calculate Dual-Engine HDD & SSD Health.
+    """
+    physical_disks = []
+    disks = _query_wmi("cimv2", "SELECT DeviceID, Index, Model, Size, MediaType, InterfaceType, PNPDeviceID, Status FROM Win32_DiskDrive")
+    failure_rows = _query_wmi("wmi", "SELECT InstanceName, PredictFailure FROM MSStorageDriver_FailurePredictStatus")
+    predict_failure_map = {str(row.get("InstanceName", "")).upper(): bool(row.get("PredictFailure")) for row in failure_rows}
+
+    # Query MSFT_PhysicalDisk for HealthStatus & OperationalStatus
+    msft_disks = _query_wmi("root\\microsoft\\windows\\storage", "SELECT DeviceId, Model, HealthStatus, OperationalStatus, MediaType, BusType FROM MSFT_PhysicalDisk")
+    msft_map = {str(m.get("DeviceId", "")).strip(): m for m in msft_disks}
+
+    # Query Zero-UAC service ONCE for all disk reliability counters
+    _wear_counters = {}
+    try:
+        helper_res = _send_ipc_command({"action": "get_drive_health"})
+        if helper_res:
+            # Print service-side debug log in main app console
+            for line in (helper_res.get("debug") or []):
+                print(f"  [SVC] {line}")
+        if helper_res and helper_res.get("status") == "success":
+            _wear_counters = helper_res.get("counters", {}) or {}
+            print(f"[Drive Health] IPC success. Counters: {_wear_counters}")
+        else:
+            print(f"[Drive Health] IPC returned: {helper_res}. Requesting service restart.")
+            _send_ipc_command({"action": "restart_self"})
+    except Exception as e:
+        print(f"[Drive Health] IPC exception: {e}")
+
+    for disk in disks:
+        device_id = str(disk.get("DeviceID") or "")
+        model = str(disk.get("Model") or "Physical Disk").strip()
+        idx = disk.get("Index")
+        if idx is None and "PHYSICALDRIVE" in device_id.upper():
+            try:
+                idx = int(device_id.upper().split("PHYSICALDRIVE")[-1])
+            except Exception:
+                idx = len(physical_disks)
+        elif idx is None:
+            idx = len(physical_disks)
+        
+        try:
+            size_bytes = int(disk.get("Size") or 0)
+        except Exception:
+            size_bytes = 0
+
+        escaped = device_id.replace("\\", "\\\\")
+        logicals = []
+        if escaped:
+            partitions = _query_wmi(
+                "cimv2",
+                f"ASSOCIATORS OF {{Win32_DiskDrive.DeviceID='{escaped}'}} WHERE AssocClass = Win32_DiskDriveToDiskPartition",
+            )
+            for part in partitions:
+                part_id = str(part.get("DeviceID") or "").replace("\\", "\\\\")
+                if not part_id:
+                    continue
+                log_disks = _query_wmi(
+                    "cimv2",
+                    f"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{part_id}'}} WHERE AssocClass = Win32_LogicalDiskToPartition",
+                )
+                for logical in log_disks:
+                    letter = str(logical.get("DeviceID") or "")
+                    if letter:
+                        logicals.append(f"{letter}\\")
+
+        media_type = str(disk.get("MediaType") or "")
+        interface_type = str(disk.get("InterfaceType") or "")
+        pnp_id = str(disk.get("PNPDeviceID") or "")
+        inferred_type = _infer_media_type(model, media_type, interface_type, pnp_id)
+
+        msft = msft_map.get(str(idx), {})
+        health_status_code = msft.get("HealthStatus", 0)
+        op_status = msft.get("OperationalStatus") or []
+
+        # Determine if predictive failure triggered
+        is_pred_fail = any(v for k, v in predict_failure_map.items() if device_id.upper() in k)
+        if isinstance(op_status, (list, tuple)):
+            if 6 in op_status or 3 in op_status: # 6 = Predictive Failure, 3 = Degraded
+                is_pred_fail = True
+
+        # Look up this disk's wear counter from the cached Zero-UAC response
+        wear_pct = 0
+        read_errors = 0
+        try:
+            cnt = _wear_counters.get(str(idx), {})
+            wear_pct = int(cnt.get("Wear") or 0)
+            read_errors = int(cnt.get("ReadErrors") or 0)
+        except Exception:
+            pass
+
+        # Dual-Engine Health Calculator
+        if is_pred_fail or health_status_code == 2:
+            health_pct = 30
+            health_text = "30% CRITICAL"
+            smart_status = "CRITICAL"
+        elif health_status_code == 1 or (isinstance(op_status, (list, tuple)) and 3 in op_status):
+            health_pct = 70
+            health_text = "70% WARNING"
+            smart_status = "WARNING"
+        else:
+            # Healthy Drive: deduct Wear percentage (e.g., 2% wear -> 98% HEALTHY)
+            health_pct = max(1, 100 - wear_pct)
+            if read_errors > 0:
+                health_pct = max(1, health_pct - min(20, read_errors))
+            health_text = f"{health_pct}% HEALTHY"
+            smart_status = "OK"
+
+        physical_disks.append({
+            "index": int(idx),
+            "device_id": device_id,
+            "model": model,
+            "size_bytes": size_bytes,
+            "media_type": inferred_type,
+            "smart_status": smart_status,
+            "health_pct": health_pct,
+            "health_text": health_text,
+            "logicals": logicals,
+        })
+
+    return physical_disks
+
+
 def _self_check() -> None:
     root = tempfile.mkdtemp(prefix="helxtats-drive-utils-")
     try:
