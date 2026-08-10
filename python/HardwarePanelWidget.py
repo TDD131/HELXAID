@@ -22,10 +22,10 @@ from PySide6.QtWidgets import (
 )
 from AnimatedButton import AnimatedCheckBox
 from smooth_scroll import SmoothScrollArea, SmoothTableWidget
-from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QThread, QPropertyAnimation, QEasingCurve, QRect
+from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QThread, QPropertyAnimation, QEasingCurve, QRect, Property
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QLinearGradient, 
-    QConicalGradient, QIntValidator, QPixmap, QFontMetrics
+    QConicalGradient, QIntValidator, QPixmap, QFontMetrics, QImage
 )
 from PySide6.QtSvg import QSvgRenderer
 
@@ -2224,19 +2224,16 @@ class DiskCleanerPanel(QWidget):
                 data["row"].setVisible(True)
 
     def _update_cleaner_tab_buttons(self):
-        """Update sub-tab button styles matching the Booster tab top-gradient indicator."""
+        """Update sub-tab button styles to Underline Accent style."""
         for i, btn in enumerate(self._cleaner_tab_btns):
             if i == self._current_cleaner_tab:
                 btn.setStyleSheet("""
                     QPushButton {
-                        background: #2a2a2a;
-                        color: #ffffff;
+                        background: transparent;
+                        color: #FF5B06;
                         border: none;
-                        border-top: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #cc47aa, stop:0.5 #ff0919, stop:1 #e89805);
-                        border-top-left-radius: 6px;
-                        border-top-right-radius: 6px;
-                        border-bottom-left-radius: 0px;
-                        border-bottom-right-radius: 0px;
+                        border-bottom: 2px solid #FF5B06;
+                        border-radius: 0px;
                         font-family: 'Orbitron', sans-serif;
                         font-size: 11px;
                         font-weight: 700;
@@ -2249,6 +2246,8 @@ class DiskCleanerPanel(QWidget):
                         background: transparent;
                         color: #888888;
                         border: none;
+                        border-bottom: 2px solid transparent;
+                        border-radius: 0px;
                         font-family: 'Orbitron', sans-serif;
                         font-size: 11px;
                         font-weight: 600;
@@ -2256,7 +2255,7 @@ class DiskCleanerPanel(QWidget):
                     }
                     QPushButton:hover {
                         color: #cccccc;
-                        background: rgba(255, 255, 255, 0.05);
+                        background: rgba(255, 91, 6, 0.1);
                     }
                 """)
 
@@ -2350,6 +2349,105 @@ class DiskCleanerPanel(QWidget):
             self._recalculate_selected_junk()
 
         self.hero_gauge.trigger_fade_transition(220, _apply_cleaned_state)
+
+
+class HeaderLhmIconButton(QPushButton):
+    """
+    Header LHM Icon Button with brightened icon on hover, 100% center-pivot pop animation, and no border.
+    Component Name: HeaderLhmIconButton
+    """
+    def __init__(self, icon_path, parent=None):
+        super().__init__("", parent)
+        self.setObjectName("headerOpenLhmBtn")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(38, 38)
+        self.setToolTip("Open LHM Panel")
+
+        self.normal_pixmap = QPixmap()
+        self.hover_pixmap = QPixmap()
+        self._scale_val = 1.0
+
+        if os.path.exists(icon_path):
+            self.normal_pixmap = QPixmap(icon_path)
+            
+            # True RGB channel brightness scaling (+45% brighter, preserving original colors)
+            img = self.normal_pixmap.toImage().convertToFormat(QImage.Format_ARGB32)
+            w, h = img.width(), img.height()
+            for y in range(h):
+                for x in range(w):
+                    c = QColor(img.pixelColor(x, y))
+                    if c.alpha() > 0:
+                        r = min(255, int(c.red() * 1.45))
+                        g = min(255, int(c.green() * 1.45))
+                        b = min(255, int(c.blue() * 1.45))
+                        img.setPixelColor(x, y, QColor(r, g, b, c.alpha()))
+            
+            self.hover_pixmap = QPixmap.fromImage(img)
+
+        self._anim = QPropertyAnimation(self, b"scaleVal")
+        self._anim.setDuration(180)
+
+        self.setStyleSheet("""
+            QPushButton#headerOpenLhmBtn {
+                background: rgba(255, 255, 255, 0.06);
+                border: none;
+                border-radius: 8px;
+                padding: 0px;
+            }
+            QPushButton#headerOpenLhmBtn:hover {
+                background: rgba(255, 255, 255, 0.14);
+                border: none;
+            }
+            QPushButton#headerOpenLhmBtn:pressed {
+                background: rgba(255, 255, 255, 0.22);
+                border: none;
+            }
+        """)
+
+    def getScaleVal(self):
+        return self._scale_val
+
+    def setScaleVal(self, val):
+        self._scale_val = val
+        self.update()
+
+    scaleVal = Property(float, getScaleVal, setScaleVal)
+
+    def enterEvent(self, event):
+        self._anim.stop()
+        self._anim.setEasingCurve(QEasingCurve.OutBack)
+        self._anim.setStartValue(self._scale_val)
+        self._anim.setEndValue(1.18)
+        self._anim.start()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._anim.stop()
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.setStartValue(self._scale_val)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        # 1. Paint button background & QSS styles
+        super().paintEvent(event)
+        
+        # 2. Paint icon with 100% TRUE CENTER PIVOT (0.5, 0.5)
+        pix = self.hover_pixmap if (self.underMouse() and not self.hover_pixmap.isNull()) else self.normal_pixmap
+        if not pix.isNull():
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            
+            rect = self.rect()
+            cx = rect.center().x()
+            cy = rect.center().y()
+            
+            sz = int(26 * self._scale_val)
+            icon_rect = QRect(cx - sz // 2, cy - sz // 2, sz, sz)
+            
+            painter.drawPixmap(icon_rect, pix)
 
 
 # ============================================
@@ -2498,18 +2596,25 @@ class HardwarePanelWidget(QWidget):
                     background: transparent;
                     color: #888888;
                     border: none;
-                    border-bottom: 2px solid transparent;
+                    border-top: 3px solid transparent;
+                    border-top-left-radius: 6px;
+                    border-top-right-radius: 6px;
                     padding: 8px 16px;
+                    font-family: 'Orbitron';
                     font-size: 12px;
                     font-weight: 600;
                 }
                 QPushButton:hover {
                     color: #e0e0e0;
-                    background: rgba(255, 91, 6, 0.1);
+                    background: rgba(255, 255, 255, 0.05);
                 }
                 QPushButton:checked {
-                    color: #FF5B06;
-                    border-bottom: 2px solid #FF5B06;
+                    background: #2a2a2a;
+                    color: #ffffff;
+                    border-top: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                        stop:0 #cc47aa, stop:0.5 #ff0919, stop:1 #e89805);
+                    border-top-left-radius: 6px;
+                    border-top-right-radius: 6px;
                 }
             """)
             self._nav_buttons.append(btn)
@@ -3747,19 +3852,16 @@ class HardwarePanelWidget(QWidget):
         """Update tab button styles based on current selection."""
         for i, btn in enumerate(self._ram_tab_btns):
             if i == self._current_ram_tab:
-                # Active tab: gradient top border (orange -> pink -> purple) with rounded corners
                 btn.setStyleSheet("""
                     QPushButton {
-                        background: #2a2a2a;
-                        color: #e0e0e0;
+                        background: transparent;
+                        color: #FF5B06;
                         border: none;
-                        border-top: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                            stop:0 #cc47aa, stop:0.5 #ff0919, stop:1 #e89805);
-                        border-top-left-radius: 6px;
-                        border-top-right-radius: 6px;
-                        border-bottom-left-radius: 0px;
-                        border-bottom-right-radius: 0px;
+                        border-bottom: 2px solid #FF5B06;
+                        border-radius: 0px;
+                        font-family: 'Orbitron';
                         font-size: 14px;
+                        font-weight: 700;
                         padding: 8px 12px;
                     }
                 """)
@@ -3769,14 +3871,16 @@ class HardwarePanelWidget(QWidget):
                         background: transparent;
                         color: #888888;
                         border: none;
-                        border-top: 3px solid transparent;
+                        border-bottom: 2px solid transparent;
                         border-radius: 0px;
+                        font-family: 'Orbitron';
                         font-size: 14px;
+                        font-weight: 500;
                         padding: 8px 12px;
                     }
                     QPushButton:hover {
-                        background: rgba(255, 255, 255, 0.05);
-                        color: #b0b0b0;
+                        background: rgba(255, 91, 6, 0.1);
+                        color: #e0e0e0;
                     }
                 """)
     
@@ -6206,38 +6310,10 @@ class HardwarePanelWidget(QWidget):
         title.setStyleSheet("color: #e0e0e0; font-size: 24px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
         title_layout.addWidget(title)
 
-        # LHM Panel Button right next to HELXTATS title with SVG icon
-        self.btn_open_lhm = QPushButton("OPEN LHM PANEL")
-        self.btn_open_lhm.setObjectName("headerOpenLhmBtn")
-        self.btn_open_lhm.setCursor(Qt.PointingHandCursor)
-        self.btn_open_lhm.setFixedHeight(30)
-
-        # Load libre.png icon
+        # LHM Panel Button right next to HELXTATS title with full icon
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "libre.png")
-        if os.path.exists(icon_path):
-            self.btn_open_lhm.setIcon(QIcon(icon_path))
-            self.btn_open_lhm.setIconSize(QSize(18, 18))
-
+        self.btn_open_lhm = HeaderLhmIconButton(icon_path)
         self.btn_open_lhm.clicked.connect(lambda: self._start_librehwmon(silent_launch=False))
-        self.btn_open_lhm.setStyleSheet("""
-            QPushButton#headerOpenLhmBtn {
-                background: rgba(255, 91, 6, 0.15);
-                color: #FF5B06;
-                border: none;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-family: 'Orbitron';
-                font-size: 11px;
-                font-weight: 700;
-            }
-            QPushButton#headerOpenLhmBtn:hover {
-                background: #FF5B06;
-                color: #ffffff;
-            }
-            QPushButton#headerOpenLhmBtn:pressed {
-                background: #e04b00;
-            }
-        """)
         title_layout.addWidget(self.btn_open_lhm, alignment=Qt.AlignVCenter)
 
         header_layout.addLayout(title_layout)
