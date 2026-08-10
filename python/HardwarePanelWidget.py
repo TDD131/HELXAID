@@ -1438,18 +1438,17 @@ class DiskCleanerPanel(QWidget):
         # Sub-tab bar (Booster tab style: Essential, System, Advanced, All Junk)
         tab_bar = QWidget()
         tab_bar.setObjectName("driveCleanerTabBar")
-        tab_bar.setFixedHeight(38)
+        tab_bar.setFixedHeight(40)
         tab_bar.setStyleSheet("""
             QWidget#driveCleanerTabBar {
-                background: rgba(20, 20, 20, 0.8);
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                background: rgba(26, 26, 26, 0.95);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
             }
         """)
         tab_bar_layout = QHBoxLayout(tab_bar)
-        tab_bar_layout.setContentsMargins(6, 0, 6, 0)
-        tab_bar_layout.setSpacing(4)
+        tab_bar_layout.setContentsMargins(6, 5, 6, 5)
+        tab_bar_layout.setSpacing(6)
 
         tab_names = ["System clean-up", "System tweaks", "Disk defragment"]
         self._cleaner_tab_btns = []
@@ -2224,20 +2223,23 @@ class DiskCleanerPanel(QWidget):
                 data["row"].setVisible(True)
 
     def _update_cleaner_tab_buttons(self):
-        """Update sub-tab button styles to Underline Accent style."""
+        """Update sub-tab button styles matching macroSubNav style 100%."""
         for i, btn in enumerate(self._cleaner_tab_btns):
             if i == self._current_cleaner_tab:
                 btn.setStyleSheet("""
                     QPushButton {
-                        background: transparent;
+                        background: rgba(255, 91, 6, 0.08);
                         color: #FF5B06;
                         border: none;
                         border-bottom: 2px solid #FF5B06;
-                        border-radius: 0px;
+                        border-radius: 6px;
                         font-family: 'Orbitron', sans-serif;
                         font-size: 11px;
                         font-weight: 700;
-                        padding: 4px 12px;
+                        padding-top: 4px;
+                        padding-bottom: 2px;
+                        padding-left: 12px;
+                        padding-right: 12px;
                     }
                 """)
             else:
@@ -2247,15 +2249,19 @@ class DiskCleanerPanel(QWidget):
                         color: #888888;
                         border: none;
                         border-bottom: 2px solid transparent;
-                        border-radius: 0px;
+                        border-radius: 6px;
                         font-family: 'Orbitron', sans-serif;
                         font-size: 11px;
                         font-weight: 600;
-                        padding: 4px 12px;
+                        padding-top: 4px;
+                        padding-bottom: 2px;
+                        padding-left: 12px;
+                        padding-right: 12px;
                     }
                     QPushButton:hover {
-                        color: #cccccc;
-                        background: rgba(255, 91, 6, 0.1);
+                        color: #ffffff;
+                        background: rgba(255, 91, 6, 0.12);
+                        border-radius: 6px;
                     }
                 """)
 
@@ -2587,42 +2593,64 @@ class HardwarePanelWidget(QWidget):
         for i, name in enumerate(tab_names):
             btn = QPushButton(name)
             btn.setObjectName(f"navBtn_{name.replace(' ', '')}")
+            btn.setFixedHeight(35)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setCheckable(True)
             btn.setChecked(i == 0)  # First tab active by default
             btn.clicked.connect(lambda checked, idx=i: self._switch_page(idx))
-            btn.setStyleSheet("""
-                QPushButton {
-                    background: transparent;
-                    color: #888888;
-                    border: none;
-                    border-top: 3px solid transparent;
-                    border-top-left-radius: 6px;
-                    border-top-right-radius: 6px;
-                    padding: 8px 16px;
-                    font-family: 'Orbitron';
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-                QPushButton:hover {
-                    color: #e0e0e0;
-                    background: rgba(255, 255, 255, 0.05);
-                }
-                QPushButton:checked {
-                    background: #2a2a2a;
-                    color: #ffffff;
-                    border-top: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                        stop:0 #cc47aa, stop:0.5 #ff0919, stop:1 #e89805);
-                    border-top-left-radius: 6px;
-                    border-top-right-radius: 6px;
-                }
-            """)
             self._nav_buttons.append(btn)
             navbar_layout.addWidget(btn)
         
         navbar_layout.addStretch()
+        self._update_nav_button_styles()
         
         return navbar
+
+    def _update_nav_button_styles(self):
+        """Update main navbar tab button styles 100% matching HELXAIRO style."""
+        current_idx = self._page_stack.currentIndex() if hasattr(self, '_page_stack') else 0
+        for i, btn in enumerate(self._nav_buttons):
+            if i == current_idx:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: #2a2a2a;
+                        color: #ffffff;
+                        border: none;
+                        border-top: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                            stop:0 #cc47aa, stop:0.5 #ff0919, stop:1 #e89805);
+                        border-top-left-radius: 6px;
+                        border-top-right-radius: 6px;
+                        border-bottom-left-radius: 0px;
+                        border-bottom-right-radius: 0px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 13px;
+                        font-weight: bold;
+                        padding-top: 0px;
+                        padding-bottom: 3px;
+                        padding-left: 14px;
+                        padding-right: 14px;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: transparent;
+                        color: #888888;
+                        border: none;
+                        border-top: 3px solid transparent;
+                        border-radius: 0px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 13px;
+                        padding-top: 0px;
+                        padding-bottom: 3px;
+                        padding-left: 14px;
+                        padding-right: 14px;
+                    }
+                    QPushButton:hover {
+                        background: rgba(255, 255, 255, 0.05);
+                        color: #b0b0b0;
+                    }
+                """)
     
     def _switch_page(self, index: int):
         """Switch to a different page in the stack, lazy-loading if needed."""
@@ -2640,9 +2668,8 @@ class HardwarePanelWidget(QWidget):
 
         self._page_stack.setCurrentIndex(index)
 
-        # Update button states
-        for i, btn in enumerate(self._nav_buttons):
-            btn.setChecked(i == index)
+        # Update button states matching HELXAIRO
+        self._update_nav_button_styles()
 
         # Show Update Interval control only on tabs that use hardware polling
         # 0=Quick Setup, 2=CPU, 3=Drive, 4=Health
@@ -2829,21 +2856,20 @@ class HardwarePanelWidget(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
         
-        # Tab bar
+        # Tab bar container matching macroSubNav
         tab_bar = QWidget()
         tab_bar.setObjectName("ramTabBar")
-        tab_bar.setFixedHeight(45)
+        tab_bar.setFixedHeight(40)
         tab_bar.setStyleSheet("""
             QWidget#ramTabBar {
-                background: rgba(20, 20, 20, 0.8);
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                background: rgba(26, 26, 26, 0.95);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
             }
         """)
         tab_bar_layout = QHBoxLayout(tab_bar)
-        tab_bar_layout.setContentsMargins(10, 0, 10, 0)
-        tab_bar_layout.setSpacing(5)
+        tab_bar_layout.setContentsMargins(6, 5, 6, 5)
+        tab_bar_layout.setSpacing(6)
         
         # Create tab buttons
         tab_icons = ["Essential", "Processes", "Basic", "Advanced"]
@@ -3849,20 +3875,23 @@ class HardwarePanelWidget(QWidget):
         self._ram_tab_desc.setText(descriptions[index])
     
     def _update_ram_tab_buttons(self):
-        """Update tab button styles based on current selection."""
+        """Update tab button styles matching macroSubNav style 100%."""
         for i, btn in enumerate(self._ram_tab_btns):
             if i == self._current_ram_tab:
                 btn.setStyleSheet("""
                     QPushButton {
-                        background: transparent;
+                        background: rgba(255, 91, 6, 0.08);
                         color: #FF5B06;
                         border: none;
                         border-bottom: 2px solid #FF5B06;
-                        border-radius: 0px;
-                        font-family: 'Orbitron';
-                        font-size: 14px;
+                        border-radius: 6px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 13px;
                         font-weight: 700;
-                        padding: 8px 12px;
+                        padding-top: 4px;
+                        padding-bottom: 2px;
+                        padding-left: 14px;
+                        padding-right: 14px;
                     }
                 """)
             else:
@@ -3872,15 +3901,19 @@ class HardwarePanelWidget(QWidget):
                         color: #888888;
                         border: none;
                         border-bottom: 2px solid transparent;
-                        border-radius: 0px;
-                        font-family: 'Orbitron';
-                        font-size: 14px;
+                        border-radius: 6px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 13px;
                         font-weight: 500;
-                        padding: 8px 12px;
+                        padding-top: 4px;
+                        padding-bottom: 2px;
+                        padding-left: 14px;
+                        padding-right: 14px;
                     }
                     QPushButton:hover {
-                        background: rgba(255, 91, 6, 0.1);
-                        color: #e0e0e0;
+                        color: #ffffff;
+                        background: rgba(255, 91, 6, 0.12);
+                        border-radius: 6px;
                     }
                 """)
     
