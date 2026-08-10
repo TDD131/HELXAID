@@ -9,8 +9,15 @@
  * - Temperature readings
  */
 
+#define WINVER 0x0600
+#define _WIN32_WINNT 0x0600
+#define WIN32_LEAN_AND_MEAN
+#define UNICODE
+#define _UNICODE
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <psapi.h>
 #include <pdh.h>
@@ -101,7 +108,7 @@ static bool cpuInitialized = false;
 static PyObject* init_cpu_counter(PyObject* self, PyObject* args) {
     if (!cpuInitialized) {
         PdhOpenQuery(NULL, 0, &cpuQuery);
-        PdhAddEnglishCounter(cpuQuery, L"\\Processor(_Total)\\% Processor Time", 0, &cpuTotal);
+        PdhAddEnglishCounterW(cpuQuery, L"\\Processor(_Total)\\% Processor Time", 0, &cpuTotal);
         PdhCollectQueryData(cpuQuery);
         cpuInitialized = true;
     }

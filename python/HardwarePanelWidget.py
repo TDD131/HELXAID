@@ -113,22 +113,40 @@ class CircularGauge(QWidget):
         anim_out.start()
         self._fade_anim = anim_out
     
+    def showEvent(self, event):
+        super().showEvent(event)
+        if (getattr(self, '_is_animated', False) or getattr(self, '_use_gradient_for_value', False)) and not self._anim_timer.isActive():
+            self._anim_timer.start(33)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if self._anim_timer.isActive():
+            self._anim_timer.stop()
+
+    def pause_animation(self):
+        if self._anim_timer.isActive():
+            self._anim_timer.stop()
+
+    def resume_animation(self):
+        if (getattr(self, '_is_animated', False) or getattr(self, '_use_gradient_for_value', False)) and self.isVisible() and not self._anim_timer.isActive():
+            self._anim_timer.start(33)
+
     def setShowText(self, show: bool):
         self._show_text = show
         self.update()
         
     def setAnimated(self, animated: bool):
         self._is_animated = animated
-        if animated and not self._anim_timer.isActive():
-            self._anim_timer.start(16)
+        if animated and self.isVisible() and not self._anim_timer.isActive():
+            self._anim_timer.start(33)
         elif not animated and not getattr(self, '_use_gradient_for_value', False) and self._anim_timer.isActive():
             self._anim_timer.stop()
         self.update()
         
     def setUseGradientForValue(self, use_gradient: bool):
         self._use_gradient_for_value = use_gradient
-        if use_gradient and not self._anim_timer.isActive():
-            self._anim_timer.start(16)
+        if use_gradient and self.isVisible() and not self._anim_timer.isActive():
+            self._anim_timer.start(33)
         elif not use_gradient and not getattr(self, '_is_animated', False) and self._anim_timer.isActive():
             self._anim_timer.stop()
         self.update()
@@ -674,6 +692,38 @@ class DiskCleanWorker(QThread):
             self.clean_completed.emit(0, 0, [str(e)])
 
 
+class DriveInfoWorker(QThread):
+    """
+    Async hardware & SMART drive info fetcher for HELXTATS Drive page.
+    Prevents blocking the UI thread with COM WMI queries.
+
+    Component Name: DriveInfoWorker
+    """
+    data_ready = Signal(list, dict, list, list)
+
+    def run(self):
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                from utils.drive_utils import (
+                    get_drive_partitions_info,
+                    get_drive_hardware_info,
+                    get_physical_disks_info,
+                )
+                from hardware_wrapper import get_monitor
+                partitions = get_drive_partitions_info()
+                hardware = get_drive_hardware_info()
+                physical_disks = get_physical_disks_info()
+                monitor = get_monitor()
+                smart_disks = monitor.get_smart_disks() if monitor else []
+                self.data_ready.emit(partitions, hardware, physical_disks, smart_disks)
+            finally:
+                pythoncom.CoUninitialize()
+        except Exception as e:
+            print(f"[DriveInfoWorker] Error querying drive info: {e}")
+
+
 class DriveOverviewWidget(QWidget):
     """
     Storage hero summary for HELXTATS Drive page with physical drive selector dropdown.
@@ -896,6 +946,7 @@ class DriveOverviewWidget(QWidget):
             smart_status = str(target_disk.get("smart_status", "OK")).upper()
             health_text = target_disk.get("health_text", "")
             health_pct = target_disk.get("health_pct", 100)
+            temp_c = int(target_disk.get("temp_c", 0) or 0)
 
             if health_pct >= 90 and "CRITICAL" not in smart_status and "WARN" not in smart_status:
                 color = "#00FF66"
@@ -904,8 +955,9 @@ class DriveOverviewWidget(QWidget):
             else:
                 color = "#FF3355"
 
-            self.lbl_health_score.setText(health_text)
-            self.lbl_health_score.setStyleSheet(f"color: {color}; font-size: 18px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+            display_health = f"{health_text} | {temp_c}°C" if temp_c > 0 else health_text
+            self.lbl_health_score.setText(display_health)
+            self.lbl_health_score.setStyleSheet(f"color: {color}; font-size: 16px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
 
             read_speed = float(self._latest_disk_io.get("read_mbps", 0) or 0)
             write_speed = float(self._latest_disk_io.get("write_mbps", 0) or 0)
@@ -1211,6 +1263,7 @@ class DiskCleanerPanel(QWidget):
         self._scan_dot_timer.timeout.connect(self._animate_scan_dots)
         self._hero_gradient_offset = 0.0
         self._hero_gradient_timer = QTimer(self)
+        self._hero_gradient_timer.setInterval(100)
         self._hero_gradient_timer.timeout.connect(self._update_hero_gradient)
         self.setStyleSheet("QWidget#DiskCleanerPanel { background: transparent; }")
 
@@ -1244,7 +1297,7 @@ class DiskCleanerPanel(QWidget):
         self.hero_gauge.setFixedSize(180, 180)
         self.hero_gauge.setShowText(True)
         self.hero_gauge.setCenterText("SCAN")
-        self.hero_gauge.setAnimated(True)
+        self.hero_gauge.setAnimated(False)
         self.hero_gauge.setSubtitle("Ready to Scan")
         self.hero_gauge.setAccentColor(QColor("#FF5B06"))
         hero_layout.addWidget(self.hero_gauge, 0, Qt.AlignCenter)
@@ -1378,7 +1431,7 @@ class DiskCleanerPanel(QWidget):
         self.empty_gauge.setFixedSize(140, 140)
         self.empty_gauge.setShowText(True)
         self.empty_gauge.setCenterText("SCAN")
-        self.empty_gauge.setAnimated(True)
+        self.empty_gauge.setAnimated(False)
         self.empty_gauge.setGrayscale(True)
         empty_layout.addWidget(self.empty_gauge, 0, Qt.AlignCenter)
 
@@ -1689,8 +1742,8 @@ class DiskCleanerPanel(QWidget):
             cat_str = "category" if len(selected_ids) == 1 else "categories"
             self.hero_status_lbl.setText(f"Click to clean {len(selected_ids)} {cat_str}\n({format_bytes(selected_bytes)})")
             self.hero_gauge.setEnabled(bool(selected_ids))
-            if not self._hero_gradient_timer.isActive():
-                self._hero_gradient_timer.start(17)
+            if not self._hero_gradient_timer.isActive() and self.isVisible():
+                self._hero_gradient_timer.start(100)
             self._update_hero_gradient()
             self.btn_back_scan.setEnabled(True)
             self.hero_gauge.setAnimated(False)
@@ -1703,10 +1756,38 @@ class DiskCleanerPanel(QWidget):
             cat_str = "category" if len(selected_ids) == 1 else "categories"
             self.hero_status_lbl.setText(f"Ready to scan\n{len(selected_ids)} {cat_str}")
             self.btn_back_scan.setEnabled(False)
-            self.hero_gauge.setAnimated(True)
+            self.hero_gauge.setAnimated(False)
             self.hero_gauge.setGrayscale(True)
             self.hero_gauge.setClockwise(False)
             self.hero_gauge.setUseGradientForValue(False)
+
+    def pause_animations(self):
+        if hasattr(self, '_scan_dot_timer') and self._scan_dot_timer.isActive():
+            self._scan_dot_timer.stop()
+        if hasattr(self, '_hero_gradient_timer') and self._hero_gradient_timer.isActive():
+            self._hero_gradient_timer.stop()
+        if hasattr(self, 'hero_gauge'):
+            self.hero_gauge.pause_animation()
+        if hasattr(self, 'empty_gauge'):
+            self.empty_gauge.pause_animation()
+
+    def resume_animations(self):
+        if not self.isVisible():
+            return
+        if hasattr(self, 'hero_gauge'):
+            self.hero_gauge.resume_animation()
+        if hasattr(self, 'empty_gauge'):
+            self.empty_gauge.resume_animation()
+        if getattr(self, '_is_scanned', False) and hasattr(self, '_hero_gradient_timer') and not self._hero_gradient_timer.isActive():
+            self._hero_gradient_timer.start(100)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.resume_animations()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.pause_animations()
 
     def _create_category_row(self, cat, admin):
         cat_id = cat["id"] if isinstance(cat, dict) else cat.id
@@ -2313,6 +2394,9 @@ class HardwarePanelWidget(QWidget):
         
         # Initial count update (will pull from config since others aren't loaded)
         self._update_total_items_count()
+        
+        # Trigger async drive & SMART info query immediately on startup for Quick Setup page
+        self._request_async_drive_info()
     
     def _create_navbar(self):
         """Create navigation bar with tab buttons."""
@@ -2362,26 +2446,36 @@ class HardwarePanelWidget(QWidget):
     
     def _switch_page(self, index: int):
         """Switch to a different page in the stack, lazy-loading if needed."""
-        # CRITICAL: Stop timer during page switch to prevent accessing deleted widgets
         was_active = self._update_timer.isActive()
         self._update_timer.stop()
-        
+
+        # Pause animation timers on previously active Drive tab if moving away
+        old_index = self._page_stack.currentIndex() if hasattr(self, '_page_stack') else -1
+        if old_index == 3 and hasattr(self, 'drive_cleaner'):
+            self.drive_cleaner.pause_animations()
+
         # Lazy load page if not yet created
         if not self._pages_created[index]:
             self._create_page_lazy(index)
-        
+
         self._page_stack.setCurrentIndex(index)
-        
+
         # Update button states
         for i, btn in enumerate(self._nav_buttons):
             btn.setChecked(i == index)
-        
+
         # Show Update Interval control only on tabs that use hardware polling
         # 0=Quick Setup, 2=CPU, 3=Drive, 4=Health
         interval_visible_tabs = {0, 2, 3, 4}
         if hasattr(self, '_interval_container'):
             self._interval_container.setVisible(index in interval_visible_tabs)
-        
+
+        # Resume animations & trigger async info fetch if switching to Drive tab (index 3)
+        if index == 3:
+            if hasattr(self, 'drive_cleaner'):
+                self.drive_cleaner.resume_animations()
+            self._request_async_drive_info()
+
         # Resume timer after page switch is complete
         if was_active:
             self._update_timer.start(self.monitor.update_interval_ms)
@@ -2401,13 +2495,13 @@ class HardwarePanelWidget(QWidget):
             # Create the actual page
             new_page = page_creators[index]()
             
-            # Replace the placeholder widget
+            # Replace the placeholder widget cleanly without shrinking/shifting stack indices
             old_widget = self._page_stack.widget(index)
-            self._page_stack.removeWidget(old_widget)
-            old_widget.deleteLater()
-            
-            # Insert at correct position
             self._page_stack.insertWidget(index, new_page)
+            if old_widget:
+                self._page_stack.removeWidget(old_widget)
+                old_widget.deleteLater()
+            
             self._pages_created[index] = True
             self._page_stack.setCurrentIndex(index)
             print(f"[Hardware] Lazy loaded page {index}")
@@ -5156,9 +5250,94 @@ class HardwarePanelWidget(QWidget):
         self.drive_cleaner.clean_requested.connect(self._start_drive_clean)
         layout.addWidget(self.drive_cleaner, stretch=1)
 
-        self._drive_refresh_counter = 999
-        self._update_drive_metrics_from_snapshot([], {"read_mbps": 0, "write_mbps": 0})
+        self._drive_refresh_counter = 0
+        self._request_async_drive_info()
         return page
+
+    def _request_async_drive_info(self):
+        """Asynchronously query drive hardware info without blocking the UI thread."""
+        if getattr(self, '_drive_info_worker', None) and self._drive_info_worker.isRunning():
+            return
+        self._drive_info_worker = DriveInfoWorker(self)
+        self._drive_info_worker.data_ready.connect(self._on_drive_info_updated)
+        self._drive_info_worker.finished.connect(self._drive_info_worker.deleteLater)
+        self._drive_info_worker.start()
+
+    def _on_drive_info_updated(self, partitions, hardware_info, physical_disks, lhm_drives=None):
+        if lhm_drives is None:
+            lhm_drives = getattr(self, '_lhm_storage', [])
+        else:
+            self._lhm_storage = lhm_drives
+            self._smart_disks = lhm_drives
+            self._disk_smart_fetched = True
+        
+        def _is_match(n1_str, n2_str):
+            if not n1_str or not n2_str:
+                return False
+            if len(physical_disks) == 1 and len(lhm_drives) == 1:
+                return True
+            u1, u2 = n1_str.upper(), n2_str.upper()
+            if u1 in u2 or u2 in u1:
+                return True
+            s1 = set(u1.replace('_', ' ').replace('-', ' ').split()) - {'1TB','2TB','4TB','500GB','250GB','1000GB','2000GB','SSD','NVME','DISK','DRIVE','GENERIC'}
+            s2 = set(u2.replace('_', ' ').replace('-', ' ').split()) - {'1TB','2TB','4TB','500GB','250GB','1000GB','2000GB','SSD','NVME','DISK','DRIVE','GENERIC'}
+            return bool(s1 & s2)
+
+        for idx_d, disk in enumerate(physical_disks):
+            d_model = disk.get('model', '')
+            matched_lhm = None
+            for lhm_disk in lhm_drives:
+                lhm_name = lhm_disk.get('model') or lhm_disk.get('name', '')
+                if _is_match(d_model, lhm_name):
+                    matched_lhm = lhm_disk
+                    break
+            if not matched_lhm and len(lhm_drives) > 0:
+                lhm_idx = min(idx_d, len(lhm_drives) - 1)
+                matched_lhm = lhm_drives[lhm_idx]
+
+            if matched_lhm:
+                if matched_lhm.get('temp', 0) > 0:
+                    disk['temp_c'] = matched_lhm['temp']
+                lhm_health = matched_lhm.get('health_percent', 0)
+                if lhm_health > 0:
+                    disk['health_pct'] = lhm_health
+                    disk['health_text'] = f"{int(lhm_health)}% HEALTHY"
+                    if lhm_health < 90:
+                        disk['health_text'] = f"{int(lhm_health)}% WARNING"
+
+        for hw_key, hw_val in hardware_info.items():
+            hw_model = hw_val.get('model', '')
+            matched_lhm = None
+            for lhm_disk in lhm_drives:
+                lhm_name = lhm_disk.get('model') or lhm_disk.get('name', '')
+                if _is_match(hw_model, lhm_name):
+                    matched_lhm = lhm_disk
+                    break
+            if not matched_lhm and len(lhm_drives) > 0:
+                matched_lhm = lhm_drives[0]
+
+            if matched_lhm:
+                if matched_lhm.get('temp', 0) > 0:
+                    hw_val['temperature'] = matched_lhm['temp']
+                lhm_health = matched_lhm.get('health_percent', 0)
+                if lhm_health > 0:
+                    hw_val['health_pct'] = lhm_health
+                    if lhm_health >= 90 and 'CRITICAL' not in hw_val.get('smart_status', '').upper():
+                        hw_val['smart_status'] = 'OK'
+
+        self._drive_partitions = partitions
+        self._drive_hardware_info = hardware_info
+        self._drive_physical_disks = physical_disks
+        self._drive_info_worker = None
+
+        current_tab = self._page_stack.currentIndex() if hasattr(self, '_page_stack') else -1
+        if current_tab == 3:  # Only render Drive cards if Drive tab is currently active
+            self._render_drive_cards(partitions)
+            if hasattr(self, 'drive_overview'):
+                disk_io = getattr(self, '_last_disk_io', {"read_mbps": 0, "write_mbps": 0})
+                self.drive_overview.set_data(partitions, hardware_info, disk_io, physical_disks)
+            if hasattr(self, "drive_refresh_label"):
+                self.drive_refresh_label.setText(f"{len(partitions)} volumes")
 
     def _get_drive_hw_for_partition(self, partition):
         drive = partition.get("drive", "")
@@ -5213,30 +5392,44 @@ class HardwarePanelWidget(QWidget):
     def _update_drive_metrics_from_snapshot(self, disks, disk_io):
         if not hasattr(self, "drive_overview"):
             return
+        self._last_disk_io = disk_io or {}
+        current_tab = self._page_stack.currentIndex() if hasattr(self, '_page_stack') else -1
+
+        # Only process if Drive Tab (3) or Overview Tab (0) is active
+        if current_tab not in (0, 3):
+            return
+
         try:
-            from utils.drive_utils import get_drive_partitions_info, get_drive_hardware_info, get_physical_disks_info
             self._drive_refresh_counter = getattr(self, "_drive_refresh_counter", 0) + 1
-            should_refresh = self._drive_refresh_counter >= 10 or not getattr(self, "_drive_partitions", None)
+            should_refresh = self._drive_refresh_counter >= 15 or not getattr(self, "_drive_partitions", None)
             if should_refresh:
                 self._drive_refresh_counter = 0
-                self._drive_partitions = get_drive_partitions_info()
-                if not getattr(self, "_drive_hardware_info", None):
-                    self._drive_hardware_info = get_drive_hardware_info()
-                if not getattr(self, "_drive_physical_disks", None):
-                    self._drive_physical_disks = get_physical_disks_info()
+                self._request_async_drive_info()
 
-            partitions = [dict(p) for p in getattr(self, "_drive_partitions", [])]
-            partitions = self._merge_drive_snapshot(partitions, disks or [])
-            self._drive_partitions = partitions
-            self._render_drive_cards(partitions)
-            self.drive_overview.set_data(
-                partitions, 
-                getattr(self, "_drive_hardware_info", {}), 
-                disk_io or {},
-                getattr(self, "_drive_physical_disks", [])
-            )
-            if hasattr(self, "drive_refresh_label"):
-                self.drive_refresh_label.setText(f"{len(partitions)} volumes")
+            if getattr(self, "_drive_partitions", None):
+                partitions = [dict(p) for p in getattr(self, "_drive_partitions", [])]
+                partitions = self._merge_drive_snapshot(partitions, disks or [])
+                self._drive_partitions = partitions
+                
+                # Compare state signature to avoid redundant UI rebuilds on every poll tick
+                state_sig = (
+                    tuple((p.get('drive'), p.get('used_bytes'), p.get('total_bytes')) for p in partitions),
+                    round(float((disk_io or {}).get('read_mbps', 0) or 0), 1),
+                    round(float((disk_io or {}).get('write_mbps', 0) or 0), 1)
+                )
+                prev_sig = getattr(self, '_last_drive_state_sig', None)
+                if state_sig != prev_sig:
+                    self._last_drive_state_sig = state_sig
+                    if current_tab == 3:
+                        self._render_drive_cards(partitions)
+                        self.drive_overview.set_data(
+                            partitions, 
+                            getattr(self, "_drive_hardware_info", {}), 
+                            disk_io or {},
+                            getattr(self, "_drive_physical_disks", [])
+                        )
+                        if hasattr(self, "drive_refresh_label"):
+                            self.drive_refresh_label.setText(f"{len(partitions)} volumes")
         except Exception as e:
             if hasattr(self, "drive_refresh_label"):
                 self.drive_refresh_label.setText("Drive scan unavailable")
@@ -5905,12 +6098,51 @@ class HardwarePanelWidget(QWidget):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Title
+        # Title Layout (HELXTATS + LHM Panel Button side-by-side)
+        title_layout = QHBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(12)
+
         title = QLabel("HELXTATS")
         title.setObjectName("hardwareTitle")
-        title.setStyleSheet("color: #e0e0e0; font-size: 24px; font-weight: 700; background: transparent;")
-        header_layout.addWidget(title)
-        
+        title.setStyleSheet("color: #e0e0e0; font-size: 24px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
+        title_layout.addWidget(title)
+
+        # LHM Panel Button right next to HELXTATS title with SVG icon
+        self.btn_open_lhm = QPushButton("OPEN LHM PANEL")
+        self.btn_open_lhm.setObjectName("headerOpenLhmBtn")
+        self.btn_open_lhm.setCursor(Qt.PointingHandCursor)
+        self.btn_open_lhm.setFixedHeight(30)
+
+        # Load libre.png icon
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "libre.png")
+        if os.path.exists(icon_path):
+            self.btn_open_lhm.setIcon(QIcon(icon_path))
+            self.btn_open_lhm.setIconSize(QSize(18, 18))
+
+        self.btn_open_lhm.clicked.connect(lambda: self._start_librehwmon(silent_launch=False))
+        self.btn_open_lhm.setStyleSheet("""
+            QPushButton#headerOpenLhmBtn {
+                background: rgba(255, 91, 6, 0.15);
+                color: #FF5B06;
+                border: none;
+                border-radius: 6px;
+                padding: 4px 12px;
+                font-family: 'Orbitron';
+                font-size: 11px;
+                font-weight: 700;
+            }
+            QPushButton#headerOpenLhmBtn:hover {
+                background: #FF5B06;
+                color: #ffffff;
+            }
+            QPushButton#headerOpenLhmBtn:pressed {
+                background: #e04b00;
+            }
+        """)
+        title_layout.addWidget(self.btn_open_lhm, alignment=Qt.AlignVCenter)
+
+        header_layout.addLayout(title_layout)
         header_layout.addStretch()
         
         # Update interval control — wrapped in a single container for easy show/hide
@@ -6537,6 +6769,8 @@ class HardwarePanelWidget(QWidget):
 
         try:
             snapshot = self.monitor.get_snapshot()
+            # Storage SMART data is fetched asynchronously via DriveInfoWorker to prevent blocking UI thread
+            self._lhm_storage = getattr(self, '_lhm_storage', [])
             
             # RAM
             ram = snapshot["ram"]
@@ -6695,11 +6929,7 @@ class HardwarePanelWidget(QWidget):
             self.download_label.setText(f"↓ {net['download_mbps']:.1f} Mbps")
             self.upload_label.setText(f"↑ {net['upload_mbps']:.1f} Mbps")
             
-            # Fetch disk SMART info once
-            if not getattr(self, '_disk_smart_fetched', False):
-                self._smart_disks = self.monitor.get_smart_disks()
-                self._disk_smart_fetched = True
-            
+            # Disk SMART info is populated asynchronously by DriveInfoWorker
             display_disks = getattr(self, '_smart_disks', [])
             if not hasattr(self, '_smart_disk_row_widgets'):
                 self._smart_disk_row_widgets = {}
@@ -6823,7 +7053,7 @@ class HardwarePanelWidget(QWidget):
                     self.cpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
             
             # CPU Load
-            if cpu_load > 0:
+            if cpu_load >= 0 and cpu_temp > 0:
                 self.cpu_load_value.setText(f"{cpu_load:.0f}%")
                 color = "#60a5fa" if cpu_load < 80 else "#f97316" if cpu_load < 95 else "#ef4444"
                 if getattr(self, '_cpu_load_color', '') != color:
@@ -6831,7 +7061,7 @@ class HardwarePanelWidget(QWidget):
                     self.cpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
             # CPU Power
-            if cpu_power > 0:
+            if cpu_power >= 0 and cpu_temp > 0:
                 self.cpu_power_value.setText(f"{cpu_power:.0f}W")
                 color = "#fbbf24" if cpu_power < 45 else "#f97316" if cpu_power < 65 else "#ef4444"
                 if getattr(self, '_cpu_power_color', '') != color:
@@ -6847,7 +7077,7 @@ class HardwarePanelWidget(QWidget):
                     self.igpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
             
             # iGPU Load
-            if igpu_load > 0:
+            if igpu_load >= 0 and igpu_temp > 0:
                 self.igpu_load_value.setText(f"{igpu_load:.0f}%")
                 color = "#60a5fa" if igpu_load < 80 else "#f97316" if igpu_load < 95 else "#ef4444"
                 if getattr(self, '_igpu_load_color', '') != color:
@@ -6855,7 +7085,7 @@ class HardwarePanelWidget(QWidget):
                     self.igpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
             # iGPU Power
-            if igpu_power > 0:
+            if igpu_power >= 0 and igpu_temp > 0:
                 self.igpu_power_value.setText(f"{igpu_power:.0f}W")
                 color = "#fbbf24" if igpu_power < 30 else "#f97316" if igpu_power < 50 else "#ef4444"
                 if getattr(self, '_igpu_power_color', '') != color:
@@ -6871,7 +7101,7 @@ class HardwarePanelWidget(QWidget):
                     self.dgpu_temp_value.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 600; background: transparent;")
             
             # dGPU Load
-            if dgpu_load > 0:
+            if dgpu_load >= 0 and dgpu_temp > 0:
                 self.dgpu_load_value.setText(f"{dgpu_load:.0f}%")
                 color = "#a78bfa" if dgpu_load < 80 else "#f97316" if dgpu_load < 95 else "#ef4444"
                 if getattr(self, '_dgpu_load_color', '') != color:
@@ -6879,7 +7109,7 @@ class HardwarePanelWidget(QWidget):
                     self.dgpu_load_value.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: 500; background: transparent;")
             
             # dGPU Power
-            if dgpu_power > 0:
+            if dgpu_power >= 0 and dgpu_temp > 0:
                 self.dgpu_power_value.setText(f"{dgpu_power:.0f}W")
                 color = "#fbbf24" if dgpu_power < 60 else "#f97316" if dgpu_power < 120 else "#ef4444"
                 if getattr(self, '_dgpu_power_color', '') != color:
@@ -7310,95 +7540,66 @@ class HardwarePanelWidget(QWidget):
             QMessageBox.critical(self, "Error", f"Install error: {e}")
     
     def _start_librehwmon(self, silent_launch=False):
-        """Launch hardware monitor as Administrator (LibreHardwareMonitor or HWiNFO).
-        If silent_launch is True, it runs hidden in the background.
-        """
+        """Open LibreHardwareMonitor Panel (shows embedded PySide6 dialog or standalone app)."""
+        if not silent_launch:
+            try:
+                from LHMSensorPanelDialog import LHMSensorPanelDialog
+                dialog = LHMSensorPanelDialog(self.window())
+                dialog.exec()
+                return
+            except Exception as e:
+                print(f"[Hardware] Failed to open embedded LHM dialog: {e}")
+
+        # If silent launch or fallback requested, delegate to standalone
+        self._start_librehwmon_standalone(silent_launch=silent_launch)
+
+    def _start_librehwmon_standalone(self, silent_launch=False):
+        """Launch standalone LibreHardwareMonitor.exe as Administrator on interactive desktop."""
         try:
-            from integrations.tools_downloader import (
-                get_librehwmon_path, get_hwinfo_path, get_hwinfo32_path,
-                is_librehwmon_available, is_hwinfo_available
-            )
+            from integrations.tools_downloader import get_librehwmon_path, is_librehwmon_available
             import ctypes
             import os
-            
-            # Determine which tool to launch
-            exe_path = None
-            tool_name = None
-            
-            if is_librehwmon_available():
-                exe_path = get_librehwmon_path()
-                tool_name = "LibreHardwareMonitor"
-            elif is_hwinfo_available():
-                # Prefer 64-bit, fallback to 32-bit
-                if os.path.exists(get_hwinfo_path()):
-                    exe_path = get_hwinfo_path()
-                else:
-                    exe_path = get_hwinfo32_path()
-                tool_name = "HWiNFO"
-            
+            import subprocess
+
+            exe_path = get_librehwmon_path() if is_librehwmon_available() else None
             if not exe_path or not os.path.exists(exe_path):
                 from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Not Found", 
-                    "No hardware monitor found.\nPlease install LibreHardwareMonitor or HWiNFO first.")
+                QMessageBox.warning(self, "Not Found", "LibreHardwareMonitor.exe not found.")
                 return
-            
-            # For HWiNFO: Auto-enable Shared Memory Support in config
-            if tool_name == "HWiNFO":
-                self._enable_hwinfo_shared_memory(exe_path)
-            
-            # Attempt Zero-UAC launch via HelxaidHelperService (no UAC prompt!)
+
+            # 1. Clean up any Session 0 background process running under SYSTEM
             try:
                 from integrations.cpu_controller import is_service_running, send_service_command
                 if is_service_running():
-                    res = send_service_command({
-                        "action": "launch_tool",
-                        "exe_path": exe_path,
-                        "silent": silent_launch
+                    send_service_command({
+                        "action": "cleanup_lhm",
+                        "exe_path": exe_path
                     })
-                    if res.get("status") == "success":
-                        print(f"[Hardware] {tool_name} started via Zero-UAC Service (No UAC prompt!)")
-                        btn = getattr(self, 'start_monitor_btn', None) or getattr(self, 'install_monitor_btn', None)
-                        if btn:
-                            btn.setText("✓ Launched")
-                            btn.setStyleSheet("""
-                                QPushButton {
-                                    background: #22c55e; color: #1a1a2e; border: none; 
-                                    border-radius: 6px; font-size: 10px; font-weight: 600;
-                                }
-                            """)
-                            from PySide6.QtCore import QTimer
-                            QTimer.singleShot(3000, lambda: self._reset_monitor_btn(btn))
-                        return
-            except Exception as e:
-                print(f"[Hardware] Zero-UAC launch failed, fallback to UAC: {e}")
+                else:
+                    subprocess.run(["taskkill", "/F", "/IM", "LibreHardwareMonitor.exe"], capture_output=True)
+            except Exception as ex:
+                print(f"[Hardware] Background cleanup warning: {ex}")
 
-            # Determine window visibility (0: Hidden/Backend, 1: Normal)
+            # 2. Check if window already running on user desktop (Session 1) and restore it
+            try:
+                import win32gui, win32con
+                hwnd = win32gui.FindWindow(None, "Libre Hardware Monitor")
+                if hwnd:
+                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    win32gui.SetForegroundWindow(hwnd)
+                    print("[Hardware] Restored existing LibreHardwareMonitor window")
+                    return
+            except Exception:
+                pass
+
+            # 3. Launch interactive instance on desktop (SW_SHOWNORMAL = 1)
             show_cmd = 0 if silent_launch else 1
-            
             result = ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", exe_path, None, 
+                None, "runas", exe_path, None,
                 os.path.dirname(exe_path), show_cmd
             )
-            
-            if result > 32:
-                # Success - update button temporarily to show it launched
-                btn = getattr(self, 'start_monitor_btn', None) or getattr(self, 'install_monitor_btn', None)
-                if btn:
-                    btn.setText("✓ Launched")
-                    btn.setStyleSheet("""
-                        QPushButton {
-                            background: #22c55e; color: #1a1a2e; border: none; 
-                            border-radius: 6px; font-size: 10px; font-weight: 600;
-                        }
-                    """)
-                    # Reset button after 3 seconds so user can launch again if needed
-                    from PySide6.QtCore import QTimer
-                    QTimer.singleShot(3000, lambda: self._reset_monitor_btn(btn))
-                print(f"[Hardware] {tool_name} started as Administrator")
-            else:
-                # User cancelled UAC or error
-                print(f"[Hardware] Failed to start {tool_name} (code: {result})")
-        
+            print(f"[Hardware] Started LibreHardwareMonitor.exe as Administrator (result={result})")
+
         except Exception as e:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Failed to start hardware monitor:\n{e}")

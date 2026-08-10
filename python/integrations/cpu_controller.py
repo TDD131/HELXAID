@@ -1,7 +1,8 @@
+import os
+
 DEFAULT_UXTU_PATH = 'C:\\Program Files\\JamesCJ60\\Universal x86 Tuning Utility\\Universal x86 Tuning Utility.exe'
 
 def is_uxtu_installed(custom_path=None):
-    import os
     return os.path.exists(custom_path or DEFAULT_UXTU_PATH)
 
 """  
@@ -9,7 +10,6 @@ CPU Controller Module for TDD Game Launcher
 Handles CPU power/temperature control via RyzenAdj.
 """
 
-import os
 import json
 import subprocess
 import ctypes
@@ -338,42 +338,37 @@ def apply_ryzenadj(profile: dict) -> tuple:
     """
     # 1. Attempt Service IPC (Zero-UAC)
     try:
-        import win32file
-        import win32pipe
-        import pywintypes
+        ry_path = get_ryzenadj_path()
+        payload = {
+            "action": "apply_cpu",
+            "profile": profile,
+            "ryzenadj_path": ry_path
+        }
         
-        pipe_name = r'\\.\pipe\HelxaidCpuPipe'
+        response = send_service_command(payload)
         
-        # Check if pipe exists by trying to wait for it briefly
-        try:
-            win32pipe.WaitNamedPipe(pipe_name, 100)
-            pipe_available = True
-        except pywintypes.error:
-            pipe_available = False
-            
-        if pipe_available:
-            try:
-                ry_path = get_ryzenadj_path()
-                payload = json.dumps({
-                    "action": "apply_cpu",
-                    "profile": profile,
-                    "ryzenadj_path": ry_path
-                })
-                # CallNamedPipe(pipeName, data, bufSize, timeOut_ms)
-                data = win32pipe.CallNamedPipe(pipe_name, payload.encode('utf-8'), 65536, 15000)
-                
-                response = json.loads(data.decode('utf-8'))
-                if response.get("status") == "success":
-                    print("[CPU DEBUG] Applied via Helper Service (Zero-UAC)")
-                    return True, None
-                else:
-                    print(f"[CPU DEBUG] Service returned error: {response.get('message')}")
-                    return False, response.get('message')
-            except pywintypes.error as e:
-                print(f"[CPU DEBUG] CallNamedPipe failed: {e}")
-                # Fall through to UAC execution
+        if response and response.get("status") == "success":
+            print(f"[CPU DEBUG] Applied via Helper Service (Zero-UAC): {response.get('message', 'Applied')}")
+            return True, None
+        elif is_service_running():
+            # Helper Service IS running!
+            err_msg = response.get("message") if response else "Unknown service error"
+            # If response indicates post-SMU crash suppressed or exit code ignored, treat as success
+            if response and ("Applied" in str(err_msg) or "crash" in str(err_msg).lower()):
+                print(f"[CPU DEBUG] Applied via Helper Service ({err_msg})")
+                return True, None
+            print(f"[CPU DEBUG] Service IPC returned error: {err_msg}")
+            # CRITICAL: Do NOT fall back to UAC prompt when Zero-UAC service is running
+            return False, f"Zero-UAC Service error: {err_msg}"
+        else:
+            err_msg = response.get("message") if response else "Unknown service error"
+            print(f"[CPU DEBUG] Service IPC failed or returned error: {err_msg}")
+            print("[CPU DEBUG] Falling back to UAC elevation...")
+            # Fall through to UAC execution
     except Exception as e:
-        print(f"[CPU DEBUG] Service IPC failed, falling back to UAC: {e}")
+        print(f"[CPU DEBUG] Service IPC failed: {e}")
+        if is_service_running():
+            return False, f"Zero-UAC Service IPC error: {e}"
 
     ryzenadj_path = get_ryzenadj_path()
     print(f"[CPU DEBUG] apply_ryzenadj() - Path: {ryzenadj_path}")

@@ -61,6 +61,10 @@ hiddenimports = [
     'macro_system.detection',
     'macro_system.integration',
     'macro_system.sandbox',
+    'clr',
+    'clr_loader',
+    'pythonnet',
+    'core.lhm_wrapper',
 ]
 
 a = Analysis(

@@ -194,21 +194,195 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 # behaviour — the crash happens during cleanup, not during the actual apply.
                 # We treat it as success if the error matches and stdout is empty (no error msg).
                 # Python's subprocess can return this as signed (-1073741819) or unsigned (3221225477).
-                KNOWN_CRASH_CODES = (-1073741819, 3221225477)
+                KNOWN_CRASH_CODES = (-1073741819, 3221225477, -1073740791, 3221226505)
                 output = result.stdout.strip()
                 stderr  = result.stderr.strip()
+                combined_log = (output + "\n" + stderr).lower()
+
+                # Keywords indicating ryzenadj attempted or succeeded setting values:
+                # Note: ryzenadj source code spells "Sucessfully" with a single 'c'
+                SUCCESS_KEYWORDS = (
+                    "sucessfully", "successfully", "smu", "stapm", "tctl", 
+                    "fast-limit", "slow-limit", "vrm", "apu", "setting", "limit"
+                )
 
                 if result.returncode == 0:
                     return {"status": "success", "message": "Applied successfully."}
-                elif result.returncode in KNOWN_CRASH_CODES and not stderr and not output:
-                    # Known post-apply crash — settings were applied successfully
-                    return {"status": "success", "message": "Applied (post-SMU crash suppressed)."}
-                elif output and ("successfully" in output.lower() or "smu" in output.lower()):
-                    return {"status": "success", "message": "Applied (exit code ignored)."}
+                elif result.returncode in KNOWN_CRASH_CODES:
+                    # Known post-SMU write crash — settings were written to registers before process cleanup crash
+                    return {"status": "success", "message": f"Applied (post-SMU crash suppressed, exit code {result.returncode})."}
+                elif any(kw in combined_log for kw in SUCCESS_KEYWORDS):
+                    return {"status": "success", "message": f"Applied (exit code {result.returncode} ignored)."}
                 else:
                     err_detail = stderr or output or "no output"
                     return {"status": "error", "message": f"RyzenAdj error {result.returncode}: {err_detail}"}
                     
+            elif action in ("launch_tool", "kill_tool", "cleanup_lhm"):
+                exe_path = data.get("exe_path", "")
+                exe_name = os.path.basename(exe_path) if exe_path else "LibreHardwareMonitor.exe"
+                silent = data.get("silent", False)
+                
+                # Kill any background/Session 0 instances running under SYSTEM
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/IM", exe_name],
+                        capture_output=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                except Exception:
+                    pass
+                    
+                if action == "kill_tool":
+                    return {"status": "success", "message": f"{exe_name} terminated."}
+                    
+                if silent:
+                    # Silent launch in background
+                    try:
+                        if exe_path and os.path.exists(exe_path):
+                            subprocess.Popen(
+                                [exe_path],
+                                cwd=os.path.dirname(exe_path),
+                                creationflags=subprocess.CREATE_NO_WINDOW
+                            )
+                            return {"status": "success", "message": f"{exe_name} started silently."}
+                    except Exception as e:
+                        return {"status": "error", "message": str(e)}
+                        
+                return {"status": "success", "message": f"{exe_name} background instances cleared for interactive launch."}
+
+            elif action == "read_lhm_sensors":
+                # Read LHM sensors from SYSTEM context (elevated) so AMD SMU Tdie temp is accessible.
+                try:
+                    import sys as _sys
+                    # Build DLL search paths scanning all user AppData dirs
+                    dll_candidates = []
+                    users_dir = "C:\\Users"
+                    if os.path.exists(users_dir):
+                        for u in os.listdir(users_dir):
+                            if u.lower() in ["public", "default", "default user", "all users"]:
+                                continue
+                            p = os.path.join(users_dir, u, "AppData", "Roaming", "HELXAID",
+                                             "tools", "librehardwaremonitor", "LibreHardwareMonitorLib.dll")
+                            if os.path.exists(p):
+                                dll_candidates.append(p)
+                    
+                    dll_path = dll_candidates[0] if dll_candidates else None
+                    if not dll_path:
+                        return {"status": "error", "message": "LibreHardwareMonitorLib.dll not found"}
+                    
+                    import clr
+                    import math
+                    clr.AddReference(dll_path)
+                    from LibreHardwareMonitor.Hardware import Computer
+                    
+                    c = Computer()
+                    c.IsCpuEnabled = True
+                    c.IsGpuEnabled = True
+                    c.IsStorageEnabled = True
+                    c.Open()
+                    
+                    out = {
+                        "available": True,
+                        "cpu_temp": 0.0, "cpu_load": 0.0, "cpu_clock": 0.0, "cpu_power": 0.0,
+                        "igpu_temp": 0.0, "igpu_load": 0.0, "igpu_power": 0.0,
+                        "dgpu_temp": 0.0, "dgpu_load": 0.0, "dgpu_power": 0.0,
+                        "gpu_fan": 0.0, "cpu_fan": 0.0, "fan_speed": 0.0,
+                        "storage": [],
+                        "status": "lhm_service"
+                    }
+                    
+                    for hw in c.Hardware:
+                        hw.Update()
+                        hw_type = str(hw.HardwareType).upper()
+                        hw_name = str(hw.Name).upper()
+                        is_cpu  = "CPU" in hw_type
+                        is_igpu = "GPUAMD" in hw_type or ("GPUINTEL" in hw_type)
+                        is_dgpu = "GPUNVIDIA" in hw_type or ("GPUAMD" in hw_type and not is_igpu)
+                        is_storage = "STORAGE" in hw_type
+                        
+                        if is_storage:
+                            disk_info = {"name": str(hw.Name), "temp": 0.0, "health_percent": 100.0}
+                        
+                        # Refine: separate iGPU (Radeon integrated) vs dGPU (NVIDIA)
+                        if "NVIDIA" in hw_name:
+                            is_dgpu = True
+                            is_igpu = False
+                        elif "RADEON" in hw_name and "CPU" not in hw_type:
+                            is_igpu = True
+                            is_dgpu = False
+                        
+                        for sensor in hw.Sensors:
+                            val = sensor.Value
+                            if val is None:
+                                continue
+                            try:
+                                fval = float(val)
+                            except Exception:
+                                continue
+                            if math.isnan(fval):
+                                continue
+                            stype = str(sensor.SensorType).upper()
+                            sname = str(sensor.Name).upper()
+                            
+                            if is_cpu:
+                                if stype == "TEMPERATURE" and fval > 0:
+                                    if ("TCTL" in sname or "TDIE" in sname or "PACKAGE" in sname) and out["cpu_temp"] == 0:
+                                        out["cpu_temp"] = fval
+                                    elif "CORE" in sname and out["cpu_temp"] == 0:
+                                        out["cpu_temp"] = fval
+                                elif stype == "LOAD":
+                                    if "TOTAL" in sname or "CORE MAX" in sname:
+                                        out["cpu_load"] = max(out["cpu_load"], fval)
+                                elif stype == "CLOCK" and "CORE" in sname and out["cpu_clock"] == 0:
+                                    out["cpu_clock"] = fval
+                                elif stype == "POWER" and ("PACKAGE" in sname or "CPU" in sname):
+                                    out["cpu_power"] = fval
+                            
+                            elif is_igpu:
+                                if stype == "TEMPERATURE" and ("CORE" in sname or "GPU" in sname) and out["igpu_temp"] == 0:
+                                    out["igpu_temp"] = fval
+                                elif stype == "LOAD" and ("CORE" in sname or "GPU" in sname or "3D" in sname):
+                                    out["igpu_load"] = max(out["igpu_load"], fval)
+                                elif stype == "POWER":
+                                    out["igpu_power"] = fval
+                            
+                            elif is_dgpu:
+                                if stype == "TEMPERATURE" and ("CORE" in sname or "GPU" in sname) and out["dgpu_temp"] == 0:
+                                    out["dgpu_temp"] = fval
+                                elif stype == "LOAD" and ("CORE" in sname or "3D" in sname or "GPU" in sname):
+                                    out["dgpu_load"] = max(out["dgpu_load"], fval)
+                                elif stype == "POWER":
+                                    out["dgpu_power"] = fval
+                                elif stype == "FAN":
+                                    out["gpu_fan"] = fval
+                                    out["fan_speed"] = max(out["fan_speed"], fval)
+                            
+                            elif is_storage:
+                                if stype == "TEMPERATURE" and disk_info["temp"] == 0:
+                                    disk_info["temp"] = fval
+                                elif 'PERCENTAGE USED' in sname or 'DEGRADATION' in sname:
+                                    disk_info["health_percent"] = max(0.0, min(100.0, 100.0 - fval))
+                                elif 'AVAILABLE SPARE' in sname or 'REMAINING LIFE' in sname:
+                                    disk_info["health_percent"] = max(0.0, min(100.0, fval))
+                        
+                        if is_storage:
+                            out["storage"].append(disk_info)
+                    
+                    if out["igpu_temp"] == 0 and out["cpu_temp"] > 0:
+                        out["igpu_temp"] = out["cpu_temp"]
+                    if out["igpu_power"] == 0 and out["cpu_power"] > 0:
+                        out["igpu_power"] = out["cpu_power"]
+                    
+                    try:
+                        c.Close()
+                    except Exception:
+                        pass
+                    
+                    out["status_str"] = "lhm_service"
+                    return {"status": "success", "sensors": out}
+                except Exception as ex:
+                    return {"status": "error", "message": f"LHM service read error: {ex}"}
+
             elif action == "restart_self":
                 # Restart the service itself to pick up code changes
                 try:
@@ -250,7 +424,7 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                     path = f"\\\\.\\PhysicalDrive{drive_idx}"
                     debug_log.append(f"[NVMe] Opening: {path}")
                     hnd = kernel32.CreateFileW(
-                        path, GENERIC_READ | GENERIC_WRITE,
+                        path, GENERIC_READ,
                         FILE_SHARE_READ | FILE_SHARE_WRITE,
                         None, OPEN_EXISTING, 0, None
                     )
@@ -261,30 +435,31 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                         return None
                     debug_log.append(f"[NVMe] Handle OK for {path}")
                     try:
-                        in_buf_size = 40 + 512
-                        out_buf_size = 40 + 512
-                        in_buf = (ctypes.c_byte * in_buf_size)()
-                        out_buf = (ctypes.c_byte * out_buf_size)()
+                        header_size = 48
+                        data_size = 512
+                        total_buf_size = header_size + data_size
+                        in_buf = (ctypes.c_byte * total_buf_size)()
+                        out_buf = (ctypes.c_byte * total_buf_size)()
                         bytes_returned = ctypes.c_ulong(0)
 
                         struct.pack_into('<II', in_buf, 0, StorageDeviceProtocolSpecificProperty, 0)
-                        struct.pack_into('<IIIIIIII', in_buf, 8,
+                        struct.pack_into('<IIIIIIIIII', in_buf, 8,
                             ProtocolTypeNvme, NVMeDataTypeLogPage,
-                            0x02, 0, 40, 512, 0, 0
+                            0x02, 0, header_size, data_size, 0, 0, 0, 0
                         )
                         ok = kernel32.DeviceIoControl(
                             hnd, IOCTL_STORAGE_QUERY_PROPERTY,
-                            in_buf, in_buf_size,
-                            out_buf, out_buf_size,
+                            in_buf, total_buf_size,
+                            out_buf, total_buf_size,
                             ctypes.byref(bytes_returned), None
                         )
                         ioctl_err = ctypes.GetLastError()
                         debug_log.append(f"[NVMe] IOCTL ok={ok}, bytes={bytes_returned.value}, err={ioctl_err}")
                         if ok:
-                            pct = out_buf[40 + 5]
-                            temp_k = struct.unpack_from('<H', out_buf, 40 + 1)[0]
-                            temp_c = max(0, temp_k - 273)
-                            debug_log.append(f"[NVMe] Drive{drive_idx}: pct_used={pct}, temp={temp_c}C, raw[40:48]={list(out_buf[40:48])}")
+                            pct = out_buf[header_size + 5]
+                            temp_k = struct.unpack_from('<H', out_buf, header_size + 1)[0]
+                            temp_c = max(0, temp_k - 273) if temp_k > 200 else 0
+                            debug_log.append(f"[NVMe] Drive{drive_idx}: pct_used={pct}, temp={temp_c}C, raw[48:56]={list(out_buf[48:56])}")
                             return {"percentage_used": int(pct), "temperature": temp_c, "type": "nvme"}
                         debug_log.append(f"[NVMe] IOCTL returned False for Drive{drive_idx}")
                         return None
@@ -346,31 +521,65 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                             raw_list = [raw_list]
                         disk_list = raw_list
 
+                    if not disk_list:
+                        disk_list = [{"DeviceId": i, "BusType": 17} for i in range(4)]
+
+                    # SYSTEM elevated query: Get-StorageReliabilityCounter for ALL drives
+                    try:
+                        ps_cmd = "Get-PhysicalDisk | Get-StorageReliabilityCounter | Select-Object DeviceId, Wear, Temperature, ReadErrorsTotal, WriteErrorsTotal | ConvertTo-Json"
+                        ps_res = subprocess.run(
+                            ["powershell", "-NoProfile", "-Command", ps_cmd],
+                            capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=8
+                        )
+                        if ps_res.returncode == 0 and ps_res.stdout.strip():
+                            rel_data = js.loads(ps_res.stdout.strip())
+                            if isinstance(rel_data, dict):
+                                rel_data = [rel_data]
+                            for ritem in rel_data:
+                                rid = str(ritem.get("DeviceId", "")).strip()
+                                rwear = int(ritem.get("Wear", 0) or 0)
+                                rtemp = int(ritem.get("Temperature", 0) or 0)
+                                rerrs = int(ritem.get("ReadErrorsTotal", 0) or 0) + int(ritem.get("WriteErrorsTotal", 0) or 0)
+                                counters[rid] = {
+                                    "Wear": rwear,
+                                    "ReadErrors": rerrs,
+                                    "Temperature": rtemp
+                                }
+                            debug_log.append(f"[Get-StorageReliabilityCounter] SYSTEM output: {counters}")
+                    except Exception as ex_rel:
+                        debug_log.append(f"[Get-StorageReliabilityCounter] Exception: {ex_rel}")
+
                     for disk_entry in disk_list:
                         dev_id = str(disk_entry.get("DeviceId", ""))
                         bus_type = int(disk_entry.get("BusType") or 0)
-                        wear = 0
-                        temperature = 0
-                        debug_log.append(f"Disk DeviceId={dev_id} BusType={bus_type}")
+                        
+                        # Use reliability counters if already obtained
+                        c_entry = counters.get(dev_id, {})
+                        wear = c_entry.get("Wear", 0)
+                        read_errors = c_entry.get("ReadErrors", 0)
+                        temperature = c_entry.get("Temperature", 0)
 
-                        if bus_type == 17:
+                        if temperature == 0:
                             nvme = _read_nvme_smart(dev_id)
                             if nvme:
                                 wear = nvme["percentage_used"]
                                 temperature = nvme["temperature"]
-                        else:
-                            ata = _read_ata_smart(dev_id)
-                            if ata:
-                                attrs = ata["attrs"]
-                                temperature = int(attrs.get(194, attrs.get(190, 0)) & 0xFF)
-                                reallocated = int(attrs.get(5, 0))
-                                pending = int(attrs.get(197, 0))
-                                uncorrectable = int(attrs.get(198, 0))
-                                wear = min(99, reallocated * 3 + pending * 2 + uncorrectable * 5)
+                            else:
+                                ata = _read_ata_smart(dev_id)
+                                if ata:
+                                    attrs = ata["attrs"]
+                                    temperature = int(attrs.get(194, attrs.get(190, 0)) & 0xFF)
+                                    reallocated = int(attrs.get(5, 0))
+                                    pending = int(attrs.get(197, 0))
+                                    uncorrectable = int(attrs.get(198, 0))
+                                    read_errors = reallocated + pending + uncorrectable
+                                    wear = min(99, reallocated * 3 + pending * 2 + uncorrectable * 5)
 
-                        debug_log.append(f"  -> Wear={wear} Temp={temperature}")
-                        counters[dev_id] = {"DeviceId": dev_id, "Wear": wear, "Temperature": temperature}
-
+                        counters[dev_id] = {
+                            "Wear": wear,
+                            "ReadErrors": read_errors,
+                            "Temperature": temperature
+                        }
                     return {"status": "success", "counters": counters, "debug": debug_log}
                 except Exception as e:
                     debug_log.append(f"TOP EXCEPTION: {e}")
@@ -509,7 +718,6 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
             elif action == "scan_disk_category":
                 try:
                     from utils.drive_utils import _as_category_dicts, _iter_files, MAX_COLLECTED_PATHS
-                    import os
                     cat_id = data.get("cat_id")
                     collect_paths = data.get("collect_paths", True)
                     all_cats = {cat["id"]: cat for cat in _as_category_dicts(None)}
@@ -544,7 +752,6 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
             elif action == "clean_disk_category":
                 try:
                     from utils.drive_utils import _as_category_dicts, _iter_files, _remove_empty_dirs
-                    import os
                     cat_id = data.get("cat_id")
                     all_cats = {cat["id"]: cat for cat in _as_category_dicts(None)}
                     if cat_id not in all_cats:

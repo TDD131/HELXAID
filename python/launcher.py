@@ -18,7 +18,6 @@ import re
 import time
 import threading
 import urllib.request
-# psutil is lazy-imported inside functions that use it to save ~5-15MB at startup
 import urllib.parse
 from datetime import datetime
 from PySide6.QtWidgets import (
@@ -7451,8 +7450,10 @@ Stylesheet Selector:
         
         # Start auto-reapply timer if enabled in settings
         if self.cpu_settings._settings.get("keep_settings_applied", False):
-            # Get saved interval - enforce minimum 300s (5 min) for safety
-            saved_interval = max(300, self.cpu_settings._settings.get("reapply_interval", 300))
+            # Get saved interval - enforce minimum (300s standard, 10s if Developer Mode is enabled)
+            is_dev = hasattr(self, 'settings') and self.settings.get("developer_mode", False)
+            min_interval = 10 if is_dev else 300
+            saved_interval = max(min_interval, self.cpu_settings._settings.get("reapply_interval", 300))
             # Delay timer start to allow UI to initialize
             from PySide6.QtCore import QTimer as QTimerLocal
             QTimerLocal.singleShot(5000, lambda: self._start_cpu_reapply_timer(saved_interval))
@@ -8892,21 +8893,18 @@ Stylesheet Selector:
         keep_applied_cb.setChecked(keep_applied_value)
         layout.addWidget(keep_applied_cb)
         
-        # Reapply interval slider
-        interval_layout = QHBoxLayout()
-        interval_label = QLabel("Reapply interval:")
-        interval_label.setStyleSheet("color: #9DB2BF; font-size: 12px;")
-        interval_layout.addWidget(interval_label)
-        
-        interval_slider = NoScrollSlider(Qt.Horizontal)
-        interval_slider.setObjectName("cpuReapplyIntervalSlider")
-        # SAFETY: Minimum 300s (5 min) to prevent driver crashes from frequent RyzenAdj calls
-        interval_slider.setRange(300, 1800)  # 5 min to 30 min
-        interval_slider.setSingleStep(60)  # 1 minute steps
-        interval_slider.setTickInterval(300)  # 5 minute ticks
-        interval_slider.setTickPosition(QSlider.TicksBelow)
-        interval_slider.setFixedHeight(20)
-        interval_slider.setStyleSheet("""
+        # Reapply interval sliders (Minutes and Seconds)
+        is_dev = hasattr(self, 'settings') and self.settings.get("developer_mode", False)
+        min_total = 10 if is_dev else 300
+
+        saved_interval = min_total  # Default
+        if hasattr(self, 'cpu_settings') and self.cpu_settings._settings:
+            saved_interval = max(min_total, self.cpu_settings._settings.get("reapply_interval", 300))
+
+        initial_mins = saved_interval // 60
+        initial_secs = saved_interval % 60
+
+        slider_style = """
             QSlider { background: transparent; }
             QSlider::groove:horizontal { height: 4px; background: rgba(60, 64, 72, 0.8); border-radius: 2px; }
             QSlider::handle:horizontal { 
@@ -8919,38 +8917,76 @@ Stylesheet Selector:
             }
             QSlider::handle:horizontal:hover { background: #FF7B36; }
             QSlider::sub-page:horizontal { background: rgba(255, 91, 6, 0.6); border-radius: 2px; }
-        """)
-        
-        # Get saved interval - enforce minimum 300s for safety
-        saved_interval = 300  # Default 5 minutes
-        if hasattr(self, 'cpu_settings') and self.cpu_settings._settings:
-            saved_interval = max(300, self.cpu_settings._settings.get("reapply_interval", 300))
-        interval_slider.setValue(saved_interval)
-        interval_layout.addWidget(interval_slider)
-        
-        interval_value_label = QLabel(f"{saved_interval // 60}m")
-        interval_value_label.setObjectName("cpuReapplyIntervalValue")
-        interval_value_label.setStyleSheet("color: #DDE6ED; font-size: 12px; min-width: 30px;")
-        interval_layout.addWidget(interval_value_label)
-        
-        def update_interval_label(val):
-            interval_value_label.setText(f"{val // 60}m")
-        interval_slider.valueChanged.connect(update_interval_label)
-        
-        layout.addLayout(interval_layout)
-        
+        """
+
+        # Grid layout for pixel-perfect vertical alignment of Minute and Second sliders
+        grid_layout = QGridLayout()
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(8)
+        grid_layout.setColumnStretch(1, 1)
+
+        # Single Label: "Reapply interval:"
+        interval_label = QLabel("Reapply interval:")
+        interval_label.setStyleSheet("color: #9DB2BF; font-size: 12px;")
+        grid_layout.addWidget(interval_label, 0, 0, 1, 1, Qt.AlignVCenter)
+
+        # 1. Minutes Slider (Row 0, Col 1)
+        min_slider = NoScrollSlider(Qt.Horizontal)
+        min_slider.setObjectName("cpuReapplyMinutesSlider")
+        min_slider.setRange(0 if is_dev else 5, 30)
+        min_slider.setSingleStep(1)
+        min_slider.setPageStep(5)
+        min_slider.setFixedHeight(20)
+        min_slider.setStyleSheet(slider_style)
+        min_slider.setValue(initial_mins)
+        grid_layout.addWidget(min_slider, 0, 1, 1, 1, Qt.AlignVCenter)
+
+        min_value_label = QLabel(f"{initial_mins}m")
+        min_value_label.setObjectName("cpuReapplyMinutesValue")
+        min_value_label.setStyleSheet("color: #DDE6ED; font-size: 12px; min-width: 35px;")
+        grid_layout.addWidget(min_value_label, 0, 2, 1, 1, Qt.AlignVCenter)
+
+        # 2. Seconds Slider (Row 1, Col 1) - Perfectly aligned vertically with Minutes Slider
+        sec_slider = NoScrollSlider(Qt.Horizontal)
+        sec_slider.setObjectName("cpuReapplySecondsSlider")
+        sec_slider.setRange(0, 59)
+        sec_slider.setSingleStep(1)
+        sec_slider.setPageStep(10)
+        sec_slider.setFixedHeight(20)
+        sec_slider.setStyleSheet(slider_style)
+        sec_slider.setValue(initial_secs)
+        grid_layout.addWidget(sec_slider, 1, 1, 1, 1, Qt.AlignVCenter)
+
+        sec_value_label = QLabel(f"{initial_secs}s")
+        sec_value_label.setObjectName("cpuReapplySecondsValue")
+        sec_value_label.setStyleSheet("color: #DDE6ED; font-size: 12px; min-width: 35px;")
+        grid_layout.addWidget(sec_value_label, 1, 2, 1, 1, Qt.AlignVCenter)
+
+        layout.addLayout(grid_layout)
+
+        def get_calculated_total_seconds():
+            total = (min_slider.value() * 60) + sec_slider.value()
+            return max(min_total, total)
+
+        def update_interval_labels():
+            min_value_label.setText(f"{min_slider.value()}m")
+            sec_value_label.setText(f"{sec_slider.value()}s")
+
+        min_slider.valueChanged.connect(lambda v: update_interval_labels())
+        sec_slider.valueChanged.connect(lambda v: update_interval_labels())
+
         layout.addStretch()
-        
+
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        
+
         save_btn = AnimatedButton("Save")
         save_btn.setObjectName("cpuSettingsSaveButton")
         save_btn.setFixedSize(100, 40)
         save_btn.setCursor(Qt.PointingHandCursor)
         save_btn.setHoverGradient(['#FF5B06', '#FDA903'])
-        save_btn.clicked.connect(lambda: self._save_cpu_settings(auto_apply_cb.isChecked(), keep_applied_cb.isChecked(), interval_slider.value(), dialog))
+        save_btn.clicked.connect(lambda: self._save_cpu_settings(auto_apply_cb.isChecked(), keep_applied_cb.isChecked(), get_calculated_total_seconds(), dialog))
         btn_layout.addWidget(save_btn)
         
         close_btn = AnimatedButton("Close")
@@ -8983,10 +9019,11 @@ Stylesheet Selector:
     def _start_cpu_reapply_timer(self, interval_seconds=300):
         """Start the auto-reapply timer that re-applies CPU settings at specified interval.
         
-        SAFETY: Minimum interval is 300s (5 min) to prevent driver crashes.
+        SAFETY: Minimum interval is 300s (5 min) normally, or 10s if Developer Mode is enabled.
         """
-        # Enforce minimum 300s for safety - frequent RyzenAdj calls can crash iGPU driver
-        interval_seconds = max(300, interval_seconds)
+        is_dev = hasattr(self, 'settings') and self.settings.get("developer_mode", False)
+        min_interval = 10 if is_dev else 300
+        interval_seconds = max(min_interval, interval_seconds)
         
         # Stop existing timer if any
         self._stop_cpu_reapply_timer()
@@ -9002,7 +9039,12 @@ Stylesheet Selector:
         self._cpu_reapply_timer = QTimer(self)
         self._cpu_reapply_timer.timeout.connect(self._reapply_cpu_settings)
         self._cpu_reapply_timer.start(interval_seconds * 1000)  # Convert to milliseconds
-        print(f"[CPU] Auto-reapply timer started ({interval_seconds // 60}m interval)")
+        if interval_seconds < 60:
+            print(f"[CPU] Auto-reapply timer started ({interval_seconds}s interval)")
+        elif interval_seconds % 60 == 0:
+            print(f"[CPU] Auto-reapply timer started ({interval_seconds // 60}m interval)")
+        else:
+            print(f"[CPU] Auto-reapply timer started ({interval_seconds // 60}m {interval_seconds % 60}s interval)")
     
     def _stop_cpu_reapply_timer(self):
         """Stop the auto-reapply timer."""
@@ -11240,6 +11282,16 @@ Stylesheet Selector:
             self.settings["check_version_daily"] = new_check
             self.settings["startup_delay"] = new_delay
             save_settings(self.settings)
+            
+            # If Developer Mode was turned OFF, clamp CPU reapply interval back to min 300s
+            if not new_dev:
+                if hasattr(self, 'cpu_settings') and self.cpu_settings and self.cpu_settings._settings:
+                    cur_interval = self.cpu_settings._settings.get("reapply_interval", 300)
+                    if cur_interval < 300:
+                        self.cpu_settings._settings["reapply_interval"] = 300
+                        self.cpu_settings.save()
+                        if hasattr(self, '_cpu_reapply_timer') and self._cpu_reapply_timer is not None:
+                            self._start_cpu_reapply_timer(300)
             
             # Apply display settings immediately
             self.setWindowOpacity(self.settings["window_opacity"])

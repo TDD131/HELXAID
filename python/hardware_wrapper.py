@@ -183,52 +183,102 @@ class HardwareMonitor:
         dgpu_load = 0
         dgpu_power = 0
         
-        # Priority 1: Try HWiNFO (fast, direct shared memory access)
-        if HWINFO_AVAILABLE:
-            try:
-                hwinfo = get_hwinfo_reader()
-                if hwinfo.is_available():
-                    sensors = hwinfo.read_sensors()
-                    if sensors.get("available"):
-                        cpu_temp = sensors.get("cpu_temp", 0)
-                        gpu_temp = sensors.get("gpu_temp", 0)
-                        cpu_load = sensors.get("cpu_load", 0)
-                        gpu_load = sensors.get("gpu_load", 0)
-                        fan_speed = sensors.get("fan_speed", 0)
-                        power = sensors.get("power", 0)
-                        cpu_clock = sensors.get("cpu_clock", 0)
-                        cpu_fan_speed = fan_speed  # HWiNFO default mapping
-                        sys_fan_speed = sensors.get("sys_fan", 0)
-                        gpu_fan_speed = sensors.get("gpu_fan", 0)
-                        if cpu_temp > 0 or gpu_temp > 0:
-                            status = "hwinfo"
-                            # Print once when first successful
-                            if not getattr(self, '_hwinfo_logged', False):
-                                print(f"[Hardware] Using HWiNFO for sensor data")
-                                self._hwinfo_logged = True
-            except Exception:
-                pass  # Silently fall back to LHM
-                
-        # Try getting NVIDIA GPU info directly via pynvml (most reliable for NVIDIA)
+        # Priority 1: Exclusive Embedded LibreHardwareMonitor Engine (100% Native, non-admin)
+        # Gets: iGPU temp/load/power, GPU clock, fan speeds, CPU load/clock
+        # Does NOT get: AMD CPU Tdie/Tctl (requires SMU / SYSTEM privileges)
         try:
-            import pynvml
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            try: gpu_fan_speed = float(pynvml.nvmlDeviceGetFanSpeed(handle))
-            except Exception: pass
-            
-            try: dgpu_temp = float(pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU))
-            except Exception: pass
-            
-            try: dgpu_load = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
-            except Exception: pass
-            
-            try: dgpu_power = float(pynvml.nvmlDeviceGetPowerUsage(handle)) / 1000.0
-            except Exception: pass
+            from core.lhm_wrapper import get_lhm_reader_instance
+            lhm = get_lhm_reader_instance()
+            if lhm.is_available():
+                sensors = lhm.read_sensors()
+                if sensors.get("available"):
+                    # CPU - load and clock are OK even non-admin; temp may be 0 on AMD
+                    cpu_load  = float(sensors.get("cpu_load")  or 0)
+                    cpu_clock = float(sensors.get("cpu_clock") or 0)
+                    cpu_power = float(sensors.get("cpu_power") or 0)
+                    power     = cpu_power
+
+                    # iGPU (AMD Radeon integrated) — available non-admin on AMD
+                    igpu_temp  = float(sensors.get("igpu_temp")  or 0)
+                    igpu_load  = float(sensors.get("igpu_load")  or 0)
+                    igpu_power = float(sensors.get("igpu_power") or 0)
+
+                    # dGPU from LHM (fallback; pynvml below overrides)
+                    dgpu_temp  = float(sensors.get("dgpu_temp")  or 0)
+                    dgpu_load  = float(sensors.get("dgpu_load")  or 0)
+                    dgpu_power = float(sensors.get("dgpu_power") or 0)
+                    gpu_temp   = float(sensors.get("gpu_temp")   or 0)
+                    gpu_load   = float(sensors.get("gpu_load")   or 0)
+                    gpu_power  = float(sensors.get("gpu_power")  or 0)
+
+                    fan_speed     = float(sensors.get("fan_speed")  or 0)
+                    cpu_fan_speed = float(sensors.get("cpu_fan")    or 0)
+                    gpu_fan_speed = float(sensors.get("gpu_fan")    or 0)
+                    sys_fan_speed = float(sensors.get("sys_fan")    or 0)
+
+                    if cpu_load > 0 or igpu_load > 0 or dgpu_load > 0:
+                        status = "lhm_embedded"
+                        if not getattr(self, '_lhm_logged', False):
+                            print("[Hardware] Using Exclusive LibreHardwareMonitor Engine")
+                            self._lhm_logged = True
         except Exception:
             pass
-        
-        # Priority 2: Try LHM/OHM via fast COM WMI (zero powershell processes)
+
+        # Priority 2: NVIDIA GPU via pynvml — most accurate NVIDIA data, always overrides LHM dGPU values
+        try:
+            import pynvml
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            try:
+                dgpu_temp = float(pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU))
+                gpu_temp  = dgpu_temp
+            except Exception: pass
+            try:
+                dgpu_load = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
+                gpu_load  = dgpu_load
+            except Exception: pass
+            try:
+                dgpu_power = float(pynvml.nvmlDeviceGetPowerUsage(handle)) / 1000.0
+                gpu_power  = dgpu_power
+            except Exception: pass
+            try:
+                gpu_fan_speed = float(pynvml.nvmlDeviceGetFanSpeed(handle))
+                fan_speed = max(fan_speed, gpu_fan_speed)
+            except Exception: pass
+            if dgpu_temp > 0 and status == "unavailable":
+                status = "pynvml"
+        except Exception:
+            pass
+
+        # Priority 3: AMD CPU Tdie via Zero-UAC service (SYSTEM context = SMU access)
+        # Only needed when cpu_temp is still 0 (AMD Ryzen non-admin limitation)
+        if cpu_temp == 0:
+            try:
+                from integrations.cpu_controller import send_service_command
+                resp = send_service_command({"action": "read_lhm_sensors"})
+                if resp and resp.get("status") == "success":
+                    svc_sensors = resp.get("sensors", {})
+                    svc_cpu = float(svc_sensors.get("cpu_temp") or 0)
+                    if svc_cpu > 0:
+                        cpu_temp = svc_cpu
+                        if status == "unavailable":
+                            status = "lhm_service"
+                    # Also grab CPU power from service if not yet set
+                    if cpu_power == 0:
+                        cpu_power = float(svc_sensors.get("cpu_power") or 0)
+                        power = cpu_power
+                    # iGPU from service if local LHM didn't get it
+                    if igpu_temp == 0:
+                        igpu_temp  = float(svc_sensors.get("igpu_temp")  or 0)
+                        igpu_load  = float(svc_sensors.get("igpu_load")  or 0)
+                        igpu_power = float(svc_sensors.get("igpu_power") or 0)
+            except Exception:
+                pass
+
+        # Priority 4: Fast COM WMI (LHM/OHM WMI namespace) — only if still no data
         if status == "unavailable":
             for namespace in ['LibreHardwareMonitor', 'OpenHardwareMonitor']:
                 if cpu_temp > 0:
@@ -240,76 +290,39 @@ class HardwareMonitor:
                         for s in sensors:
                             stype = str(s.get('SensorType', ''))
                             sname = str(s.get('Name', ''))
-                            sval = float(s.get('Value') or 0)
+                            sval  = float(s.get('Value') or 0)
                             sname_u = sname.upper()
-                            
+
                             if stype == 'Temperature':
-                                # Exclude GPU sensors from CPU matching
                                 if 'GPU' in sname_u:
                                     if gpu_temp == 0 or 'CORE' in sname_u:
                                         gpu_temp = sval
                                 else:
-                                    # CPU Temperature Priority: Tctl/Tdie/Package > CPU > Core
                                     if ('TCTL' in sname_u or 'TDIE' in sname_u or 'PACKAGE' in sname_u) and cpu_prio < 3:
-                                        cpu_temp = sval
-                                        cpu_prio = 3
+                                        cpu_temp = sval; cpu_prio = 3
                                     elif 'CPU' in sname_u and cpu_prio < 2:
-                                        cpu_temp = sval
-                                        cpu_prio = 2
+                                        cpu_temp = sval; cpu_prio = 2
                                     elif 'CORE' in sname_u and cpu_prio < 1:
-                                        cpu_temp = sval
-                                        cpu_prio = 1
-
+                                        cpu_temp = sval; cpu_prio = 1
                             elif stype == 'Load':
                                 if 'GPU' in sname_u:
-                                    if gpu_load == 0 or 'CORE' in sname_u:
-                                        gpu_load = sval
-                                else:
-                                    if ('CPU' in sname_u or 'TOTAL' in sname_u) and cpu_load == 0:
-                                        cpu_load = sval
-
+                                    if gpu_load == 0 or 'CORE' in sname_u: gpu_load = sval
+                                elif ('CPU' in sname_u or 'TOTAL' in sname_u) and cpu_load == 0:
+                                    cpu_load = sval
                             elif stype == 'Power':
-                                if 'GPU' in sname_u:
-                                    gpu_power = sval
-                                elif ('CPU' in sname_u or 'PACKAGE' in sname_u) and power == 0:
-                                    power = sval
-
-                            elif stype == 'Clock':
-                                if 'GPU' in sname_u:
-                                    pass
-                                elif 'CORE' in sname_u or 'CPU' in sname_u:
-                                    if cpu_clock == 0:
-                                        cpu_clock = sval
-                                    else:
-                                        cpu_clock = (cpu_clock + sval) / 2.0
-
+                                if 'GPU' in sname_u: gpu_power = sval
+                                elif ('CPU' in sname_u or 'PACKAGE' in sname_u) and power == 0: power = sval
                             elif stype == 'Fan':
                                 fname = sname.lower()
-                                if 'cpu' in fname:
-                                    cpu_fan_speed = max(cpu_fan_speed, sval)
-                                elif 'gpu' in fname:
-                                    if gpu_fan_speed == 0:
-                                        gpu_fan_speed = max(gpu_fan_speed, sval)
-                                else:
-                                    sys_fan_speed = max(sys_fan_speed, sval)
-                        
+                                if 'cpu' in fname: cpu_fan_speed = max(cpu_fan_speed, sval)
+                                elif 'gpu' in fname: gpu_fan_speed = max(gpu_fan_speed, sval)
+                                else: sys_fan_speed = max(sys_fan_speed, sval)
+
                         fan_speed = cpu_fan_speed or sys_fan_speed or gpu_fan_speed
                         if cpu_temp > 0 or gpu_temp > 0:
                             status = "lhm_com"
                 except Exception:
                     pass
-
-        
-        # Helper: Map generic gpu to igpu or duplicate
-        if dgpu_temp > 0 and abs(gpu_temp - dgpu_temp) < 2 and abs(gpu_load - dgpu_load) < 5:
-            # The generic GPU temp picked up by HWiNFO/LHM is likely the dGPU. So no iGPU.
-            igpu_temp = 0
-            igpu_load = 0
-            igpu_power = 0
-        else:
-            igpu_temp = gpu_temp
-            igpu_load = gpu_load
-            igpu_power = gpu_power
 
         # Update cache
         self._temp_cache = {
@@ -561,13 +574,42 @@ class HardwareMonitor:
     
     def get_smart_disks(self) -> List[Dict]:
         """
-        Get Physical Disk S.M.A.R.T info (Health, Temperature) via COM WMI / WinAPI without spawning powershell.
+        Get Physical Disk S.M.A.R.T info (Health, Temperature) via service, COM WMI, or WinAPI without spawning powershell.
         """
         smart_disks = []
         if os.name != 'nt':
             return smart_disks
 
-        # 1. Try LHM via COM WMI
+        # 1. Try Zero-UAC Service (Fastest & most reliable for elevated SMART)
+        try:
+            from integrations.cpu_controller import send_service_command
+            resp = send_service_command({"action": "read_lhm_sensors"})
+            if resp and resp.get("status") == "success":
+                svc_sensors = resp.get("sensors", {})
+                for disk in svc_sensors.get("storage", []):
+                    model_name = disk.get("name", "Unknown")
+                    temp_val = float(disk.get("temp") or 0)
+                    health_pct = float(disk.get("health_percent", 100))
+                    
+                    is_ssd = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "WD", "SAMSUNG", "KINGSTON", "CRUCIAL"])
+                    status_str = "OK"
+                    if health_pct < 20: status_str = "Warning"
+                    if health_pct < 5: status_str = "Critical"
+                    
+                    smart_disks.append({
+                        'model': model_name,
+                        'temp': round(temp_val, 0),
+                        'health_percent': round(health_pct, 0),
+                        'status': status_str,
+                        'type': "SSD" if is_ssd else "HDD"
+                    })
+        except Exception:
+            pass
+
+        if smart_disks:
+            return smart_disks
+
+        # 2. Try LHM via COM WMI (Fallback if service is down)
         try:
             lhm_hw = _query_wmi_fast("LibreHardwareMonitor", "SELECT Identifier, Name FROM Hardware WHERE HardwareType='Storage'")
             if lhm_hw:
@@ -607,7 +649,7 @@ class HardwareMonitor:
         except Exception:
             pass
 
-        # 2. Fallback: Standard Win32_DiskDrive COM query if empty
+        # 3. Fallback: Standard Win32_DiskDrive COM query if empty
         if not smart_disks:
             try:
                 disks = _query_wmi_fast("cimv2", "SELECT Model, Status, MediaType FROM Win32_DiskDrive")
@@ -760,18 +802,14 @@ class HardwareMonitor:
         Get CPU/GPU temperatures (non-blocking, uses cached data).
         
         Note: Data is updated in background thread every 2 seconds.
-        Works best with LibreHardwareMonitor running in background.
+        Uses LHM embedded (iGPU/fans) + pynvml (NVIDIA dGPU) + service IPC (AMD CPU Tdie).
         
         Returns:
-            Dict with cpu_temp, gpu_temp, cpu_load, gpu_load, fan_speed, power, status
+            Dict with cpu_temp, dgpu_temp, igpu_temp, gpu_temp, cpu_load, dgpu_load,
+            igpu_load, gpu_load, fan_speed, cpu_power, dgpu_power, status
         """
-        if NATIVE_AVAILABLE:
-            try:
-                return _hw.get_temperatures()
-            except Exception:
-                pass
-        
-        # Return cached data (updated by background thread)
+        # Always use Python cache — LHM+pynvml+service IPC chain has AMD SMU, iGPU/dGPU split,
+        # NVIDIA temp/power — far superior to C++ hardware_utils which lacks all of these.
         return self._temp_cache.copy()
     
     # ============================================
@@ -808,3 +846,4 @@ def get_monitor(update_interval_ms: int = 500) -> HardwareMonitor:
     if _monitor is None:
         _monitor = HardwareMonitor(update_interval_ms)
     return _monitor
+

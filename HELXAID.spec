@@ -13,6 +13,8 @@ datas = [
     ('python/Fonts', 'Fonts'),
     ('python/helxaid_native.cp314-win_amd64.pyd', '.'),
     ('python/helxairo_native.cp314-win_amd64.pyd', '.'),
+    ('python/hardware_utils.cp314-win_amd64.pyd', '.'),
+    ('python/hardware_utils.pyd', '.'),
 ]
 binaries = []
 hiddenimports = [
@@ -21,6 +23,10 @@ hiddenimports = [
     'win32timezone',
     'win32serviceutil',
     'servicemanager',
+    'clr',
+    'clr_loader',
+    'pythonnet',
+    'core.lhm_wrapper',
 ]
 
 # Collect all resources and binaries for critical packages
