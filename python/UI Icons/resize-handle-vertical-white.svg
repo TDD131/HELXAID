@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="#ffffff">
+  <!-- Small Up Arrow -->
+  <path d="M12 3.5L8 7.5h2.5v2.5h3V7.5H16L12 3.5z"/>
+  <!-- Two Thin Horizontal Bars in Middle (height=0.8) -->
+  <rect x="5" y="10.8" width="14" height="0.8" rx="0.4"/>
+  <rect x="5" y="12.4" width="14" height="0.8" rx="0.4"/>
+  <!-- Small Down Arrow -->
+  <path d="M12 20.5l4-4h-2.5v-2.5h-3v2.5H8l4 4z"/>
+</svg>

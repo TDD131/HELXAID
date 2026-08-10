@@ -333,8 +333,8 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                                 elif stype == "LOAD":
                                     if "TOTAL" in sname or "CORE MAX" in sname:
                                         out["cpu_load"] = max(out["cpu_load"], fval)
-                                elif stype == "CLOCK" and "CORE" in sname and out["cpu_clock"] == 0:
-                                    out["cpu_clock"] = fval
+                                elif stype == "CLOCK" and fval > 200:
+                                    out["cpu_clock"] = max(out["cpu_clock"], fval)
                                 elif stype == "POWER" and ("PACKAGE" in sname or "CPU" in sname):
                                     out["cpu_power"] = fval
                             

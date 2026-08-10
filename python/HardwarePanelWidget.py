@@ -18,15 +18,16 @@ from PySide6.QtWidgets import (
     QFrame, QStackedWidget, QGridLayout, QSlider, QLineEdit,
     QScrollArea, QSizePolicy, QGraphicsDropShadowEffect, QProgressBar,
     QCheckBox, QGroupBox, QDialog, QListWidget, QListWidgetItem,
-    QGraphicsOpacityEffect
+    QGraphicsOpacityEffect, QSplitter, QSplitterHandle
 )
 from AnimatedButton import AnimatedCheckBox
 from smooth_scroll import SmoothScrollArea, SmoothTableWidget
-from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QThread, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QThread, QPropertyAnimation, QEasingCurve, QRect
 from PySide6.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QLinearGradient, 
     QConicalGradient, QIntValidator, QPixmap, QFontMetrics
 )
+from PySide6.QtSvg import QSvgRenderer
 
 import collections
 import threading
@@ -610,26 +611,8 @@ class ProgressBarWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Background
         bg_rect = self.rect()
-        painter.setBrush(QColor("#2a2a2a"))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(bg_rect, 6, 6)
-        
-        # Progress bar
-        if self._value > 0:
-            progress_width = int((self._value / self._max_value) * self.width())
-            progress_rect = bg_rect.adjusted(0, 0, -(self.width() - progress_width), 0)
-            
-            # Gradient fill
-            gradient = QLinearGradient(0, 0, progress_width, 0)
-            gradient.setColorAt(0, QColor("#FF5B06"))
-            gradient.setColorAt(1, QColor("#FDA903"))
-            painter.setBrush(gradient)
-            painter.drawRoundedRect(progress_rect, 6, 6)
-        
-        # Text overlay - left side (drive letter + percent)
-        painter.setPen(QColor("#ffffff"))
+        text_rect = bg_rect.adjusted(8, 0, -8, 0)
         font = QFont("Orbitron", 10)
         painter.setFont(font)
         
@@ -637,12 +620,42 @@ class ProgressBarWidget(QWidget):
         if self._show_percent:
             left_text = f"{left_text}  {int(self._value)}%" if left_text else f"{int(self._value)}%"
         
-        painter.drawText(self.rect().adjusted(8, 0, -8, 0), Qt.AlignVCenter | Qt.AlignLeft, left_text)
+        # 1. Background track (#2a2a2a)
+        painter.setBrush(QColor("#2a2a2a"))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(bg_rect, 6, 6)
         
-        # Right side text (GB info)
+        # 2. PASS 1: Render light text for the unfilled/dark area
+        painter.setPen(QColor("#e0e0e0"))
+        if left_text:
+            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, left_text)
         if self._right_label:
             painter.setPen(QColor("#cccccc"))
-            painter.drawText(self.rect().adjusted(8, 0, -8, 0), Qt.AlignVCenter | Qt.AlignRight, self._right_label)
+            painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignRight, self._right_label)
+            
+        # 3. PASS 2: Progress Fill & Inverted Dark Text for the filled area
+        if self._value > 0:
+            progress_width = int((self._value / self._max_value) * self.width())
+            if progress_width > 0:
+                progress_rect = bg_rect.adjusted(0, 0, -(self.width() - progress_width), 0)
+                
+                # Gradient Fill (#FF5B06 -> #FDA903)
+                gradient = QLinearGradient(0, 0, progress_width, 0)
+                gradient.setColorAt(0, QColor("#FF5B06"))
+                gradient.setColorAt(1, QColor("#FDA903"))
+                painter.setBrush(gradient)
+                painter.setPen(Qt.NoPen)
+                painter.drawRoundedRect(progress_rect, 6, 6)
+                
+                # Clip drawing strictly to filled progress rectangle
+                painter.setClipRect(progress_rect)
+                
+                # Draw inverted dark text on top of orange progress fill
+                painter.setPen(QColor("#0a0a0a"))
+                if left_text:
+                    painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignLeft, left_text)
+                if self._right_label:
+                    painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignRight, self._right_label)
         
         painter.end()
 
@@ -722,6 +735,92 @@ class DriveInfoWorker(QThread):
                 pythoncom.CoUninitialize()
         except Exception as e:
             print(f"[DriveInfoWorker] Error querying drive info: {e}")
+
+
+class DriveSplitterHandle(QSplitterHandle):
+    """
+    Custom vertical splitter handle rendering resize-handle-vertical-white.svg vector icon.
+    Component Name: DriveSplitterHandle
+    """
+    def __init__(self, orientation, parent):
+        super().__init__(orientation, parent)
+        self.setObjectName("DriveSplitterHandle")
+        self.setCursor(Qt.SplitVCursor)
+        self._is_pressed = False
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        svg_path = os.path.join(script_dir, "UI Icons", "resize-handle-vertical-white.svg")
+        self._svg_renderer = None
+        if os.path.exists(svg_path):
+            self._svg_renderer = QSvgRenderer(svg_path)
+
+    def mousePressEvent(self, event):
+        self._is_pressed = True
+        self.update()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._is_pressed = False
+        self.update()
+        super().mouseReleaseEvent(event)
+
+    def enterEvent(self, event):
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._is_pressed = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        rect = self.rect()
+        active = self.underMouse() or self._is_pressed
+        
+        # 1. Subtle horizontal track line across full width
+        line_height = 2 if not active else 4
+        line_y = rect.center().y() - line_height // 2
+        line_rect = QRect(rect.x() + 10, line_y, rect.width() - 20, line_height)
+        
+        line_color = QColor(255, 91, 6, 220) if active else QColor(255, 255, 255, 30)
+        painter.fillRect(line_rect, line_color)
+        
+        # 2. Centered White 90-degree rotated SVG resize handle icon pill
+        center_x = rect.center().x()
+        center_y = rect.center().y()
+        
+        pill_w = 52
+        pill_h = 22
+        pill_rect = QRect(center_x - pill_w // 2, center_y - pill_h // 2, pill_w, pill_h)
+        
+        # Pill background
+        pill_bg = QColor(255, 91, 6) if active else QColor(28, 28, 35)
+        painter.setBrush(QBrush(pill_bg))
+        border_pen = QPen(QColor(255, 91, 6) if active else QColor(255, 255, 255, 50), 1)
+        painter.setPen(border_pen)
+        painter.drawRoundedRect(pill_rect, 11, 11)
+        
+        # 3. Render SVG Icon
+        if self._svg_renderer and self._svg_renderer.isValid():
+            icon_size = 20
+            icon_rect = QRect(center_x - icon_size // 2, center_y - icon_size // 2, icon_size, icon_size)
+            self._svg_renderer.render(painter, icon_rect)
+
+
+class DrivePageSplitter(QSplitter):
+    """
+    Custom vertical QSplitter for Drive page using DriveSplitterHandle.
+    Component Name: DrivePageSplitter
+    """
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+        self.setObjectName("DrivePageSplitter")
+
+    def createHandle(self):
+        return DriveSplitterHandle(self.orientation(), self)
 
 
 class DriveOverviewWidget(QWidget):
@@ -884,8 +983,10 @@ class DriveOverviewWidget(QWidget):
                 self.combo_drive_selector.clear()
                 self.combo_drive_selector.addItem("TOTAL STORAGE")
                 for d in physical_disks:
-                    d_label = f"Drive {d['index']}: {d['model']}"
+                    model_name = d.get('model') or f"Disk {d.get('index', 0)}"
+                    d_label = model_name if len(model_name) <= 24 else model_name[:21] + "..."
                     self.combo_drive_selector.addItem(d_label)
+                    self.combo_drive_selector.setItemData(self.combo_drive_selector.count() - 1, d.get('model', ''), Qt.ToolTipRole)
                 if curr_idx < self.combo_drive_selector.count():
                     self.combo_drive_selector.setCurrentIndex(curr_idx)
                 self.combo_drive_selector.blockSignals(False)
@@ -998,11 +1099,6 @@ class DriveVolumeCard(QWidget):
         self.type_badge.setObjectName("driveVolumeTypeBadge")
         self.type_badge.setStyleSheet("color: #00E5FF; background-color: rgba(0, 229, 255, 0.14); border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 800;")
         top.addWidget(self.type_badge)
-
-        self.smart_badge = QLabel("Status Unknown")
-        self.smart_badge.setObjectName("driveVolumeSmartBadge")
-        self.smart_badge.setStyleSheet("color: #FFCC00; background-color: rgba(255, 204, 0, 0.14); border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 800;")
-        top.addWidget(self.smart_badge)
         top.addStretch()
         layout.addLayout(top)
 
@@ -1035,28 +1131,6 @@ class DriveVolumeCard(QWidget):
         model = hardware_info.get("model") or "Unknown model"
         self.type_badge.setText(str(media_type))
         self.type_badge.setToolTip(model)
-
-        status = str(hardware_info.get("smart_status") or "Status Unknown")
-        temp = hardware_info.get("temperature")
-        if temp not in (None, "", 0, 0.0):
-            status_text = f"{status} • {float(temp):.0f}°C"
-        else:
-            status_text = status
-        lowered = status.lower()
-        if "ok" in lowered or "good" in lowered:
-            color = "#00FF66"
-            bg = "rgba(0, 255, 102, 0.14)"
-        elif "warn" in lowered:
-            color = "#FFCC00"
-            bg = "rgba(255, 204, 0, 0.14)"
-        elif "critical" in lowered or "fail" in lowered:
-            color = "#FF3355"
-            bg = "rgba(255, 51, 85, 0.14)"
-        else:
-            color = "#FFCC00"
-            bg = "rgba(255, 204, 0, 0.14)"
-        self.smart_badge.setText(status_text)
-        self.smart_badge.setStyleSheet(f"color: {color}; background-color: {bg}; border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 800;")
 
         percent = float(partition.get("percent_used", 0) or 0)
         used = int(partition.get("used_bytes", 0) or 0)
@@ -2350,6 +2424,7 @@ class HardwarePanelWidget(QWidget):
         self._drive_volume_cards = {}
         self._drive_scan_worker = None
         self._drive_clean_worker = None
+        self._cpu_freq_unit = "GHz"
 
         self._setup_ui()
         self._apply_style()
@@ -5182,8 +5257,11 @@ class HardwarePanelWidget(QWidget):
         layout.setContentsMargins(0, 10, 0, 0)
         layout.setSpacing(12)
 
-        # === TOP ROW: Total Storage Card (Left) + Drive Volumes Panel (Right) ===
-        top_row = QHBoxLayout()
+        # === TOP SECTION: Total Storage Card (Left) + Drive Volumes Panel (Right) ===
+        top_container = QWidget()
+        top_container.setObjectName("DriveTopContainer")
+        top_container.setStyleSheet("background: transparent;")
+        top_row = QHBoxLayout(top_container)
         top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(12)
 
@@ -5242,13 +5320,27 @@ class HardwarePanelWidget(QWidget):
         volumes_layout.addWidget(scroll, stretch=1)
 
         top_row.addWidget(volumes_panel, stretch=1)
-        layout.addLayout(top_row, stretch=0)
 
-        # === BOTTOM ROW: Disk Cleaner (Full Width) ===
+        # === BOTTOM SECTION: Disk Cleaner (Full Width) ===
         self.drive_cleaner = DiskCleanerPanel()
         self.drive_cleaner.scan_requested.connect(self._start_drive_scan)
         self.drive_cleaner.clean_requested.connect(self._start_drive_clean)
-        layout.addWidget(self.drive_cleaner, stretch=1)
+
+        # === VERTICAL SPLITTER WITH RESIZE HANDLE LINE BELOW TOP CARDS ===
+        drive_splitter = DrivePageSplitter(Qt.Vertical)
+        drive_splitter.setObjectName("DrivePageSplitter")
+        drive_splitter.setStyleSheet("""
+            QSplitter#DrivePageSplitter::handle {
+                height: 24px;
+                background: transparent;
+            }
+        """)
+        drive_splitter.addWidget(top_container)
+        drive_splitter.addWidget(self.drive_cleaner)
+        drive_splitter.setStretchFactor(0, 0)
+        drive_splitter.setStretchFactor(1, 1)
+
+        layout.addWidget(drive_splitter, stretch=1)
 
         self._drive_refresh_counter = 0
         self._request_async_drive_info()
@@ -5264,12 +5356,18 @@ class HardwarePanelWidget(QWidget):
         self._drive_info_worker.start()
 
     def _on_drive_info_updated(self, partitions, hardware_info, physical_disks, lhm_drives=None):
-        if lhm_drives is None:
-            lhm_drives = getattr(self, '_lhm_storage', [])
-        else:
+        if lhm_drives:
             self._lhm_storage = lhm_drives
             self._smart_disks = lhm_drives
             self._disk_smart_fetched = True
+        else:
+            # Fallback to previously cached valid SMART data if current read is transiently empty
+            cached_lhm = getattr(self, '_lhm_storage', [])
+            if cached_lhm:
+                lhm_drives = cached_lhm
+                self._smart_disks = cached_lhm
+            elif lhm_drives is None:
+                lhm_drives = []
         
         def _is_match(n1_str, n2_str):
             if not n1_str or not n2_str:
@@ -6344,9 +6442,22 @@ class HardwarePanelWidget(QWidget):
         self.cpu_percent_label.setObjectName("cpuPercentLabel")
         self.cpu_percent_label.setStyleSheet("color: #FF5B06; font-size: 24px; font-weight: 700; background: transparent;")
         cpu_stats.addWidget(self.cpu_percent_label)
-        self.cpu_freq_label = QLabel("0 GHz")
+        self.cpu_freq_label = QLabel("0.00 GHz")
         self.cpu_freq_label.setObjectName("cpuFreqLabel")
-        self.cpu_freq_label.setStyleSheet("color: #888888; font-size: 12px; background: transparent;")
+        self.cpu_freq_label.setStyleSheet("""
+            QLabel#cpuFreqLabel {
+                color: #888888;
+                font-size: 12px;
+                background: transparent;
+            }
+            QLabel#cpuFreqLabel:hover {
+                color: #ffffff;
+            }
+        """)
+        self.cpu_freq_label.setCursor(Qt.PointingHandCursor)
+        self.cpu_freq_label.setToolTip("Right click to toggle frequency unit (GHz / MHz)")
+        self.cpu_freq_label.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.cpu_freq_label.customContextMenuRequested.connect(self._show_cpu_freq_context_menu)
         cpu_stats.addWidget(self.cpu_freq_label)
         cpu_stats.addStretch()
         cpu_stats_widget = QWidget()
@@ -6680,6 +6791,47 @@ class HardwarePanelWidget(QWidget):
         grid.addWidget(health_card, 3, 0, 1, 2)  # Make Health card span both columns
         
         return container
+
+    def _show_cpu_freq_context_menu(self, pos):
+        """Show context menu on CPU frequency label to switch between GHz and MHz."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setObjectName("cpuFreqContextMenu")
+        menu.setStyleSheet("""
+            QMenu#cpuFreqContextMenu {
+                background-color: #1e1e24;
+                color: #e0e0e0;
+                border: 1px solid #3c3c45;
+                border-radius: 6px;
+                padding: 4px;
+                font-family: 'Orbitron';
+                font-size: 11px;
+            }
+            QMenu#cpuFreqContextMenu::item {
+                padding: 6px 20px 6px 12px;
+                border-radius: 4px;
+            }
+            QMenu#cpuFreqContextMenu::item:selected {
+                background-color: #FF5B06;
+                color: #ffffff;
+            }
+        """)
+        
+        ghz_action = menu.addAction("GHz (Gigahertz)")
+        ghz_action.setCheckable(True)
+        ghz_action.setChecked(getattr(self, '_cpu_freq_unit', 'GHz') == "GHz")
+        
+        mhz_action = menu.addAction("MHz (Megahertz)")
+        mhz_action.setCheckable(True)
+        mhz_action.setChecked(getattr(self, '_cpu_freq_unit', 'GHz') == "MHz")
+        
+        action = menu.exec_(self.cpu_freq_label.mapToGlobal(pos))
+        if action == ghz_action:
+            self._cpu_freq_unit = "GHz"
+            self._update_stats()
+        elif action == mhz_action:
+            self._cpu_freq_unit = "MHz"
+            self._update_stats()
     
     def _enforce_chart_y_range(self, chart, min_val: float, max_val: float):
         """Enforce Y-axis range on chart (prevents View All from changing it)."""
@@ -6836,7 +6988,15 @@ class HardwarePanelWidget(QWidget):
             self.cpu_leading_text.setText(f'{cpu_usage:.0f}%')
             self.cpu_leading_text.setPos(len(self._cpu_history) - 1, cpu_usage)
             self.cpu_percent_label.setText(f"{cpu_usage:.0f}%")
-            self.cpu_freq_label.setText(f"{cpu.get('freq_ghz', 0):.2f} GHz • {cpu.get('cores', 0)} cores • {cpu.get('threads', 0)} threads")
+            freq_ghz = cpu.get('freq_ghz', 0)
+            cores = cpu.get('cores', 0)
+            threads = cpu.get('threads', 0)
+            unit = getattr(self, '_cpu_freq_unit', 'GHz')
+            if unit == 'MHz':
+                freq_str = f"{freq_ghz * 1000:.0f} MHz"
+            else:
+                freq_str = f"{freq_ghz:.2f} GHz"
+            self.cpu_freq_label.setText(f"{freq_str} • {cores} cores • {threads} threads")
             
             # Update disk activity chart (append only, auto-scroll)
             disk_io = snapshot.get("disk_io", {})

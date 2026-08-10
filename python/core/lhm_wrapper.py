@@ -60,12 +60,13 @@ class LHMEmbeddedReader:
         try:
             import clr
             if self._dll_path and os.path.exists(self._dll_path):
-                clr.AddReference(self._dll_path)
-                logger.info(f"[LHM] Loaded assembly from: {self._dll_path}")
+                abs_dll = os.path.abspath(self._dll_path)
+                clr.AddReference(abs_dll)
+                logger.info(f"[LHM] Loaded assembly from: {abs_dll}")
             else:
                 clr.AddReference("LibreHardwareMonitorLib")
 
-            from LibreHardwareMonitor.Hardware import Computer
+            from LibreHardwareMonitor.Hardware import Computer  # type: ignore[import-not-found, import-untyped]
             
             self._computer = Computer()
             self._computer.IsCpuEnabled = True
@@ -164,8 +165,8 @@ class LHMEmbeddedReader:
                     elif stype == "LOAD":
                         if "TOTAL" in sname or "CORE MAX" in sname:
                             metrics["cpu_load"] = max(metrics["cpu_load"], fval)
-                    elif stype == "CLOCK" and "CORE" in sname and metrics["cpu_clock"] == 0:
-                        metrics["cpu_clock"] = fval
+                    elif stype == "CLOCK" and fval > 200:  # Ignore 100MHz bus speed, capture max core clock
+                        metrics["cpu_clock"] = max(metrics["cpu_clock"], fval)
                     elif stype == "POWER" and ("PACKAGE" in sname or "CPU" in sname):
                         metrics["cpu_power"] = fval
                         metrics["power"]     = fval

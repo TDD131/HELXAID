@@ -64,6 +64,46 @@ def _query_wmi_fast(namespace: str, query: str) -> list:
     except Exception:
         return []
 
+_pdh_query_handle = None
+_pdh_counter_handle = None
+
+def _get_pdh_cpu_freq_ghz() -> float:
+    """Read dynamic real-time CPU frequency using Windows PDH Processor Performance counter."""
+    if os.name != 'nt':
+        return 0.0
+    global _pdh_query_handle, _pdh_counter_handle
+    try:
+        import ctypes
+        import struct
+        pdh = ctypes.windll.pdh
+        if _pdh_query_handle is None:
+            hq = ctypes.c_void_p()
+            hc = ctypes.c_void_p()
+            if pdh.PdhOpenQueryW(None, 0, ctypes.byref(hq)) == 0:
+                if pdh.PdhAddEnglishCounterW(hq, r'\Processor Information(_Total)\% Processor Performance', 0, ctypes.byref(hc)) == 0:
+                    _pdh_query_handle = hq
+                    _pdh_counter_handle = hc
+                    pdh.PdhCollectQueryData(_pdh_query_handle)
+                    return 0.0
+        if _pdh_query_handle and _pdh_counter_handle:
+            pdh.PdhCollectQueryData(_pdh_query_handle)
+            buf = (ctypes.c_uint8 * 16)()
+            if pdh.PdhGetFormattedCounterValue(_pdh_counter_handle, 0x200, None, buf) == 0:
+                perf_pct = struct.unpack('d', bytes(buf)[8:16])[0]
+                if perf_pct > 0:
+                    base_mhz = 2635.0
+                    if PSUTIL_AVAILABLE:
+                        try:
+                            freq = psutil.cpu_freq()
+                            if freq and freq.current > 0:
+                                base_mhz = freq.current
+                        except Exception:
+                            pass
+                    return round(base_mhz * (perf_pct / 100.0) / 1000.0, 2)
+    except Exception:
+        pass
+    return 0.0
+
 
 class HardwareMonitor:
     """
@@ -151,7 +191,7 @@ class HardwareMonitor:
                 self._update_temp_cache()
             except Exception as e:
                 print(f"[Hardware] Temp thread error: {e}")
-            time.sleep(2)  # Update every 2 seconds
+            time.sleep(0.5)  # Update every 500ms for real-time hardware sensors
     
     def _update_temp_cache(self):
         """Update temperature cache (runs in background thread).
@@ -266,7 +306,9 @@ class HardwareMonitor:
                         cpu_temp = svc_cpu
                         if status == "unavailable":
                             status = "lhm_service"
-                    # Also grab CPU power from service if not yet set
+                    # Also grab CPU clock and power from service if not yet set
+                    if cpu_clock == 0:
+                        cpu_clock = float(svc_sensors.get("cpu_clock") or 0)
                     if cpu_power == 0:
                         cpu_power = float(svc_sensors.get("cpu_power") or 0)
                         power = cpu_power
@@ -477,62 +519,67 @@ class HardwareMonitor:
             return psutil.cpu_percent(interval=0)
         
         return 0.0
-    
+
     def get_cpu_freq(self) -> Dict:
         """
         Get CPU frequency and core count.
         
-        Priority: HWiNFO > LHM > psutil
+        Priority for Frequency: LHM (MSR/SMU hardware clock) > Windows PDH (real-time dynamic clock) > psutil > HWiNFO > Native C++
+        Cores & Threads: Always from psutil (Physical Cores & Logical Threads)
         
         Returns:
             Dict with freq_ghz, cores, and threads
         """
-        if NATIVE_AVAILABLE:
-            try:
-                return _hw.get_cpu_freq()
-            except Exception:
-                pass
-        
-        freq_ghz = 0.0
         cores = 0
         threads = 0
         
-        # Get cores/threads from psutil
+        # Get accurate physical cores and logical threads from psutil
         if PSUTIL_AVAILABLE:
-            cores = psutil.cpu_count(logical=False) or psutil.cpu_count()
-            threads = psutil.cpu_count(logical=True) or psutil.cpu_count()
+            cores = psutil.cpu_count(logical=False) or psutil.cpu_count() or 0
+            threads = psutil.cpu_count(logical=True) or psutil.cpu_count() or 0
         
-        # Priority 1: Try HWiNFO (most accurate real-time boost clock)
+        freq_ghz = 0.0
+        
+        # Priority 1: Try LHM real-time hardware clock (SMU / MSR max core boost clock)
+        lhm_clock = self._temp_cache.get("cpu_clock", 0) if hasattr(self, '_temp_cache') else 0
+        if lhm_clock > 0:
+            freq_ghz = round(lhm_clock / 1000.0, 2)
+            return {"freq_ghz": freq_ghz, "cores": cores, "threads": threads}
+        
+        # Priority 2: Try dynamic Windows PDH Processor Performance Counter (Ultra zero latency real-time GHz)
+        pdh_freq = _get_pdh_cpu_freq_ghz()
+        if pdh_freq > 0:
+            return {"freq_ghz": pdh_freq, "cores": cores, "threads": threads}
+
+        # Priority 3: Fallback to psutil
+        if PSUTIL_AVAILABLE:
+            try:
+                freq = psutil.cpu_freq()
+                if freq and freq.current > 0:
+                    return {"freq_ghz": round(freq.current / 1000.0, 2), "cores": cores, "threads": threads}
+            except Exception:
+                pass
+
+        # Priority 4: Try HWiNFO
         if HWINFO_AVAILABLE:
             try:
                 hwinfo = get_hwinfo_reader()
                 if hwinfo.is_available():
                     sensors = hwinfo.read_sensors()
                     if sensors.get("available") and sensors.get("cpu_clock", 0) > 0:
-                        freq_ghz = sensors["cpu_clock"] / 1000  # MHz to GHz
+                        freq_ghz = round(sensors["cpu_clock"] / 1000.0, 2)
                         return {"freq_ghz": freq_ghz, "cores": cores, "threads": threads}
             except Exception:
                 pass
-        
-        # Priority 2: Try LHM cached clock
-        lhm_clock = self._temp_cache.get("cpu_clock", 0)
-        if lhm_clock > 0:
-            freq_ghz = lhm_clock / 1000  # MHz to GHz
-            return {"freq_ghz": freq_ghz, "cores": cores, "threads": threads}
-        
-        # Priority 3: Fallback to psutil (usually base clock only)
-        if PSUTIL_AVAILABLE:
+
+        # Priority 5: Fallback to C++ Native extension
+        if NATIVE_AVAILABLE:
             try:
-                per_cpu = psutil.cpu_freq(percpu=True)
-                if per_cpu:
-                    current_freq = max(cpu.current for cpu in per_cpu)
-                else:
-                    freq = psutil.cpu_freq()
-                    current_freq = freq.current if freq else 0
+                native_res = _hw.get_cpu_freq()
+                if native_res and native_res.get("freq_ghz", 0) > 0:
+                    freq_ghz = round(native_res.get("freq_ghz", 0.0), 2)
             except Exception:
-                freq = psutil.cpu_freq()
-                current_freq = freq.current if freq else 0
-            freq_ghz = current_freq / 1000 if current_freq else 0
+                pass
         
         return {"freq_ghz": freq_ghz, "cores": cores, "threads": threads}
     
