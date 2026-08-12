@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 210" width="140" height="210">
+  <!-- Side Button (Forward / MB5) -->
+  <rect x="23" y="75" width="6" height="18" rx="2" ry="2" fill="#323232" stroke="#474747" stroke-width="1"/>
+  
+  <!-- Side Button (Back / MB4) -->
+  <rect x="23" y="96" width="6" height="18" rx="2" ry="2" fill="#323232" stroke="#474747" stroke-width="1"/>
+
+  <!-- Body -->
+  <path d="M 70,10 
+           C 98,10 112,16 112,40 
+           C 112,80 108,110 114,145 
+           C 119,180 98,200 70,200 
+           C 42,200 21,180 26,145 
+           C 32,110 28,80 28,40 
+           C 28,16 42,10 70,10 Z" 
+        fill="#1e1e1e" stroke="#474747" stroke-width="2"/>
+  
+  <!-- Left Mouse Button -->
+  <path d="M 69,12 
+           C 42,12 30,18 30,40 
+           C 30,50 32,60 33,70 
+           C 42,75 55,75 69,70 
+           L 69, 56
+           C 69,56 64,56 64,50
+           L 64, 32
+           C 64,26 69,26 69,26
+           L 69, 12 Z" 
+        fill="#323232" stroke="#ff5500" stroke-width="1"/>
+        
+  <!-- Right Mouse Button -->
+  <path d="M 71,12 
+           C 98,12 110,18 110,40 
+           C 110,50 108,60 107,70 
+           C 98,75 85,75 71,70 
+           L 71, 56
+           C 71,56 76,56 76,50
+           L 76, 32
+           C 76,26 71,26 71,26
+           L 71, 12 Z" 
+        fill="#323232" stroke="#ff5500" stroke-width="1"/>
+        
+  <!-- Scroll Wheel -->
+  <rect x="66" y="28" width="8" height="26" rx="4" ry="4" fill="#141414"/>
+</svg>

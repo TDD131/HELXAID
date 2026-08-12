@@ -481,6 +481,11 @@ class RamCleanerPresetDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("RamCleanerPresetDialog")
         self.setWindowTitle("Custom Preset Configuration")
+        try:
+            from launcher import apply_custom_titlebar
+            apply_custom_titlebar(self, "#000000")
+        except Exception:
+            pass
         self.setFixedSize(750, 550)
         self.setModal(True)
         

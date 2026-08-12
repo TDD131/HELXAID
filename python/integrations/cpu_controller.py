@@ -48,6 +48,63 @@ def is_ryzenadj_available() -> bool:
     # Fallback check
     return os.path.exists(get_ryzenadj_path())
 
+def get_cpu_vendor() -> str:
+    """
+    Detect CPU Vendor ('AMD', 'Intel', or 'UNKNOWN') via Windows Registry.
+    Zero-latency (0ms), 0-subprocess execution.
+    """
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        vendor_id, _ = winreg.QueryValueEx(key, "VendorIdentifier")
+        winreg.CloseKey(key)
+        vendor_str = str(vendor_id).upper()
+        if "AMD" in vendor_str or "AUTHENTICAMD" in vendor_str:
+            return "AMD"
+        elif "INTEL" in vendor_str or "GENUINEINTEL" in vendor_str:
+            return "Intel"
+    except Exception:
+        pass
+    
+    proc_id = os.environ.get("PROCESSOR_IDENTIFIER", "").upper()
+    if "AMD" in proc_id:
+        return "AMD"
+    elif "INTEL" in proc_id:
+        return "Intel"
+    return "UNKNOWN"
+
+def is_amd_cpu() -> bool:
+    return get_cpu_vendor() == "AMD"
+
+def is_intel_cpu() -> bool:
+    return get_cpu_vendor() == "Intel"
+
+def _apply_intel_power_scheme(profile: dict) -> bool:
+    """
+    Switch Windows Power Scheme based on requested CPU profile mode for Intel CPUs.
+    High Performance: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+    Balanced: 381b4222-f694-41f0-9685-ff5bb260df2e
+    Power Saver: a1841308-3541-4fab-bc81-f71556f20b4a
+    """
+    try:
+        stapm = profile.get("stapm_limit", 40)
+        if stapm >= 45:
+            scheme_guid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" # High Performance
+        elif stapm <= 20:
+            scheme_guid = "a1841308-3541-4fab-bc81-f71556f20b4a" # Power Saver
+        else:
+            scheme_guid = "381b4222-f694-41f0-9685-ff5bb260df2e" # Balanced
+
+        subprocess.run(
+            ["powercfg.exe", "/setactive", scheme_guid],
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        return True
+    except Exception:
+        return False
+
+
 # Legacy UXTU path (kept for compatibility)
 DEFAULT_UXTU_PATH = r"C:\Program Files\JamesCJ60\Universal x86 Tuning Utility\Universal x86 Tuning Utility.exe"
 
@@ -336,7 +393,13 @@ def apply_ryzenadj(profile: dict) -> tuple:
     Returns:
         (success: bool, error_message: str or None)
     """
+    if is_intel_cpu():
+        print("[CPU DEBUG] Intel CPU detected. RyzenAdj is not applicable; applying Windows Power Scheme optimization.")
+        _apply_intel_power_scheme(profile)
+        return True, "Intel CPU detected: Applied Windows Power Profile optimization."
+
     # 1. Attempt Service IPC (Zero-UAC)
+
     try:
         ry_path = get_ryzenadj_path()
         payload = {

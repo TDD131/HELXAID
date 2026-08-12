@@ -61,12 +61,27 @@ class LHMEmbeddedReader:
             import clr
             if self._dll_path and os.path.exists(self._dll_path):
                 abs_dll = os.path.abspath(self._dll_path)
+                dll_dir = os.path.dirname(abs_dll)
+
+                # Unblock Zone.Identifier stream if present (Mark of the Web)
+                zone_id = abs_dll + ":Zone.Identifier"
+                if os.path.exists(zone_id):
+                    try: os.remove(zone_id)
+                    except Exception: pass
+
+                if dll_dir not in sys.path:
+                    sys.path.append(dll_dir)
+                if hasattr(os, 'add_dll_directory') and os.path.exists(dll_dir):
+                    try: os.add_dll_directory(dll_dir)
+                    except Exception: pass
+
                 clr.AddReference(abs_dll)
                 logger.info(f"[LHM] Loaded assembly from: {abs_dll}")
             else:
                 clr.AddReference("LibreHardwareMonitorLib")
 
             from LibreHardwareMonitor.Hardware import Computer  # type: ignore[import-not-found, import-untyped]
+
             
             self._computer = Computer()
             self._computer.IsCpuEnabled = True

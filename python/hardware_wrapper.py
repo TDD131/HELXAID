@@ -223,6 +223,21 @@ class HardwareMonitor:
         dgpu_load = 0
         dgpu_power = 0
         
+        # Priority 0: Native GPU Driver Engine (AMD ADL PMLog / WDDM - Task Manager Engine)
+        try:
+            from core.native_gpu_reader import get_native_gpu_reader
+            native_gpu = get_native_gpu_reader()
+            if native_gpu.is_available():
+                native_metrics = native_gpu.read_igpu_sensors()
+                if native_metrics.get("available"):
+                    igpu_temp  = float(native_metrics.get("igpu_temp")  or 0)
+                    igpu_load  = float(native_metrics.get("igpu_load")  or 0)
+                    igpu_power = float(native_metrics.get("igpu_power") or 0)
+                    if igpu_temp > 0 or igpu_load > 0:
+                        status = native_metrics.get("status", "native_gpu_driver")
+        except Exception:
+            pass
+
         # Priority 1: Exclusive Embedded LibreHardwareMonitor Engine (100% Native, non-admin)
         # Gets: iGPU temp/load/power, GPU clock, fan speeds, CPU load/clock
         # Does NOT get: AMD CPU Tdie/Tctl (requires SMU / SYSTEM privileges)
@@ -238,10 +253,13 @@ class HardwareMonitor:
                     cpu_power = float(sensors.get("cpu_power") or 0)
                     power     = cpu_power
 
-                    # iGPU (AMD Radeon integrated) — available non-admin on AMD
-                    igpu_temp  = float(sensors.get("igpu_temp")  or 0)
-                    igpu_load  = float(sensors.get("igpu_load")  or 0)
-                    igpu_power = float(sensors.get("igpu_power") or 0)
+                    # iGPU (AMD Radeon integrated) — fallback if Native GPU Driver didn't get it
+                    if igpu_temp == 0:
+                        igpu_temp  = float(sensors.get("igpu_temp")  or 0)
+                    if igpu_load == 0:
+                        igpu_load  = float(sensors.get("igpu_load")  or 0)
+                    if igpu_power == 0:
+                        igpu_power = float(sensors.get("igpu_power") or 0)
 
                     # dGPU from LHM (fallback; pynvml below overrides)
                     dgpu_temp  = float(sensors.get("dgpu_temp")  or 0)
@@ -256,7 +274,7 @@ class HardwareMonitor:
                     gpu_fan_speed = float(sensors.get("gpu_fan")    or 0)
                     sys_fan_speed = float(sensors.get("sys_fan")    or 0)
 
-                    if cpu_load > 0 or igpu_load > 0 or dgpu_load > 0:
+                    if (cpu_load > 0 or igpu_load > 0 or dgpu_load > 0) and status == "unavailable":
                         status = "lhm_embedded"
                         if not getattr(self, '_lhm_logged', False):
                             print("[Hardware] Using Exclusive LibreHardwareMonitor Engine")

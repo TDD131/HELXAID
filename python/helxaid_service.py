@@ -123,10 +123,22 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 if not profile:
                     return {"status": "error", "message": "No profile data provided."}
                 
+                # Check CPU vendor - skip RyzenAdj on Intel CPUs
+                try:
+                    import winreg
+                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+                    vendor_id, _ = winreg.QueryValueEx(key, "VendorIdentifier")
+                    winreg.CloseKey(key)
+                    if "INTEL" in str(vendor_id).upper() or "GENUINEINTEL" in str(vendor_id).upper():
+                        return {"status": "success", "message": "Intel CPU detected. Zero-UAC active for system features; CPU power managed via Windows Power Scheme."}
+                except Exception:
+                    pass
+
                 explicit_path = data.get("ryzenadj_path")
                 ryzenadj_path = self.get_ryzenadj_path(explicit_path)
                 if not ryzenadj_path:
                     return {"status": "error", "message": "RyzenAdj executable not found."}
+
                 
                 # Auto-kill UXTU's PawnIO driver if it's running (to prevent RyzenAdj crash)
                 try:
@@ -270,10 +282,23 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                     if not dll_path:
                         return {"status": "error", "message": "LibreHardwareMonitorLib.dll not found"}
                     
+                    # Unblock Zone.Identifier stream if present (Mark of the Web)
+                    zone_id = dll_path + ":Zone.Identifier"
+                    if os.path.exists(zone_id):
+                        try: os.remove(zone_id)
+                        except Exception: pass
+
+                    dll_dir = os.path.dirname(os.path.abspath(dll_path))
+                    if dll_dir not in _sys.path:
+                        _sys.path.append(dll_dir)
+                    if hasattr(os, 'add_dll_directory') and os.path.exists(dll_dir):
+                        try: os.add_dll_directory(dll_dir)
+                        except Exception: pass
+
                     import clr
                     import math
-                    clr.AddReference(dll_path)
-                    from LibreHardwareMonitor.Hardware import Computer
+                    clr.AddReference(os.path.abspath(dll_path))
+                    from LibreHardwareMonitor.Hardware import Computer  # type: ignore[import-not-found, import-untyped]  # noqa: F401
                     
                     c = Computer()
                     c.IsCpuEnabled = True

@@ -17,7 +17,7 @@ from PySide6.QtGui import QIcon, QFont
 from PySide6.QtCore import Qt, Signal, QTimer
 
 
-def apply_custom_titlebar(widget, color_hex="#121212"):
+def apply_custom_titlebar(widget, color_hex="#000000"):
     """Apply Windows 11 custom title bar color and Windows 10 dark mode."""
     import sys
     if sys.platform != "win32":
@@ -62,7 +62,7 @@ def show_custom_question_box(parent, title: str, text: str) -> bool:
     msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
     msg.setDefaultButton(QMessageBox.No)
 
-    apply_custom_titlebar(msg, "#121212")
+    apply_custom_titlebar(msg, "#000000")
 
     msg.setStyleSheet("""
         QMessageBox {
@@ -197,6 +197,7 @@ class MacroSettingsDialog(QDialog):
         
     def _setup_ui(self):
         self.setWindowTitle("Macro Settings")
+        apply_custom_titlebar(self, "#000000")
         self.setMinimumSize(800, 600)
         self.setStyleSheet("""
             QDialog {

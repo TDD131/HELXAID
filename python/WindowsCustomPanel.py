@@ -629,11 +629,11 @@ class LockScreenOverlay(QWidget):
         
         layout.addWidget(container)
         
-        # Center on screen
+        # Center on primary screen
         screen = QApplication.primaryScreen().geometry()
         self.move(
-            (screen.width() - self.width()) // 2,
-            (screen.height() - self.height()) // 2
+            screen.x() + (screen.width() - self.width()) // 2,
+            screen.y() + (screen.height() - self.height()) // 2
         )
         
         # Fade-in animation setup
@@ -655,23 +655,36 @@ class LockScreenOverlay(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self.activateWindow()
-        self._opacity_effect.setOpacity(0.0)
-        self._fade_anim.start()
+        with InvisibleLockScreen._lock:
+            InvisibleLockScreen._overlay_hwnd = int(self.winId())
+        if InvisibleLockScreen._hwnd:
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                user32.SetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+                user32.SetWindowLongPtrW.restype = ctypes.c_void_p
+                user32.SetWindowLongPtrW(ctypes.c_void_p(int(self.winId())), -8, ctypes.c_void_p(InvisibleLockScreen._hwnd))
+            except Exception:
+                pass
+        if not getattr(self, "_fade_started", False):
+            self._fade_started = True
+            self._opacity_effect.setOpacity(0.0)
+            self._fade_anim.start()
+        else:
+            self._opacity_effect.setOpacity(1.0)
     
     def closeEvent(self, event):
         """Clean up animations and graphics effects before destruction."""
+        with InvisibleLockScreen._lock:
+            if InvisibleLockScreen._overlay_hwnd == int(self.winId()):
+                InvisibleLockScreen._overlay_hwnd = None
         if hasattr(self, "_fade_anim") and self._fade_anim:
             self._fade_anim.stop()
         self.setGraphicsEffect(None)
         super().closeEvent(event)
     
     def focusOutEvent(self, event):
-        # Only collapse if focus moved completely outside this window
-        focused = QApplication.focusWidget()
-        if focused and (focused == self or self.isAncestorOf(focused)):
-            return
-        InvisibleLockScreen.set_visibility(False)
-        self.close()
+        # Keep lock overlay steady while lock screen is active
         super().focusOutEvent(event)
 
 
@@ -893,6 +906,7 @@ class InvisibleLockScreen:
     _instance = None
     _active = False
     _hwnd = None
+    _overlay_hwnd = None
     _current_opacity = 100
     _overlay_shown = False
     _verifying = False  # True while Windows Hello dialog is open
@@ -1004,11 +1018,53 @@ class InvisibleLockScreen:
             VK_L = 0x4C
             MOD_CONTROL = 0x0002
             
+            HWND_TOPMOST = ctypes.c_void_p(-1)
+
+            user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+            user32.FindWindowW.restype = wintypes.HWND
+
+            user32.IsWindow.argtypes = [wintypes.HWND]
+            user32.IsWindow.restype = wintypes.BOOL
+
+            user32.IsWindowVisible.argtypes = [wintypes.HWND]
+            user32.IsWindowVisible.restype = wintypes.BOOL
+
+            user32.IsIconic.argtypes = [wintypes.HWND]
+            user32.IsIconic.restype = wintypes.BOOL
+
+            user32.GetForegroundWindow.argtypes = []
+            user32.GetForegroundWindow.restype = wintypes.HWND
+
+            user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+            user32.GetClassNameW.restype = ctypes.c_int
+
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND, wintypes.HWND,
+                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                wintypes.UINT
+            ]
+            user32.SetWindowPos.restype = wintypes.BOOL
+
+            def _get_taskmgr_hwnd():
+                for cls_name in ("TaskManagerWindow", "TaskmanagerWindow"):
+                    hwnd_tm = user32.FindWindowW(cls_name, None)
+                    if hwnd_tm and user32.IsWindow(hwnd_tm) and user32.IsWindowVisible(hwnd_tm) and not user32.IsIconic(hwnd_tm):
+                        return hwnd_tm
+                return None
+
             # Calculate opacity byte (1-255, where 1 = nearly invisible)
             alpha_byte = max(1, min(255, int(opacity * 2.55)))  # opacity is 1-100
             
-            screen_w = user32.GetSystemMetrics(0)
-            screen_h = user32.GetSystemMetrics(1)
+            # Query Virtual Screen metrics to cover all connected displays (Multi-Monitor Support)
+            # SM_XVIRTUALSCREEN=76, SM_YVIRTUALSCREEN=77, SM_CXVIRTUALSCREEN=78, SM_CYVIRTUALSCREEN=79
+            virt_x = user32.GetSystemMetrics(76)
+            virt_y = user32.GetSystemMetrics(77)
+            virt_w = user32.GetSystemMetrics(78)
+            virt_h = user32.GetSystemMetrics(79)
+            if virt_w <= 0:
+                virt_w = user32.GetSystemMetrics(0)
+            if virt_h <= 0:
+                virt_h = user32.GetSystemMetrics(1)
             
             # Create a simple message-only approach using hotkey
             # Register Ctrl+L as the unlock hotkey
@@ -1052,6 +1108,20 @@ class InvisibleLockScreen:
                         cls._overlay_shown = True
                         cls.set_visibility(True)
                         lock_signals.show_password.emit()
+                    return 0
+                elif msg == 0x007E:  # WM_DISPLAYCHANGE
+                    # Re-query virtual bounds if display topology/resolution changes while locked
+                    vx = user32.GetSystemMetrics(76)
+                    vy = user32.GetSystemMetrics(77)
+                    vw = user32.GetSystemMetrics(78)
+                    vh = user32.GetSystemMetrics(79)
+                    if vw <= 0: vw = user32.GetSystemMetrics(0)
+                    if vh <= 0: vh = user32.GetSystemMetrics(1)
+                    hwnd_tm = _get_taskmgr_hwnd()
+                    if hwnd_tm:
+                        user32.SetWindowPos(hwnd, hwnd_tm, vx, vy, vw, vh, 0x0010 | 0x0040)
+                    else:
+                        user32.SetWindowPos(hwnd, HWND_TOPMOST, vx, vy, vw, vh, 0x0010 | 0x0040)
                     return 0
                 elif msg == 0x0010:  # WM_CLOSE
                     user32.UnregisterHotKey(hwnd, HOTKEY_ID)
@@ -1113,14 +1183,13 @@ class InvisibleLockScreen:
             ]
             user32.CreateWindowExW.restype = wintypes.HWND
             
-            # Create the window — pass hInstance_ptr (c_void_p) to avoid
-            # OverflowError on 64-bit when hInstance is a large int.
+            # Create the window spanning all displays (virtual screen rect)
             hwnd = user32.CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
                 class_name,
                 "HELRCUS Lock",
                 WS_POPUP | WS_VISIBLE,
-                0, 0, screen_w, screen_h,
+                virt_x, virt_y, virt_w, virt_h,
                 None, None, hInstance_ptr, None
             )
             
@@ -1133,17 +1202,123 @@ class InvisibleLockScreen:
             with cls._lock:
                 cls._hwnd = hwnd
             
-            # Show lock overlay immediately upon activation
-            cls._overlay_shown = True
-            cls.set_visibility(True)
-            lock_signals.show_password.emit()
+            # Start in stealth/invisible mode (overlay panel will only show if user clicks screen)
+            cls._overlay_shown = False
+            cls.set_visibility(False, animate=False)
             
+            # Low-level Keyboard Hook definitions to block all user input except emergency shortcuts (Ctrl+Shift+Esc, Ctrl+Alt+Del) & unlock hotkey
+            WH_KEYBOARD_LL = 13
+            
+            class KBDLLHOOKSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ("vkCode", wintypes.DWORD),
+                    ("scanCode", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.c_ulonglong)
+                ]
+            
+            HOOKPROC = ctypes.WINFUNCTYPE(
+                ctypes.c_longlong, ctypes.c_int,
+                wintypes.WPARAM, wintypes.LPARAM
+            )
+            
+            user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+            user32.SetWindowsHookExW.restype = wintypes.HHOOK
+            user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+            user32.CallNextHookEx.restype = ctypes.c_longlong
+            user32.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+            user32.UnhookWindowsHookEx.restype = wintypes.BOOL
+            
+            user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+            user32.GetAsyncKeyState.restype = ctypes.c_short
+
+            def _is_pressed(vk):
+                return (user32.GetAsyncKeyState(vk) & 0x8000) != 0
+
+            h_hook_ref = [None]
+
+            user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+            user32.GetAncestor.restype = wintypes.HWND
+            GA_ROOT = 2
+
+            def low_level_keyboard_proc(nCode, wParam, lParam):
+                if nCode >= 0:
+                    try:
+                        # Allow all keyboard inputs when Task Manager is in focus or root ancestor is Task Manager
+                        fg_hwnd = user32.GetForegroundWindow()
+                        hwnd_tm = _get_taskmgr_hwnd()
+                        if hwnd_tm and (fg_hwnd == hwnd_tm or user32.GetAncestor(fg_hwnd, GA_ROOT) == hwnd_tm):
+                            return user32.CallNextHookEx(h_hook_ref[0], nCode, wParam, lParam)
+
+                        if fg_hwnd:
+                            buf = ctypes.create_unicode_buffer(256)
+                            user32.GetClassNameW(fg_hwnd, buf, 256)
+                            if buf.value.lower() in ("taskmanagerwindow", "resmonwindowclass"):
+                                return user32.CallNextHookEx(h_hook_ref[0], nCode, wParam, lParam)
+
+                        kbd_struct = KBDLLHOOKSTRUCT.from_address(lParam)
+                        vk = kbd_struct.vkCode
+                        
+                        # 1. Allow Ctrl + Shift + Esc (Task Manager)
+                        if vk == 0x1B:  # VK_ESCAPE
+                            if _is_pressed(0x11) and _is_pressed(0x10):  # Ctrl + Shift
+                                return user32.CallNextHookEx(h_hook_ref[0], nCode, wParam, lParam)
+                        
+                        # 2. Allow Ctrl + Alt + Del (Security Attention Sequence)
+                        if vk == 0x2E:  # VK_DELETE
+                            if _is_pressed(0x11) and _is_pressed(0x12):  # Ctrl + Alt
+                                return user32.CallNextHookEx(h_hook_ref[0], nCode, wParam, lParam)
+
+                        # 3. Always pass through modifier keypress events (Ctrl, Shift, Alt) so emergency shortcuts & unlock hotkey combos work
+                        if vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5):
+                            return user32.CallNextHookEx(h_hook_ref[0], nCode, wParam, lParam)
+
+                        is_mod_ctrl = bool(unlock_modifiers & 0x0002)
+                        is_mod_shift = bool(unlock_modifiers & 0x0004)
+                        is_mod_alt = bool(unlock_modifiers & 0x0001)
+
+                        ctrl_down = _is_pressed(0x11) or _is_pressed(0xA2) or _is_pressed(0xA3)
+                        shift_down = _is_pressed(0x10) or _is_pressed(0xA0) or _is_pressed(0xA1)
+                        alt_down = _is_pressed(0x12) or _is_pressed(0xA4) or _is_pressed(0xA5)
+                        
+                        if vk == unlock_vk and (ctrl_down == is_mod_ctrl) and (shift_down == is_mod_shift) and (alt_down == is_mod_alt):
+                            cls.unlock()
+                            return user32.CallNextHookEx(h_hook_ref[0], nCode, wParam, lParam)
+
+                        # 4. Block all other system/application inputs
+                        return 1
+                    except Exception:
+                        pass
+                return user32.CallNextHookEx(h_hook_ref[0], nCode, wParam, lParam)
+            
+            kb_hook_proc = HOOKPROC(low_level_keyboard_proc)
+            h_hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, kb_hook_proc, hInstance_ptr, 0)
+            h_hook_ref[0] = h_hook
+
             # Register unlock hotkey
             user32.RegisterHotKey(hwnd, HOTKEY_ID, unlock_modifiers, unlock_vk)
             
             # Bring to front and capture focus
             user32.SetForegroundWindow(hwnd)
             user32.SetFocus(hwnd)
+            
+            gdi32.CreateRectRgn.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+            gdi32.CreateRectRgn.restype = wintypes.HRGN
+
+            gdi32.CombineRgn.argtypes = [wintypes.HRGN, wintypes.HRGN, wintypes.HRGN, ctypes.c_int]
+            gdi32.CombineRgn.restype = ctypes.c_int
+
+            gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+            gdi32.DeleteObject.restype = wintypes.BOOL
+
+            user32.SetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN, wintypes.BOOL]
+            user32.SetWindowRgn.restype = ctypes.c_int
+
+            user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+            user32.GetWindowRect.restype = wintypes.BOOL
+
+            prev_tm_rect = [None]
             
             # Block input by keeping window on top
             # Message loop
@@ -1158,10 +1333,63 @@ class InvisibleLockScreen:
                 else:
                     # Keep window on top ONLY when not verifying (Windows Hello needs to be above)
                     if hwnd_ref[0] and not cls._verifying:
-                        user32.SetWindowPos(hwnd_ref[0], -1, 0, 0, 0, 0, 0x0001 | 0x0002)  # HWND_TOPMOST, SWP_NOSIZE | SWP_NOMOVE
+                        vx = user32.GetSystemMetrics(76)
+                        vy = user32.GetSystemMetrics(77)
+                        vw = user32.GetSystemMetrics(78)
+                        vh = user32.GetSystemMetrics(79)
+                        if vw <= 0: vw = user32.GetSystemMetrics(0)
+                        if vh <= 0: vh = user32.GetSystemMetrics(1)
+                        
+                        hwnd_tm = _get_taskmgr_hwnd()
+                        with cls._lock:
+                            ov_hwnd = cls._overlay_hwnd
+
+                        has_ov = ov_hwnd and user32.IsWindow(ov_hwnd) and user32.IsWindowVisible(ov_hwnd)
+
+                        if hwnd_tm:
+                            # Physically cut out Task Manager's bounding rect from the lock screen window region
+                            rect_tm = wintypes.RECT()
+                            if user32.GetWindowRect(hwnd_tm, ctypes.byref(rect_tm)):
+                                curr_rect = (rect_tm.left, rect_tm.top, rect_tm.right, rect_tm.bottom)
+                                if prev_tm_rect[0] != curr_rect:
+                                    prev_tm_rect[0] = curr_rect
+                                    rgn_full = gdi32.CreateRectRgn(vx, vy, vx + vw, vy + vh)
+                                    rgn_tm = gdi32.CreateRectRgn(rect_tm.left, rect_tm.top, rect_tm.right, rect_tm.bottom)
+                                    rgn_diff = gdi32.CreateRectRgn(0, 0, 0, 0)
+                                    gdi32.CombineRgn(rgn_diff, rgn_full, rgn_tm, 4)  # RGN_DIFF = 4
+                                    user32.SetWindowRgn(hwnd_ref[0], rgn_diff, True)
+                                    gdi32.DeleteObject(rgn_full)
+                                    gdi32.DeleteObject(rgn_tm)
+
+                            # Keep Task Manager on TOPMOST layer (-1)
+                            user32.SetWindowPos(hwnd_tm, HWND_TOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+                            
+                            if has_ov:
+                                # Place LockScreenOverlay directly behind Task Manager
+                                user32.SetWindowPos(ov_hwnd, hwnd_tm, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040)
+                                # Place fullscreen lock screen directly behind LockScreenOverlay
+                                user32.SetWindowPos(hwnd_ref[0], ov_hwnd, vx, vy, vw, vh, 0x0010 | 0x0040)
+                            else:
+                                # Place transparent lock screen directly behind Task Manager
+                                user32.SetWindowPos(hwnd_ref[0], hwnd_tm, vx, vy, vw, vh, 0x0010 | 0x0040)
+                        else:
+                            if prev_tm_rect[0] is not None:
+                                prev_tm_rect[0] = None
+                                user32.SetWindowRgn(hwnd_ref[0], None, True)
+
+                            if has_ov:
+                                # Keep LockScreenOverlay at TOPMOST (-1)
+                                user32.SetWindowPos(ov_hwnd, HWND_TOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040)
+                                # Place fullscreen lock screen directly behind LockScreenOverlay
+                                user32.SetWindowPos(hwnd_ref[0], ov_hwnd, vx, vy, vw, vh, 0x0010 | 0x0040)
+                            else:
+                                user32.SetWindowPos(hwnd_ref[0], HWND_TOPMOST, vx, vy, vw, vh, 0x0010 | 0x0040)
                     ctypes.windll.kernel32.Sleep(50)
             
             # Cleanup
+            if h_hook_ref[0]:
+                user32.UnhookWindowsHookEx(h_hook_ref[0])
+            
             if hwnd_ref[0]:
                 user32.UnregisterHotKey(hwnd_ref[0], HOTKEY_ID)
                 user32.DestroyWindow(hwnd_ref[0])
@@ -2326,14 +2554,16 @@ class WindowsCustomPanel(QWidget):
     
     def _show_lock_overlay(self):
         """Show the 'Screen is Locked' overlay panel."""
-        # Close any existing overlay and reset the click guard
         if hasattr(self, "_lock_overlay") and self._lock_overlay is not None:
             try:
-                self._lock_overlay.close()
+                self._lock_overlay.raise_()
+                self._lock_overlay.activateWindow()
+                InvisibleLockScreen._overlay_shown = True
+                return
             except Exception:
                 pass
-        InvisibleLockScreen._overlay_shown = False
 
+        InvisibleLockScreen._overlay_shown = True
         self._lock_overlay = LockScreenOverlay(None)
         self._lock_overlay.show()
 

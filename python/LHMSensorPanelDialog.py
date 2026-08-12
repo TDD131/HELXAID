@@ -77,6 +77,11 @@ class LHMSensorPanelDialog(QDialog):
         super().__init__(parent)
         self.setObjectName("LHMSensorPanelDialog")
         self.setWindowTitle("HELXAID - LibreHardwareMonitor Panel")
+        try:
+            from launcher import apply_custom_titlebar
+            apply_custom_titlebar(self, "#000000")
+        except Exception:
+            pass
         self.setMinimumSize(780, 520)
         self.resize(860, 580)
         self.setStyleSheet("QDialog#LHMSensorPanelDialog { background: #121316; color: #e0e0e0; }")

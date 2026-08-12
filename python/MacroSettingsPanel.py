@@ -25,7 +25,7 @@ from macro_system.integration.hardware_manager import get_hardware_manager
 from AnimatedButton import AnimatedCheckBox, FadeHoverButton
 
 
-def apply_custom_titlebar(widget, color_hex="#121212"):
+def apply_custom_titlebar(widget, color_hex="#000000"):
     """Apply Windows 11 custom title bar color and Windows 10 dark mode."""
     import sys
     if sys.platform != "win32":
@@ -73,7 +73,7 @@ def show_custom_question_box(parent, title: str, text: str) -> bool:
     msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
     msg.setDefaultButton(QMessageBox.No)
 
-    apply_custom_titlebar(msg, "#121212")
+    apply_custom_titlebar(msg, "#000000")
 
     msg.setStyleSheet("""
         QMessageBox {
@@ -153,6 +153,7 @@ def show_custom_question_box(parent, title: str, text: str) -> bool:
                 text-decoration: none;
             }
         """)
+
 
     res = msg.exec()
     return res == QMessageBox.Yes
@@ -3037,12 +3038,828 @@ class CpsBenchmarkPanel(QWidget):
             w = min(self.click_target_zone.width() - 30, 720)
             h = 44
             x = max(0, (self.click_target_zone.width() - w) // 2)
-            y = max(0, (self.click_target_zone.height() - h) // 2)
-            self.result_banner.setGeometry(x, y, w, h)
-            self.result_banner.raise_()
 
 
 
+class HelxairoPulseGraphWidget(QWidget):
+    """
+    Real-time Digital Oscilloscope Waveform Plotter for Click Pulse Signals.
+    Component Name: HelxairoPulseGraphWidget
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("HelxairoPulseGraphWidget")
+        from collections import deque
+        self._samples = deque(maxlen=80)
+        self.setMinimumHeight(120)
+        self.setMaximumHeight(160)
+
+    def add_sample(self, state: bool, dt_ms: float, is_chatter: bool):
+        self._samples.append({
+            'state': state,
+            'dt_ms': dt_ms,
+            'is_chatter': is_chatter,
+            'time': time.perf_counter_ns()
+        })
+        self.update()
+
+    def clear_graph(self):
+        self._samples.clear()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect()
+        w = rect.width()
+        h = rect.height()
+
+        # Background container
+        painter.fillRect(rect, QColor(14, 16, 20, 220))
+
+        # Grid lines
+        grid_pen = QPen(QColor(255, 255, 255, 12), 1, Qt.DashLine)
+        painter.setPen(grid_pen)
+        
+        y_high = int(h * 0.3)
+        y_low = int(h * 0.75)
+        painter.drawLine(0, y_high, w, y_high)
+        painter.drawLine(0, y_low, w, y_low)
+
+        lbl_font = QFont("Orbitron", 8, QFont.Bold)
+        painter.setFont(lbl_font)
+        painter.setPen(QColor(0, 230, 118, 180))
+        painter.drawText(10, y_high - 6, "HIGH (PRESS)")
+        painter.setPen(QColor(160, 160, 160, 140))
+        painter.drawText(10, y_low + 16, "LOW (RELEASE)")
+
+        if not self._samples:
+            painter.setPen(QColor(120, 120, 120, 120))
+            painter.drawText(QRect(0, 0, w, h), Qt.AlignCenter, "CLICK IN TEST CANVA TO RECORD SIGNAL WAVEFORM")
+            return
+
+        n = len(self._samples)
+        step_x = max(10.0, (w - 60) / max(1, n - 1))
+        
+        path = QPainterPath()
+        last_x = 50.0
+        last_y = y_low if not self._samples[0]['state'] else y_high
+        path.moveTo(last_x, last_y)
+
+        for i, sample in enumerate(self._samples):
+            curr_x = 50.0 + i * step_x
+            curr_y = y_high if sample['state'] else y_low
+
+            path.lineTo(curr_x, last_y)
+            path.lineTo(curr_x, curr_y)
+
+            last_x = curr_x
+            last_y = curr_y
+
+        pulse_pen = QPen(QColor(255, 91, 6), 2)
+        painter.setPen(pulse_pen)
+        painter.drawPath(path)
+
+        for i, sample in enumerate(self._samples):
+            curr_x = 50.0 + i * step_x
+            curr_y = y_high if sample['state'] else y_low
+
+            if sample['is_chatter']:
+                painter.setBrush(QBrush(QColor(255, 51, 51, 200)))
+                painter.setPen(QPen(QColor(255, 51, 51), 2))
+                painter.drawEllipse(QPoint(int(curr_x), int(curr_y)), 6, 6)
+                
+                painter.setFont(QFont("Orbitron", 7, QFont.Bold))
+                painter.drawText(int(curr_x) - 15, int(curr_y) - 10, f"{sample['dt_ms']:.1f}ms !")
+            else:
+                painter.setBrush(QBrush(QColor(0, 230, 118, 220)))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(QPoint(int(curr_x), int(curr_y)), 3, 3)
+
+
+class HelxairoMouseGraphicWidget(QWidget):
+    """
+    Vector Mouse Silhouette Graphic with Interactive Button State Feedback.
+    Component Name: HelxairoMouseGraphicWidget
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("HelxairoMouseGraphicWidget")
+        self.setFixedSize(140, 210)
+        self._button_states = {
+            'left': 'normal',
+            'right': 'normal',
+            'middle': 'normal',
+            'x1': 'normal',
+            'x2': 'normal',
+        }
+
+    def set_button_state(self, button: str, state: str):
+        if button in self._button_states:
+            self._button_states[button] = state
+            self.update()
+
+    def reset_all_buttons(self):
+        for k in self._button_states:
+            self._button_states[k] = 'normal'
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Draw Side Buttons First
+        mb5_rect = QRect(23, 75, 6, 18)
+        mb4_rect = QRect(23, 96, 6, 18)
+        
+        def _color_for_side_btn(state_val):
+            if state_val == 'pressed':
+                return QColor(0, 230, 118, 200)
+            elif state_val == 'chatter':
+                return QColor(255, 51, 51, 220)
+            elif state_val == 'fast_dc':
+                return QColor(255, 183, 77, 200)
+            return QColor(50, 50, 50, 255)
+
+        x2_color = _color_for_side_btn(self._button_states['x2'])
+        x1_color = _color_for_side_btn(self._button_states['x1'])
+        
+        painter.setPen(QPen(QColor("#474747"), 1))
+        painter.setBrush(QBrush(x2_color))
+        painter.drawRoundedRect(mb5_rect, 2, 2)
+        
+        painter.setBrush(QBrush(x1_color))
+        painter.drawRoundedRect(mb4_rect, 2, 2)
+
+        # Draw Body
+        body_path = QPainterPath()
+        body_path.moveTo(70, 10)
+        body_path.cubicTo(98, 10, 112, 16, 112, 40)
+        body_path.cubicTo(112, 80, 108, 110, 114, 145)
+        body_path.cubicTo(119, 180, 98, 200, 70, 200)
+        body_path.cubicTo(42, 200, 21, 180, 26, 145)
+        body_path.cubicTo(32, 110, 28, 80, 28, 40)
+        body_path.cubicTo(28, 16, 42, 10, 70, 10)
+
+        painter.setPen(QPen(QColor("#474747"), 2))
+        painter.setBrush(QBrush(QColor("#1e1e1e")))
+        painter.drawPath(body_path)
+
+        # Left Button Zone
+        lmb_path = QPainterPath()
+        lmb_path.moveTo(69, 12)
+        lmb_path.cubicTo(42, 12, 30, 18, 30, 40)
+        lmb_path.cubicTo(30, 50, 32, 60, 33, 70)
+        lmb_path.cubicTo(42, 75, 55, 75, 69, 70)
+        lmb_path.lineTo(69, 56)
+        lmb_path.cubicTo(69, 56, 64, 56, 64, 50)
+        lmb_path.lineTo(64, 32)
+        lmb_path.cubicTo(64, 26, 69, 26, 69, 26)
+        lmb_path.lineTo(69, 12)
+
+        lmb_color = QColor(50, 50, 50, 255)
+        if self._button_states['left'] == 'pressed':
+            lmb_color = QColor(0, 230, 118, 140)
+        elif self._button_states['left'] == 'chatter':
+            lmb_color = QColor(255, 51, 51, 180)
+        elif self._button_states['left'] == 'fast_dc':
+            lmb_color = QColor(255, 183, 77, 160)
+
+        painter.setPen(QPen(QColor("#ff5500"), 1))
+        painter.setBrush(QBrush(lmb_color))
+        painter.drawPath(lmb_path)
+
+        # Right Button Zone
+        rmb_path = QPainterPath()
+        rmb_path.moveTo(71, 12)
+        rmb_path.cubicTo(98, 12, 110, 18, 110, 40)
+        rmb_path.cubicTo(110, 50, 108, 60, 107, 70)
+        rmb_path.cubicTo(98, 75, 85, 75, 71, 70)
+        rmb_path.lineTo(71, 56)
+        rmb_path.cubicTo(71, 56, 76, 56, 76, 50)
+        rmb_path.lineTo(76, 32)
+        rmb_path.cubicTo(76, 26, 71, 26, 71, 26)
+        rmb_path.lineTo(71, 12)
+
+        rmb_color = QColor(50, 50, 50, 255)
+        if self._button_states['right'] == 'pressed':
+            rmb_color = QColor(0, 230, 118, 140)
+        elif self._button_states['right'] == 'chatter':
+            rmb_color = QColor(255, 51, 51, 180)
+        elif self._button_states['right'] == 'fast_dc':
+            rmb_color = QColor(255, 183, 77, 160)
+
+        painter.setPen(QPen(QColor("#ff5500"), 1))
+        painter.setBrush(QBrush(rmb_color))
+        painter.drawPath(rmb_path)
+
+        # Scroll Wheel & MMB
+        mmb_rect = QRect(66, 28, 8, 26)
+        mmb_color = QColor("#141414")
+        if self._button_states['middle'] == 'pressed':
+            mmb_color = QColor(0, 230, 118, 220)
+        elif self._button_states['middle'] == 'chatter':
+            mmb_color = QColor(255, 51, 51, 240)
+        elif self._button_states['middle'] == 'fast_dc':
+            mmb_color = QColor(255, 183, 77, 220)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(mmb_color))
+        painter.drawRoundedRect(mmb_rect, 4, 4)
+
+        # Text Labels
+        painter.setFont(QFont("Orbitron", 7, QFont.Bold))
+        painter.setPen(QColor(220, 220, 220, 180))
+        painter.drawText(45, 55, "L")
+        painter.drawText(87, 55, "R")
+
+
+class HelxairoChatterLogTableWidget(QTableWidget):
+    """
+    High-Performance Event Log Table for Double-Click and Microswitch Chatter Events.
+    Component Name: HelxairoChatterLogTableWidget
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("HelxairoChatterLogTableWidget")
+        self.setColumnCount(5)
+        self.setHorizontalHeaderLabels(["ID", "Button", "Hold (ms)", "Interval (ms)", "Status Badge"])
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.verticalHeader().setVisible(False)
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.setStyleSheet("""
+            QTableWidget#HelxairoChatterLogTableWidget {
+                background-color: rgba(0, 0, 0, 0.25);
+                border: none;
+                border-radius: 8px;
+                gridline-color: rgba(255, 255, 255, 0.05);
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+            }
+            QTableWidget#HelxairoChatterLogTableWidget QHeaderView::section {
+                background-color: rgba(255, 255, 255, 0.05);
+                color: #FF5B06;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border: none;
+                padding: 6px;
+            }
+            QTableWidget#HelxairoChatterLogTableWidget::item {
+                padding: 4px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            }
+            QTableWidget#HelxairoChatterLogTableWidget::item:selected {
+                background-color: rgba(255, 91, 6, 0.15);
+            }
+        """)
+
+    def add_log_entry(self, event_id: int, button_name: str, hold_ms: float, interval_ms: float, classification: str):
+        row = self.rowCount()
+        self.insertRow(row)
+
+        item_id = QTableWidgetItem(f"#{event_id:03d}")
+        item_btn = QTableWidgetItem(button_name.upper())
+        item_hold = QTableWidgetItem(f"{hold_ms:.1f} ms" if hold_ms > 0 else "--")
+        item_int = QTableWidgetItem(f"{interval_ms:.1f} ms" if interval_ms > 0 else "--")
+        item_status = QTableWidgetItem(classification)
+
+        item_id.setTextAlignment(Qt.AlignCenter)
+        item_btn.setTextAlignment(Qt.AlignCenter)
+        item_hold.setTextAlignment(Qt.AlignCenter)
+        item_int.setTextAlignment(Qt.AlignCenter)
+        item_status.setTextAlignment(Qt.AlignCenter)
+
+        if classification == "CHATTER FAULT!":
+            item_status.setForeground(QColor(255, 51, 51))
+            item_status.setFont(QFont("Orbitron", 9, QFont.Bold))
+        elif classification == "FAST DOUBLE":
+            item_status.setForeground(QColor(255, 183, 77))
+        else:
+            item_status.setForeground(QColor(0, 230, 118))
+
+        self.setItem(row, 0, item_id)
+        self.setItem(row, 1, item_btn)
+        self.setItem(row, 2, item_hold)
+        self.setItem(row, 3, item_int)
+        self.setItem(row, 4, item_status)
+
+        self.scrollToBottom()
+
+    def clear_logs(self):
+        self.setRowCount(0)
+
+
+import ctypes
+from ctypes import wintypes
+from PySide6.QtCore import QThread, Signal
+
+# Win32 Constants
+WH_MOUSE_LL = 14
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+WM_RBUTTONDOWN = 0x0204
+WM_RBUTTONUP = 0x0205
+WM_MBUTTONDOWN = 0x0207
+WM_MBUTTONUP = 0x0208
+WM_XBUTTONDOWN = 0x020B
+WM_XBUTTONUP = 0x020C
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", wintypes.POINT),
+        ("mouseData", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_void_p)
+    ]
+
+CMPFUNC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+
+class LowLevelMouseHook(QThread):
+    mouse_event_signal = Signal(str, str, int)
+
+    def __init__(self):
+        super().__init__()
+        self._hook_id = None
+        self._user32 = ctypes.windll.user32
+        self._pointer = CMPFUNC(self._hook_callback)
+        self._thread_id = None
+        self.is_running = True
+
+    def _hook_callback(self, nCode, wParam, lParam):
+        if nCode >= 0:
+            msg = wParam
+            struct = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+            
+            btn_name = None
+            action = None
+            
+            if msg == WM_LBUTTONDOWN: btn_name, action = 'left', 'press'
+            elif msg == WM_LBUTTONUP: btn_name, action = 'left', 'release'
+            elif msg == WM_RBUTTONDOWN: btn_name, action = 'right', 'press'
+            elif msg == WM_RBUTTONUP: btn_name, action = 'right', 'release'
+            elif msg == WM_MBUTTONDOWN: btn_name, action = 'middle', 'press'
+            elif msg == WM_MBUTTONUP: btn_name, action = 'middle', 'release'
+            elif msg in (WM_XBUTTONDOWN, WM_XBUTTONUP):
+                high_word = (struct.mouseData >> 16) & 0xFFFF
+                btn_name = 'x1' if high_word == 1 else 'x2'
+                action = 'press' if msg == WM_XBUTTONDOWN else 'release'
+
+            if btn_name and action:
+                self.mouse_event_signal.emit(btn_name, action, struct.time)
+
+        return self._user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
+
+    def run(self):
+        self._thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+        self._hook_id = self._user32.SetWindowsHookExW(WH_MOUSE_LL, self._pointer, None, 0)
+        if not self._hook_id:
+            return
+
+        msg = wintypes.MSG()
+        while self.is_running:
+            bRet = self._user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+            if bRet <= 0:
+                break
+            self._user32.TranslateMessage(ctypes.byref(msg))
+            self._user32.DispatchMessageW(ctypes.byref(msg))
+
+        if self._hook_id:
+            self._user32.UnhookWindowsHookEx(self._hook_id)
+            self._hook_id = None
+
+    def stop(self):
+        self.is_running = False
+        if self._thread_id is not None:
+            self._user32.PostThreadMessageW(self._thread_id, 0x0012, 0, 0)
+
+
+class DoubleClickTestPanel(QWidget):
+    """
+    Universal Mouse Button & Microswitch Chatter Test Suite Panel.
+    Component Name: DoubleClickTestPanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DoubleClickTestPanel")
+
+        self._chatter_threshold_ms = 50.0
+        self._event_counter = 0
+        self._total_clicks = 0
+        self._chatter_fault_count = 0
+        self._fast_double_count = 0
+        self._reset_timers = {}
+        self._mouse_hook = None
+        
+        self._button_stats = {
+            'left': {'press_ms': 0, 'release_ms': 0, 'clicks': 0, 'faults': 0},
+            'right': {'press_ms': 0, 'release_ms': 0, 'clicks': 0, 'faults': 0},
+            'middle': {'press_ms': 0, 'release_ms': 0, 'clicks': 0, 'faults': 0},
+            'x1': {'press_ms': 0, 'release_ms': 0, 'clicks': 0, 'faults': 0},
+            'x2': {'press_ms': 0, 'release_ms': 0, 'clicks': 0, 'faults': 0},
+        }
+
+        self._setup_ui()
+
+    def showEvent(self, event):
+        if not self._mouse_hook or not self._mouse_hook.is_running:
+            self._mouse_hook = LowLevelMouseHook()
+            self._mouse_hook.mouse_event_signal.connect(self._on_global_mouse_event)
+            self._mouse_hook.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        if self._mouse_hook and self._mouse_hook.is_running:
+            self._mouse_hook.stop()
+            self._mouse_hook.wait()
+            self._mouse_hook = None
+        super().hideEvent(event)
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(12)
+
+        # ── 1. HEADER ROW ─────────────────────────────────────
+        header_frame = QFrame()
+        header_frame.setObjectName("DoubleClickHeaderFrame")
+        header_frame.setFixedHeight(38)
+        header_frame.setStyleSheet("""
+            QFrame#DoubleClickHeaderFrame {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        # Back Button
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("DoubleClickBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        self.back_btn.setIcon(QIcon(back_icon_path))
+        self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Benchmark Lab")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#DoubleClickBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#DoubleClickBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self.back_clicked.emit)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("DOUBLE CLICK & MICROSWITCH CHATTER LAB")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+
+        h_layout.addStretch()
+
+        thresh_lbl = QLabel("Chatter Threshold:")
+        thresh_lbl.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 10px;")
+        h_layout.addWidget(thresh_lbl)
+
+        self.threshold_slider = QSlider(Qt.Horizontal)
+        self.threshold_slider.setRange(10, 120)
+        self.threshold_slider.setValue(50)
+        self.threshold_slider.setFixedWidth(100)
+        self.threshold_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                height: 4px;
+                background: rgba(255, 255, 255, 0.15);
+                border-radius: 2px;
+            }
+            QSlider::handle:horizontal {
+                background: #FF5B06;
+                width: 12px;
+                height: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }
+        """)
+        self.threshold_slider.valueChanged.connect(self._on_threshold_changed)
+        h_layout.addWidget(self.threshold_slider)
+
+        self.thresh_val_lbl = QLabel("50 ms")
+        self.thresh_val_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        h_layout.addWidget(self.thresh_val_lbl)
+
+        self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
+        self.reset_btn.setObjectName("DoubleClickResetBtn")
+        self.reset_btn.setFixedSize(65, 26)
+        self.reset_btn.setStyleSheet("""
+            QPushButton#DoubleClickResetBtn, FadeHoverButton#DoubleClickResetBtn {
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 26px;
+                max-height: 26px;
+                padding: 0px;
+                margin: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.reset_btn.clicked.connect(self.reset_test)
+        h_layout.addWidget(self.reset_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. DASHBOARD STATS CARDS ─────────────────────────
+        stats_frame = QFrame()
+        stats_frame.setStyleSheet("background: transparent;")
+        stats_layout = QHBoxLayout(stats_frame)
+        stats_layout.setContentsMargins(0, 0, 0, 0)
+        stats_layout.setSpacing(10)
+
+        self.card_total = self._create_stat_card("TOTAL CLICKS", "0", "#ffffff")
+        self.total_val_lbl = self.card_total.findChild(QLabel, "StatValLbl")
+        stats_layout.addWidget(self.card_total)
+
+        self.card_faults = self._create_stat_card("CHATTER FAULTS", "0", "#FF3333")
+        self.faults_val_lbl = self.card_faults.findChild(QLabel, "StatValLbl")
+        stats_layout.addWidget(self.card_faults)
+
+        self.card_bounce = self._create_stat_card("BOUNCE RATIO", "0.0 %", "#FFB74D")
+        self.bounce_val_lbl = self.card_bounce.findChild(QLabel, "StatValLbl")
+        stats_layout.addWidget(self.card_bounce)
+
+        self.card_health = self._create_stat_card("SWITCH HEALTH", "100%", "#00E676")
+        self.health_val_lbl = self.card_health.findChild(QLabel, "StatValLbl")
+        stats_layout.addWidget(self.card_health)
+
+        self.btn_guide = QPushButton()
+        self.btn_guide.setObjectName("GuideCardBtn")
+        self.btn_guide.setCursor(Qt.PointingHandCursor)
+        self.btn_guide.setStyleSheet("""
+            QPushButton#GuideCardBtn {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+                padding: 8px;
+                text-align: left;
+            }
+            QPushButton#GuideCardBtn:hover {
+                background-color: rgba(255, 91, 6, 0.1);
+                border: 1px solid rgba(255, 91, 6, 0.6);
+            }
+        """)
+        
+        g_layout = QVBoxLayout(self.btn_guide)
+        g_layout.setContentsMargins(10, 8, 10, 8)
+        g_layout.setSpacing(2)
+        
+        g_title = QLabel("NEED HELP?")
+        g_title.setAttribute(Qt.WA_TransparentForMouseEvents)
+        g_title.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; background: transparent;")
+        
+        g_val = QLabel("GUIDE")
+        g_val.setAttribute(Qt.WA_TransparentForMouseEvents)
+        g_val.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; background: transparent;")
+        
+        g_layout.addWidget(g_title)
+        g_layout.addWidget(g_val)
+        
+        self.btn_guide.clicked.connect(self._show_guide)
+        stats_layout.addWidget(self.btn_guide)
+
+        main_layout.addWidget(stats_frame)
+
+        # ── 3. MIDDLE ROW: CLICK ZONE CANVAS & VECTOR MOUSE & GRAPH ──
+        mid_widget = QWidget()
+        mid_layout = QHBoxLayout(mid_widget)
+        mid_layout.setContentsMargins(0, 0, 0, 0)
+        mid_layout.setSpacing(12)
+
+        self.click_canvas = QFrame()
+        self.click_canvas.setObjectName("DoubleClickTestZoneFrame")
+        self.click_canvas.setCursor(Qt.CrossCursor)
+        self.click_canvas.setStyleSheet("""
+            QFrame#DoubleClickTestZoneFrame {
+                background-color: rgba(255, 255, 255, 0.02);
+                border: 2px dashed rgba(255, 91, 6, 0.4);
+                border-radius: 10px;
+            }
+            QFrame#DoubleClickTestZoneFrame:hover {
+                background-color: rgba(255, 91, 6, 0.05);
+                border-color: rgba(255, 91, 6, 0.8);
+            }
+        """)
+        canvas_layout = QVBoxLayout(self.click_canvas)
+        canvas_layout.setAlignment(Qt.AlignCenter)
+        
+        canvas_lbl1 = QLabel("INTERACTIVE CLICK TEST ZONE")
+        canvas_lbl1.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        canvas_lbl2 = QLabel("Click anywhere inside this area using Left, Right, Middle, or Side Mouse Buttons")
+        canvas_lbl2.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        canvas_lbl1.setAlignment(Qt.AlignCenter)
+        canvas_lbl2.setAlignment(Qt.AlignCenter)
+
+        canvas_layout.addWidget(canvas_lbl1)
+        canvas_layout.addWidget(canvas_lbl2)
+
+        mid_layout.addWidget(self.click_canvas, 2)
+
+        self.mouse_graphic = HelxairoMouseGraphicWidget()
+        mid_layout.addWidget(self.mouse_graphic, 0)
+
+        main_layout.addWidget(mid_widget, 1)
+
+        # ── 4. OSCILLOSCOPE WAVEFORM GRAPH ───────────────────
+        self.pulse_graph = HelxairoPulseGraphWidget()
+        main_layout.addWidget(self.pulse_graph)
+
+        # ── 5. EVENT HISTORY TABLE ───────────────────────────
+        self.log_table = HelxairoChatterLogTableWidget()
+        self.log_table.setMaximumHeight(140)
+        main_layout.addWidget(self.log_table)
+
+    def _create_stat_card(self, title: str, init_val: str, color_hex: str) -> QFrame:
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+                padding: 8px;
+            }
+        """)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(2)
+
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold;")
+        
+        val_lbl = QLabel(init_val)
+        val_lbl.setObjectName("StatValLbl")
+        val_lbl.setStyleSheet(f"color: {color_hex}; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+
+        layout.addWidget(title_lbl)
+        layout.addWidget(val_lbl)
+        return card
+
+    def _on_threshold_changed(self, val):
+        self._chatter_threshold_ms = float(val)
+        self.thresh_val_lbl.setText(f"{val} ms")
+
+    def _on_global_mouse_event(self, btn_name: str, action: str, os_time_ms: int):
+        canvas_rect = self.click_canvas.rect()
+        global_pos = QCursor.pos()
+        local_pos = self.click_canvas.mapFromGlobal(global_pos)
+        
+        if not canvas_rect.contains(local_pos):
+            return
+            
+        if action == 'press':
+            self._handle_mouse_press_ctypes(btn_name, os_time_ms)
+        elif action == 'release':
+            self._handle_mouse_release_ctypes(btn_name, os_time_ms)
+
+    def _handle_mouse_press_ctypes(self, btn_name: str, os_time_ms: int):
+        if btn_name in self._reset_timers and self._reset_timers[btn_name].isActive():
+            self._reset_timers[btn_name].stop()
+
+        stats = self._button_stats[btn_name]
+        self._total_clicks += 1
+        stats['clicks'] += 1
+        self._event_counter += 1
+
+        inter_ms = 0.0
+        if stats['release_ms'] > 0:
+            inter_ms = float(os_time_ms - stats['release_ms'])
+
+        stats['press_ms'] = os_time_ms
+        is_chatter = False
+        status_str = "NORMAL"
+
+        if stats['release_ms'] > 0 and 0.0 <= inter_ms < self._chatter_threshold_ms:
+            is_chatter = True
+            self._chatter_fault_count += 1
+            stats['faults'] += 1
+            status_str = "CHATTER FAULT!"
+            self.mouse_graphic.set_button_state(btn_name, 'chatter')
+        elif stats['release_ms'] > 0 and self._chatter_threshold_ms <= inter_ms < 300.0:
+            self._fast_double_count += 1
+            status_str = "FAST DOUBLE"
+            self.mouse_graphic.set_button_state(btn_name, 'fast_dc')
+        else:
+            self.mouse_graphic.set_button_state(btn_name, 'pressed')
+
+        self.pulse_graph.add_sample(True, inter_ms, is_chatter)
+        self.log_table.add_log_entry(self._event_counter, btn_name, 0.0, inter_ms, status_str)
+        self._update_dashboard()
+
+    def _handle_mouse_release_ctypes(self, btn_name: str, os_time_ms: int):
+        stats = self._button_stats[btn_name]
+        
+        hold_ms = 0.0
+        if stats['press_ms'] > 0:
+            hold_ms = float(os_time_ms - stats['press_ms'])
+
+        stats['release_ms'] = os_time_ms
+        self.pulse_graph.add_sample(False, hold_ms, False)
+        
+        timer = QTimer()
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda b=btn_name: self.mouse_graphic.set_button_state(b, 'normal'))
+        self._reset_timers[btn_name] = timer
+        timer.start(150)
+
+    def _update_dashboard(self):
+        self.total_val_lbl.setText(str(self._total_clicks))
+        self.faults_val_lbl.setText(str(self._chatter_fault_count))
+        
+        bounce_pct = 0.0
+        if self._total_clicks > 0:
+            bounce_pct = (self._chatter_fault_count / self._total_clicks) * 100.0
+        self.bounce_val_lbl.setText(f"{bounce_pct:.1f} %")
+
+        if bounce_pct == 0.0:
+            self.health_val_lbl.setText("100% PERFECT")
+            self.health_val_lbl.setStyleSheet("color: #00E676; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+        elif bounce_pct < 5.0:
+            self.health_val_lbl.setText("GOOD (MINOR)")
+            self.health_val_lbl.setStyleSheet("color: #FFB74D; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+        else:
+            self.health_val_lbl.setText("DEFECTIVE!")
+            self.health_val_lbl.setStyleSheet("color: #FF3333; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+
+    def reset_test(self):
+        self._event_counter = 0
+        self._total_clicks = 0
+        self._chatter_fault_count = 0
+        self._fast_double_count = 0
+        for btn in self._button_stats:
+            self._button_stats[btn] = {'press_ms': 0, 'release_ms': 0, 'clicks': 0, 'faults': 0}
+        self.pulse_graph.clear_graph()
+        self.log_table.clear_logs()
+        self.mouse_graphic.reset_all_buttons()
+        self._update_dashboard()
+
+    def _show_guide(self):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("How To Use")
+        msg.setText(
+            "1. Hover your mouse inside the dashed 'CLICK TEST ZONE'.\n"
+            "2. Click as fast as you can (or drag click).\n"
+            "3. If a physical hardware bounce registers under your set threshold, it will trigger a 'CHATTER FAULT'.\n"
+            "4. A low 'SWITCH HEALTH' means your mouse switch might be physically failing and needs replacement."
+        )
+        msg.setIcon(QMessageBox.Information)
+        
+        ok_btn = FadeHoverButton("OK", is_secondary=True, border_radius=6.0)
+        ok_btn.setStyleSheet("""
+            FadeHoverButton {
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 6px 20px;
+            }
+        """)
+        msg.addButton(ok_btn, QMessageBox.AcceptRole)
+        
+        try:
+            apply_custom_titlebar(msg, "#000000")
+        except NameError:
+            pass
+
+        msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #121212;
+                color: #e0e0e0;
+            }
+            QMessageBox QLabel {
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                padding: 10px;
+            }
+        """)
+        msg.exec()
 
 
 class MacroSettingsPanel(QWidget):
@@ -5904,6 +6721,9 @@ class MacroSettingsPanel(QWidget):
         btn_layout.addWidget(btn_sub)
         btn_layout.addStretch()
 
+        # Connect click event on Button & Double Click test card to switch to Page 2!
+        card_btn.mousePressEvent = lambda e: self._benchmark_stack.setCurrentIndex(2)
+
         # Card 3: Scroll & Wheel Test
         card_scroll = QFrame()
         card_scroll.setObjectName("ScrollTestCard")
@@ -5980,6 +6800,18 @@ class MacroSettingsPanel(QWidget):
         cps_page_layout.addWidget(self.cps_benchmark_panel, 1)
 
         self._benchmark_stack.addWidget(cps_page)  # Index 1: CPS Benchmark Suite
+
+        # ── SUB-PAGE 2: DEDICATED DOUBLE CLICK & CHATTER TEST PAGE ──────────
+        dc_page = QWidget()
+        dc_page_layout = QVBoxLayout(dc_page)
+        dc_page_layout.setContentsMargins(12, 10, 12, 10)
+        dc_page_layout.setSpacing(8)
+
+        self.double_click_panel = DoubleClickTestPanel()
+        self.double_click_panel.back_clicked.connect(lambda: self._benchmark_stack.setCurrentIndex(0))
+        dc_page_layout.addWidget(self.double_click_panel, 1)
+
+        self._benchmark_stack.addWidget(dc_page)  # Index 2: Double Click & Chatter Test Suite
 
         benchmark_layout.addWidget(self._benchmark_stack)
         self._page_stack.addWidget(benchmark_tab)

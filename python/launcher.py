@@ -4448,7 +4448,7 @@ class NetworkInfoWizard(HelxailInfoWizard):
         self.prev_btn.setEnabled(False)
         self.next_btn.setText("Finish")
 
-def apply_custom_titlebar(widget, color_hex):
+def apply_custom_titlebar(widget, color_hex="#000000"):
     """Apply Windows 11 custom title bar color and Windows 10 dark mode."""
     import sys
     if sys.platform != "win32":
@@ -4497,8 +4497,8 @@ class PageInitProfilerWindow(QWidget):
         self.setFixedSize(420, 210)
         self.setStyleSheet("background-color: #12141A; color: #FFFFFF; border: 1px solid #FF5B06; border-radius: 10px;")
         
-        # Apply Windows 11 custom title bar color (#12141a)
-        apply_custom_titlebar(self, "#12141a")
+        # Apply Windows 11 custom title bar color (#000000)
+        apply_custom_titlebar(self, "#000000")
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 18, 20, 18)
@@ -4563,7 +4563,7 @@ class GameLauncher(QWidget):
     
     def _apply_dark_titlebar(self):
         """Apply Windows 10/11 immersive dark mode and custom title bar colors."""
-        apply_custom_titlebar(self, "#1d1d1d")
+        apply_custom_titlebar(self, "#000000")
 
     def _cleanup_memory(self):
         """Periodic memory cleanup to prevent RAM growth."""
@@ -8821,7 +8821,7 @@ Stylesheet Selector:
     def _open_cpu_settings(self):
         """Open CPU settings dialog."""
         dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#0f0f0f")
+        apply_custom_titlebar(dialog, "#000000")
         dialog.setWindowTitle("CPU Settings")
         dialog.setObjectName("cpuSettingsDialog")
         dialog.setMinimumWidth(350)
@@ -9202,18 +9202,23 @@ Stylesheet Selector:
         import sys
         import os
         from integrations.tools_downloader import is_ryzenadj_available, ensure_ryzenadj
+        from integrations.cpu_controller import is_amd_cpu
 
-        # Ensure RyzenAdj is installed/downloaded before installing Zero-UAC service
-        if not is_ryzenadj_available():
-            print("[Zero-UAC] RyzenAdj missing. Triggering auto-download...")
+        # For AMD CPUs, ensure RyzenAdj is installed/downloaded before installing Zero-UAC service
+        if is_amd_cpu() and not is_ryzenadj_available():
+            print("[Zero-UAC] AMD CPU detected and RyzenAdj missing. Triggering auto-download...")
             downloaded = ensure_ryzenadj(self)
             if not downloaded:
-                QMessageBox.critical(
-                    self, "Zero-UAC Setup Error",
-                    "RyzenAdj executable is required for Zero-UAC Mode, but could not be downloaded.\n\n"
-                    "Service installation aborted. Please check your internet connection and try again."
+                reply = QMessageBox.question(
+                    self, "Zero-UAC Setup Notice",
+                    "RyzenAdj executable could not be downloaded.\n\n"
+                    "Zero-UAC Service will still provide Disk Cleanup, Task Scheduler, and Network features, "
+                    "but CPU TDP tuning will be limited.\n\nDo you want to proceed with installation?",
+                    QMessageBox.Yes | QMessageBox.No
                 )
-                return
+                if reply == QMessageBox.No:
+                    return
+
 
         reply = QMessageBox.question(
             self, "Enable Zero-UAC Mode", 
@@ -9314,18 +9319,26 @@ Stylesheet Selector:
         # This slot will execute on the main thread
         def show_result(success, error):
             if success:
-                QMessageBox.information(
-                    self,
+                msg = QMessageBox(
+                    QMessageBox.Information,
                     "Settings Applied",
-                    f"CPU settings applied successfully."
+                    f"CPU settings applied successfully.",
+                    QMessageBox.Ok,
+                    self
                 )
+                apply_custom_titlebar(msg, "#000000")
+                msg.exec()
             else:
-                QMessageBox.warning(
-                    self,
+                msg = QMessageBox(
+                    QMessageBox.Warning,
                     "Application Failed",
                     f"Failed to apply settings:\n\n{error}\n\n"
-                    "Try running the launcher as administrator or restart Zero-UAC Service."
+                    "Try running the launcher as administrator or restart Zero-UAC Service.",
+                    QMessageBox.Ok,
+                    self
                 )
+                apply_custom_titlebar(msg, "#000000")
+                msg.exec()
                 
         # Connect the signal to the handler callback
         self._cpu_apply_signals.finished.connect(show_result)
@@ -10535,8 +10548,13 @@ Stylesheet Selector:
                     if hasattr(self, 'music_panel') and self.music_panel:
                         focus_widget = QApplication.focusWidget()
                         
-                        # Skip if typing in input
-                        if isinstance(focus_widget, QLineEdit):
+                        # Skip if typing in input or recording hotkeys
+                        is_input_focus = (
+                            isinstance(focus_widget, QLineEdit) or 
+                            getattr(focus_widget, '_recording', False) or 
+                            (focus_widget is not None and focus_widget.__class__.__name__ == 'HotkeyRecordButton')
+                        )
+                        if is_input_focus:
                             return False
                         
                         # === Arrow Seek & Volume Keys (no cooldown — hold continuously) ===
@@ -10717,7 +10735,7 @@ Stylesheet Selector:
         Background & System settings are in Quick Settings (navbar gear).
         """
         dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#010101")
+        apply_custom_titlebar(dialog, "#000000")
         dialog.setWindowTitle("Settings")
         dialog.setMinimumWidth(500)
 
@@ -10822,7 +10840,7 @@ Stylesheet Selector:
         Display and Library are accessible from the full settings (top-bar gear icon).
         """
         dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#010101")
+        apply_custom_titlebar(dialog, "#000000")
         dialog.setWindowTitle("Main Setting")
         dialog.setMinimumWidth(520)
         dialog.setFixedHeight(540)
@@ -11827,7 +11845,7 @@ Stylesheet Selector:
     def show_statistics_dashboard(self, parent_dialog=None):
         """Show game statistics dashboard."""
         dialog = QDialog(parent_dialog or self)
-        apply_custom_titlebar(dialog, "#010101")
+        apply_custom_titlebar(dialog, "#000000")
         dialog.setWindowTitle("📊 Game Statistics")
         dialog.setMinimumSize(500, 400)
         
@@ -12091,7 +12109,7 @@ First Played: {first_played_formatted}
     def _show_game_more_info(self, game):
         """Show detailed info dialog for a game."""
         dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#1a1a1a")
+        apply_custom_titlebar(dialog, "#000000")
         dialog.setWindowTitle(f"{game.get('name', 'Unknown')}")
         dialog.setMinimumWidth(450)
         dialog.setStyleSheet("background-color: #1a1a1a; color: #e0e0e0;")
@@ -12780,7 +12798,7 @@ First Played: {first_played_formatted}
     def closeEvent(self, event):
         if self.confirm_on_exit:
             msg = QMessageBox(self)
-            apply_custom_titlebar(msg, "#010101")
+            apply_custom_titlebar(msg, "#000000")
             msg.setWindowTitle("Exit - HELXAID")
             msg.setText("Are you sure you want to exit?")
             msg.setIcon(QMessageBox.Question)
@@ -14576,7 +14594,7 @@ First Played: {first_played_formatted}
                 ok_btn = AnimatedButton("OK")
                 msg.addButton(ok_btn, QMessageBox.AcceptRole)
                 
-                apply_custom_titlebar(msg, "#010101")
+                apply_custom_titlebar(msg, "#000000")
                 msg.exec()
             return False
         return True
@@ -14609,7 +14627,7 @@ First Played: {first_played_formatted}
         else:
             # Let user choose which Steam games to add
             dialog = QDialog(self)
-            apply_custom_titlebar(dialog, "#010101")
+            apply_custom_titlebar(dialog, "#000000")
             dialog.setWindowTitle("Add Games from Steam")
             dialog.setMinimumWidth(500)
 
@@ -14713,7 +14731,7 @@ First Played: {first_played_formatted}
     def manage_game_folders(self):
         """Dialog to manage custom game folders to scan."""
         dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#1a1a1a")
+        apply_custom_titlebar(dialog, "#000000")
         dialog.setWindowTitle("📁 Manage Local Game Folders")
         dialog.setMinimumWidth(500)
         dialog.setMinimumHeight(400)
@@ -14973,7 +14991,7 @@ First Played: {first_played_formatted}
         else:
             # Show selection dialog
             dialog = QDialog(self)
-            apply_custom_titlebar(dialog, "#010101")
+            apply_custom_titlebar(dialog, "#000000")
             dialog.setWindowTitle("Select Games to Add")
             dialog.setMinimumWidth(500)
             dialog.setMinimumHeight(400)
@@ -15119,7 +15137,7 @@ First Played: {first_played_formatted}
         else:
             # Show selection dialog
             dialog = QDialog(self)
-            apply_custom_titlebar(dialog, "#010101")
+            apply_custom_titlebar(dialog, "#000000")
             dialog.setWindowTitle("Select Google Play Games")
             dialog.setMinimumSize(500, 400)
             layout = QVBoxLayout(dialog)
@@ -16032,7 +16050,7 @@ First Played: {first_played_formatted}
     def edit_game(self, game):
         # Create a new window for editing
         edit_dialog = QDialog(self)
-        apply_custom_titlebar(edit_dialog, "#010101")
+        apply_custom_titlebar(edit_dialog, "#000000")
         edit_dialog.setWindowTitle("Edit Game")
         edit_dialog.setMinimumWidth(500)
         
@@ -16653,7 +16671,7 @@ if __name__ == "__main__":
     splash = None
     if not hide_initialize_panel:
         splash = LoadingSplash()
-        apply_custom_titlebar(splash, "#121212")
+        apply_custom_titlebar(splash, "#000000")
         splash.show()
         app.processEvents()
 
@@ -16717,14 +16735,17 @@ if __name__ == "__main__":
                 print("[Init] Zero-UAC Service is already running.")
             else:
                 update_splash(70, "Initializing Zero-UAC Service...")
-                # Auto-download RyzenAdj if missing
+                # Auto-download RyzenAdj if missing (AMD CPUs only)
                 try:
-                    from integrations.tools_downloader import is_ryzenadj_available, download_ryzenadj
-                    if not is_ryzenadj_available():
-                        print("[Init] RyzenAdj missing for Zero-UAC on startup, downloading...")
-                        download_ryzenadj()
+                    from integrations.cpu_controller import is_amd_cpu
+                    if is_amd_cpu():
+                        from integrations.tools_downloader import is_ryzenadj_available, download_ryzenadj
+                        if not is_ryzenadj_available():
+                            print("[Init] AMD CPU detected and RyzenAdj missing for Zero-UAC on startup, downloading...")
+                            download_ryzenadj()
                 except Exception as dl_err:
                     print(f"[Init] Auto-download RyzenAdj error: {dl_err}")
+
 
                 import ctypes
                 if getattr(sys, 'frozen', False):

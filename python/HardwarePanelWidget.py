@@ -1432,8 +1432,8 @@ class DiskCleanerPanel(QWidget):
             }
         """)
         cat_panel_layout = QVBoxLayout(self.category_panel)
-        cat_panel_layout.setContentsMargins(14, 14, 14, 14)
-        cat_panel_layout.setSpacing(10)
+        cat_panel_layout.setContentsMargins(0, 0, 0, 0)
+        cat_panel_layout.setSpacing(0)
 
         # Sub-tab bar (Booster tab style: Essential, System, Advanced, All Junk)
         tab_bar = QWidget()
@@ -1443,7 +1443,10 @@ class DiskCleanerPanel(QWidget):
             QWidget#driveCleanerTabBar {
                 background: rgba(26, 26, 26, 0.95);
                 border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                border-bottom-left-radius: 0px;
+                border-bottom-right-radius: 0px;
             }
         """)
         tab_bar_layout = QHBoxLayout(tab_bar)
@@ -1467,9 +1470,21 @@ class DiskCleanerPanel(QWidget):
         tab_bar_layout.addStretch()
         cat_panel_layout.addWidget(tab_bar)
 
-        # QStackedWidget for 3 Sub-Tabs
+        # QStackedWidget for 3 Sub-Tabs (Item Container with Booster-style background & border)
         self.cleaner_stack = QStackedWidget()
         self.cleaner_stack.setObjectName("driveCleanerStack")
+        self.cleaner_stack.setAttribute(Qt.WA_StyledBackground, True)
+        self.cleaner_stack.setStyleSheet("""
+            QStackedWidget#driveCleanerStack {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-top: none;
+                border-top-left-radius: 0px;
+                border-top-right-radius: 0px;
+                border-bottom-left-radius: 12px;
+                border-bottom-right-radius: 12px;
+            }
+        """)
 
         # Page 0: System clean-up (Disk Cleaner Scroll Area)
         scroll = SmoothScrollArea()
@@ -1486,7 +1501,7 @@ class DiskCleanerPanel(QWidget):
         self.category_container.setObjectName("driveCleanerCategoryContainer")
         self.category_container.setStyleSheet("background: transparent;")
         self.category_layout = QVBoxLayout(self.category_container)
-        self.category_layout.setContentsMargins(0, 0, 6, 0)
+        self.category_layout.setContentsMargins(10, 10, 10, 10)
         self.category_layout.setSpacing(6)
 
         scroll.setWidget(self.category_container)
@@ -1555,6 +1570,8 @@ class DiskCleanerPanel(QWidget):
         self._build_categories()
         self._switch_cleaner_tab(0)
 
+        cat_panel_layout.addSpacing(8)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setObjectName("driveCleanerProgress")
         self.progress_bar.setFixedHeight(6)
@@ -1591,7 +1608,7 @@ class DiskCleanerPanel(QWidget):
 
         self.btn_reset = QPushButton("RESET TO DEFAULT")
         self.btn_reset.setObjectName("driveCleanerResetBtn")
-        self.btn_reset.setFixedSize(170, 38)
+        self.btn_reset.setFixedSize(180, 35)
         self.btn_reset.setCursor(Qt.PointingHandCursor)
         self.btn_reset.setToolTip("Reset all selections to default tier configuration")
         self.btn_reset.setStyleSheet("""
@@ -1600,8 +1617,14 @@ class DiskCleanerPanel(QWidget):
                 color: #e0e0e0;
                 border: 1px solid #555;
                 border-radius: 4px;
+                height: 30px;
+                min-height: 30px;
+                max-height: 30px;
+                padding: 0px;
+                margin: 0px;
+                text-align: center;
                 font-family: 'Orbitron';
-                font-size: 11px;
+                font-size: 9px;
                 font-weight: 600;
             }
             QPushButton#driveCleanerResetBtn:hover {
@@ -7950,17 +7973,7 @@ class HardwarePanelWidget(QWidget):
             QMessageBox.critical(self, "Error", f"Install error: {e}")
     
     def _start_librehwmon(self, silent_launch=False):
-        """Open LibreHardwareMonitor Panel (shows embedded PySide6 dialog or standalone app)."""
-        if not silent_launch:
-            try:
-                from LHMSensorPanelDialog import LHMSensorPanelDialog
-                dialog = LHMSensorPanelDialog(self.window())
-                dialog.exec()
-                return
-            except Exception as e:
-                print(f"[Hardware] Failed to open embedded LHM dialog: {e}")
-
-        # If silent launch or fallback requested, delegate to standalone
+        """Launch standalone LibreHardwareMonitor.exe directly on user desktop."""
         self._start_librehwmon_standalone(silent_launch=silent_launch)
 
     def _start_librehwmon_standalone(self, silent_launch=False):

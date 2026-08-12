@@ -818,8 +818,16 @@ def ensure_ryzenadj(parent=None) -> bool:
         parent: Optional parent widget for dialog
     
     Returns:
-        True if RyzenAdj is available
+        True if RyzenAdj is available (or if Intel CPU where RyzenAdj is skipped)
     """
+    try:
+        from integrations.cpu_controller import is_intel_cpu
+        if is_intel_cpu():
+            print("[ToolsDownloader] Intel CPU detected. RyzenAdj is AMD-specific and will be skipped.")
+            return True
+    except Exception:
+        pass
+
     if is_ryzenadj_available():
         return True
     
@@ -828,6 +836,7 @@ def ensure_ryzenadj(parent=None) -> bool:
     else:
         success, _ = download_ryzenadj()
         return success
+
 
 
 def ensure_ffmpeg(parent=None) -> bool:
