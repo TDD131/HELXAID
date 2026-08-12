@@ -6,6 +6,7 @@ A panel widget for the sidebar stack to configure macros, profiles, and layers.
 
 import os
 import time
+import collections
 import json
 import re
 from PySide6.QtWidgets import (
@@ -3369,6 +3370,7 @@ WM_MBUTTONDOWN = 0x0207
 WM_MBUTTONUP = 0x0208
 WM_XBUTTONDOWN = 0x020B
 WM_XBUTTONUP = 0x020C
+WM_MOUSEMOVE = 0x0200
 WM_MOUSEWHEEL = 0x020A
 WM_MOUSEHWHEEL = 0x020E
 WHEEL_DELTA = 120
@@ -3394,10 +3396,18 @@ class LowLevelMouseHook(QThread):
         self._pointer = CMPFUNC(self._hook_callback)
         self._thread_id = None
         self.is_running = True
+        self.measure_polling_rate = False
+        self._polling_timestamps = collections.deque(maxlen=10000)
 
     def _hook_callback(self, nCode, wParam, lParam):
         if nCode >= 0:
             msg = wParam
+            
+            # Polling Rate Fast Path
+            if self.measure_polling_rate and msg == WM_MOUSEMOVE:
+                self._polling_timestamps.append(time.perf_counter())
+                return self._user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
+                
             struct = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
             
             btn_name = None
@@ -4114,6 +4124,289 @@ class ScrollWheelTestPanel(QWidget):
             self.max_vel_lbl.setText(f"{self._max_velocity} lines/s")
             
         self.vel_lbl.setText(f"{int(self._current_velocity)} lines/s")
+
+
+class PollingGraph(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(150)
+        self._history = collections.deque([0.0]*60, maxlen=60)
+        
+    def add_value(self, val):
+        self._history.append(val)
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        rect = self.rect()
+        painter.fillRect(rect, QColor(255, 255, 255, 5))
+        
+        # Grid lines
+        pen_grid = QPen(QColor(255, 255, 255, 20))
+        pen_grid.setStyle(Qt.DashLine)
+        painter.setPen(pen_grid)
+        
+        h = rect.height()
+        w = rect.width()
+        
+        # Draw 125, 500, 1000 lines approx
+        max_val = max(1000, max(self._history) * 1.2)
+        
+        for y_lbl in [125, 500, 1000, 2000, 4000, 8000]:
+            if y_lbl < max_val:
+                y_pos = h - (y_lbl / max_val * h)
+                painter.drawLine(0, int(y_pos), w, int(y_pos))
+                painter.drawText(5, int(y_pos) - 2, f"{y_lbl} Hz")
+
+        if not self._history:
+            return
+            
+        path = QPainterPath()
+        step = w / (len(self._history) - 1) if len(self._history) > 1 else w
+        
+        for i, val in enumerate(self._history):
+            x = i * step
+            y = h - (val / max_val * h)
+            if i == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+                
+        pen_line = QPen(QColor("#FF5B06"))
+        pen_line.setWidth(2)
+        painter.setPen(pen_line)
+        painter.drawPath(path)
+
+
+class PollingRateTestPanel(QWidget):
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._mouse_hook = None
+        self._ui_timer = QTimer(self)
+        self._ui_timer.timeout.connect(self._update_ui)
+        
+        self._current_hz = 0.0
+        self._peak_hz = 0
+        self._avg_hz = 0
+        self._last_tick_time = time.perf_counter()
+        
+        self._setup_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._mouse_hook or not self._mouse_hook.is_running:
+            self._mouse_hook = LowLevelMouseHook()
+            self._mouse_hook.measure_polling_rate = True
+            self._mouse_hook.start()
+        else:
+            self._mouse_hook._polling_timestamps.clear()
+            self._mouse_hook.measure_polling_rate = True
+        self._ui_timer.start(16)
+        self._last_tick_time = time.perf_counter()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if self._mouse_hook and self._mouse_hook.is_running:
+            self._mouse_hook.measure_polling_rate = False
+            self._mouse_hook.stop()
+            self._mouse_hook.wait()
+            self._mouse_hook = None
+        self._ui_timer.stop()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(15)
+
+        # Header
+        header_frame = QFrame()
+        header_frame.setStyleSheet("""
+            QFrame {
+                background-color: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("PollingBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        self.back_btn.setIcon(QIcon(back_icon_path))
+        self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Benchmark Lab")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#PollingBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#PollingBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self.back_clicked.emit)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("POLLING RATE & LATENCY LAB")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+        h_layout.addStretch()
+
+        self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
+        self.reset_btn.setObjectName("PollingResetBtn")
+        self.reset_btn.setFixedSize(65, 26)
+        self.reset_btn.setStyleSheet("""
+            QPushButton#PollingResetBtn, FadeHoverButton#PollingResetBtn {
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 26px;
+                max-height: 26px;
+                padding: 0px;
+                margin: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.reset_btn.clicked.connect(self._reset_stats)
+        h_layout.addWidget(self.reset_btn)
+
+        main_layout.addWidget(header_frame)
+        
+        # Graph
+        self.graph = PollingGraph()
+        main_layout.addWidget(self.graph, 1)
+
+        # Stats Grid
+        stats_layout = QHBoxLayout()
+        stats_layout.setSpacing(10)
+
+        self.current_lbl = self._create_stat_card("CURRENT (Hz)", "0", stats_layout)
+        self.peak_lbl = self._create_stat_card("PEAK (Hz)", "0", stats_layout)
+        self.avg_lbl = self._create_stat_card("AVERAGE (Hz)", "0", stats_layout)
+        self.latency_lbl = self._create_stat_card("LATENCY", "0.00 ms", stats_layout)
+
+        main_layout.addLayout(stats_layout)
+
+    def _create_stat_card(self, title, val, parent_layout):
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        layout = QVBoxLayout(card)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        t_lbl = QLabel(title)
+        t_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
+        t_lbl.setAlignment(Qt.AlignCenter)
+        
+        v_lbl = QLabel(val)
+        v_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 20px; font-weight: bold;")
+        v_lbl.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(t_lbl)
+        layout.addWidget(v_lbl)
+        parent_layout.addWidget(card)
+        return v_lbl
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._mouse_hook or not self._mouse_hook.is_running:
+            self._mouse_hook = LowLevelMouseHook()
+            self._mouse_hook.measure_polling_rate = True
+            self._mouse_hook.start()
+        else:
+            self._mouse_hook._polling_timestamps.clear()
+            self._mouse_hook.measure_polling_rate = True
+        self._ui_timer.start(16)
+        self._last_tick_time = time.perf_counter()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if self._mouse_hook and self._mouse_hook.is_running:
+            self._mouse_hook.measure_polling_rate = False
+            self._mouse_hook.stop()
+            self._mouse_hook.wait()
+            self._mouse_hook = None
+        self._ui_timer.stop()
+
+    def _reset_stats(self):
+        self._current_hz = 0.0
+        self._peak_hz = 0
+        self._avg_hz = 0
+        if self._mouse_hook:
+            self._mouse_hook._polling_timestamps.clear()
+        self._history = collections.deque([0.0]*60, maxlen=60)
+        self.graph._history.clear()
+        self.graph.update()
+        self.current_lbl.setText("0")
+        self.peak_lbl.setText("0")
+        self.avg_lbl.setText("0")
+        self.latency_lbl.setText("0.00 ms")
+
+    def _update_ui(self):
+        if not self._mouse_hook:
+            return
+
+        now = time.perf_counter()
+        window_size = 0.1
+        cutoff = now - window_size
+        
+        # Using a list copy as thread-safe snapshot of deque
+        events = list(self._mouse_hook._polling_timestamps)
+        recent_count = sum(1 for t in events if t > cutoff)
+        
+        target_hz = recent_count * (1.0 / window_size)
+        
+        if len(events) > 2:
+            time_span = events[-1] - events[0]
+            if time_span > 0:
+                self._avg_hz = int(len(events) / time_span)
+        
+        # Smooth the current Hz
+        if target_hz > self._current_hz:
+            self._current_hz = target_hz  # Fast Attack
+        else:
+            self._current_hz += (target_hz - self._current_hz) * 0.1  # Slow Release
+            
+        if self._current_hz < 5:
+            self._current_hz = 0
+            
+        current_hz_int = int(self._current_hz)
+        
+        if current_hz_int > self._peak_hz:
+            self._peak_hz = current_hz_int
+            
+        latency = 0.0
+        if current_hz_int > 0:
+            latency = 1000.0 / current_hz_int
+            
+        self.graph.add_value(self._current_hz)
+        
+        self.current_lbl.setText(str(current_hz_int))
+        self.peak_lbl.setText(str(self._peak_hz))
+        self.avg_lbl.setText(str(self._avg_hz))
+        self.latency_lbl.setText(f"{latency:.2f} ms")
 
 
 class MacroSettingsPanel(QWidget):
@@ -7023,6 +7316,9 @@ class MacroSettingsPanel(QWidget):
                 border-color: rgba(255, 91, 6, 0.5);
             }
         """)
+        
+        # Connect click event on Polling Rate test card to switch to Page 4!
+        card_poll.mousePressEvent = lambda e: self._benchmark_stack.setCurrentIndex(4)
         poll_layout = QVBoxLayout(card_poll)
         poll_title = QLabel("Polling Rate & Latency")
         poll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
@@ -7081,6 +7377,18 @@ class MacroSettingsPanel(QWidget):
         scroll_page_layout.addWidget(self.scroll_wheel_panel, 1)
 
         self._benchmark_stack.addWidget(scroll_page)  # Index 3: Scroll Wheel Test Suite
+
+        # ── SUB-PAGE 4: DEDICATED POLLING RATE TEST PAGE ──────────
+        poll_page = QWidget()
+        poll_page_layout = QVBoxLayout(poll_page)
+        poll_page_layout.setContentsMargins(12, 10, 12, 10)
+        poll_page_layout.setSpacing(8)
+
+        self.polling_rate_panel = PollingRateTestPanel()
+        self.polling_rate_panel.back_clicked.connect(lambda: self._benchmark_stack.setCurrentIndex(0))
+        poll_page_layout.addWidget(self.polling_rate_panel, 1)
+
+        self._benchmark_stack.addWidget(poll_page)  # Index 4: Polling Rate Test Suite
 
         benchmark_layout.addWidget(self._benchmark_stack)
         self._page_stack.addWidget(benchmark_tab)
