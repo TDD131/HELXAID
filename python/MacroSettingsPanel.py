@@ -3369,6 +3369,9 @@ WM_MBUTTONDOWN = 0x0207
 WM_MBUTTONUP = 0x0208
 WM_XBUTTONDOWN = 0x020B
 WM_XBUTTONUP = 0x020C
+WM_MOUSEWHEEL = 0x020A
+WM_MOUSEHWHEEL = 0x020E
+WHEEL_DELTA = 120
 
 class MSLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [
@@ -3410,6 +3413,11 @@ class LowLevelMouseHook(QThread):
                 high_word = (struct.mouseData >> 16) & 0xFFFF
                 btn_name = 'x1' if high_word == 1 else 'x2'
                 action = 'press' if msg == WM_XBUTTONDOWN else 'release'
+            elif msg == WM_MOUSEWHEEL:
+                high_word = (struct.mouseData >> 16) & 0xFFFF
+                delta = ctypes.c_short(high_word).value
+                btn_name = 'wheel'
+                action = str(delta)
 
             if btn_name and action:
                 self.mouse_event_signal.emit(btn_name, action, struct.time)
@@ -3860,6 +3868,252 @@ class DoubleClickTestPanel(QWidget):
             }
         """)
         msg.exec()
+
+
+class ScrollWheelTestPanel(QWidget):
+    """
+    Scroll Wheel & Encoder Test Suite Panel.
+    Component Name: ScrollWheelTestPanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ScrollWheelTestPanel")
+
+        self._mouse_hook = None
+        
+        # Accumulator data
+        self._total_events = 0
+        self._steps_up = 0
+        self._steps_down = 0
+        self._max_velocity = 0
+        self._current_velocity = 0.0
+        self._accumulator_delta = 0
+        
+        self._ui_timer = QTimer(self)
+        self._ui_timer.setInterval(16)  # ~60fps
+        self._ui_timer.timeout.connect(self._update_ui)
+        
+        self._setup_ui()
+
+    def showEvent(self, event):
+        if not self._mouse_hook or not self._mouse_hook.is_running:
+            self._mouse_hook = LowLevelMouseHook()
+            self._mouse_hook.mouse_event_signal.connect(self._on_global_mouse_event)
+            self._mouse_hook.start()
+        self._ui_timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self._ui_timer.stop()
+        if self._mouse_hook and self._mouse_hook.is_running:
+            try:
+                self._mouse_hook.mouse_event_signal.disconnect(self._on_global_mouse_event)
+            except Exception:
+                pass
+            self._mouse_hook.stop()
+            self._mouse_hook.wait()
+            self._mouse_hook = None
+        super().hideEvent(event)
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(12)
+
+        # Header Row
+        header_frame = QFrame()
+        header_frame.setObjectName("ScrollHeaderFrame")
+        header_frame.setFixedHeight(38)
+        header_frame.setStyleSheet("""
+            QFrame#ScrollHeaderFrame {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("ScrollBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        self.back_btn.setIcon(QIcon(back_icon_path))
+        self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Benchmark Lab")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#ScrollBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#ScrollBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self.back_clicked.emit)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("SCROLL WHEEL & ENCODER LAB")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+        h_layout.addStretch()
+
+        self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
+        self.reset_btn.setObjectName("ScrollResetBtn")
+        self.reset_btn.setFixedSize(65, 26)
+        self.reset_btn.setStyleSheet("""
+            QPushButton#ScrollResetBtn, FadeHoverButton#ScrollResetBtn {
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 26px;
+                max-height: 26px;
+                padding: 0px;
+                margin: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.reset_btn.clicked.connect(self._reset_stats)
+        h_layout.addWidget(self.reset_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # Stats Grid
+        stats_layout = QHBoxLayout()
+        stats_layout.setSpacing(10)
+
+        self.up_lbl = self._create_stat_card("SCROLL UP", "0", stats_layout)
+        self.down_lbl = self._create_stat_card("SCROLL DOWN", "0", stats_layout)
+        self.vel_lbl = self._create_stat_card("CURRENT VELOCITY", "0 lines/s", stats_layout)
+        self.max_vel_lbl = self._create_stat_card("MAX VELOCITY", "0 lines/s", stats_layout)
+
+        main_layout.addLayout(stats_layout)
+
+        # Log visualizer area
+        self.log_area = QTextEdit()
+        self.log_area.setReadOnly(True)
+        self.log_area.setStyleSheet("""
+            QTextEdit {
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 6px;
+                color: #e0e0e0;
+                font-family: 'Consolas', monospace;
+                font-size: 11px;
+                padding: 8px;
+            }
+            QTextEdit QScrollBar:vertical {
+                background: transparent;
+                width: 8px;
+            }
+            QTextEdit QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.2);
+                border-radius: 4px;
+            }
+        """)
+        main_layout.addWidget(self.log_area, 1)
+
+    def _create_stat_card(self, title, init_val, parent_layout):
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        t_lbl = QLabel(title)
+        t_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px; border: none; background: transparent;")
+        t_lbl.setAlignment(Qt.AlignCenter)
+        
+        v_lbl = QLabel(init_val)
+        v_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: bold; border: none; background: transparent;")
+        v_lbl.setAlignment(Qt.AlignCenter)
+        
+        layout.addWidget(t_lbl)
+        layout.addWidget(v_lbl)
+        parent_layout.addWidget(card)
+        return v_lbl
+
+    def _reset_stats(self):
+        self._total_events = 0
+        self._steps_up = 0
+        self._steps_down = 0
+        self._max_velocity = 0
+        self._current_velocity = 0.0
+        self.log_area.clear()
+        self._update_ui()
+
+    def _on_global_mouse_event(self, btn_name, action, time_ms):
+        if btn_name == 'wheel':
+            try:
+                delta = int(action)
+                self._accumulator_delta += delta
+                self._total_events += 1
+                if delta > 0:
+                    self._steps_up += 1
+                else:
+                    self._steps_down += 1
+            except ValueError:
+                pass
+
+    def _update_ui(self):
+        target_vel = 0
+        
+        if self._accumulator_delta != 0:
+            lines_scrolled = self._accumulator_delta // WHEEL_DELTA
+            if lines_scrolled == 0:
+                # E.g. precision scroll wheels might send delta < 120
+                lines_scrolled = 1 if self._accumulator_delta > 0 else -1
+            
+            # Simple velocity calc for the 16ms window
+            target_vel = abs(lines_scrolled) * (1000 // 16)
+                
+            dir_str = "UP" if self._accumulator_delta > 0 else "DOWN"
+            log_msg = f"[{self._total_events:04d}] Scroll {dir_str} | Delta: {self._accumulator_delta} | Lines: {abs(lines_scrolled)}"
+            self.log_area.append(log_msg)
+            
+            # Auto scroll to bottom
+            sb = self.log_area.verticalScrollBar()
+            sb.setValue(sb.maximum())
+            
+            self._accumulator_delta = 0
+            
+            self.up_lbl.setText(str(self._steps_up))
+            self.down_lbl.setText(str(self._steps_down))
+            
+        # Fast Attack, Slow Release (Smoothing)
+        if target_vel > self._current_velocity:
+            self._current_velocity = target_vel
+        else:
+            self._current_velocity += (target_vel - self._current_velocity) * 0.025
+            
+        # Snap to 0 if very slow to avoid floating point trailing
+        if self._current_velocity < 0.5:
+            self._current_velocity = 0
+            
+        if self._current_velocity > self._max_velocity:
+            self._max_velocity = int(self._current_velocity)
+            self.max_vel_lbl.setText(f"{self._max_velocity} lines/s")
+            
+        self.vel_lbl.setText(f"{int(self._current_velocity)} lines/s")
 
 
 class MacroSettingsPanel(QWidget):
@@ -6740,6 +6994,9 @@ class MacroSettingsPanel(QWidget):
                 border-color: rgba(255, 91, 6, 0.5);
             }
         """)
+        
+        # Connect click event on Scroll & Wheel test card to switch to Page 3!
+        card_scroll.mousePressEvent = lambda e: self._benchmark_stack.setCurrentIndex(3)
         scroll_layout = QVBoxLayout(card_scroll)
         scroll_title = QLabel("Scroll Wheel Test")
         scroll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
@@ -6812,6 +7069,18 @@ class MacroSettingsPanel(QWidget):
         dc_page_layout.addWidget(self.double_click_panel, 1)
 
         self._benchmark_stack.addWidget(dc_page)  # Index 2: Double Click & Chatter Test Suite
+
+        # ── SUB-PAGE 3: DEDICATED SCROLL WHEEL TEST PAGE ──────────
+        scroll_page = QWidget()
+        scroll_page_layout = QVBoxLayout(scroll_page)
+        scroll_page_layout.setContentsMargins(12, 10, 12, 10)
+        scroll_page_layout.setSpacing(8)
+
+        self.scroll_wheel_panel = ScrollWheelTestPanel()
+        self.scroll_wheel_panel.back_clicked.connect(lambda: self._benchmark_stack.setCurrentIndex(0))
+        scroll_page_layout.addWidget(self.scroll_wheel_panel, 1)
+
+        self._benchmark_stack.addWidget(scroll_page)  # Index 3: Scroll Wheel Test Suite
 
         benchmark_layout.addWidget(self._benchmark_stack)
         self._page_stack.addWidget(benchmark_tab)
