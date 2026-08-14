@@ -2589,25 +2589,32 @@ class WindowsCustomPanel(QWidget):
         unlock_hotkey = self._config["lock_screen"].get("unlock_hotkey", "Ctrl+Shift+L")
         InvisibleLockScreen.activate(opacity, unlock_hotkey)
         
-        self._lock_status.setText("● Active")
-        self._lock_status.setStyleSheet("color: #FF5B06; font-size: 12px; font-weight: 500;")
-        self._lock_activate_btn.setText("  Lock Screen Active...")
-        self._lock_activate_btn.setEnabled(False)
+        if hasattr(self, "_lock_status") and self._lock_status is not None:
+            self._lock_status.setText("● Active")
+            self._lock_status.setStyleSheet("color: #FF5B06; font-size: 12px; font-weight: 500;")
+        if hasattr(self, "_lock_activate_btn") and self._lock_activate_btn is not None:
+            self._lock_activate_btn.setText("  Lock Screen Active...")
+            self._lock_activate_btn.setEnabled(False)
         
         # Poll for deactivation
-        self._lock_poll_timer = QTimer(self)
-        self._lock_poll_timer.setInterval(500)
-        self._lock_poll_timer.timeout.connect(self._check_lock_status)
-        self._lock_poll_timer.start()
+        if not hasattr(self, "_lock_poll_timer") or self._lock_poll_timer is None:
+            self._lock_poll_timer = QTimer(self)
+            self._lock_poll_timer.setInterval(500)
+            self._lock_poll_timer.timeout.connect(self._check_lock_status)
+        if not self._lock_poll_timer.isActive():
+            self._lock_poll_timer.start()
     
     def _check_lock_status(self):
         """Check if lock screen is still active."""
         if not InvisibleLockScreen.is_active():
-            self._lock_poll_timer.stop()
-            self._lock_status.setText("● Inactive")
-            self._lock_status.setStyleSheet("color: #888888; font-size: 12px; font-weight: 500;")
-            self._lock_activate_btn.setText("  Activate Lock Screen")
-            self._lock_activate_btn.setEnabled(True)
+            if hasattr(self, "_lock_poll_timer") and self._lock_poll_timer is not None:
+                self._lock_poll_timer.stop()
+            if hasattr(self, "_lock_status") and self._lock_status is not None:
+                self._lock_status.setText("● Inactive")
+                self._lock_status.setStyleSheet("color: #888888; font-size: 12px; font-weight: 500;")
+            if hasattr(self, "_lock_activate_btn") and self._lock_activate_btn is not None:
+                self._lock_activate_btn.setText("  Activate Lock Screen")
+                self._lock_activate_btn.setEnabled(True)
             self._hide_lock_overlay()
     
     def _update_toggle_button_ui(self, is_paused):
@@ -2801,8 +2808,12 @@ class WindowsCustomPanel(QWidget):
         """Load and apply saved state on startup."""
         # Check if lock screen is somehow still active
         if InvisibleLockScreen.is_active():
-            self._lock_status.setText("● Active")
-            self._lock_status.setStyleSheet("color: #FF5B06; font-size: 12px; font-weight: 500;")
+            if hasattr(self, "_lock_status") and self._lock_status is not None:
+                self._lock_status.setText("● Active")
+                self._lock_status.setStyleSheet("color: #FF5B06; font-size: 12px; font-weight: 500;")
+            if hasattr(self, "_lock_activate_btn") and self._lock_activate_btn is not None:
+                self._lock_activate_btn.setText("  Lock Screen Active...")
+                self._lock_activate_btn.setEnabled(False)
 
     def _register_global_hotkey(self):
         """Register the global activation hotkey."""
@@ -2856,6 +2867,8 @@ class WindowsCustomPanel(QWidget):
         return super().nativeEvent(eventType, message)
 
     def closeEvent(self, event):
-        """Clean up hotkeys when window is closed."""
+        """Clean up hotkeys and timers when window is closed."""
+        if hasattr(self, "_lock_poll_timer") and self._lock_poll_timer is not None:
+            self._lock_poll_timer.stop()
         self._unregister_global_hotkey()
         super().closeEvent(event)

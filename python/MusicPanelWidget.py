@@ -5709,19 +5709,7 @@ class MusicPanelWidget(QWidget):
             
             # Refresh duration explicitly if VLC or QMediaPlayer is currently active
             try:
-                if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
-                    pos = self._vlc_player.get_time()
-                    dur = self._vlc_player.get_length()
-                    if pos >= 0 and dur > 0:
-                        self.player_bar.set_position(pos / 1000.0, dur / 1000.0)
-                        # Metadata Feedback Loop for VLC
-                        if hasattr(self, '_playlist') and 0 <= self._current_index < len(self._playlist):
-                            track = self._playlist[self._current_index]
-                            if track.get('duration', 0) == 0:
-                                track['duration'] = dur / 1000.0
-                                if hasattr(self, 'table'): self.table._render_tracks()
-                                if hasattr(self, 'header'): self.header.set_info(getattr(self.header, '_name', "Playlist"), len(self._playlist), self._format_playlist_duration())
-                elif hasattr(self, '_player') and self._player:
+                if hasattr(self, '_player') and self._player:
                     pos = self._player.position()
                     dur = self._player.duration()
                     if dur > 0:
@@ -5736,13 +5724,13 @@ class MusicPanelWidget(QWidget):
                 pass
     
     def _check_ffmpeg(self) -> bool:
-        """Check if FFmpeg is available."""
+        """Check if FFmpeg is available in AppData tools path."""
         try:
             from integrations.tools_downloader import is_ffmpeg_available
             return is_ffmpeg_available()
         except ImportError:
-            import shutil
-            return shutil.which("ffmpeg") is not None or shutil.which("ffprobe") is not None
+            from integrations.tools_downloader import get_ffmpeg_path
+            return os.path.exists(get_ffmpeg_path())
     
     def _setup_ffmpeg_required_ui(self):
         """Setup placeholder UI when FFmpeg is not available."""
@@ -8356,11 +8344,6 @@ class MusicPanelWidget(QWidget):
     
     def _seek(self, percent: float):
         # VLC overlay seek intercept
-        if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
-            dur = self._vlc_player.get_length()
-            if dur > 0:
-                self._vlc_player.set_time(int(percent * dur))
-            return
             
         if self._player.duration() > 0:
             self._player.setPosition(int(percent * self._player.duration()))

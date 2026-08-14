@@ -135,7 +135,7 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
 
 
 # Hook procedure type
-HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+HOOKPROC = ctypes.WINFUNCTYPE(wintypes.LPARAM, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
 
 class InputListener:

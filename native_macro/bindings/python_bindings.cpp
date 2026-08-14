@@ -89,6 +89,8 @@ PYBIND11_MODULE(helxairo_native, m) {
            "Click mouse button")
       .def("mouse_scroll", &InputSimulator::mouseScroll, py::arg("delta"),
            py::arg("horizontal") = false, "Scroll mouse wheel")
+      .def("scroll_window", &InputSimulator::scrollWindow, py::arg("delta"),
+           py::arg("horizontal") = false, "Scroll specific window directly via IPC")
 
       // Keyboard
       .def("key_down", &InputSimulator::keyDown, py::arg("key"),

@@ -63,6 +63,13 @@ public:
    */
   void mouseScroll(int delta, bool horizontal = false);
 
+  /**
+   * Scroll window directly using IPC messages (Anti-Cheat Safe).
+   * @param delta Scroll amount (positive = up, negative = down)
+   * @param horizontal If true, scroll horizontally
+   */
+  void scrollWindow(int delta, bool horizontal = false);
+
   // ==================== KEYBOARD ====================
 
   /**

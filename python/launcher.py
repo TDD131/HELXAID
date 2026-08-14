@@ -1,14 +1,12 @@
 import sys
 
 # --- Windows Service Intercept ---
-# Must happen before any GUI or heavy imports to keep the background service lightweight and avoid PyInstaller recursion issues.
 if len(sys.argv) > 1 and sys.argv[1] == "--run-service":
     import helxaid_service
     helxaid_service.run_as_service()
     sys.exit(0)
-# ---------------------------------
 
-import gc  # For memory cleanup
+import gc
 import json
 import os
 import random
@@ -4617,6 +4615,13 @@ class GameLauncher(QWidget):
         # Setup deferred button animations (improves startup time)
         self._setup_deferred_button_animations()
 
+        # =============================================
+        # Start Universal Macro Hook Engine (EARLY - before panels load)
+        # This must run from launcher, NOT from MacroSettingsPanel,
+        # because the hook needs to be alive even if the user never opens the HELXAIRO tab.
+        # =============================================
+        self._start_universal_macro_hook()
+
         # Pre-instantiate panel widgets sequentially on idle timers so tab switching is instantaneous
         def _prewarm_panel_step(step):
             if not hasattr(self, 'content_stack'):
@@ -5047,6 +5052,9 @@ class GameLauncher(QWidget):
         # Setup system tray icon
         self.setup_system_tray()
         self._debug_delay()
+
+        # Start Universal Macro Hook Engine directly on app startup (300ms delay)
+        QTimer.singleShot(300, self._start_universal_macro_hook)
 
         # =============================================
         # MAIN LAYOUT: Sidebar + Content Panel
@@ -6983,12 +6991,13 @@ Stylesheet Selector:
             self.music_panel = QWidget()
             self.music_panel.setObjectName("musicPanel")
             layout = QVBoxLayout(self.music_panel)
-            layout.setContentsMargins(40, 30, 40, 30)
-            layout.setSpacing(24)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
             
             container = QWidget()
+            container.setObjectName("musicMissingToolContainer")
             container.setStyleSheet("""
-                QWidget {
+                QWidget#musicMissingToolContainer {
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                         stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a);
                 }
@@ -6998,23 +7007,27 @@ Stylesheet Selector:
             container_layout.setSpacing(20)
             
             icon_label = QLabel("")
+            icon_label.setObjectName("musicMissingToolIcon")
             icon_label.setStyleSheet("font-size: 64px; background: transparent;")
             icon_label.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(icon_label)
             
             title = QLabel("FFmpeg Required")
-            title.setStyleSheet("color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
+            title.setObjectName("musicMissingToolTitle")
+            title.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
             title.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(title)
             
             desc = QLabel("HELXAIC Music Player requires FFmpeg (FFprobe) to read audio track durations.\nClick below to download and install it automatically.")
-            desc.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
+            desc.setObjectName("musicMissingToolDesc")
+            desc.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #888888; font-size: 14px; background: transparent;")
             desc.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(desc)
             
             def do_download():
-                from PySide6.QtWidgets import QProgressDialog, QMessageBox
+                from PySide6.QtWidgets import QMessageBox
                 from PySide6.QtCore import QThread, Signal as QSignal
+                from integrations.tools_downloader import HELXAIDProgressDialog
                 
                 class _FFmpegDownloadWorker(QThread):
                     progress_update = QSignal(int, int)
@@ -7027,12 +7040,9 @@ Stylesheet Selector:
                         success, error = download_ffmpeg(on_progress)
                         self.finished.emit(success, error or "")
                         
-                progress = QProgressDialog("Downloading FFmpeg...", "Cancel", 0, 100, self)
-                progress.setWindowTitle("Installing FFmpeg")
-                progress.setWindowModality(Qt.WindowModal)
-                progress.setMinimumDuration(0)
-                progress.setAutoClose(False)
-                progress.setAutoReset(False)
+                progress = HELXAIDProgressDialog("Installing FFmpeg", "Cancel", 0, 100, self)
+                progress.setObjectName("musicFFmpegDownloadProgress")
+                progress.set_status("Downloading FFmpeg...")
                 progress.show()
                 
                 worker = _FFmpegDownloadWorker()
@@ -7043,22 +7053,25 @@ Stylesheet Selector:
                         worker.terminate()
                         return
                     if total > 0:
-                        pct = int((downloaded / total) * 100)
-                        progress.setValue(pct)
-                        progress.setLabelText(f"Downloading... {downloaded // 1024} KB / {total // 1024} KB")
+                        progress.set_progress(downloaded, total)
                         
                 def on_finished(success: bool, error: str):
                     progress.close()
                     if success:
-                        QMessageBox.information(
-                            self, "Download Complete",
-                            "FFmpeg installed successfully!\n\nReloading HELXAIC..."
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Complete",
+                            "FFmpeg installed successfully!\n\nClick OK to reload HELXAIC.",
+                            self,
+                            on_ok=self._reload_music_panel
                         )
-                        self._reload_music_panel()
                     else:
-                        QMessageBox.critical(
-                            self, "Download Failed",
-                            f"Failed to install FFmpeg:\n{error}"
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Failed",
+                            f"Failed to install FFmpeg:\n{error}",
+                            self,
+                            is_error=True
                         )
                         
                 worker.progress_update.connect(on_progress)
@@ -7066,10 +7079,12 @@ Stylesheet Selector:
                 worker.start()
                 
             download_btn = QPushButton("Setup HELXAIC")
+            download_btn.setObjectName("musicDownloadFFmpegBtn")
             download_btn.setFixedSize(220, 50)
             download_btn.setCursor(Qt.PointingHandCursor)
             download_btn.setStyleSheet("""
-                QPushButton {
+                QPushButton#musicDownloadFFmpegBtn {
+                    font-family: 'Orbitron', sans-serif;
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
                     color: #1a1a1a;
                     border: none;
@@ -7077,20 +7092,25 @@ Stylesheet Selector:
                     font-size: 16px;
                     font-weight: bold;
                 }
-                QPushButton:hover {
+                QPushButton#musicDownloadFFmpegBtn:hover {
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:1 #FFD700);
                 }
             """)
             download_btn.clicked.connect(do_download)
             container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
             
+            from integrations.tools_downloader import SplitImportButton, import_ffmpeg_tool
+            import_btn = SplitImportButton("FFmpeg", import_ffmpeg_tool, self._reload_music_panel, self)
+            container_layout.addWidget(import_btn, alignment=Qt.AlignCenter)
+            
             try:
                 from integrations.tools_downloader import FFMPEG_DIR
                 install_path = FFMPEG_DIR
             except ImportError:
                 install_path = "%APPDATA%\\HELXAID\\tools\\ffmpeg"
-            instructions = QLabel(f"Will be installed to:\n{install_path}")
-            instructions.setStyleSheet("font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions = QLabel(f"Installs to\n{install_path}")
+            instructions.setObjectName("musicMissingToolPath")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
             container_layout.addWidget(instructions)
@@ -7133,7 +7153,11 @@ Stylesheet Selector:
             self.music_panel.playbackStateChanged.connect(self._update_taskbar_play_state)
         
         # Add to content stack (index 1 = music panel)
-        self.content_stack.addWidget(self.music_panel)
+        if not hasattr(self, '_music_panel_insert_index'):
+            self.content_stack.addWidget(self.music_panel)
+        else:
+            self.content_stack.insertWidget(self._music_panel_insert_index, self.music_panel)
+            delattr(self, '_music_panel_insert_index')
         
         # Initialize taskbar thumbnail toolbar reference
         self.taskbar_toolbar = None
@@ -7294,7 +7318,144 @@ Stylesheet Selector:
         # Always clear tracking dict on setup to avoid dangling C++ object references
         self._cpu_collapsible_groups = {}
         
-        # Check if UXTU is available - if not, show download prompt
+        # Check if RyzenAdj (for AMD) or UXTU is available - if not, show download prompt
+        from integrations.cpu_controller import is_amd_cpu
+        from integrations.tools_downloader import is_ryzenadj_available
+        
+        is_amd = is_amd_cpu()
+        ryzenadj_available = is_ryzenadj_available()
+        
+        # If AMD CPU and RyzenAdj is missing -> Show RyzenAdj Download Screen
+        if is_amd and not ryzenadj_available:
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            
+            container = QWidget()
+            container.setObjectName("cpuMissingToolContainer")
+            container.setStyleSheet("""
+                QWidget#cpuMissingToolContainer {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a);
+                }
+            """)
+            container_layout = QVBoxLayout(container)
+            container_layout.setAlignment(Qt.AlignCenter)
+            container_layout.setSpacing(20)
+            
+            icon_label = QLabel()
+            icon_label.setObjectName("cpuMissingToolIcon")
+            icon_label.setStyleSheet("font-size: 64px; background: transparent;")
+            icon_label.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(icon_label)
+            
+            title = QLabel("RyzenAdj Required")
+            title.setObjectName("cpuMissingToolTitle")
+            title.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
+            title.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(title)
+            
+            desc = QLabel("HELXAIL CPU Controller requires RyzenAdj for AMD TDP & thermal limit tuning.\nClick below to download and install it to AppData automatically.")
+            desc.setObjectName("cpuMissingToolDesc")
+            desc.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #888888; font-size: 14px; background: transparent;")
+            desc.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(desc)
+            
+            def do_download_ryzenadj():
+                from PySide6.QtWidgets import QMessageBox
+                from PySide6.QtCore import QThread, Signal as QSignal
+                from integrations.tools_downloader import HELXAIDProgressDialog
+                
+                class _RyzenAdjDownloadWorker(QThread):
+                    progress_update = QSignal(int, int)
+                    finished = QSignal(bool, str)
+                    
+                    def run(self):
+                        from integrations.tools_downloader import download_ryzenadj
+                        def on_progress(downloaded: int, total: int):
+                            self.progress_update.emit(downloaded, total)
+                        success, error = download_ryzenadj(on_progress, force=True)
+                        self.finished.emit(success, error or "")
+                        
+                progress = HELXAIDProgressDialog("Installing RyzenAdj", "Cancel", 0, 100, self)
+                progress.setObjectName("cpuRyzenAdjDownloadProgress")
+                progress.set_status("Downloading RyzenAdj...")
+                progress.show()
+                
+                worker = _RyzenAdjDownloadWorker()
+                self._ryzenadj_download_worker = worker
+                
+                def on_progress(downloaded: int, total: int):
+                    if progress.wasCanceled():
+                        worker.terminate()
+                        return
+                    if total > 0:
+                        progress.set_progress(downloaded, total)
+                        
+                def on_finished(success: bool, error: str):
+                    progress.close()
+                    if success:
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Complete",
+                            "RyzenAdj installed successfully!\n\nClick OK to reload HELXAIL.",
+                            self,
+                            on_ok=self._reload_cpu_panel
+                        )
+                    else:
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Failed",
+                            f"Failed to install RyzenAdj:\n{error}",
+                            self,
+                            is_error=True
+                        )
+                        
+                worker.progress_update.connect(on_progress)
+                worker.finished.connect(on_finished)
+                worker.start()
+                
+            download_btn = QPushButton("Setup HELXAIL")
+            download_btn.setObjectName("cpuDownloadRyzenAdjBtn")
+            download_btn.setFixedSize(220, 50)
+            download_btn.setCursor(Qt.PointingHandCursor)
+            download_btn.setStyleSheet("""
+                QPushButton#cpuDownloadRyzenAdjBtn {
+                    font-family: 'Orbitron', sans-serif;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                    color: #1a1a1a;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 16px;
+                    font-weight: bold;
+                }
+                QPushButton#cpuDownloadRyzenAdjBtn:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:1 #FFD700);
+                }
+            """)
+            download_btn.clicked.connect(do_download_ryzenadj)
+            container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
+            
+            from integrations.tools_downloader import SplitImportButton, import_ryzenadj_tool
+            import_btn = SplitImportButton("RyzenAdj", import_ryzenadj_tool, self._reload_cpu_panel, self)
+            container_layout.addWidget(import_btn, alignment=Qt.AlignCenter)
+            
+            from integrations.tools_downloader import RYZENADJ_DIR
+            instructions = QLabel(f"Installs to\n{RYZENADJ_DIR}")
+            instructions.setObjectName("cpuMissingToolPath")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions.setAlignment(Qt.AlignCenter)
+            instructions.setWordWrap(True)
+            container_layout.addWidget(instructions)
+            
+            layout.addWidget(container)
+            if not hasattr(self, '_cpu_panel_insert_index'):
+                self.content_stack.addWidget(self.cpu_panel)
+            else:
+                self.content_stack.insertWidget(self._cpu_panel_insert_index, self.cpu_panel)
+                delattr(self, '_cpu_panel_insert_index')
+            return
+
+        # Check if UXTU is available for non-AMD or general fallback - if not, show download prompt
         if not self.uxtu_installed:
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
@@ -7333,8 +7494,9 @@ Stylesheet Selector:
                 (potentially large) download. Progress is forwarded to the
                 QProgressDialog via Qt signals which are thread-safe.
                 """
-                from PySide6.QtWidgets import QProgressDialog, QMessageBox
+                from PySide6.QtWidgets import QMessageBox
                 from PySide6.QtCore import QThread, Signal as QSignal, QMetaObject, Qt as Qt2
+                from integrations.tools_downloader import HELXAIDProgressDialog
 
                 class _UxtuDownloadWorker(QThread):
                     """Background thread that downloads UXTU.
@@ -7357,12 +7519,9 @@ Stylesheet Selector:
                         self.finished.emit(success, error or "")
 
                 # Progress dialog displayed on the main thread
-                progress = QProgressDialog("Downloading UXTU Installer...", "Cancel", 0, 100, self)
-                progress.setWindowTitle("Installing UXTU")
-                progress.setWindowModality(Qt.WindowModal)
-                progress.setMinimumDuration(0)
-                progress.setAutoClose(False)
-                progress.setAutoReset(False)
+                progress = HELXAIDProgressDialog("Installing UXTU", "Cancel", 0, 100, self)
+                progress.setObjectName("cpuUxtuDownloadProgress")
+                progress.set_status("Downloading UXTU Installer...")
                 progress.show()
 
                 worker = _UxtuDownloadWorker()
@@ -7370,16 +7529,12 @@ Stylesheet Selector:
                 self._uxtu_download_worker = worker
 
                 def on_progress(downloaded: int, total: int):
-                    """Forward download progress to the QProgressDialog (main thread)."""
+                    """Forward download progress to the ProgressDialog (main thread)."""
                     if progress.wasCanceled():
                         worker.terminate()
                         return
                     if total > 0:
-                        pct = int((downloaded / total) * 100)
-                        progress.setValue(pct)
-                        progress.setLabelText(
-                            f"Downloading... {downloaded // 1024 // 1024} MB / {total // 1024 // 1024} MB"
-                        )
+                        progress.set_progress(downloaded, total)
 
                 def on_finished(success: bool, error: str):
                     """Called on main thread when the worker thread exits."""
@@ -7387,22 +7542,18 @@ Stylesheet Selector:
                     if success:
                         msg = (
                             "The official UXTU installer has been launched.\n\n"
-                            "IMPORTANT: After installation, you MUST open UXTU manually at least once and click 'Install Driver' (PawnIO) when prompted.\n\n"
-                            "Once the driver is installed, restart HELXAID to use the CPU Controller."
+                            "IMPORTANT: After installation, open UXTU manually once and click 'Install Driver' (PawnIO).\n\n"
+                            "Once installed, restart HELXAID to use the CPU Controller."
                         )
-                        self._uxtu_floating_panel = DraggableFloatingPanel("UXTU Installer - HELXAID", msg, self)
-                        # Center it
-                        rect = self.rect()
-                        self._uxtu_floating_panel.move(
-                            rect.width() // 2 - self._uxtu_floating_panel.width() // 2,
-                            rect.height() // 2 - self._uxtu_floating_panel.height() // 2
-                        )
-                        self._uxtu_floating_panel.raise_()
-                        self._uxtu_floating_panel.show()
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel("UXTU Installer", msg, self)
                     else:
-                        QMessageBox.critical(
-                            self, "Download Failed",
-                            f"Failed to download UXTU:\n{error}"
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Failed",
+                            f"Failed to download UXTU:\n{error}",
+                            self,
+                            is_error=True
                         )
 
                 worker.progress_update.connect(on_progress)
@@ -7434,14 +7585,19 @@ Stylesheet Selector:
                 install_path = os.path.dirname(DEFAULT_UXTU_PATH)
             except ImportError:
                 install_path = "C:\\Program Files\\JamesCJ60\\Universal x86 Tuning Utility\\"
-            instructions = QLabel(f"Installs to:\n{install_path}")
-            instructions.setStyleSheet("font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions = QLabel(f"Installs to\n{install_path}")
+            instructions.setObjectName("cpuUxtuMissingToolPath")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
             container_layout.addWidget(instructions)
             
             layout.addWidget(container)
-            self.content_stack.addWidget(self.cpu_panel)
+            if not hasattr(self, '_cpu_panel_insert_index'):
+                self.content_stack.addWidget(self.cpu_panel)
+            else:
+                self.content_stack.insertWidget(self._cpu_panel_insert_index, self.cpu_panel)
+                delattr(self, '_cpu_panel_insert_index')
             return
         
         # Initialize CPU settings - use AppData for persistence
@@ -7481,10 +7637,11 @@ Stylesheet Selector:
         header_layout.addStretch()
         
         # Status badge
-        if self.uxtu_installed:
-            status_text, status_style = "● CONNECTED", "background: rgba(76, 175, 80, 0.15); color: #4CAF50; border: 1px solid rgba(76, 175, 80, 0.3); border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
+        from integrations.tools_downloader import is_ryzenadj_available
+        if is_ryzenadj_available() or self.uxtu_installed:
+            status_text, status_style = "● CONNECTED", "background: rgba(76, 175, 80, 0.15); color: #4CAF50; border: none; border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
         else:
-            status_text, status_style = "● OFFLINE", "background: rgba(244, 67, 54, 0.15); color: #f44336; border: 1px solid rgba(244, 67, 54, 0.3); border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
+            status_text, status_style = "● OFFLINE", "background: rgba(244, 67, 54, 0.15); color: #f44336; border: none; border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
         
         status_badge = QLabel(status_text)
         status_badge.setObjectName("cpuStatusBadge")
@@ -8372,15 +8529,14 @@ Stylesheet Selector:
         self._cpu_slider_checkboxes = {}
         self._cpu_collapsible_groups = {}
 
-        # Get current panel index (should be 2)
-        cpu_panel_index = self.content_stack.indexOf(self.cpu_panel) if hasattr(self, 'cpu_panel') else 2
-        if cpu_panel_index < 0:
-            cpu_panel_index = 2  # Default CPU panel index
-        
-        # Remove old panel
+        # Remove old panel and save stack slot
         if hasattr(self, 'cpu_panel') and self.cpu_panel:
+            cpu_slot = self.content_stack.indexOf(self.cpu_panel)
             self.content_stack.removeWidget(self.cpu_panel)
             self.cpu_panel.deleteLater()
+            delattr(self, 'cpu_panel')
+            if cpu_slot >= 0:
+                self._cpu_panel_insert_index = cpu_slot
         
         # Flush global QPixmapCache & trigger Python GC
         from PySide6.QtGui import QPixmapCache
@@ -8388,25 +8544,14 @@ Stylesheet Selector:
         QPixmapCache.clear()
         gc.collect()
 
-        # Set insert index for _setup_cpu_panel
-        self._cpu_panel_insert_index = cpu_panel_index
-        
         # Recreate the panel at correct position
         self._setup_cpu_panel()
         
-        # Switch to the CPU panel
-        self.switch_panel(cpu_panel_index)
+        # Always stay on CPU panel (Page 2)
+        self.switch_panel(2)
     
     def _reload_music_panel(self):
-        """Replace the music panel with an 'unavailable' placeholder.
-        
-        Called after FFprobe/FFmpeg is uninstalled so the user sees the
-        HELXAIC panel reflect the missing dependency immediately, without
-        needing to restart the application.
-        
-        Stops any active playback first so no audio/video leaks when the
-        MusicPanelWidget is destroyed.
-        """
+        """Reload the music panel after FFmpeg installation or uninstallation."""
         # Stop playback gracefully before destroying the widget
         if hasattr(self, 'music_panel'):
             try:
@@ -8414,44 +8559,20 @@ Stylesheet Selector:
             except Exception:
                 pass
 
-        # Find the current stack index so we can insert the placeholder at the same slot
-        music_panel_index = self.content_stack.indexOf(self.music_panel) if hasattr(self, 'music_panel') else 1
-        if music_panel_index < 0:
-            music_panel_index = 1  # Default music panel index
-
-        # Remove existing music panel from the stacked widget
-        if hasattr(self, 'music_panel'):
+        # Remove existing music panel from the stacked widget and save slot
+        if hasattr(self, 'music_panel') and self.music_panel:
+            music_slot = self.content_stack.indexOf(self.music_panel)
             self.content_stack.removeWidget(self.music_panel)
             self.music_panel.deleteLater()
+            delattr(self, 'music_panel')
+            if music_slot >= 0:
+                self._music_panel_insert_index = music_slot
 
-        # Build a minimal "unavailable" placeholder that matches the CPU panel style
-        placeholder = QWidget()
-        placeholder.setObjectName("musicPanel")
-        ph_layout = QVBoxLayout(placeholder)
-        ph_layout.setContentsMargins(40, 30, 40, 30)
-        ph_layout.addStretch()
+        # Recreate the music panel (will render either the setup gate or the full player)
+        self._setup_music_panel()
 
-        title_lbl = QLabel("FFmpeg Not Found")
-        title_lbl.setStyleSheet("font-size: 24px; color: #FDA903; font-weight: bold;")
-        title_lbl.setAlignment(Qt.AlignCenter)
-        ph_layout.addWidget(title_lbl)
-
-        info_lbl = QLabel(
-            "HELXAIC (Music Player) requires FFmpeg / FFprobe for audio duration reading.\n"
-            "The external tool was removed. Re-install FFmpeg and restart the application."
-        )
-        info_lbl.setStyleSheet("font-size: 14px; color: #9DB2BF;")
-        info_lbl.setAlignment(Qt.AlignCenter)
-        info_lbl.setWordWrap(True)
-        ph_layout.addWidget(info_lbl)
-        ph_layout.addStretch()
-
-        # Insert placeholder at the same index as the original music panel
-        self.content_stack.insertWidget(music_panel_index, placeholder)
-        self.music_panel = placeholder
-
-        # Navigate to the music panel so the change is visible immediately
-        self.switch_panel(music_panel_index)
+        # Always stay on Music panel (Page 1)
+        self.switch_panel(1)
 
     def _on_boost_profile_changed(self, profile: str):
         """Handle boost profile selection change."""
@@ -8580,8 +8701,9 @@ Stylesheet Selector:
             container_layout.addWidget(desc)
             # Auto-download button
             def do_download():
-                from PySide6.QtWidgets import QProgressDialog, QMessageBox
+                from PySide6.QtWidgets import QMessageBox
                 from PySide6.QtCore import QThread, Signal as QSignal
+                from integrations.tools_downloader import HELXAIDProgressDialog
                 
                 class _LHMDownloadWorker(QThread):
                     progress_update = QSignal(int, int)
@@ -8594,12 +8716,9 @@ Stylesheet Selector:
                         success, error = download_librehwmon(on_progress)
                         self.finished.emit(success, error or "")
                         
-                progress = QProgressDialog("Downloading LibreHardwareMonitor...", "Cancel", 0, 100, self)
-                progress.setWindowTitle("Installing LHM")
-                progress.setWindowModality(Qt.WindowModal)
-                progress.setMinimumDuration(0)
-                progress.setAutoClose(False)
-                progress.setAutoReset(False)
+                progress = HELXAIDProgressDialog("Installing LibreHardwareMonitor", "Cancel", 0, 100, self)
+                progress.setObjectName("hardwareLhmDownloadProgress")
+                progress.set_status("Downloading LibreHardwareMonitor...")
                 progress.show()
                 
                 worker = _LHMDownloadWorker()
@@ -8610,22 +8729,25 @@ Stylesheet Selector:
                         worker.terminate()
                         return
                     if total > 0:
-                        pct = int((downloaded / total) * 100)
-                        progress.setValue(pct)
-                        progress.setLabelText(f"Downloading... {downloaded // 1024} KB / {total // 1024} KB")
+                        progress.set_progress(downloaded, total)
                         
                 def on_finished(success: bool, error: str):
                     progress.close()
                     if success:
-                        QMessageBox.information(
-                            self, "Download Complete",
-                            "LibreHardwareMonitor installed successfully!\n\nReloading HELXTATS..."
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Complete",
+                            "LibreHardwareMonitor installed successfully!\n\nClick OK to reload HELXTATS.",
+                            self,
+                            on_ok=self._reload_hardware_panel
                         )
-                        self._reload_hardware_panel()
                     else:
-                        QMessageBox.critical(
-                            self, "Download Failed",
-                            f"Failed to install LibreHardwareMonitor:\n{error}"
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Failed",
+                            f"Failed to install LibreHardwareMonitor:\n{error}",
+                            self,
+                            is_error=True
                         )
                         
                 worker.progress_update.connect(on_progress)
@@ -8648,16 +8770,22 @@ Stylesheet Selector:
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:1 #FFD700);
                 }
             """)
+            download_btn.setObjectName("hardwareDownloadLHMBtn")
             download_btn.clicked.connect(do_download)
             container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
+            
+            from integrations.tools_downloader import SplitImportButton, import_lhm_tool
+            import_btn = SplitImportButton("LibreHardwareMonitor", import_lhm_tool, self._reload_hardware_panel, self)
+            container_layout.addWidget(import_btn, alignment=Qt.AlignCenter)
             
             try:
                 from integrations.tools_downloader import LIBREHWMON_DIR
                 install_path = LIBREHWMON_DIR
             except ImportError:
                 install_path = "%APPDATA%\\HELXAID\\tools\\librehwmon"
-            instructions = QLabel(f"Will be installed to:\n{install_path}")
-            instructions.setStyleSheet("font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions = QLabel(f"Installs to\n{install_path}")
+            instructions.setObjectName("hardwareMissingToolPath")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
             container_layout.addWidget(instructions)
@@ -8679,16 +8807,16 @@ Stylesheet Selector:
         if not hasattr(self, 'hardware_panel'):
             return
             
-        hw_panel_index = self.content_stack.indexOf(self.hardware_panel)
-        if hw_panel_index < 0:
-            hw_panel_index = 5  # Default Hardware panel index
-            
+        hw_slot = self.content_stack.indexOf(self.hardware_panel)
         self.content_stack.removeWidget(self.hardware_panel)
         self.hardware_panel.deleteLater()
+        delattr(self, 'hardware_panel')
+        if hw_slot >= 0:
+            self._hardware_panel_insert_index = hw_slot
         
-        self._hardware_panel_insert_index = hw_panel_index
         self._setup_hardware_panel()
-        self.switch_panel(hw_panel_index)
+        # Always stay on Hardware panel (Page 5)
+        self.switch_panel(5)
         
     def _on_power_mode_changed(self, mode: str):
         """Handle Windows power mode selection change."""
@@ -9156,6 +9284,137 @@ Stylesheet Selector:
             error_label.setStyleSheet("color: #e74c3c; font-size: 16px;")
             layout.addWidget(error_label)
             self.content_stack.addWidget(self.macro_panel)
+    
+    # =============================================
+    # Universal Macro Hook Engine Management
+    # (Lives in GameLauncher, NOT MacroSettingsPanel)
+    # =============================================
+    
+    def _start_universal_macro_hook(self):
+        """
+        Start the UniversalMacroHook subprocess and set up heartbeat + mapping sync.
+        This runs from the main launcher so the hook is ALWAYS active,
+        regardless of whether the user visits the HELXAIRO tab.
+        """
+        import sys
+        print("[MacroHook] Initializing UniversalMacroHook engine...")
+        sys.stdout.flush()
+        
+        if getattr(self, '_macro_hook_started', False):
+            return
+        self._macro_hook_started = True
+        
+        import socket, json, subprocess, os, time
+        
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UniversalMacroHook.py")
+        if not os.path.exists(script_path):
+            print("[MacroHook] UniversalMacroHook.py not found, skipping hook startup.")
+            sys.stdout.flush()
+            return
+        
+        # 1. Create UDP socket for sending commands to the hook
+        self._macro_hook_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        
+        # 2. Kill any existing zombie hook process
+        try:
+            kill_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            kill_sock.sendto(json.dumps({'cmd': 'exit'}).encode('utf-8'), ('127.0.0.1', 48123))
+            kill_sock.close()
+            time.sleep(0.3)
+        except Exception:
+            pass
+        
+        # 3. Spawn the hook subprocess (simple Popen, no schtasks overhead)
+        try:
+            CREATE_NO_WINDOW = 0x08000000
+            self._macro_hook_proc = subprocess.Popen(
+                [sys.executable, script_path],
+                creationflags=CREATE_NO_WINDOW
+            )
+            print(f"[MacroHook] Spawned UniversalMacroHook subprocess (PID: {self._macro_hook_proc.pid})")
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"[MacroHook] Failed to spawn hook: {e}")
+            sys.stdout.flush()
+            return
+        
+        # 4. Start heartbeat timer (every 1000ms) to keep hook alive
+        self._macro_hook_heartbeat = QTimer(self)
+        self._macro_hook_heartbeat.setInterval(1000)
+        self._macro_hook_heartbeat.timeout.connect(self._send_macro_hook_heartbeat)
+        self._macro_hook_heartbeat.start()
+        
+        # 5. After 2s delay, sync all saved button mappings to the hook
+        QTimer.singleShot(2000, self._sync_saved_mappings_to_hook)
+    
+    def _send_macro_hook_heartbeat(self):
+        """Send heartbeat ping to keep the hook subprocess alive."""
+        try:
+            import json
+            if hasattr(self, '_macro_hook_sock'):
+                self._macro_hook_sock.sendto(
+                    json.dumps({'cmd': 'ping'}).encode('utf-8'),
+                    ('127.0.0.1', 48123)
+                )
+        except Exception:
+            pass
+    
+    def _sync_saved_mappings_to_hook(self):
+        """Load saved button mappings from settings file and sync to the hook."""
+        import json, os
+        
+        if not hasattr(self, '_macro_hook_sock'):
+            return
+        
+        # Load button mappings from the HELXAIRO settings file
+        try:
+            settings_path = os.path.join(os.getenv('APPDATA', ''), 'HELXAID', 'helxairo_settings.json')
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+                button_mappings = settings.get('button_mappings', [])
+            else:
+                button_mappings = ["Left Click", "Right Click", "Wheel Click", "Forward", "Backward"]
+        except Exception as e:
+            print(f"[MacroHook] Failed to load settings: {e}")
+            button_mappings = ["Left Click", "Right Click", "Wheel Click", "Forward", "Backward"]
+        
+        # Send each mapping to the hook via UDP
+        for i, mapping in enumerate(button_mappings):
+            try:
+                payload = json.dumps({
+                    'cmd': 'map',
+                    'btn_name': str(i),
+                    'macro': mapping
+                }).encode('utf-8')
+                self._macro_hook_sock.sendto(payload, ('127.0.0.1', 48123))
+                print(f"[MacroHook] Synced: Button {i+1} -> {mapping}")
+            except Exception as e:
+                print(f"[MacroHook] Failed to sync mapping {i}: {e}")
+                
+        # Send Anti-Cheat Bypass setting
+        try:
+            sensor_settings = settings.get('sensor_settings', {}) if 'settings' in locals() and isinstance(settings, dict) else {}
+            bypass_ac = sensor_settings.get('bypass_anti_cheat', False)
+            ac_payload = json.dumps({
+                'cmd': 'set_anticheat_bypass',
+                'enabled': bypass_ac
+            }).encode('utf-8')
+            self._macro_hook_sock.sendto(ac_payload, ('127.0.0.1', 48123))
+            print(f"[MacroHook] Synced Anti-Cheat Bypass: {bypass_ac}")
+            
+            pagedown_emu = sensor_settings.get('pagedown_emulation', False)
+            pg_payload = json.dumps({
+                'cmd': 'set_pagedown_emulation',
+                'enabled': pagedown_emu
+            }).encode('utf-8')
+            self._macro_hook_sock.sendto(pg_payload, ('127.0.0.1', 48123))
+            print(f"[MacroHook] Synced PageDown Emulation: {pagedown_emu}")
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"[MacroHook] Failed to sync Anti-Cheat/PageDown setting: {e}")
+            sys.stdout.flush()
+
     
     def get_macro_bridge(self):
         """Get the macro bridge, initializing if needed."""
@@ -11462,14 +11721,21 @@ Stylesheet Selector:
         except Exception as e:
             print(f"[UninstallTools] Could not resolve FFmpeg path: {e}")
 
-        # ---- VLC ----
+        # ---- AutoHotkey Macro Engine ----
         try:
-            from integrations.tools_downloader import VLC_DIR
-            if os.path.exists(VLC_DIR) and VLC_DIR not in seen_paths:
-                targets.append((VLC_DIR, f"VLC Media Player  ({VLC_DIR})"))
-                seen_paths.add(VLC_DIR)
+            from integrations.tools_downloader import AHK_DIR
+            from AHKPluginManager import AHKPluginManager
+            ahk_mgr = AHKPluginManager()
+            # Stop AHK process before deletion
+            ahk_mgr.stop()
+            if os.path.exists(AHK_DIR) and AHK_DIR not in seen_paths:
+                targets.append((AHK_DIR, f"AutoHotkey Macro Engine  ({AHK_DIR})"))
+                seen_paths.add(AHK_DIR)
+            if os.path.exists(ahk_mgr.plugin_dir) and ahk_mgr.plugin_dir not in seen_paths:
+                targets.append((ahk_mgr.plugin_dir, f"AutoHotkey Plugin Scripts  ({ahk_mgr.plugin_dir})"))
+                seen_paths.add(ahk_mgr.plugin_dir)
         except Exception as e:
-            print(f"[UninstallTools] Could not resolve VLC path: {e}")
+            print(f"[UninstallTools] Could not resolve AHK path: {e}")
 
         if not targets:
             QMessageBox.information(
@@ -11480,104 +11746,366 @@ Stylesheet Selector:
             )
             return
 
-        # Show confirmation listing all discovered paths before touching anything
-        names = "\n".join(f"  - {label}" for _, label in targets)
-        msg = QMessageBox(
-            QMessageBox.Warning,
-            "Uninstall External Tools",
-            f"The following external tools will be permanently deleted:\n\n{names}\n\n"
-            "This action cannot be undone. Features that depend on these tools\n"
-            "(CPU Controller, Music duration reading) will stop working.\n\n"
-            "Are you sure?",
-            QMessageBox.Yes | QMessageBox.No,
-            self
-        )
-        apply_custom_titlebar(msg, "#000000")
-        confirm = msg.exec()
-        if confirm != QMessageBox.Yes:
+        # Custom Selection QDialog
+        dialog = QDialog(self)
+        dialog.setObjectName("uninstallToolsDialog")
+        dialog.setWindowTitle("Uninstall External Tools - HELXAID")
+        dialog.setFixedWidth(560)
+        dialog.setStyleSheet("""
+            QDialog#uninstallToolsDialog {
+                background-color: #14161c;
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 12px;
+            }
+            QLabel {
+                font-family: 'Orbitron', sans-serif;
+                color: #e0e0e0;
+            }
+            QCheckBox {
+                font-family: 'Orbitron', sans-serif;
+                color: #ffffff;
+                font-size: 10px;
+                padding: 6px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                background: #1e2128;
+                border: none;
+            }
+            QCheckBox::indicator:hover {
+                background: #2a2d35;
+            }
+            QCheckBox::indicator:checked {
+                background: #FF5B06;
+                image: url('');
+            }
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: rgba(255, 255, 255, 0.02);
+                width: 8px;
+                margin: 0px 0px 0px 0px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #3a3d45;
+                min-height: 20px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #FF5B06;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+                height: 0px;
+            }
+        """)
+        apply_custom_titlebar(dialog, "#000000")
+
+        dlg_layout = QVBoxLayout(dialog)
+        dlg_layout.setContentsMargins(24, 20, 24, 20)
+        dlg_layout.setSpacing(14)
+
+        # Header Title
+        title_label = QLabel("Uninstall External Tools")
+        title_label.setObjectName("uninstallTitleLabel")
+        title_label.setFont(QFont("Orbitron", 13, QFont.Bold))
+        title_label.setStyleSheet("color: #e0e0e0;")
+        dlg_layout.addWidget(title_label)
+
+        # Warning / Info
+        desc_label = QLabel("Select the external tools you want to remove. Checked items will be permanently deleted.")
+        desc_label.setObjectName("uninstallDescLabel")
+        desc_label.setWordWrap(True)
+        desc_label.setFont(QFont("Orbitron", 10))
+        desc_label.setStyleSheet("color: #FF5B06; margin-bottom: 4px;")
+        dlg_layout.addWidget(desc_label)
+
+        # Checkboxes Scroll Area
+        scroll = QScrollArea()
+        scroll.setObjectName("toolsSelectionScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background: transparent; border: none;")
+
+        scroll_content = QWidget()
+        scroll_content.setObjectName("scrollContentWidget")
+        scroll_content.setStyleSheet("background: rgba(255, 255, 255, 0.02); border-radius: 8px; padding: 8px;")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(8)
+
+        checkbox_map = []  # list of (checkbox_widget, path, display_name, label)
+        for path, label in targets:
+            cb = AnimatedCheckBox(label)
+            cb.setObjectName(f"toolCheckbox_{len(checkbox_map)}")
+            cb.setChecked(True)  # checked by default so user can uncheck
+            cb.setFont(QFont("Orbitron", 10))
+            scroll_layout.addWidget(cb)
+            checkbox_map.append((cb, path, label))
+
+        scroll.setWidget(scroll_content)
+        dlg_layout.addWidget(scroll, 1)
+
+        # Select All / Deselect All Bar
+        select_bar = QHBoxLayout()
+        select_all_btn = AnimatedButton("Select All")
+        select_all_btn.setObjectName("selectAllBtn")
+        select_all_btn.setFont(QFont("Orbitron", 10))
+        select_all_btn.setCursor(Qt.PointingHandCursor)
+        select_all_btn.setStyleSheet("background: #2a2d35; color: #ccc; border: none; border-radius: 4px; padding: 6px 12px;")
+        
+        deselect_all_btn = AnimatedButton("Deselect All")
+        deselect_all_btn.setObjectName("deselectAllBtn")
+        deselect_all_btn.setFont(QFont("Orbitron", 10))
+        deselect_all_btn.setCursor(Qt.PointingHandCursor)
+        deselect_all_btn.setStyleSheet("background: #2a2d35; color: #ccc; border: none; border-radius: 4px; padding: 6px 12px;")
+
+        def _select_all(checked=True):
+            for cb, _, _ in checkbox_map:
+                cb.setChecked(checked)
+
+        select_all_btn.clicked.connect(lambda: _select_all(True))
+        deselect_all_btn.clicked.connect(lambda: _select_all(False))
+
+        select_bar.addWidget(select_all_btn)
+        select_bar.addWidget(deselect_all_btn)
+        select_bar.addStretch()
+        dlg_layout.addLayout(select_bar)
+
+        # Action Buttons Layout (Uninstall Selected / Cancel)
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        cancel_btn = AnimatedButton("Cancel")
+        cancel_btn.setObjectName("cancelUninstallBtn")
+        cancel_btn.setFont(QFont("Orbitron", 10, QFont.Bold))
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setStyleSheet("""
+            QPushButton#cancelUninstallBtn {
+                background: #2a2d35;
+                border: none;
+                color: white;
+                border-radius: 6px;
+                padding: 8px 18px;
+            }
+            QPushButton#cancelUninstallBtn:hover { background: #3a3d45; }
+        """)
+        cancel_btn.clicked.connect(dialog.reject)
+
+        uninstall_btn = AnimatedButton("Uninstall Selected")
+        uninstall_btn.setObjectName("confirmUninstallBtn")
+        uninstall_btn.setFont(QFont("Orbitron", 10, QFont.Bold))
+        uninstall_btn.setCursor(Qt.PointingHandCursor)
+        uninstall_btn.setStyleSheet("""
+            QPushButton#confirmUninstallBtn {
+                background: #c82828;
+                border: none;
+                color: white;
+                border-radius: 6px;
+                padding: 8px 18px;
+            }
+            QPushButton#confirmUninstallBtn:hover { background: #e63232; }
+        """)
+        uninstall_btn.clicked.connect(dialog.accept)
+
+        btn_layout.addStretch()
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(uninstall_btn)
+        dlg_layout.addLayout(btn_layout)
+
+        if dialog.exec() != QDialog.Accepted:
             return
 
-        # Perform deletion and collect results
-        removed, failed = [], []
-        for path, label in targets:
-            display_name = label.split("  ")[0]   # strip the parenthesised path for summary
-            try:
-                if path == "SYSTEM_UNINSTALL_UXTU":
-                    import subprocess
-                    # Run WMI uninstall for UXTU MSI silently
-                    ps_cmd = "$app = Get-WmiObject -Class Win32_Product | Where-Object Name -match 'Universal x86 Tuning Utility'; if ($app) { $app.Uninstall() }"
-                    subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], creationflags=subprocess.CREATE_NO_WINDOW)
-                    
-                    # Revo-style cleanup: remove leftovers in Program Files, AppData, and Registry
-                    import shutil
-                    import glob
-                    
-                    # 1. Program Files
-                    uxtu_leftover = r"C:\Program Files\JamesCJ60\Universal x86 Tuning Utility"
-                    if os.path.exists(uxtu_leftover):
-                        shutil.rmtree(uxtu_leftover, ignore_errors=True)
-                        
-                    # 2. AppData Local
-                    local_appdata = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'JamesCJ60')
-                    if os.path.exists(local_appdata):
-                        shutil.rmtree(local_appdata, ignore_errors=True)
-                        
-                    # 3. Registry (HKCU\Software\JamesCJ60)
-                    ps_reg = "Remove-Item -Path 'HKCU:\\Software\\JamesCJ60' -Recurse -Force -ErrorAction SilentlyContinue"
-                    subprocess.run(['powershell', '-NoProfile', '-Command', ps_reg], creationflags=subprocess.CREATE_NO_WINDOW)
-                    
-                    # 4. Prefetch cache (requires Admin, ignores if fails)
+        # Filter targets to only checked checkboxes
+        selected_targets = [(path, label) for cb, path, label in checkbox_map if cb.isChecked()]
+        if not selected_targets:
+            return
+
+        targets = selected_targets
+
+        # Move deletion logic to a background thread to prevent UI freezing (especially from WMI UXTU uninstaller)
+        from PySide6.QtCore import QThread, Signal as QSignal
+        from PySide6.QtWidgets import QProgressDialog
+
+        class _UninstallWorker(QThread):
+            finished_signal = QSignal(list, list)
+
+            def __init__(self, targets):
+                super().__init__()
+                self.targets = targets
+
+            def run(self):
+                removed, failed = [], []
+                import subprocess, shutil, glob, os
+                for path, label in self.targets:
+                    display_name = label.split("  ")[0]
                     try:
-                        prefetch_files = glob.glob(r"C:\Windows\Prefetch\UNIVERSAL X86 TUNING UTILITY*.pf")
-                        for pf in prefetch_files:
-                            os.remove(pf)
-                    except Exception:
-                        pass
-                        
-                    removed.append(display_name)
-                    continue
+                        if path == "SYSTEM_UNINSTALL_UXTU":
+                            # Use Registry lookup (milliseconds) instead of Win32_Product (minutes)
+                            ps_cmd = (
+                                "$paths = 'HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', "
+                                "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', "
+                                "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'; "
+                                "$app = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'Universal x86 Tuning Utility' }; "
+                                "if ($app -and $app.PSChildName -match '^{') { Start-Process msiexec.exe -ArgumentList \"/x $($app.PSChildName) /qn\" -Wait -NoNewWindow }"
+                            )
+                            subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], creationflags=subprocess.CREATE_NO_WINDOW)
+                            
+                            # Revo-style cleanup: remove leftovers in Program Files, AppData, and Registry
+                            uxtu_leftover = r"C:\Program Files\JamesCJ60\Universal x86 Tuning Utility"
+                            if os.path.exists(uxtu_leftover):
+                                shutil.rmtree(uxtu_leftover, ignore_errors=True)
+                                
+                            local_appdata = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'JamesCJ60')
+                            if os.path.exists(local_appdata):
+                                shutil.rmtree(local_appdata, ignore_errors=True)
+                                
+                            ps_reg = "Remove-Item -Path 'HKCU:\\Software\\JamesCJ60' -Recurse -Force -ErrorAction SilentlyContinue"
+                            subprocess.run(['powershell', '-NoProfile', '-Command', ps_reg], creationflags=subprocess.CREATE_NO_WINDOW)
+                            
+                            try:
+                                prefetch_files = glob.glob(r"C:\Windows\Prefetch\UNIVERSAL X86 TUNING UTILITY*.pf")
+                                for pf in prefetch_files:
+                                    os.remove(pf)
+                            except Exception:
+                                pass
+                                
+                            removed.append(display_name)
+                            continue
 
-                if os.path.isdir(path):
-                    shutil.rmtree(path)
-                else:
-                    os.remove(path)
-                removed.append(display_name)
-            except Exception as e:
-                failed.append(f"{display_name}: {e}")
+                        # Multi-tier robust removal with In-Use Evacuation & Zero-UAC integration
+                        import stat, tempfile, uuid
+                        success = False
 
-        # Clear stored ffprobe_path setting so it no longer references a deleted file
-        if any("FFmpeg" in n for n in removed):
-            self.settings.pop("ffprobe_path", None)
-            self.settings.pop("ffprobe_exe", None)
-            save_settings(self.settings)
+                        # Tier 1: Recursive chmod + rmtree
+                        try:
+                            if os.path.isdir(path):
+                                for root, dirs, files in os.walk(path):
+                                    for d in dirs:
+                                        try: os.chmod(os.path.join(root, d), stat.S_IWRITE)
+                                        except Exception: pass
+                                    for f in files:
+                                        try: os.chmod(os.path.join(root, f), stat.S_IWRITE)
+                                        except Exception: pass
+                                shutil.rmtree(path, ignore_errors=True)
+                            else:
+                                try: os.chmod(path, stat.S_IWRITE)
+                                except Exception: pass
+                                os.remove(path)
+                            success = not os.path.exists(path)
+                        except Exception:
+                            pass
 
-        # Clean up empty tools directory if all managed tools were removed
-        try:
-            from integrations.tools_downloader import TOOLS_DIR
-            if os.path.exists(TOOLS_DIR) and not os.listdir(TOOLS_DIR):
-                os.rmdir(TOOLS_DIR)
-        except Exception:
-            pass
+                        # Tier 2: In-Use File Evacuation (Move locked/mapped files out to %TEMP% so directory can be removed)
+                        if not success and os.path.exists(path):
+                            try:
+                                if os.path.isdir(path):
+                                    for root, dirs, files in os.walk(path, topdown=False):
+                                        for f in files:
+                                            f_path = os.path.join(root, f)
+                                            try:
+                                                os.chmod(f_path, stat.S_IWRITE)
+                                                os.remove(f_path)
+                                            except Exception:
+                                                try:
+                                                    os.rename(f_path, os.path.join(tempfile.gettempdir(), f"{f}.del_{uuid.uuid4().hex[:4]}"))
+                                                except Exception:
+                                                    pass
+                                    shutil.rmtree(path, ignore_errors=True)
+                                else:
+                                    try:
+                                        os.rename(path, os.path.join(tempfile.gettempdir(), f"{os.path.basename(path)}.del_{uuid.uuid4().hex[:4]}"))
+                                    except Exception:
+                                        pass
+                                success = not os.path.exists(path)
+                            except Exception:
+                                pass
 
-        # Build and show result summary
-        msg = ""
-        if removed:
-            msg += "Successfully removed:\n" + "\n".join(f"  - {n}" for n in removed)
-        if failed:
-            msg += "\n\nFailed to remove:\n" + "\n".join(f"  - {n}" for n in failed)
+                        # Tier 3: Zero-UAC Service Deletion
+                        if not success and os.path.exists(path):
+                            try:
+                                from utils.drive_utils import _send_ipc_command
+                                res = _send_ipc_command({"action": "delete_path", "path": path})
+                                success = not os.path.exists(path)
+                            except Exception:
+                                pass
 
-        QMessageBox.information(self, "Uninstall Complete", msg.strip())
+                        # Tier 4: Windows Shell Forced Deletion
+                        if not success and os.path.exists(path):
+                            try:
+                                if os.path.isdir(path):
+                                    subprocess.run(['cmd.exe', '/c', f'attrib -r -s -h "{path}\\*" /s /d & rd /s /q "{path}"'],
+                                                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                                else:
+                                    subprocess.run(['cmd.exe', '/c', f'attrib -r -s -h "{path}" & del /f /q "{path}"'],
+                                                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                                success = not os.path.exists(path)
+                            except Exception:
+                                pass
 
-        # Trigger live panel reload for CPU if UXTU or RyzenAdj was removed
-        if any("UXTU" in n or "RyzenAdj" in n for n in removed):
-            self._reload_cpu_panel()
+                        if not os.path.exists(path):
+                            removed.append(display_name)
+                        else:
+                            failed.append(f"{display_name}: Access is denied (In use or locked)")
+                    except Exception as e:
+                        failed.append(f"{display_name}: {e}")
+
+                self.finished_signal.emit(removed, failed)
+
+        progress = QProgressDialog("Uninstalling selected tools. Please wait, this may take a few minutes...", None, 0, 0, self)
+        progress.setWindowTitle("Uninstalling...")
+        progress.setWindowModality(Qt.WindowModal)
+        apply_custom_titlebar(progress, "#000000")
+
+        self._uninstall_worker = _UninstallWorker(targets)
+
+        def on_uninstall_finished(removed, failed):
+            progress.accept()
             
-        # Trigger live panel reload for HELXTATS if LHM or HWiNFO was removed.
-        if any("LibreHardwareMonitor" in n or "HWiNFO" in n for n in removed):
-            self._reload_hardware_panel()
-        # Trigger live panel reload for HELXAIC if FFprobe/FFmpeg or VLC was removed.
-        if any("FFprobe" in n or "FFmpeg" in n or "VLC" in n for n in removed):
-            self._reload_music_panel()
+            # Clear stored ffprobe_path setting so it no longer references a deleted file
+            if any("FFmpeg" in n for n in removed):
+                self.settings.pop("ffprobe_path", None)
+                self.settings.pop("ffprobe_exe", None)
+                save_settings(self.settings)
+
+            # Clean up empty tools directory if all managed tools were removed
+            try:
+                from integrations.tools_downloader import TOOLS_DIR
+                if os.path.exists(TOOLS_DIR) and not os.listdir(TOOLS_DIR):
+                    os.rmdir(TOOLS_DIR)
+            except Exception:
+                pass
+
+            # Build and show result summary
+            msg = ""
+            if removed:
+                msg += "Successfully removed:\n" + "\n".join(f"  - {n}" for n in removed)
+            if failed:
+                msg += "\n\nFailed to remove:\n" + "\n".join(f"  - {n}" for n in failed)
+
+            # Trigger live panel reload for CPU if UXTU or RyzenAdj was removed
+            if any("UXTU" in n or "RyzenAdj" in n for n in removed):
+                self._reload_cpu_panel()
+                
+            # Trigger live panel reload for HELXTATS if LHM or HWiNFO was removed.
+            if any("LibreHardwareMonitor" in n or "HWiNFO" in n for n in removed):
+                self._reload_hardware_panel()
+                
+            # Trigger live panel reload for HELXAIC if FFprobe/FFmpeg was removed.
+            if any("FFprobe" in n or "FFmpeg" in n for n in removed):
+                self._reload_music_panel()
+
+            from integrations.tools_downloader import HELXAIDMessagePanel
+            HELXAIDMessagePanel("Uninstall Complete", msg.strip(), self, is_error=bool(failed and not removed))
+
+        self._uninstall_worker.finished_signal.connect(on_uninstall_finished)
+        self._uninstall_worker.start()
+        progress.exec()
 
     def check_for_updates(self):
         """Check for application updates."""
@@ -12829,6 +13357,22 @@ First Played: {first_played_formatted}
                 self._macro_bridge.shutdown()
             except Exception as e:
                 print(f"Error shutting down macro bridge: {e}")
+
+        # Shutdown UniversalMacroHook process
+        if hasattr(self, '_macro_hook_sock'):
+            try:
+                import json
+                print("[HELXAID] Shutting down UniversalMacroHook process...")
+                payload = json.dumps({'cmd': 'exit'}).encode('utf-8')
+                self._macro_hook_sock.sendto(payload, ('127.0.0.1', 48123))
+                self._macro_hook_sock.close()
+            except Exception:
+                pass
+        if hasattr(self, '_macro_hook_proc') and self._macro_hook_proc:
+            try:
+                self._macro_hook_proc.terminate()
+            except Exception:
+                pass
                 
         # Forcefully terminate any orphaned hardware polling processes to prevent PyInstaller _MEI locking
         try:
@@ -16735,18 +17279,6 @@ if __name__ == "__main__":
                 print("[Init] Zero-UAC Service is already running.")
             else:
                 update_splash(70, "Initializing Zero-UAC Service...")
-                # Auto-download RyzenAdj if missing (AMD CPUs only)
-                try:
-                    from integrations.cpu_controller import is_amd_cpu
-                    if is_amd_cpu():
-                        from integrations.tools_downloader import is_ryzenadj_available, download_ryzenadj
-                        if not is_ryzenadj_available():
-                            print("[Init] AMD CPU detected and RyzenAdj missing for Zero-UAC on startup, downloading...")
-                            download_ryzenadj()
-                except Exception as dl_err:
-                    print(f"[Init] Auto-download RyzenAdj error: {dl_err}")
-
-
                 import ctypes
                 if getattr(sys, 'frozen', False):
                     exe_path = sys.executable

@@ -23,7 +23,7 @@ from PySide6.QtCore import Qt, Signal, QTimer, QPoint, Slot, QMetaObject, QPrope
 # FurycubeHID is NOT imported here -- ButtonAction is lazy-imported where needed (line ~2989).
 # Loading this module at import time pulled in the hidapi DLL, adding ~200ms to startup.
 from macro_system.integration.hardware_manager import get_hardware_manager
-from AnimatedButton import AnimatedCheckBox, FadeHoverButton
+from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton
 
 
 def apply_custom_titlebar(widget, color_hex="#000000"):
@@ -3384,7 +3384,7 @@ class MSLLHOOKSTRUCT(ctypes.Structure):
         ("dwExtraInfo", ctypes.c_void_p)
     ]
 
-CMPFUNC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+CMPFUNC = ctypes.WINFUNCTYPE(wintypes.LPARAM, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
 
 class LowLevelMouseHook(QThread):
     mouse_event_signal = Signal(str, str, int)
@@ -4462,6 +4462,104 @@ class MacroSettingsPanel(QWidget):
         # Auto-initialize and start macro bridge (deferred by 1.5s for zero-latency page switch)
         QTimer.singleShot(1500, self._auto_init_macro_system)
         
+        # Initialize AutoHotkey (AHK) Plugin Engine Manager
+        try:
+            from AHKPluginManager import AHKPluginManager
+            self._ahk_manager = AHKPluginManager()
+            print("[HELXAIRO] AHKPluginManager initialized successfully.")
+        except Exception as e:
+            print(f"[HELXAIRO] Failed to initialize AHKPluginManager: {e}")
+            self._ahk_manager = None
+        
+        # Universal OS Macro Hook IPC (UDP Socket to port 48123)
+        # Reuse the parent GameLauncher's hook socket if available,
+        # otherwise create our own as fallback.
+        import socket
+        import json
+        parent = self.parent()
+        while parent and not hasattr(parent, '_macro_hook_sock'):
+            parent = parent.parent() if hasattr(parent, 'parent') and callable(parent.parent) else None
+        
+        if parent and hasattr(parent, '_macro_hook_sock'):
+            self._macro_sock = parent._macro_hook_sock
+            print("[HELXAIRO] Using launcher's macro hook socket (hook already running).")
+        else:
+            # Fallback: create own socket and start hook (shouldn't happen normally)
+            self._macro_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._macro_heartbeat_timer = QTimer(self)
+            self._macro_heartbeat_timer.setInterval(1000)
+            self._macro_heartbeat_timer.timeout.connect(self._send_macro_heartbeat)
+            self._macro_heartbeat_timer.start()
+            self._start_universal_macro_engine()
+            print("[HELXAIRO] Fallback: Started own macro hook engine.")
+        
+    def _start_universal_macro_engine(self):
+        """Starts the isolated python subprocess for Universal Macro Hooking."""
+        import subprocess
+        import os
+        import sys
+        
+        script_path = os.path.join(os.path.dirname(__file__), "UniversalMacroHook.py")
+        
+        # Kill any existing zombie hook processes that might still be bound to the UDP port
+        try:
+            import socket, json
+            kill_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            kill_sock.sendto(json.dumps({'cmd': 'exit'}).encode('utf-8'), ('127.0.0.1', 48123))
+            kill_sock.close()
+            import time
+            time.sleep(0.5)  # Wait for old hook to cleanly unhook and exit
+        except Exception:
+            pass
+        
+        # Zero-UAC Integration: Attempt to create and run an elevated Scheduled Task
+        try:
+            from utils.drive_utils import send_service_command
+            import ctypes
+            
+            # Use PowerShell to dynamically create a Scheduled Task running as the current user but with Highest Privileges (Admin).
+            # This completely bypasses UAC if the Zero-UAC Service is active.
+            user_name = os.environ.get("USERNAME", "")
+            task_name = "HELXAIRO_MacroHook"
+            
+            # The XML configuration ensures it runs in Session 1 (Interactive) and doesn't get hidden in Session 0.
+            # However, schtasks /Create /RU %USERNAME% /RL HIGHEST is easier.
+            schtasks_end = f'schtasks.exe /End /TN "{task_name}"'
+            schtasks_create = f'schtasks.exe /Create /TN "{task_name}" /TR "\\"\"{sys.executable}\\\" \\\"{script_path}\\\"\\"" /RU "{user_name}" /RL HIGHEST /F'
+            schtasks_run = f'schtasks.exe /Run /TN "{task_name}"'
+            
+            res = send_service_command({
+                "action": "exec_batch_commands", 
+                "commands": [schtasks_end, schtasks_create, schtasks_run]
+            })
+            
+            if isinstance(res, dict) and res.get("status") == "success":
+                print("[HELXAIRO] Spawned UniversalMacroHook process via Zero-UAC Service (Elevated!).")
+                return
+            else:
+                print(f"[HELXAIRO] Zero-UAC Service not available or failed: {res}. Falling back to standard spawn.")
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"[HELXAIRO] Zero-UAC task launch error: {e}")
+            
+        # Fallback to standard subprocess if Zero-UAC is disabled
+        try:
+            CREATE_NO_WINDOW = 0x08000000
+            subprocess.Popen([sys.executable, script_path], creationflags=CREATE_NO_WINDOW)
+            print("[HELXAIRO] Spawned UniversalMacroHook process (Standard User).")
+        except Exception as e:
+            print(f"[HELXAIRO] Failed to spawn UniversalMacroHook: {e}")
+
+    def _send_macro_heartbeat(self):
+        """Send ping to the isolated macro subprocess to keep it alive."""
+        try:
+            import json
+            payload = json.dumps({'cmd': 'ping'}).encode('utf-8')
+            self._macro_sock.sendto(payload, ('127.0.0.1', 48123))
+        except Exception:
+            pass
+        
     def set_bridge(self, bridge):
         """Set the macro bridge and load data."""
         self._bridge = bridge
@@ -4791,8 +4889,66 @@ class MacroSettingsPanel(QWidget):
         """)
         self._refresh_btn.clicked.connect(self._on_refresh_connection_clicked)
         header_layout.addWidget(self._refresh_btn)
-        
         layout.addLayout(header_layout)
+        
+        # ===== AHK MISSING ENGINE BANNER =====
+        self._ahk_banner_container = QWidget()
+        self._ahk_banner_container.setObjectName("ahkBannerContainer")
+        self._ahk_banner_container.setStyleSheet("""
+            QWidget#ahkBannerContainer {
+                background: rgba(255, 91, 6, 0.08);
+                border: 1px solid rgba(255, 91, 6, 0.35);
+                border-radius: 8px;
+            }
+        """)
+        ahk_banner_layout = QHBoxLayout(self._ahk_banner_container)
+        ahk_banner_layout.setContentsMargins(14, 8, 14, 8)
+        ahk_banner_layout.setSpacing(12)
+
+        # Warning icon/title
+        ahk_title = QLabel("AHK Engine Missing")
+        ahk_title.setObjectName("ahkBannerTitle")
+        ahk_title.setFont(QFont("Orbitron", 12, QFont.Bold))
+        ahk_title.setStyleSheet("color: #FF9800;")
+        ahk_banner_layout.addWidget(ahk_title)
+
+        # Description text
+        self._ahk_status_label = QLabel("AutoHotkey engine is not installed. Download now to enable OS-level macro bindings.")
+        self._ahk_status_label.setObjectName("ahkStatusLabel")
+        self._ahk_status_label.setFont(QFont("Orbitron", 11))
+        self._ahk_status_label.setStyleSheet("color: #cccccc;")
+        ahk_banner_layout.addWidget(self._ahk_status_label, 1)
+
+        # Download button
+        self._ahk_download_btn = AnimatedButton("Download AHK Engine")
+        self._ahk_download_btn.setObjectName("ahkDownloadBtn")
+        self._ahk_download_btn.setFont(QFont("Orbitron", 11, QFont.Bold))
+        self._ahk_download_btn.setCursor(Qt.PointingHandCursor)
+        self._ahk_download_btn.setStyleSheet("""
+            QPushButton#ahkDownloadBtn {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FF8A06);
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 16px;
+                font-family: 'Orbitron', sans-serif;
+                font-weight: bold;
+            }
+            QPushButton#ahkDownloadBtn:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7328, stop:1 #FFA028);
+            }
+            QPushButton#ahkDownloadBtn:disabled {
+                background: rgba(100, 100, 100, 0.4);
+                color: #888888;
+            }
+        """)
+        self._ahk_download_btn.clicked.connect(self._on_download_ahk_clicked)
+        ahk_banner_layout.addWidget(self._ahk_download_btn)
+
+        layout.addWidget(self._ahk_banner_container)
+        
+        # Check initial AHK status
+        QTimer.singleShot(500, self._check_ahk_banner_status)
         
         # ===== CUSTOM TAB BAR (HELXTATS Style) =====
         tab_bar_container = QWidget()
@@ -4989,13 +5145,7 @@ class MacroSettingsPanel(QWidget):
                     act = buttons_menu.addAction(action)
                     act.triggered.connect(lambda checked, b=btn, a=action, idx=btn_idx: (b.setText(f"   {a}"), self._on_button_mapping_changed(idx, a)))
                 
-                # DPI submenu
-                dpi_menu = menu.addMenu("DPI Switch")
-                dpi_menu.setStyleSheet(menu_style)
-                for action in ["DPI Loop", "DPI +", "DPI -"]:
-                    act = dpi_menu.addAction(action)
-                    act.triggered.connect(lambda checked, b=btn, a=action, idx=btn_idx: (b.setText(f"   {a}"), self._on_button_mapping_changed(idx, a)))
-                
+
                 # Scroll submenu
                 scroll_menu = menu.addMenu("Scroll")
                 scroll_menu.setStyleSheet(menu_style)
@@ -5104,6 +5254,153 @@ class MacroSettingsPanel(QWidget):
         self._debounce_spinbox.editingFinished.connect(lambda: (self._debounce_spinbox.clearFocus(), self._on_debounce_changed()))
         
         left_layout.addLayout(db_row)
+        
+        # Anti-Cheat Interference Bypass Toggle
+        left_layout.addSpacing(15)
+        
+        self._anticheat_toggle = QCheckBox("Bypass Anti-Cheat Interference")
+        self._anticheat_toggle.setObjectName("helxairo_antiCheatToggle")
+        self._anticheat_toggle.setToolTip("Bypasses OS software injection flags blocked by Anti-Cheat (Vanguard, EAC, BattEye).")
+        self._anticheat_toggle.setCursor(Qt.PointingHandCursor)
+        self._anticheat_toggle.setStyleSheet("""
+            QCheckBox#helxairo_antiCheatToggle {
+                color: #cccccc;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 500;
+                spacing: 8px;
+                background-color: rgba(25, 27, 33, 0.7);
+                padding: 8px 12px;
+                border-radius: 6px;
+                border: none;
+            }
+            QCheckBox#helxairo_antiCheatToggle:hover {
+                color: #ffffff;
+                background-color: rgba(38, 42, 52, 0.9);
+            }
+            QCheckBox#helxairo_antiCheatToggle::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                background: #2a2d35;
+            }
+            QCheckBox#helxairo_antiCheatToggle::indicator:hover {
+                background: #3a3e48;
+            }
+            QCheckBox#helxairo_antiCheatToggle::indicator:checked {
+                background: #FF5B06;
+            }
+        """)
+        self._anticheat_toggle.toggled.connect(self._on_anticheat_toggle_changed)
+        left_layout.addWidget(self._anticheat_toggle)
+        
+        # Macro Execution Mode Options
+        left_layout.addSpacing(8)
+        
+        execution_mode_label = QLabel("Macro Execution Mode")
+        execution_mode_label.setStyleSheet("color: #888; font-size: 11px;")
+        left_layout.addWidget(execution_mode_label)
+        
+        # Option A
+        self._macro_mode_a = QRadioButton("Option A: Hardware Native (Direct MCU)")
+        self._macro_mode_a.setObjectName("helxairo_macroModeA")
+        self._macro_mode_a.setToolTip("Writes commands directly to mouse internal flash memory (0ms latency, 100% anti-cheat safe, but limited by firmware).")
+        
+        # Option B
+        self._macro_mode_b = QRadioButton("Option B: AutoHotkey (External Plugin)")
+        self._macro_mode_b.setObjectName("helxairo_macroModeB")
+        self._macro_mode_b.setToolTip("Uses AutoHotkey to inject keys. Highly robust but risks detection by strict Anti-Cheats (Vanguard, etc).")
+        
+        # Option C
+        self._macro_mode_c = QRadioButton("Option C: Kernel Driver (Interception)")
+        self._macro_mode_c.setObjectName("helxairo_macroModeC")
+        self._macro_mode_c.setToolTip("Bypasses Anti-Cheat and hardware limits using a custom kernel driver.")
+        
+        radio_style = """
+            QRadioButton {
+                color: #cccccc;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 500;
+                spacing: 8px;
+                background-color: rgba(25, 27, 33, 0.7);
+                padding: 8px 12px;
+                border-radius: 6px;
+                border: none;
+            }
+            QRadioButton:hover {
+                color: #ffffff;
+                background-color: rgba(38, 42, 52, 0.9);
+            }
+            QRadioButton::indicator {
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                background: #2a2d35;
+                border: 1px solid #3a3e48;
+            }
+            QRadioButton::indicator:hover {
+                background: #3a3e48;
+            }
+            QRadioButton::indicator:checked {
+                background: #FF5B06;
+                border: 1px solid #FF5B06;
+            }
+        """
+        
+        self._macro_mode_a.setStyleSheet(radio_style)
+        self._macro_mode_b.setStyleSheet(radio_style)
+        self._macro_mode_c.setStyleSheet(radio_style)
+        
+        self._macro_mode_a.setCursor(Qt.PointingHandCursor)
+        self._macro_mode_b.setCursor(Qt.PointingHandCursor)
+        self._macro_mode_c.setCursor(Qt.PointingHandCursor)
+        
+        self._macro_mode_a.setChecked(True) # Default to Option A
+        
+        self._macro_mode_a.toggled.connect(lambda checked: self._on_macro_execution_mode_changed("Option A") if checked else None)
+        self._macro_mode_b.toggled.connect(lambda checked: self._on_macro_execution_mode_changed("Option B") if checked else None)
+        self._macro_mode_c.toggled.connect(lambda checked: self._on_macro_execution_mode_changed("Option C") if checked else None)
+        
+        left_layout.addWidget(self._macro_mode_a)
+        left_layout.addSpacing(2)
+        left_layout.addWidget(self._macro_mode_b)
+        left_layout.addSpacing(2)
+        left_layout.addWidget(self._macro_mode_c)
+        
+        # Scroll Injection Mode (Sub-Option for Option B)
+        self._scroll_injection_combo = QComboBox()
+        self._scroll_injection_combo.setObjectName("helxairo_scrollInjectionCombo")
+        self._scroll_injection_combo.addItems([
+            "Gaming",
+            "Safe Browsing (Window Message Injection)"
+        ])
+        self._scroll_injection_combo.setToolTip("Select the scroll injection method used by Option B.")
+        self._scroll_injection_combo.setVisible(False) # Hidden by default
+        
+        combo_style = """
+            QComboBox {
+                color: #cccccc;
+                background-color: rgba(25, 27, 33, 0.7);
+                border: 1px solid #3a3e48;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                margin-left: 20px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox:hover {
+                border: 1px solid #FF5B06;
+            }
+        """
+        self._scroll_injection_combo.setStyleSheet(combo_style)
+        self._scroll_injection_combo.currentTextChanged.connect(self._on_scroll_injection_mode_changed)
+        
+        left_layout.addSpacing(4)
+        left_layout.addWidget(self._scroll_injection_combo)
         
         left_layout.addStretch()
         home_main_layout.addWidget(left_column)
@@ -7941,7 +8238,91 @@ class MacroSettingsPanel(QWidget):
         ]
     
 
-    
+    def _check_ahk_banner_status(self):
+        """Check if AutoHotkey is installed and toggle missing engine banner visibility."""
+        try:
+            from integrations.tools_downloader import is_ahk_installed
+            installed = is_ahk_installed()
+        except Exception:
+            installed = False
+
+        if hasattr(self, '_ahk_banner_container'):
+            self._ahk_banner_container.setVisible(not installed)
+
+    def _on_download_ahk_clicked(self):
+        """Handler for clicking the Download AHK Engine button."""
+        if hasattr(self, '_ahk_download_btn'):
+            self._ahk_download_btn.setEnabled(False)
+            self._ahk_download_btn.setText("Downloading...")
+        if hasattr(self, '_ahk_status_label'):
+            self._ahk_status_label.setText("Downloading AutoHotkey v1.1 Portable engine...")
+
+        def _download_thread():
+            try:
+                from integrations.tools_downloader import download_ahk
+                success, res = download_ahk()
+                
+                def _on_done():
+                    if success:
+                        if hasattr(self, '_ahk_status_label'):
+                            self._ahk_status_label.setText("AutoHotkey Engine installed successfully!")
+                        if hasattr(self, '_ahk_banner_container'):
+                            self._ahk_banner_container.setVisible(False)
+                        # Re-initialize AHKPluginManager if needed and sync
+                        try:
+                            from AHKPluginManager import AHKPluginManager
+                            self._ahk_manager = AHKPluginManager()
+                        except Exception:
+                            pass
+                        self._sync_macros_to_hook()
+                    else:
+                        if hasattr(self, '_ahk_status_label'):
+                            self._ahk_status_label.setText(f"Download failed: {res}")
+                        if hasattr(self, '_ahk_download_btn'):
+                            self._ahk_download_btn.setEnabled(True)
+                            self._ahk_download_btn.setText("Retry Download")
+                
+                QTimer.singleShot(0, _on_done)
+            except Exception as e:
+                def _on_err():
+                    if hasattr(self, '_ahk_status_label'):
+                        self._ahk_status_label.setText(f"Download error: {e}")
+                    if hasattr(self, '_ahk_download_btn'):
+                        self._ahk_download_btn.setEnabled(True)
+                        self._ahk_download_btn.setText("Retry Download")
+                QTimer.singleShot(0, _on_err)
+
+        import threading
+        threading.Thread(target=_download_thread, daemon=True).start()
+
+    def _sync_macros_to_hook(self):
+        """Syncs all current button mappings to the AHK Engine and OS Hook after it has initialized."""
+        if not hasattr(self, '_button_mappings'):
+            return
+            
+        self._check_ahk_banner_status()
+
+        # 1. Sync via AutoHotkey (AHK) Plugin Engine
+        if hasattr(self, '_ahk_manager') and self._ahk_manager:
+            try:
+                bypass = getattr(self, '_anticheat_bypass_enabled', False)
+                mappings_dict = {str(i): mapping for i, mapping in enumerate(self._button_mappings)}
+                self._ahk_manager.apply_mappings(mappings_dict, bypass_anticheat=bypass)
+                print(f"[HELXAIRO] Synced Macros to AHK Plugin Engine: {mappings_dict}")
+            except Exception as e:
+                print(f"[HELXAIRO] Failed to sync macro to AHK Plugin Engine: {e}")
+
+        # 2. Legacy Socket Sync (if running)
+        if hasattr(self, '_macro_sock'):
+            import json
+            for i, mapping in enumerate(self._button_mappings):
+                try:
+                    payload = json.dumps({'cmd': 'map', 'btn_name': str(i), 'macro': mapping})
+                    self._macro_sock.sendto(payload.encode('utf-8'), ('127.0.0.1', 48123))
+                    print(f"[HELXAIRO] Synced Startup Macro: Button {i+1} -> {mapping}")
+                except Exception as e:
+                    print(f"[HELXAIRO] Failed to sync macro to Hook: {e}")
+
     # ===== SETTINGS TAB HANDLERS =====
     
     def _on_language_changed(self, text: str):
@@ -8151,6 +8532,9 @@ class MacroSettingsPanel(QWidget):
                 'angle_snap': self._angle_snap_check.isChecked() if hasattr(self, '_angle_snap_check') else False,
                 'motion_sync': self._motion_sync_check.isChecked() if hasattr(self, '_motion_sync_check') else False,
                 'debounce_time': self._debounce_slider.value() if hasattr(self, '_debounce_slider') else 10,
+                'bypass_anti_cheat': self._anticheat_toggle.isChecked() if hasattr(self, '_anticheat_toggle') else False,
+                'hardware_native_scroll': self._hardware_native_toggle.isChecked() if hasattr(self, '_hardware_native_toggle') else False,
+                'pagedown_emulation': self._pagedown_emulation_toggle.isChecked() if hasattr(self, '_pagedown_emulation_toggle') else False,
                 'sensor_mode': self._mode_combo.currentIndex() if hasattr(self, '_mode_combo') else 0,
                 'highest_performance': self._highest_perf_check.isChecked() if hasattr(self, '_highest_perf_check') else False,
                 'perf_time': self._perf_time_combo.currentText() if hasattr(self, '_perf_time_combo') else "1min"
@@ -8209,11 +8593,11 @@ class MacroSettingsPanel(QWidget):
     def _on_button_mapping_changed(self, button_index: int, new_action: str):
         """
         Handle button mapping change from dropdown menu.
-        Saves to local settings AND sends HID command to mouse hardware.
+        Saves to local settings AND sends HID command to mouse hardware OR to OS-Level Hook.
         
         Args:
             button_index: Button index (0-4)
-            new_action: Action name string (e.g., "Left Click", "Right Click", etc.)
+            new_action: Action name string (e.g., "Left Click", "Right Click", "Macro", etc.)
         """
         if not hasattr(self, '_button_mappings'):
             self._button_mappings = self._get_default_button_mappings()
@@ -8222,8 +8606,32 @@ class MacroSettingsPanel(QWidget):
         self._save_helxairo_settings()
         print(f"[HELXAIRO] Button {button_index + 1} mapped to: {new_action}")
         
-        # Send HID command to mouse hardware
+        # Hardware Mapping (Mouse internal flash memory)
         self._send_button_mapping_to_hardware(button_index, new_action)
+        
+        # Update AHK Plugin Engine
+        if hasattr(self, '_ahk_manager') and self._ahk_manager:
+            try:
+                bypass = getattr(self, '_anticheat_bypass_enabled', False)
+                mappings_dict = {str(i): mapping for i, mapping in enumerate(self._button_mappings)}
+                self._ahk_manager.apply_mappings(mappings_dict, bypass_anticheat=bypass)
+                print(f"[HELXAIRO] Updated AHK Plugin Engine with new button mappings.")
+            except Exception as e:
+                print(f"[HELXAIRO] Failed to update AHK Plugin Engine: {e}")
+
+        # Legacy Universal OS Macro Mapping Socket
+        try:
+            import json
+            btn_name = str(button_index)
+            payload = json.dumps({
+                'cmd': 'map', 
+                'btn_name': btn_name, 
+                'macro': new_action
+            }).encode('utf-8')
+            if hasattr(self, '_macro_sock'):
+                self._macro_sock.sendto(payload, ('127.0.0.1', 48123))
+        except Exception as e:
+            print(f"[HELXAIRO] Failed to send macro mapping to Hook Engine: {e}")
     
     def _on_debounce_changed(self):
         """Handle debounce time slider change."""
@@ -8238,6 +8646,87 @@ class MacroSettingsPanel(QWidget):
             print(f"[HELXAIRO] Debounce time set to {ms}ms")
         except Exception as e:
             print(f"[HELXAIRO] Failed to set debounce: {e}")
+
+    def _on_anticheat_toggle_changed(self, checked: bool):
+        """Handle Anti-Cheat Interference Bypass toggle."""
+        import sys
+        print(f"[TOGGLE-DEBUG] Anti-Cheat Bypass Mode changed -> {checked}")
+        sys.stdout.flush()
+        self._anticheat_bypass_enabled = checked
+        self._save_helxairo_settings()
+
+        if hasattr(self, '_ahk_manager') and self._ahk_manager:
+            try:
+                mappings_dict = {str(i): mapping for i, mapping in enumerate(self._button_mappings)}
+                self._ahk_manager.apply_mappings(mappings_dict, bypass_anticheat=checked)
+                print(f"[HELXAIRO] Applied Anti-Cheat Bypass ({checked}) to AHK Plugin Engine.")
+            except Exception as e:
+                print(f"[HELXAIRO] Failed to apply Anti-Cheat Bypass to AHK: {e}")
+
+        try:
+            import json
+            payload = json.dumps({
+                'cmd': 'set_anticheat_bypass',
+                'enabled': checked
+            }).encode('utf-8')
+            if hasattr(self, '_macro_sock'):
+                self._macro_sock.sendto(payload, ('127.0.0.1', 48123))
+            print(f"[HELXAIRO] Anti-Cheat Bypass Mode set to: {checked}")
+            sys.stdout.flush()
+        except Exception as e:
+            print(f"[HELXAIRO] Failed to send Anti-Cheat setting to Hook Engine: {e}")
+
+    def _on_macro_execution_mode_changed(self, mode_str: str):
+        """Handle Macro Execution Mode Options (A, B, C) toggle."""
+        import sys
+        print(f"[TOGGLE-DEBUG] Macro Execution Mode changed -> {mode_str}")
+        print(f"[HELXAIRO] {mode_str} triggered")
+        sys.stdout.flush()
+        
+        self._save_helxairo_settings()
+        
+        # Show sub-options ONLY if Option B is selected (DISABLED FOR AHK)
+        if mode_str == "Option B":
+            self._scroll_injection_combo.setVisible(False)
+        else:
+            self._scroll_injection_combo.setVisible(False)
+        
+        # Re-apply all button mappings to hardware if Option A is chosen
+        if mode_str == "Option A":
+            if hasattr(self, '_button_mappings'):
+                for i, mapping in enumerate(self._button_mappings):
+                    print(f"[TOGGLE-DEBUG] Re-applying Button {i+1} to HW -> {mapping} (Hardware Native: True)")
+                    sys.stdout.flush()
+                    self._send_button_mapping_to_hardware(i, mapping)
+                    
+        # Send mode selection to hook engine
+        try:
+            import json
+            payload = json.dumps({
+                'cmd': 'set_macro_execution_mode',
+                'mode': mode_str
+            }).encode('utf-8')
+            if hasattr(self, '_macro_sock'):
+                self._macro_sock.sendto(payload, ('127.0.0.1', 48123))
+        except Exception as e:
+            print(f"[HELXAIRO] Failed to send Macro Execution Mode setting to Hook Engine: {e}")
+
+    def _on_scroll_injection_mode_changed(self, mode_str: str):
+        """Handle Scroll Injection Mode (Gaming / Safe Browsing)."""
+        import sys
+        print(f"[TOGGLE-DEBUG] Scroll Injection Mode changed -> {mode_str}")
+        sys.stdout.flush()
+        
+        try:
+            import json
+            payload = json.dumps({
+                'cmd': 'set_scroll_injection_mode',
+                'mode': mode_str
+            }).encode('utf-8')
+            if hasattr(self, '_macro_sock'):
+                self._macro_sock.sendto(payload, ('127.0.0.1', 48123))
+        except Exception as e:
+            print(f"[HELXAIRO] Failed to send Scroll Injection Mode setting to Hook Engine: {e}")
 
     def _on_sensor_mode_changed(self, index: int):
         """Handle sensor mode change."""
@@ -8539,15 +9028,28 @@ class MacroSettingsPanel(QWidget):
 
     def _send_button_mapping_to_hardware(self, button_index: int, action_name: str):
         """Send button mapping command to manager queue."""
-        action_map = {
-            "Left Click": 10, # Action codes... reduced for brevity
-            # ... (mapping uses ButtonAction enums internally in manager if we pass names? 
-            # No, let's keep it simple and pass the code directly)
-        }
-        # Note: Re-using the logic from _send_button_mapping_to_hardware
-        # Mapping name to code...
-        from FurycubeHID import ButtonAction
         
+        # Certain hardware firmwares (like Furycube) have corrupted memory addresses for Scroll/Media,
+        # which causes them to dual-output or output completely wrong keys (e.g. Backward).
+        # For these, we force the hardware to output its default physical click, and let our Universal OS Hook
+        # do the heavy lifting of injecting the requested action.
+        SOFTWARE_ONLY_ACTIONS = {
+            "Scroll Up", "Scroll Down", "Scroll Left", "Scroll Right",
+            "Play/Pause", "Next Track", "Prev Track", "Stop", "Mute", "Volume +", "Volume -",
+            "Macro", "Combo Key", "Fire Key"
+        }
+        
+        is_hw_native = hasattr(self, '_hardware_native_toggle') and self._hardware_native_toggle.isChecked()
+        
+        if action_name in SOFTWARE_ONLY_ACTIONS:
+            if is_hw_native and action_name in ("Scroll Up", "Scroll Down"):
+                pass  # Allow direct MCU hardware flash write for Scroll Up/Down!
+            else:
+                DEFAULT_MAPPING = ["Left Click", "Right Click", "Middle Click", "Forward", "Backward", "DPI Loop"]
+                if button_index < len(DEFAULT_MAPPING):
+                    action_name = DEFAULT_MAPPING[button_index]
+                
+        from FurycubeHID import ButtonAction
         m = {
             "Left Click": ButtonAction.LEFT_CLICK, "Right Click": ButtonAction.RIGHT_CLICK,
             "Wheel Click": ButtonAction.MIDDLE_CLICK, "Middle Click": ButtonAction.MIDDLE_CLICK,
@@ -8668,6 +9170,11 @@ class MacroSettingsPanel(QWidget):
                         self._button_mapping_btns[i].setText(f"   {mapping}")
                         # Sync to hardware
                         self._send_button_mapping_to_hardware(i, mapping)
+                        
+            # Deferred sync to Universal OS Hook to ensure socket is initialized and Hook process is listening
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(2000, self._sync_macros_to_hook)
+            
             print(f"[TIMING] Button mappings done: +{(_t.perf_counter()-_t0)*1000:.0f}ms")
 
             # Apply Saved DPI Effect Settings
@@ -8727,6 +9234,24 @@ class MacroSettingsPanel(QWidget):
                         # Label update handled by signal
                         
                     self._hw_manager.enqueue('set_debounce_time', val)
+
+                # Anti-Cheat Interference Bypass
+                if 'bypass_anti_cheat' in s and hasattr(self, '_anticheat_toggle'):
+                    ac_val = bool(s['bypass_anti_cheat'])
+                    self._anticheat_toggle.setChecked(ac_val)
+                    self._on_anticheat_toggle_changed(ac_val)
+
+                # Hardware Native Scroll Mode (Option A)
+                if 'hardware_native_scroll' in s and hasattr(self, '_hardware_native_toggle'):
+                    hw_val = bool(s['hardware_native_scroll'])
+                    self._hardware_native_toggle.setChecked(hw_val)
+                    self._on_hardware_native_toggle_changed(hw_val)
+
+                # PageDown Key Emulation Mode (Option D)
+                if 'pagedown_emulation' in s and hasattr(self, '_pagedown_emulation_toggle'):
+                    pg_val = bool(s['pagedown_emulation'])
+                    self._pagedown_emulation_toggle.setChecked(pg_val)
+                    self._on_pagedown_emulation_toggle_changed(pg_val)
 
                 # Sensor Mode
                 if 'sensor_mode' in s and hasattr(self, '_mode_combo'):
@@ -8943,6 +9468,12 @@ class MacroSettingsPanel(QWidget):
         
     def _auto_init_macro_system(self):
         """Auto-initializing and start macro system on panel load."""
+        if not hasattr(self, 'active_list'):
+            # The UI builder _build_remaining_tabs might not have finished yet, retry soon
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(100, self._auto_init_macro_system)
+            return
+            
         try:
             import time as _t; _s = _t.perf_counter()
             print("[TIMING] _auto_init_macro_system START")

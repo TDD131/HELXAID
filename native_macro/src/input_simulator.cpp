@@ -209,6 +209,19 @@ void InputSimulator::mouseScroll(int delta, bool horizontal) {
   sendInputs(&input, 1);
 }
 
+void InputSimulator::scrollWindow(int delta, bool horizontal) {
+  POINT pt;
+  if (GetCursorPos(&pt)) {
+    HWND hwnd = WindowFromPoint(pt);
+    if (hwnd) {
+      UINT msg = horizontal ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL;
+      WPARAM wParam = MAKEWPARAM(0, delta);
+      LPARAM lParam = MAKELPARAM(pt.x, pt.y);
+      PostMessage(hwnd, msg, wParam, lParam);
+    }
+  }
+}
+
 uint16_t InputSimulator::getVkCode(const std::string &key) const {
   std::string lowerKey = key;
   std::transform(lowerKey.begin(), lowerKey.end(), lowerKey.begin(), ::tolower);

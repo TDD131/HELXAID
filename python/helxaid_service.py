@@ -840,6 +840,35 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                         try: os.remove(bat_path)
                         except OSError: pass
 
+            elif action == "delete_path":
+                target_path = data.get("path")
+                if not target_path or not os.path.exists(target_path):
+                    return {"status": "success", "message": "Path does not exist"}
+                try:
+                    import stat, tempfile, uuid
+                    if os.path.isdir(target_path):
+                        for root, dirs, files in os.walk(target_path, topdown=False):
+                            for f in files:
+                                f_path = os.path.join(root, f)
+                                try:
+                                    os.chmod(f_path, stat.S_IWRITE)
+                                    os.remove(f_path)
+                                except Exception:
+                                    try:
+                                        os.rename(f_path, os.path.join(tempfile.gettempdir(), f"{f}.del_{uuid.uuid4().hex[:4]}"))
+                                    except Exception:
+                                        pass
+                        subprocess.run(['cmd.exe', '/c', f'attrib -r -s -h "{target_path}\\*" /s /d & rd /s /q "{target_path}"'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    else:
+                        try:
+                            os.chmod(target_path, stat.S_IWRITE)
+                            os.remove(target_path)
+                        except Exception:
+                            os.rename(target_path, os.path.join(tempfile.gettempdir(), f"{os.path.basename(target_path)}.del_{uuid.uuid4().hex[:4]}"))
+                    return {"status": "success", "removed": not os.path.exists(target_path)}
+                except Exception as e:
+                    return {"status": "error", "message": str(e)}
+
             elif action == "ping":
                 return {"status": "success", "message": "pong"}
 

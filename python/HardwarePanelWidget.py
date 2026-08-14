@@ -7685,10 +7685,9 @@ class HardwarePanelWidget(QWidget):
                 note = "LibreHardwareMonitor requires running as Administrator for best results."
             
             # Show progress dialog
-            progress = QProgressDialog(f"Downloading {tool_name}...", "Cancel", 0, 100, self)
-            progress.setWindowTitle(f"Installing {tool_name}")
-            progress.setWindowModality(Qt.WindowModal)
-            progress.setMinimumDuration(0)
+            from integrations.tools_downloader import HELXAIDProgressDialog
+            progress = HELXAIDProgressDialog(f"Installing {tool_name}", "Cancel", 0, 100, self)
+            progress.set_status(f"Downloading {tool_name}...")
             progress.show()
             
             # State for thread communication
@@ -7717,9 +7716,7 @@ class HardwarePanelWidget(QWidget):
                 if progress.wasCanceled():
                     break
                 if state["total"] > 0:
-                    percent = int((state["downloaded"] / state["total"]) * 100)
-                    progress.setValue(percent)
-                    progress.setLabelText(f"Downloading... {state['downloaded'] // 1024} KB / {state['total'] // 1024} KB")
+                    progress.set_progress(state["downloaded"], state["total"])
                 time.sleep(0.05)
             
             progress.close()
@@ -7921,10 +7918,9 @@ class HardwarePanelWidget(QWidget):
             download_func = download_librehwmon if tool == "lhm" else download_hwinfo
             
             # Show progress dialog
-            progress = QProgressDialog(f"Downloading {tool_name}...", "Cancel", 0, 100, self)
-            progress.setWindowTitle(f"Installing {tool_name}")
-            progress.setWindowModality(Qt.WindowModal)
-            progress.setMinimumDuration(0)
+            from integrations.tools_downloader import HELXAIDProgressDialog
+            progress = HELXAIDProgressDialog(f"Installing {tool_name}", "Cancel", 0, 100, self)
+            progress.set_status(f"Downloading {tool_name}...")
             progress.show()
             
             # Shared state for thread communication
