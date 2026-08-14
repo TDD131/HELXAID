@@ -906,6 +906,51 @@ try:
             except Exception as e:
                 print(f"[Taskbar ERROR] Could not update play state: {e}")
         
+        def set_buttons_visible(self, visible: bool, target_hwnd=None):
+            """Hide or show taskbar thumbnail buttons dynamically."""
+            if not self.taskbar or not self.buttons_added:
+                return
+            
+            try:
+                if target_hwnd is None:
+                    target_hwnd = self.hwnd
+                    
+                flags = THBF_ENABLED if visible else THBF_HIDDEN
+                
+                buttons = (THUMBBUTTON * 3)()
+                
+                # Button 0: Prev
+                buttons[0].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
+                buttons[0].iId = BUTTON_PREV
+                buttons[0].hIcon = self.icon_prev
+                buttons[0].szTip = "Previous"
+                buttons[0].dwFlags = flags
+                
+                # Button 1: Play/Pause
+                buttons[1].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
+                buttons[1].iId = BUTTON_PLAYPAUSE
+                buttons[1].hIcon = self.icon_pause if self._is_playing else self.icon_play
+                buttons[1].szTip = "Pause" if self._is_playing else "Play"
+                buttons[1].dwFlags = flags
+                
+                # Button 2: Next
+                buttons[2].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
+                buttons[2].iId = BUTTON_NEXT
+                buttons[2].hIcon = self.icon_next
+                buttons[2].szTip = "Next"
+                buttons[2].dwFlags = flags
+                
+                vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
+                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 30)).contents
+                
+                ThumbBarUpdateButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
+                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(vtable_ptr[16])
+                
+                ThumbBarUpdateButtons(self.taskbar, target_hwnd, 3, buttons)
+                print(f"[Taskbar DEBUG] set_buttons_visible({visible}) on HWND {hex(target_hwnd)}", flush=True)
+            except Exception as e:
+                print(f"[Taskbar ERROR] Could not update button visibility: {e}")
+        
         def handle_button_click(self, button_id):
             """Handle a button click from WM_COMMAND."""
             print(f"[Taskbar DEBUG] handle_button_click called with id={button_id}", flush=True)
@@ -2021,7 +2066,8 @@ DEFAULT_SETTINGS = {
     "minimize_to_tray": True,
     "confirm_on_exit": True,
     "developer_mode": False,
-    "calculate_page_initialize": False
+    "calculate_page_initialize": False,
+    "calculate_tab_initialize": False
 }
 
 def load_settings():
@@ -4552,6 +4598,79 @@ class PageInitProfilerWindow(QWidget):
         main_layout.addLayout(btn_layout)
 
 
+class TabInitProfilerWindow(QWidget):
+    """
+    Standalone Top-Level Window Pop-up for Tab Initialization Latency Profiling.
+    Pops up as a new independent OS window when navigating between sub-tabs.
+    
+    Component Name: TabInitProfilerWindow
+    """
+    def __init__(self, tab_name: str, elapsed_ms: float):
+        super().__init__(None)  # Top-level standalone OS window
+        self.setObjectName("TabInitProfilerWindow")
+        self.setWindowTitle("Tab Initialization Profiler")
+        self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
+        self.setFixedSize(420, 210)
+        self.setStyleSheet("background-color: #12141A; color: #FFFFFF; border: 1px solid #FF5B06; border-radius: 10px;")
+        
+        # Apply Windows 11 custom title bar color (#000000)
+        apply_custom_titlebar(self, "#000000")
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 18, 20, 18)
+        main_layout.setSpacing(10)
+        
+        title_lbl = QLabel("[Profiler] Tab Initialization")
+        title_lbl.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 15px; font-weight: bold; color: #FFFFFF; border: none;")
+        main_layout.addWidget(title_lbl)
+        
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("background-color: rgba(255, 91, 6, 0.4); border: none; max-height: 1px;")
+        main_layout.addWidget(sep)
+        
+        tab_lbl = QLabel(f"Tab: {tab_name}")
+        tab_lbl.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 12px; color: #E0E0E0; border: none;")
+        main_layout.addWidget(tab_lbl)
+        
+        time_lbl = QLabel(f"Initialization Time: <span style='color: #FF5B06; font-weight: bold;'>{elapsed_ms:.2f} ms</span>")
+        time_lbl.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 13px; color: #FFFFFF; border: none;")
+        main_layout.addWidget(time_lbl)
+        
+        main_layout.addStretch()
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.setObjectName("tabProfilerOkBtn")
+        ok_btn.setFixedSize(95, 30)
+        ok_btn.setCursor(Qt.PointingHandCursor)
+        ok_btn.setStyleSheet("""
+            QPushButton#tabProfilerOkBtn {
+                background: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 8px;
+                color: #E0E0E0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+            }
+            QPushButton#tabProfilerOkBtn:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FF8000, stop:1 #FF5B06);
+                border: none;
+                color: #FFFFFF;
+            }
+            QPushButton#tabProfilerOkBtn:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #D94800, stop:1 #B33600);
+                border: none;
+                color: #FFFFFF;
+            }
+        """)
+        ok_btn.clicked.connect(self.close)
+        btn_layout.addWidget(ok_btn)
+        main_layout.addLayout(btn_layout)
+
+
 class GameLauncher(QWidget):
     # Class-level icon cache to avoid reloading same icons
     _icon_cache = {}
@@ -4890,6 +5009,11 @@ class GameLauncher(QWidget):
         except:
             self._WM_TASKBARBUTTONCREATED = None
         
+        # Taskbar Media Toolbar integration tracking
+        self.taskbar_toolbar = None
+        self._taskbar_init_attempts = 0
+        self._taskbar_retry_count = 0
+        
         # Initialize Debug Console (only redirects; doesn't show window)
         self.debug_console = get_debug_console(self)
         
@@ -5018,6 +5142,19 @@ class GameLauncher(QWidget):
         # Enable drag-drop from non-elevated Explorer to elevated app (UAC bypass for drag-drop)
         self._enable_drag_drop_for_elevated()
         self._debug_delay()
+        
+        # Early initialization of Taskbar Thumbnail Toolbar so COM wrapper is ready for OS messages
+        if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar and self.taskbar_toolbar is None:
+            try:
+                hwnd = int(self.winId())
+                self.taskbar_toolbar = TaskbarThumbnailToolbar(
+                    hwnd,
+                    on_prev=self._taskbar_prev,
+                    on_playpause=self._taskbar_playpause,
+                    on_next=self._taskbar_next
+                )
+            except Exception as e:
+                print(f"[Taskbar FATAL] Early taskbar toolbar init failed: {e}")
         
         # Apply after layout settles so background scales to final window size
         # (at this point the window geometry may not be restored yet)
@@ -6988,6 +7125,11 @@ Stylesheet Selector:
         from integrations.tools_downloader import is_ffmpeg_available
         
         if not is_ffmpeg_available():
+            # If taskbar buttons were previously mapped, hide them dynamically from the taskbar preview
+            if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar and self.taskbar_toolbar.buttons_added:
+                target_hwnd = getattr(self, '_verified_taskbar_hwnd', None) or int(self.winId())
+                self.taskbar_toolbar.set_buttons_visible(False, target_hwnd=target_hwnd)
+                
             self.music_panel = QWidget()
             self.music_panel.setObjectName("musicPanel")
             layout = QVBoxLayout(self.music_panel)
@@ -7159,8 +7301,7 @@ Stylesheet Selector:
             self.content_stack.insertWidget(self._music_panel_insert_index, self.music_panel)
             delattr(self, '_music_panel_insert_index')
         
-        # Initialize taskbar thumbnail toolbar reference
-        self.taskbar_toolbar = None
+        # Initialize taskbar thumbnail toolbar reference if not already created
         if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar and not getattr(self, 'taskbar_toolbar', None):
             try:
                 hwnd = int(self.winId())
@@ -7171,6 +7312,7 @@ Stylesheet Selector:
                     on_next=self._taskbar_next
                 )
                 
+                self._taskbar_init_attempts = 0
                 self._taskbar_retry_count = 0
                 
                 # If running as Admin, allow Taskbar messages through UIPI
@@ -7200,9 +7342,26 @@ Stylesheet Selector:
                 # If TaskbarButtonCreated already fired before music panel was opened, trigger it now
                 if getattr(self, '_os_taskbar_proxy_hwnd', None):
                     self._exec_os_taskbar_init()
+                else:
+                    self._init_taskbar_buttons()
                     
             except Exception as e:
                 print(f"[Taskbar FATAL] Could not setup taskbar toolbar: {e}")
+        elif getattr(self, 'taskbar_toolbar', None):
+            # Toolbar already initialized; ensure buttons are mapped and sync current state
+            target_hwnd = getattr(self, '_verified_taskbar_hwnd', None) or int(self.winId())
+            if not self.taskbar_toolbar.buttons_added:
+                if getattr(self, '_os_taskbar_proxy_hwnd', None):
+                    self._exec_os_taskbar_init()
+                else:
+                    self._init_taskbar_buttons()
+            else:
+                # Ensure buttons are visible again if they were previously hidden by an uninstall
+                self.taskbar_toolbar.set_buttons_visible(True, target_hwnd=target_hwnd)
+                from PySide6.QtMultimedia import QMediaPlayer
+                player = getattr(self.music_panel, '_player', None)
+                if player and hasattr(player, 'playbackState'):
+                    self._update_taskbar_play_state(player.playbackState())
         
         # For backward compatibility with existing code that references audio_player
         self.audio_player = None  # Deprecated - use music_panel directly
@@ -7242,68 +7401,6 @@ Stylesheet Selector:
                         self.music_panel.on_helxaic_page_shown()
         except Exception:
             pass
-
-    def _taskbar_prev(self):
-        """Taskbar button: Previous track."""
-        try:
-            if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_prev_track'):
-                if getattr(self.music_panel, '_playlist', None):
-                    self.music_panel._prev_track()
-        except Exception as e:
-            print(f"[Taskbar] prev error: {e}", flush=True)
-    
-    def _taskbar_playpause(self):
-        """Taskbar button: Play/Pause."""
-        try:
-            if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_toggle_play'):
-                # Only toggle if there's a playlist loaded OR player already has media
-                has_playlist = bool(getattr(self.music_panel, '_playlist', None))
-                from PySide6.QtMultimedia import QMediaPlayer
-                has_media = hasattr(self.music_panel, '_player') and self.music_panel._player.source().isValid()
-                if has_playlist or has_media:
-                    self.music_panel._toggle_play()
-                else:
-                    print("[Taskbar] Play ignored: no playlist loaded", flush=True)
-        except Exception as e:
-            print(f"[Taskbar] playpause error: {e}", flush=True)
-    
-    def _taskbar_next(self):
-        """Taskbar button: Next track."""
-        try:
-            if hasattr(self, 'music_panel') and hasattr(self.music_panel, '_next_track'):
-                if getattr(self.music_panel, '_playlist', None):
-                    self.music_panel._next_track()
-        except Exception as e:
-            print(f"[Taskbar] next error: {e}", flush=True)
-    
-
-    def _on_music_panel_loaded(self, success):
-        """Called when HTML music panel finishes loading."""
-        if success and hasattr(self, 'music_bridge'):
-            # Get playlist name from folder
-            if self.audio_player and hasattr(self.audio_player, 'playlist') and self.audio_player.playlist:
-                folder = os.path.dirname(self.audio_player.playlist[0])
-                name = os.path.basename(folder)
-                self.music_bridge.set_playlist_name(name)
-            else:
-                self.music_bridge.requestPlaylist()
-    
-
-    def _reload_music_panel(self):
-        """Reload the Music panel after FFmpeg installation."""
-        if not hasattr(self, 'music_panel'):
-            return
-            
-        panel_index = self.content_stack.indexOf(self.music_panel)
-        if panel_index < 0:
-            panel_index = 1  # Default Music panel index
-            
-        self.content_stack.removeWidget(self.music_panel)
-        self.music_panel.deleteLater()
-        
-        self._music_panel_insert_index = panel_index
-        self._setup_music_panel()
-        self.switch_panel(panel_index)
 
     def _setup_cpu_panel(self):
         """Setup the CPU control panel with modern card-based design."""
@@ -11403,11 +11500,19 @@ Stylesheet Selector:
 
         # Toggle for calculating page initialization / switch latency
         calc_page_init_cb = AnimatedCheckBox("Calculate Page Initialize")
+        calc_page_init_cb.setObjectName("calcPageInitCheckBox")
         calc_page_init_cb.setChecked(self.settings.get("calculate_page_initialize", False))
         dev_sub_container_layout.addWidget(calc_page_init_cb)
 
+        # Toggle for calculating sub-tab initialization / switch latency
+        calc_tab_init_cb = AnimatedCheckBox("Calculate Tab Initialize")
+        calc_tab_init_cb.setObjectName("calcTabInitCheckBox")
+        calc_tab_init_cb.setChecked(self.settings.get("calculate_tab_initialize", False))
+        dev_sub_container_layout.addWidget(calc_tab_init_cb)
+
         # Toggle for turning off Psutil fallback scanning
         turn_off_psutil_cb = AnimatedCheckBox("Turn off Psutil")
+        turn_off_psutil_cb.setObjectName("turnOffPsutilCheckBox")
         turn_off_psutil_cb.setChecked(self.settings.get("turn_off_psutil", False))
         dev_sub_container_layout.addWidget(turn_off_psutil_cb)
 
@@ -11418,6 +11523,7 @@ Stylesheet Selector:
             uninstall_tools_btn.setEnabled(is_dev)
             reset_appdata_btn.setEnabled(is_dev)
             calc_page_init_cb.setEnabled(is_dev)
+            calc_tab_init_cb.setEnabled(is_dev)
             turn_off_psutil_cb.setEnabled(is_dev)
             dev_opacity_effect.setOpacity(1.0 if is_dev else 0.35)
 
@@ -11511,6 +11617,7 @@ Stylesheet Selector:
             new_init_zero_uac = init_zero_uac_cb.isChecked()
             new_dev = dev_mode_cb.isChecked()
             new_calc_init = calc_page_init_cb.isChecked()
+            new_calc_tab_init = calc_tab_init_cb.isChecked()
             new_psutil = turn_off_psutil_cb.isChecked()
             new_check = check_daily_cb.isChecked()
             new_startup = startup_cb.isChecked()
@@ -11529,6 +11636,7 @@ Stylesheet Selector:
                 abs(new_opacity - self.settings.get("window_opacity", 1.0)) < 0.01 and
                 new_dev == self.settings.get("developer_mode", False) and
                 new_calc_init == self.settings.get("calculate_page_initialize", False) and
+                new_calc_tab_init == self.settings.get("calculate_tab_initialize", False) and
                 new_psutil == self.settings.get("turn_off_psutil", False) and
                 new_check == self.settings.get("check_version_daily", True) and
                 new_startup == orig_startup and
@@ -11555,6 +11663,7 @@ Stylesheet Selector:
             self.settings["window_opacity"] = new_opacity
             self.settings["developer_mode"] = new_dev
             self.settings["calculate_page_initialize"] = new_calc_init
+            self.settings["calculate_tab_initialize"] = new_calc_tab_init
             self.settings["turn_off_psutil"] = new_psutil
             self.settings["check_version_daily"] = new_check
             self.settings["startup_delay"] = new_delay
@@ -13436,6 +13545,12 @@ First Played: {first_played_formatted}
             print(f"[Taskbar DEBUG] _init_taskbar_buttons ABORT: taskbar_toolbar is None for [id={id(self)}]", flush=True)
             return
             
+        # Gate: Do NOT add media buttons to taskbar if HELXAIC (FFmpeg) is not installed yet
+        from integrations.tools_downloader import is_ffmpeg_available
+        if not is_ffmpeg_available():
+            print("[Taskbar DEBUG] FFmpeg not available yet; deferring taskbar media button mapping until setup.", flush=True)
+            return
+            
         # FORCE using the main window HWND instead of the explorer proxy HWND.
         # This ensures that WM_COMMAND (THBN_CLICKED) messages are sent directly to
         # our main window, allowing us to catch them in QWidget.nativeEvent safely
@@ -13456,20 +13571,19 @@ First Played: {first_played_formatted}
             return
             
         # Robust escalating retry mechanism if DWM hasn't generated the thumbnail frame yet
-        if hasattr(self, '_taskbar_init_attempts'):
-            self._taskbar_init_attempts += 1
-            if self._taskbar_init_attempts <= 5:
-                delay = 1000 * self._taskbar_init_attempts
-                print(f"[Taskbar DEBUG] DWM rejected mapping. Next retry queued in {delay}ms...")
-                # Maintain strong reference to prevent PySide6 GC of callbacks
-                self._retry_taskbar_hwnd = target_hwnd
-                self._retry_taskbar_timer = QTimer(self)
-                self._retry_taskbar_timer.setSingleShot(True)
-                self._retry_taskbar_timer.timeout.connect(self._exec_taskbar_retry)
-                self._retry_taskbar_timer.start(delay)
-            else:
-                print("[Taskbar FATAL] Exhausted all bounds waiting for DWM thumbnail generation.")
-                
+        self._taskbar_init_attempts = getattr(self, '_taskbar_init_attempts', 0) + 1
+        if self._taskbar_init_attempts <= 5:
+            delay = 1000 * self._taskbar_init_attempts
+            print(f"[Taskbar DEBUG] DWM rejected mapping. Next retry queued in {delay}ms...")
+            # Maintain strong reference to prevent PySide6 GC of callbacks
+            self._retry_taskbar_hwnd = target_hwnd
+            self._retry_taskbar_timer = QTimer(self)
+            self._retry_taskbar_timer.setSingleShot(True)
+            self._retry_taskbar_timer.timeout.connect(self._exec_taskbar_retry)
+            self._retry_taskbar_timer.start(delay)
+        else:
+            print("[Taskbar FATAL] Exhausted all bounds waiting for DWM thumbnail generation.")
+            
     def _exec_taskbar_retry(self):
         """Executes taskbar init retry using strongly referenced target."""
         self._init_taskbar_buttons(getattr(self, '_retry_taskbar_hwnd', None))
@@ -13571,9 +13685,11 @@ First Played: {first_played_formatted}
     def _taskbar_prev(self):
         """Handle taskbar Previous button."""
         try:
-            if hasattr(self, 'music_panel') and getattr(self.music_panel, '_playlist', None):
-                self.music_panel._prev_track()
-            elif hasattr(self, 'audio_player') and self.audio_player:
+            if hasattr(self, 'music_panel') and self.music_panel is not None:
+                if hasattr(self.music_panel, '_prev_track'):
+                    self.music_panel._prev_track()
+                    return
+            if hasattr(self, 'audio_player') and self.audio_player:
                 self.audio_player.prev_track()
         except Exception as e:
             print(f"[Taskbar] prev error: {e}", flush=True)
@@ -13581,15 +13697,11 @@ First Played: {first_played_formatted}
     def _taskbar_playpause(self):
         """Handle taskbar Play/Pause toggle button."""
         try:
-            if hasattr(self, 'music_panel'):
-                has_playlist = bool(getattr(self.music_panel, '_playlist', None))
-                from PySide6.QtMultimedia import QMediaPlayer
-                has_media = hasattr(self.music_panel, '_player') and self.music_panel._player.source().isValid()
-                if has_playlist or has_media:
+            if hasattr(self, 'music_panel') and self.music_panel is not None:
+                if hasattr(self.music_panel, '_toggle_play'):
                     self.music_panel._toggle_play()
-                else:
-                    print("[Taskbar] Play ignored: no playlist loaded", flush=True)
-            elif hasattr(self, 'audio_player') and self.audio_player:
+                    return
+            if hasattr(self, 'audio_player') and self.audio_player:
                 self.audio_player.toggle_play()
         except Exception as e:
             print(f"[Taskbar] playpause error: {e}", flush=True)
@@ -13597,9 +13709,11 @@ First Played: {first_played_formatted}
     def _taskbar_next(self):
         """Handle taskbar Next button."""
         try:
-            if hasattr(self, 'music_panel') and getattr(self.music_panel, '_playlist', None):
-                self.music_panel._next_track()
-            elif hasattr(self, 'audio_player') and self.audio_player:
+            if hasattr(self, 'music_panel') and self.music_panel is not None:
+                if hasattr(self.music_panel, '_next_track'):
+                    self.music_panel._next_track()
+                    return
+            if hasattr(self, 'audio_player') and self.audio_player:
                 self.audio_player.next_track()
         except Exception as e:
             print(f"[Taskbar] next error: {e}", flush=True)

@@ -4717,16 +4717,12 @@ class SplitResumeButton(QWidget):
         self.btn_main.setText(pref_name)
         self._settings.setValue("Music/resume_mode_pref", pref_name)
         self.adjustSize()
-        if self.parent():
-            if hasattr(self.parent(), 'update_position'):
-                self.parent().update_position()
-            else:
-                self.parent().adjustSize()
-                if self.parent().parent():
-                    try:
-                        self.parent().move(max(20, (self.parent().parent().width() - self.parent().width()) // 2), 20)
-                    except Exception:
-                        pass
+        p = self.parent()
+        while p:
+            if hasattr(p, 'update_position'):
+                p.update_position()
+                break
+            p = p.parent()
 
     def get_preference(self):
         return self._active_pref
@@ -4746,6 +4742,7 @@ class ResumeNotificationWidget(QFrame):
     resume_clicked = Signal()
     resume_and_folder_clicked = Signal()
     dismiss_clicked = Signal()
+    auto_timeout = Signal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4904,7 +4901,7 @@ class ResumeNotificationWidget(QFrame):
         self.progress.setValue(remaining)
         if self._elapsed_ms >= self._timeout_ms:
             self._timer.stop()
-            self.dismiss_clicked.emit()
+            self.auto_timeout.emit()
 
     def set_track_title(self, title):
         self._full_title = title
@@ -4937,7 +4934,7 @@ class ResumeNotificationWidget(QFrame):
         
         self.adjustSize()
         w = self.width()
-        x = max(20, (parent_w - w) // 2)
+        x = max(20, parent_w - w - 20)
         self.move(x, 20)
 
     def animate_out(self, callback=None):
@@ -6467,7 +6464,8 @@ class MusicPanelWidget(QWidget):
         self.resume_banner.hide()
         
         # Connect signals
-        self.resume_banner.dismiss_clicked.connect(self._dismiss_banner)
+        self.resume_banner.dismiss_clicked.connect(self._dismiss_banner_by_user)
+        self.resume_banner.auto_timeout.connect(self._dismiss_banner_by_timeout)
         self.resume_banner.resume_clicked.connect(self._resume_playback_from_banner)
         self.resume_banner.resume_and_folder_clicked.connect(self._resume_and_open_folder)
         
@@ -7739,267 +7737,24 @@ class MusicPanelWidget(QWidget):
             print(f"Rescanned: {self._music_folder}")
     
     def _show_convert_dialog(self):
-        """Show dialog to convert selected/all tracks to MP3."""
-        from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                                        QPushButton, QFileDialog, QProgressBar,
-                                        QRadioButton, QButtonGroup, QSpinBox, QGroupBox)
-        from PySide6.QtCore import QThread, Signal
-        
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Convert to MP3")
-        dialog.setMinimumWidth(450)
-        dialog.setStyleSheet("""
-            QDialog {
-                background: #1e1e2e;
-                color: #e0e0e0;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 1px solid #444;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }
-            QGroupBox::title {
-                color: #FF5B06;
-            }
-            QRadioButton {
-                color: #e0e0e0;
-                padding: 5px;
-                spacing: 8px;
-            }
-            QRadioButton::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 8px;
-                border: 2px solid #666;
-                background: #2a2a2a;
-            }
-            QRadioButton::indicator:checked {
-                background: #FF5B06;
-                border: 2px solid #FF5B06;
-            }
-            QRadioButton::indicator:hover {
-                border: 2px solid #FF5B06;
-            }
-            QLabel {
-                color: #e0e0e0;
-            }
-            QPushButton {
-                background: #FF5B06;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: #FF7B26;
-            }
-            QPushButton:disabled {
-                background: #555;
-            }
-            QProgressBar {
-                border: 1px solid #444;
-                border-radius: 5px;
-                background: #2a2a2a;
-                height: 20px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
-                border-radius: 4px;
-            }
-            QSpinBox {
-                background: #2a2a2a;
-                color: #e0e0e0;
-                border: 1px solid #444;
-                border-radius: 4px;
-                padding: 5px 25px 5px 10px;
-                min-width: 60px;
-            }
-            QSpinBox::up-button {
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 20px;
-                background: #444;
-                border-top-right-radius: 4px;
-            }
-            QSpinBox::down-button {
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 20px;
-                background: #444;
-                border-bottom-right-radius: 4px;
-            }
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background: #FF5B06;
-            }
-            QSpinBox::up-arrow {
-                image: url(UI Icons/up-arrow.png);
-                width: 10px;
-                height: 10px;
-            }
-            QSpinBox::down-arrow {
-                image: url(UI Icons/down-arrow.png);
-                width: 10px;
-                height: 10px;
-            }
-        """)
-        
-        layout = QVBoxLayout(dialog)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Source selection
-        source_group = QGroupBox("Source")
-        source_layout = QVBoxLayout(source_group)
-        
-        source_btn_group = QButtonGroup(dialog)
-        current_track_radio = QRadioButton(f"Current track: {self._playlist[self._current_index].get('title', 'Unknown') if self._playlist else 'None'}")
-        all_tracks_radio = QRadioButton(f"All tracks in playlist ({len(self._playlist)} tracks)")
-        source_btn_group.addButton(current_track_radio, 0)
-        source_btn_group.addButton(all_tracks_radio, 1)
-        current_track_radio.setChecked(True)
-        
-        source_layout.addWidget(current_track_radio)
-        source_layout.addWidget(all_tracks_radio)
-        layout.addWidget(source_group)
-        
-        # Quality settings
-        quality_group = QGroupBox("Quality")
-        quality_layout = QHBoxLayout(quality_group)
-        
-        bitrate_label = QLabel("Bitrate (kbps):")
-        bitrate_spin = QSpinBox()
-        bitrate_spin.setRange(128, 320)
-        bitrate_spin.setValue(320)
-        bitrate_spin.setSingleStep(32)
-        
-        quality_layout.addWidget(bitrate_label)
-        quality_layout.addWidget(bitrate_spin)
-        quality_layout.addStretch()
-        layout.addWidget(quality_group)
-        
-        # Output folder
-        output_layout = QHBoxLayout()
-        output_label = QLabel("Output folder:")
-        output_path = QLabel(self._music_folder or "Not set")
-        output_path.setStyleSheet("color: #888; font-size: 11px;")
-        output_btn = QPushButton("Browse...")
-        output_btn.setFixedWidth(100)
-        
-        def browse_output():
-            folder = QFileDialog.getExistingDirectory(dialog, "Select Output Folder", self._music_folder or "")
-            if folder:
-                output_path.setText(folder)
-        
-        output_btn.clicked.connect(browse_output)
-        output_layout.addWidget(output_label)
-        output_layout.addWidget(output_path, 1)
-        output_layout.addWidget(output_btn)
-        layout.addLayout(output_layout)
-        
-        # Progress bar
-        progress = QProgressBar()
-        progress.setValue(0)
-        progress.setVisible(False)
-        layout.addWidget(progress)
-        
-        # Status label
-        status_label = QLabel("")
-        status_label.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(status_label)
-        
-        # Buttons
-        btn_layout = QHBoxLayout()
-        convert_btn = QPushButton("Convert")
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet("background: #444;")
-        
-        btn_layout.addStretch()
-        btn_layout.addWidget(convert_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-        
-        cancel_btn.clicked.connect(dialog.reject)
-        
-        def start_convert():
-            import subprocess
-            
-            # Get tracks to convert
-            if current_track_radio.isChecked():
-                tracks = [self._playlist[self._current_index]] if self._playlist else []
-            else:
-                tracks = self._playlist
-            
-            if not tracks:
-                status_label.setText("No tracks to convert!")
-                return
-            
-            output_dir = output_path.text()
-            if not output_dir or not os.path.exists(output_dir):
-                status_label.setText("Invalid output folder!")
-                return
-            
-            bitrate = bitrate_spin.value()
-            progress.setVisible(True)
-            progress.setMaximum(len(tracks))
-            convert_btn.setEnabled(False)
-            
-            success_count = 0
-            for i, track in enumerate(tracks):
-                input_path = track.get('path', '')
-                if not input_path or not os.path.exists(input_path):
-                    continue
-                
-                # Skip if already MP3
-                if input_path.lower().endswith('.mp3'):
-                    status_label.setText(f"Skipping (already MP3): {track.get('title', 'Unknown')}")
-                    progress.setValue(i + 1)
-                    continue
-                
-                # Output filename
-                base_name = os.path.splitext(os.path.basename(input_path))[0]
-                output_file = os.path.join(output_dir, f"{base_name}.mp3")
-                
-                status_label.setText(f"Converting: {track.get('title', 'Unknown')}")
-                from PySide6.QtWidgets import QApplication
-                QApplication.processEvents()
-                
-                try:
-                    # Use FFmpeg to convert
-                    cmd = [
-                        "ffmpeg", "-y", "-i", input_path,
-                        "-vn",  # No video
-                        "-acodec", "libmp3lame",
-                        "-ab", f"{bitrate}k",
-                        output_file
-                    ]
-                    
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-                    )
-                    
-                    if result.returncode == 0:
-                        success_count += 1
-                except Exception as e:
-                    print(f"Convert error: {e}")
-                
-                progress.setValue(i + 1)
-                QApplication.processEvents()
-            
-            status_label.setText(f"Done! Converted {success_count} of {len(tracks)} tracks.")
-            convert_btn.setEnabled(True)
-            convert_btn.setText("Done")
-            convert_btn.clicked.disconnect()
-            convert_btn.clicked.connect(dialog.accept)
-        
-        convert_btn.clicked.connect(start_convert)
-        
-        dialog.exec()
+        """Show dialog to convert selected/all tracks to MP3 with HELXAID styling."""
+        try:
+            from ConvertMp3Dialog import ConvertMp3Dialog
+            dialog = ConvertMp3Dialog(
+                parent=self,
+                playlist=getattr(self, '_playlist', []),
+                current_index=getattr(self, '_current_index', -1),
+                default_output_dir=getattr(self, '_music_folder', None)
+            )
+            if dialog.exec():
+                # If output was inside current music folder, rescan
+                if getattr(self, '_music_folder', None) and os.path.exists(self._music_folder):
+                    out_dir = getattr(dialog, '_output_dir', '')
+                    if out_dir and os.path.exists(out_dir) and os.path.abspath(out_dir) == os.path.abspath(self._music_folder):
+                        self._rescan_folder()
+        except Exception as e:
+            print(f"[MusicPanel] Failed to show ConvertMp3Dialog: {e}")
+
         
     def _generate_shuffled_sequence(self):
         """Generate a random Fisher-Yates shuffled sequence of track indices."""
@@ -8111,6 +7866,8 @@ class MusicPanelWidget(QWidget):
             
             # Subdue overlapping QMediaPlayer triggers
             self._player.stop()
+            if hasattr(self, 'resume_banner') and self.resume_banner.isVisible():
+                self.resume_banner.hide()
             
             # Hard kill any overlapping VLC active streams before launching next
             if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
@@ -8969,13 +8726,13 @@ class MusicPanelWidget(QWidget):
             self._save_state()
     
 
-    def _dismiss_banner(self):
-        print("[Music DEBUG] _dismiss_banner triggered!")
-        try:
-            self._finalize_dismiss()
-        except Exception:
-            pass
-
+    def _dismiss_banner_by_user(self):
+        """User explicitly clicked 'Dismiss' button. Clear saved resume state."""
+        print("[Music DEBUG] _dismiss_banner_by_user: Clearing saved resume position")
+        self._last_known_position = 0
+        self._pending_seek_position = 0
+        self._pending_single_track_resume = None
+        self._save_state()
         try:
             if hasattr(self.resume_banner, 'animate_out'):
                 self.resume_banner.animate_out()
@@ -8983,6 +8740,20 @@ class MusicPanelWidget(QWidget):
                 self.resume_banner.hide()
         except Exception:
             self.resume_banner.hide()
+
+    def _dismiss_banner_by_timeout(self):
+        """Banner timed out naturally. Hide banner but keep last_position for next session."""
+        print("[Music DEBUG] _dismiss_banner_by_timeout: Auto-dismissing without clearing saved position")
+        try:
+            if hasattr(self.resume_banner, 'animate_out'):
+                self.resume_banner.animate_out()
+            else:
+                self.resume_banner.hide()
+        except Exception:
+            self.resume_banner.hide()
+
+    def _dismiss_banner(self):
+        self._dismiss_banner_by_timeout()
         
     def _finalize_dismiss(self):
         if hasattr(self, '_pending_single_track_resume'):
@@ -9159,6 +8930,7 @@ class MusicPanelWidget(QWidget):
                                 # Restore last position after media loads
                                 last_pos = state.get('last_position', 0)
                                 if last_pos > 0:
+                                    self._last_known_position = last_pos
                                     self.resume_banner.set_track_title(track.get('title', 'Unknown'))
                                     self.resume_banner.show()
                                     self.resume_banner.raise_()
@@ -9191,6 +8963,7 @@ class MusicPanelWidget(QWidget):
                             'playlist_name': state.get('playlist_name', 'Previous Session')
                         }
                         if last_pos > 0:
+                            self._last_known_position = last_pos
                             self.resume_banner.set_track_title(title)
                             self.resume_banner.show()
                             self.resume_banner.raise_()

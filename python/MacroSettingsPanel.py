@@ -7895,10 +7895,43 @@ class MacroSettingsPanel(QWidget):
         self._apply_saved_helxairo_settings()
 
     def _switch_tab(self, index: int):
-        """Switch to specified tab."""
+        """Switch to specified tab with latency profiling."""
+        try:
+            import json, os, time
+            appdata = os.getenv("APPDATA", "")
+            settings_file = os.path.join(appdata, "HELXAID", "settings.json")
+            is_profiling = False
+            if os.path.exists(settings_file):
+                with open(settings_file, "r") as f:
+                    is_profiling = json.load(f).get("calculate_tab_initialize", False)
+        except Exception:
+            is_profiling = False
+
+        t_start = time.perf_counter() if is_profiling else 0.0
+
         self._current_tab = index
         self._page_stack.setCurrentIndex(index)
         self._update_tab_buttons()
+
+        if is_profiling:
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            tab_names = {
+                0: "HELXAIRO - Home",
+                1: "HELXAIRO - DPI",
+                2: "HELXAIRO - Macro",
+                3: "HELXAIRO - Benchmark",
+                4: "HELXAIRO - Settings",
+            }
+            tab_label = tab_names.get(index, f"HELXAIRO Tab {index}")
+            print(f"[Tab Profiler] {tab_label} initialized in {elapsed_ms:.2f} ms")
+            try:
+                from launcher import TabInitProfilerWindow
+                self._tab_profiler_win = TabInitProfilerWindow(tab_label, elapsed_ms)
+                self._tab_profiler_win.show()
+                self._tab_profiler_win.raise_()
+                self._tab_profiler_win.activateWindow()
+            except Exception as pe:
+                print(f"[Tab Profiler Error] {pe}")
 
     def _switch_macro_subtab(self, index: int):
         """Switch between sub-tabs in the Macro tab."""

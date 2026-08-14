@@ -37,6 +37,7 @@ from hardware_wrapper import get_monitor, HardwareMonitor
 
 import os
 import io
+import time
 
 # Maximum chart history points (10 minutes at 500ms = 1200 points)
 MAX_CHART_HISTORY = 1200
@@ -660,6 +661,32 @@ class ProgressBarWidget(QWidget):
         painter.end()
 
 
+_DRIVE_ICON_CACHE = {}
+_DRIVE_PIXMAP_CACHE = {}
+
+
+def _get_cached_drive_icon(path: str) -> QIcon:
+    if path not in _DRIVE_ICON_CACHE:
+        if os.path.exists(path):
+            _DRIVE_ICON_CACHE[path] = QIcon(path)
+        else:
+            _DRIVE_ICON_CACHE[path] = QIcon()
+    return _DRIVE_ICON_CACHE[path]
+
+
+def _get_cached_drive_pixmap(path: str, width: int = None, height: int = None) -> QPixmap:
+    key = (path, width, height)
+    if key not in _DRIVE_PIXMAP_CACHE:
+        if os.path.exists(path):
+            pix = QPixmap(path)
+            if width and height:
+                pix = pix.scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            _DRIVE_PIXMAP_CACHE[key] = pix
+        else:
+            _DRIVE_PIXMAP_CACHE[key] = QPixmap()
+    return _DRIVE_PIXMAP_CACHE[key]
+
+
 class DriveScanWorker(QThread):
     """
     Async junk scanner for Drive page.
@@ -726,8 +753,8 @@ class DriveInfoWorker(QThread):
                 )
                 from hardware_wrapper import get_monitor
                 partitions = get_drive_partitions_info()
-                hardware = get_drive_hardware_info()
-                physical_disks = get_physical_disks_info()
+                hardware = get_drive_hardware_info(partitions=partitions)
+                physical_disks = get_physical_disks_info(partitions=partitions)
                 monitor = get_monitor()
                 smart_disks = monitor.get_smart_disks() if monitor else []
                 self.data_ready.emit(partitions, hardware, physical_disks, smart_disks)
@@ -823,6 +850,63 @@ class DrivePageSplitter(QSplitter):
         return DriveSplitterHandle(self.orientation(), self)
 
 
+_DRIVE_ARROW_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+_DRIVE_OVERVIEW_COMBO_STYLESHEET = """
+    QComboBox#driveOverviewSelector {
+        background: rgba(255, 255, 255, 0.08);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 6px;
+        padding-left: 10px;
+        padding-right: 26px;
+        font-family: 'Orbitron', sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+    }
+    QComboBox#driveOverviewSelector:hover {
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.25);
+        color: #ffffff;
+    }
+    QComboBox#driveOverviewSelector::drop-down {
+        subcontrol-origin: padding;
+        subcontrol-position: top right;
+        width: 24px;
+        border: none;
+        background: transparent;
+    }
+    QComboBox#driveOverviewSelector::down-arrow {
+        subcontrol-origin: content;
+        subcontrol-position: center;
+        image: url("%s");
+        width: 10px;
+        height: 10px;
+    }
+    QComboBox#driveOverviewSelector QAbstractItemView {
+        background: rgba(18, 20, 26, 0.95);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 6px;
+        padding: 4px;
+        outline: 0px;
+        font-family: 'Orbitron', sans-serif;
+        font-size: 10px;
+    }
+    QComboBox#driveOverviewSelector QAbstractItemView::item {
+        min-height: 24px;
+        padding: 4px 8px;
+        background: transparent;
+        color: #e0e0e0;
+        border-radius: 4px;
+    }
+    QComboBox#driveOverviewSelector QAbstractItemView::item:hover,
+    QComboBox#driveOverviewSelector QAbstractItemView::item:selected {
+        background-color: rgba(255, 255, 255, 0.12);
+        color: #ffffff;
+    }
+""" % _DRIVE_ARROW_PATH
+
+
 class DriveOverviewWidget(QWidget):
     """
     Storage hero summary for HELXTATS Drive page with physical drive selector dropdown.
@@ -856,68 +940,12 @@ class DriveOverviewWidget(QWidget):
         cap_col = QVBoxLayout()
         cap_col.setSpacing(6)
         cap_col.setAlignment(Qt.AlignTop)
-        
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
 
         self.combo_drive_selector = QComboBox()
         self.combo_drive_selector.setObjectName("driveOverviewSelector")
         self.combo_drive_selector.setFixedHeight(24)
         self.combo_drive_selector.setCursor(Qt.PointingHandCursor)
-        self.combo_drive_selector.setStyleSheet("""
-            QComboBox#driveOverviewSelector {
-                background: rgba(255, 255, 255, 0.08);
-                color: #e0e0e0;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 6px;
-                padding-left: 10px;
-                padding-right: 26px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 10px;
-                font-weight: 700;
-            }
-            QComboBox#driveOverviewSelector:hover {
-                background: rgba(255, 255, 255, 0.14);
-                border-color: rgba(255, 255, 255, 0.25);
-                color: #ffffff;
-            }
-            QComboBox#driveOverviewSelector::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 24px;
-                border: none;
-                background: transparent;
-            }
-            QComboBox#driveOverviewSelector::down-arrow {
-                subcontrol-origin: content;
-                subcontrol-position: center;
-                image: url("%s");
-                width: 10px;
-                height: 10px;
-            }
-            QComboBox#driveOverviewSelector QAbstractItemView {
-                background: rgba(18, 20, 26, 0.95);
-                color: #e0e0e0;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                border-radius: 6px;
-                padding: 4px;
-                outline: 0px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 10px;
-            }
-            QComboBox#driveOverviewSelector QAbstractItemView::item {
-                min-height: 24px;
-                padding: 4px 8px;
-                background: transparent;
-                color: #e0e0e0;
-                border-radius: 4px;
-            }
-            QComboBox#driveOverviewSelector QAbstractItemView::item:hover,
-            QComboBox#driveOverviewSelector QAbstractItemView::item:selected {
-                background-color: rgba(255, 255, 255, 0.12);
-                color: #ffffff;
-            }
-        """ % down_arrow_path)
+        self.combo_drive_selector.setStyleSheet(_DRIVE_OVERVIEW_COMBO_STYLESHEET)
         self.combo_drive_selector.addItem("TOTAL STORAGE")
         self.combo_drive_selector.currentIndexChanged.connect(self._on_selector_changed)
 
@@ -1567,8 +1595,11 @@ class DiskCleanerPanel(QWidget):
 
         cat_panel_layout.addWidget(self.cleaner_stack, stretch=1)
 
-        self._build_categories()
+        self._categories_built = False
         self._switch_cleaner_tab(0)
+
+        # Deferred background warm-up: builds 51 rows on idle tick for instant <15ms tab switch
+        QTimer.singleShot(100, self._ensure_categories_built)
 
         cat_panel_layout.addSpacing(8)
 
@@ -1643,8 +1674,15 @@ class DiskCleanerPanel(QWidget):
 
         main_layout.addWidget(self.category_panel, stretch=6)
 
+    def _ensure_categories_built(self):
+        """Ensure category rows are built (lazy / deferred on-demand)."""
+        if getattr(self, '_categories_built', False):
+            return
+        self._build_categories()
+
     def _reset_cleanup_selections(self):
         """Reset all category row checkboxes to their default configuration."""
+        self._ensure_categories_built()
         from utils.drive_utils import JUNK_CATEGORIES
         default_map = {c.id: c.default for c in JUNK_CATEGORIES}
 
@@ -1700,6 +1738,7 @@ class DiskCleanerPanel(QWidget):
         self.hero_status_lbl.setText(f"Scanning{dots}")
 
     def _on_hero_action_clicked(self):
+        self._ensure_categories_built()
         if not self._is_scanned:
             def _start_scan_anim():
                 self._is_scanning_active = True
@@ -1756,6 +1795,15 @@ class DiskCleanerPanel(QWidget):
         self.hero_gauge.trigger_fade_transition(220, _reset_scan_state)
 
     def _recalculate_selected_junk(self):
+        if not getattr(self, '_categories_built', False):
+            if hasattr(self, 'hero_gauge'):
+                self.hero_gauge.setValue(0)
+                self.hero_gauge.setCenterText("SCAN")
+                self.hero_gauge.setSubtitle("Ready to scan")
+            if hasattr(self, 'cleanup_view_stack'):
+                self.cleanup_view_stack.setCurrentIndex(0)
+            return
+
         from utils.drive_utils import format_bytes
         selected_ids = self.selected_category_ids()
         selected_bytes = sum(row["bytes"] for cat_id, row in self._category_rows.items() if cat_id in selected_ids)
@@ -1896,16 +1944,8 @@ class DiskCleanerPanel(QWidget):
 
         row = QFrame()
         row.setObjectName(f"driveCleanRow_{cat_id}")
+        row.setProperty("class", "driveCleanRow")
         row.setFixedHeight(35)
-        row.setStyleSheet("""
-            QFrame#driveCleanRow_%s {
-                background: transparent;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            }
-            QFrame#driveCleanRow_%s:hover {
-                background: rgba(255, 91, 6, 0.08);
-            }
-        """ % (cat_id, cat_id))
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(8, 0, 15, 0)
         row_layout.setSpacing(8)
@@ -1919,8 +1959,10 @@ class DiskCleanerPanel(QWidget):
 
         cb = AnimatedCheckBox()
         cb.setObjectName(f"driveCleanCheck_{cat_id}")
+        cb.blockSignals(True)
         cb.setChecked(bool(cat_default))
-        cb.setEnabled(True) # Enabled unconditionally since Zero-UAC handles elevated tasks
+        cb.blockSignals(False)
+        cb.setEnabled(True)  # Enabled unconditionally since Zero-UAC handles elevated tasks
         cb.setStyleSheet("background: transparent;")
         cb.toggled.connect(lambda checked: self._recalculate_selected_junk())
         row_layout.addWidget(cb, alignment=Qt.AlignVCenter)
@@ -1941,26 +1983,17 @@ class DiskCleanerPanel(QWidget):
         # Folder inspect button positioned immediately to the left of the total size label
         btn_folder = QPushButton()
         btn_folder.setObjectName(f"driveCleanFolderBtn_{cat_id}")
+        btn_folder.setProperty("class", "driveCleanFolderBtn")
         btn_folder.setFixedSize(22, 22)
         btn_folder.setCursor(Qt.PointingHandCursor)
         btn_folder.setToolTip(f"Inspect junk paths for {cat_name}")
         folder_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon-white.svg")
-        if os.path.exists(folder_icon_path):
-            btn_folder.setIcon(QIcon(folder_icon_path))
+        folder_icon = _get_cached_drive_icon(folder_icon_path)
+        if not folder_icon.isNull():
+            btn_folder.setIcon(folder_icon)
             btn_folder.setIconSize(QSize(13, 13))
         else:
             btn_folder.setText("📁")
-        btn_folder.setStyleSheet("""
-            QPushButton#driveCleanFolderBtn_%s {
-                background: transparent;
-                border: none;
-                border-radius: 4px;
-                padding: 2px;
-            }
-            QPushButton#driveCleanFolderBtn_%s:hover {
-                background: rgba(255, 91, 6, 0.25);
-            }
-        """ % (cat_id, cat_id))
         btn_folder.clicked.connect(lambda checked=False, cid=cat_id: self._show_junk_items_panel(cid))
         row_layout.addWidget(btn_folder, alignment=Qt.AlignVCenter)
 
@@ -1988,16 +2021,51 @@ class DiskCleanerPanel(QWidget):
         return row, cat_id
 
     def _build_categories(self):
+        if getattr(self, '_categories_built', False):
+            return
+        self._categories_built = True
+
         import os
         from PySide6.QtGui import QIcon, QPixmap
         from PySide6.QtCore import QSize
         from utils.drive_utils import get_junk_categories, is_admin
 
+        self.category_container.setUpdatesEnabled(False)
+        self.category_container.setStyleSheet("""
+            QFrame[class="driveCleanRow"] {
+                background: transparent;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            }
+            QFrame[class="driveCleanRow"]:hover {
+                background: rgba(255, 91, 6, 0.08);
+            }
+            QWidget[class="driveGroupHeader"] {
+                background: rgba(40, 40, 40, 0.9);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QWidget[class="driveSubGroupHeader"] {
+                background: rgba(40, 40, 40, 0.9);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QWidget[class="driveSubGroupHeader"]:hover {
+                background: rgba(255, 91, 6, 0.15);
+            }
+            QPushButton[class="driveCleanFolderBtn"] {
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 2px;
+            }
+            QPushButton[class="driveCleanFolderBtn"]:hover {
+                background: rgba(255, 91, 6, 0.25);
+            }
+        """)
+
         script_dir = os.path.dirname(os.path.abspath(__file__))
         down_icon_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg")
         right_icon_path = os.path.join(script_dir, "UI Icons", "right-arrow-triangle.svg")
-        down_icon = QIcon(down_icon_path)
-        right_icon = QIcon(right_icon_path)
+        down_pixmap = _get_cached_drive_pixmap(down_icon_path, 16, 16)
+        right_pixmap = _get_cached_drive_pixmap(right_icon_path, 16, 16)
 
         admin = is_admin()
         categories = get_junk_categories()
@@ -2023,15 +2091,19 @@ class DiskCleanerPanel(QWidget):
         self._group_rows = {}
         self._subgroup_rows = {}
 
+        SUBGROUP_ICON_MAP = {
+            "chrome": "chrome.png",
+            "edge": "edge.png",
+            "brave": "brave.png",
+            "firefox": "firefox.png",
+            "opera": "opera.png",
+            "vivaldi": "vivaldi.png",
+        }
+
         for gid, grp_info in groups_map.items():
             group_frame = QFrame()
             group_frame.setObjectName(f"driveGroupFrame_{gid}")
-            group_frame.setStyleSheet("""
-                QFrame#driveGroupFrame_%s {
-                    background-color: transparent;
-                    border: none;
-                }
-            """ % gid)
+            group_frame.setStyleSheet(f"QFrame#driveGroupFrame_{gid} {{ background-color: transparent; border: none; }}")
             group_layout = QVBoxLayout(group_frame)
             group_layout.setContentsMargins(0, 0, 0, 0)
             group_layout.setSpacing(0)
@@ -2039,13 +2111,8 @@ class DiskCleanerPanel(QWidget):
             # --- Main Group Header Row ---
             header_row = QWidget()
             header_row.setObjectName(f"driveGroupHeader_{gid}")
+            header_row.setProperty("class", "driveGroupHeader")
             header_row.setFixedHeight(35)
-            header_row.setStyleSheet("""
-                QWidget#driveGroupHeader_%s {
-                    background: rgba(40, 40, 40, 0.9);
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-                }
-            """ % gid)
             header_layout = QHBoxLayout(header_row)
             header_layout.setContentsMargins(8, 0, 15, 0)
             header_layout.setSpacing(8)
@@ -2054,12 +2121,14 @@ class DiskCleanerPanel(QWidget):
             btn_toggle.setObjectName(f"driveGroupToggleBtn_{gid}")
             btn_toggle.setFixedSize(16, 16)
             btn_toggle.setScaledContents(True)
-            btn_toggle.setPixmap(QPixmap(down_icon_path))
+            btn_toggle.setPixmap(down_pixmap)
             btn_toggle.setCursor(Qt.PointingHandCursor)
 
             grp_cb = AnimatedCheckBox()
             grp_cb.setObjectName(f"driveGroupCheck_{gid}")
+            grp_cb.blockSignals(True)
             grp_cb.setChecked(True)
+            grp_cb.blockSignals(False)
             grp_cb.setStyleSheet("background: transparent;")
 
             grp_title = QLabel(grp_info["name"])
@@ -2086,7 +2155,7 @@ class DiskCleanerPanel(QWidget):
 
             def _toggle_main(e, container=child_container, btn=btn_toggle):
                 container.setVisible(not container.isVisible())
-                btn.setPixmap(QPixmap(down_icon_path) if container.isVisible() else QPixmap(right_icon_path))
+                btn.setPixmap(down_pixmap if container.isVisible() else right_pixmap)
             btn_toggle.mousePressEvent = _toggle_main
 
             def _on_main_group_toggled(checked, group_id=gid):
@@ -2108,28 +2177,15 @@ class DiskCleanerPanel(QWidget):
             for sgid, subgrp_info in grp_info["subgroups"].items():
                 sub_frame = QFrame()
                 sub_frame.setObjectName(f"driveSubGroupFrame_{sgid}")
-                sub_frame.setStyleSheet("""
-                    QFrame#driveSubGroupFrame_%s {
-                        background-color: transparent;
-                        border: none;
-                    }
-                """ % sgid)
+                sub_frame.setStyleSheet(f"QFrame#driveSubGroupFrame_{sgid} {{ background-color: transparent; border: none; }}")
                 sub_layout = QVBoxLayout(sub_frame)
                 sub_layout.setContentsMargins(0, 0, 0, 0)
                 sub_layout.setSpacing(0)
 
                 sub_header = QWidget()
                 sub_header.setObjectName(f"driveSubGroupHeader_{sgid}")
+                sub_header.setProperty("class", "driveSubGroupHeader")
                 sub_header.setFixedHeight(35)
-                sub_header.setStyleSheet("""
-                    QWidget#driveSubGroupHeader_%s {
-                        background: rgba(40, 40, 40, 0.9);
-                        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-                    }
-                    QWidget#driveSubGroupHeader_%s:hover {
-                        background: rgba(255, 91, 6, 0.15);
-                    }
-                """ % (sgid, sgid))
                 sub_h_layout = QHBoxLayout(sub_header)
                 sub_h_layout.setContentsMargins(8, 0, 15, 0)
                 sub_h_layout.setSpacing(8)
@@ -2138,12 +2194,14 @@ class DiskCleanerPanel(QWidget):
                 btn_sub_toggle.setObjectName(f"driveSubGroupToggleBtn_{sgid}")
                 btn_sub_toggle.setFixedSize(16, 16)
                 btn_sub_toggle.setScaledContents(True)
-                btn_sub_toggle.setPixmap(QPixmap(down_icon_path))
+                btn_sub_toggle.setPixmap(down_pixmap)
                 btn_sub_toggle.setCursor(Qt.PointingHandCursor)
 
                 sub_cb = AnimatedCheckBox()
                 sub_cb.setObjectName(f"driveSubGroupCheck_{sgid}")
+                sub_cb.blockSignals(True)
                 sub_cb.setChecked(True)
+                sub_cb.blockSignals(False)
                 sub_cb.setStyleSheet("background: transparent;")
 
                 sub_h_layout.addWidget(btn_sub_toggle, alignment=Qt.AlignVCenter)
@@ -2154,23 +2212,15 @@ class DiskCleanerPanel(QWidget):
                 sub_title.setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
                 sub_h_layout.addWidget(sub_title, alignment=Qt.AlignVCenter)
 
-                SUBGROUP_ICON_MAP = {
-                    "chrome": "chrome.png",
-                    "edge": "edge.png",
-                    "brave": "brave.png",
-                    "firefox": "firefox.png",
-                    "opera": "opera.png",
-                    "vivaldi": "vivaldi.png",
-                }
                 icon_filename = SUBGROUP_ICON_MAP.get(sgid)
                 if icon_filename:
                     icon_path = os.path.join(script_dir, "UI Icons", icon_filename)
-                    if os.path.exists(icon_path):
+                    sub_pix = _get_cached_drive_pixmap(icon_path, 18, 18)
+                    if not sub_pix.isNull():
                         sub_icon_lbl = QLabel()
                         sub_icon_lbl.setObjectName(f"driveSubGroupIcon_{sgid}")
                         sub_icon_lbl.setFixedSize(18, 18)
-                        pix = QPixmap(icon_path).scaled(18, 18, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                        sub_icon_lbl.setPixmap(pix)
+                        sub_icon_lbl.setPixmap(sub_pix)
                         sub_icon_lbl.setStyleSheet("background: transparent;")
                         sub_h_layout.addWidget(sub_icon_lbl, alignment=Qt.AlignVCenter)
 
@@ -2178,9 +2228,6 @@ class DiskCleanerPanel(QWidget):
                 sub_size.setObjectName(f"driveSubGroupSize_{sgid}")
                 sub_size.setStyleSheet("color: #ffffff; font-size: 10px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
 
-                sub_h_layout.addWidget(btn_sub_toggle, alignment=Qt.AlignVCenter)
-                sub_h_layout.addWidget(sub_cb, alignment=Qt.AlignVCenter)
-                sub_h_layout.addWidget(sub_title, alignment=Qt.AlignVCenter)
                 sub_h_layout.addStretch()
                 sub_h_layout.addWidget(sub_size, alignment=Qt.AlignVCenter)
                 sub_layout.addWidget(sub_header)
@@ -2193,7 +2240,7 @@ class DiskCleanerPanel(QWidget):
 
                 def _toggle_sub(e, container=sub_child_container, btn=btn_sub_toggle):
                     container.setVisible(not container.isVisible())
-                    btn.setPixmap(QPixmap(down_icon_path) if container.isVisible() else QPixmap(right_icon_path))
+                    btn.setPixmap(down_pixmap if container.isVisible() else right_pixmap)
                 btn_sub_toggle.mousePressEvent = _toggle_sub
 
                 def _on_subgroup_toggled(checked, subgroup_id=sgid):
@@ -2233,6 +2280,7 @@ class DiskCleanerPanel(QWidget):
             }
 
         self.category_layout.addStretch()
+        self.category_container.setUpdatesEnabled(True)
         self._recalculate_selected_junk()
 
     def _switch_cleaner_tab(self, index):
@@ -2240,7 +2288,7 @@ class DiskCleanerPanel(QWidget):
         self._current_cleaner_tab = index
         self._update_cleaner_tab_buttons()
         self.cleaner_stack.setCurrentIndex(index)
-        if index == 0:
+        if index == 0 and getattr(self, '_categories_built', False):
             # Ensure all categories are visible in System clean-up page
             for cat_id, data in self._category_rows.items():
                 data["row"].setVisible(True)
@@ -2289,9 +2337,11 @@ class DiskCleanerPanel(QWidget):
                 """)
 
     def selected_category_ids(self):
+        self._ensure_categories_built()
         return [cat_id for cat_id, row in self._category_rows.items() if row["check"].isChecked() and row["check"].isEnabled()]
 
     def selected_has_tier3(self):
+        self._ensure_categories_built()
         return any(row["tier"] >= 3 and row["check"].isChecked() for row in self._category_rows.values())
 
     def set_busy(self, busy, text="Working...", percent=0):
@@ -2312,6 +2362,7 @@ class DiskCleanerPanel(QWidget):
             self.hero_gauge.setSubtitle(f"{int(percent)}%")
 
     def _show_junk_items_panel(self, cat_id):
+        self._ensure_categories_built()
         row_data = self._category_rows.get(cat_id)
         if not row_data:
             return
@@ -2332,6 +2383,7 @@ class DiskCleanerPanel(QWidget):
         panel.exec()
 
     def update_results(self, results):
+        self._ensure_categories_built()
         from utils.drive_utils import format_bytes
         def _apply_scanned_results():
             self._is_scanning_active = False
@@ -2356,6 +2408,7 @@ class DiskCleanerPanel(QWidget):
         self.hero_gauge.trigger_fade_transition(220, _apply_scanned_results)
 
     def finish_clean(self, cleaned, skipped, errors):
+        self._ensure_categories_built()
         from utils.drive_utils import format_bytes
         freed = format_bytes(cleaned)
         def _apply_cleaned_state():
@@ -2482,6 +2535,19 @@ class HeaderLhmIconButton(QPushButton):
 # ============================================
 # MAIN HARDWARE PANEL
 # ============================================
+
+def _is_tab_profiling_enabled():
+    try:
+        import json, os
+        appdata = os.getenv("APPDATA", "")
+        settings_file = os.path.join(appdata, "HELXAID", "settings.json")
+        if os.path.exists(settings_file):
+            with open(settings_file, "r") as f:
+                return json.load(f).get("calculate_tab_initialize", False)
+    except Exception:
+        pass
+    return False
+
 
 class HardwarePanelWidget(QWidget):
     """
@@ -2676,7 +2742,10 @@ class HardwarePanelWidget(QWidget):
                 """)
     
     def _switch_page(self, index: int):
-        """Switch to a different page in the stack, lazy-loading if needed."""
+        """Switch to a different page in the stack, lazy-loading if needed with latency profiling."""
+        is_profiling = _is_tab_profiling_enabled()
+        t_start = time.perf_counter() if is_profiling else 0.0
+
         was_active = self._update_timer.isActive()
         self._update_timer.stop()
 
@@ -2709,6 +2778,27 @@ class HardwarePanelWidget(QWidget):
         # Resume timer after page switch is complete
         if was_active:
             self._update_timer.start(self.monitor.update_interval_ms)
+
+        if is_profiling:
+            elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+            tab_names = {
+                0: "HELXTATS - Quick Setup",
+                1: "HELXTATS - Booster",
+                2: "HELXTATS - CPU",
+                3: "HELXTATS - Drive",
+                4: "HELXTATS - Health",
+                5: "HELXTATS - Network",
+            }
+            tab_label = tab_names.get(index, f"HELXTATS Tab {index}")
+            print(f"[Tab Profiler] {tab_label} initialized in {elapsed_ms:.2f} ms")
+            try:
+                from launcher import TabInitProfilerWindow
+                self._tab_profiler_win = TabInitProfilerWindow(tab_label, elapsed_ms)
+                self._tab_profiler_win.show()
+                self._tab_profiler_win.raise_()
+                self._tab_profiler_win.activateWindow()
+            except Exception as pe:
+                print(f"[Tab Profiler Error] {pe}")
     
     def _create_page_lazy(self, index: int):
         """Create a page on-demand (lazy loading)."""
@@ -5553,7 +5643,8 @@ class HardwarePanelWidget(QWidget):
         page = QWidget()
         page.setObjectName("drivePage")
         page.setStyleSheet("background: transparent;")
-        
+        page.setUpdatesEnabled(False)
+
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 10, 0, 0)
         layout.setSpacing(12)
@@ -5645,6 +5736,7 @@ class HardwarePanelWidget(QWidget):
 
         self._drive_refresh_counter = 0
         self._request_async_drive_info()
+        page.setUpdatesEnabled(True)
         return page
 
     def _request_async_drive_info(self):
