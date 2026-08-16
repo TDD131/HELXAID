@@ -6976,18 +6976,31 @@ class GameLauncher(QWidget):
             elif widget.objectName() == "gamesScrollArea":
                 component_name = "Games Scroll Area"
                 code_ref = "self.games_scroll"
+
+            # Fallback dynamic resolution for any named component or accessible widget
+            if component_name == "Unknown":
+                if widget.accessibleName():
+                    component_name = widget.accessibleName()
+                elif widget.objectName():
+                    component_name = widget.objectName()
+                elif hasattr(widget, 'text') and widget.text():
+                    component_name = f"{widget_type}: \"{widget.text()[:30]}\""
+                elif widget.toolTip():
+                    component_name = f"{widget_type} ({widget.toolTip()[:30]})"
+                else:
+                    component_name = widget_type
             
             selector_text = f"{widget_type}#{widget.objectName()}" if widget.objectName() else f"<{widget_type}: set objectName first>"
+            accessible_text = f"Accessible Name: {widget.accessibleName()}" if widget.accessibleName() else ""
             info = f"""Component Inspector
 
 Component: {component_name}
 Widget Type: {widget_type}
 Object Name: {widget.objectName() or '(not set)'}
-Size: {widget.width()} x {widget.height()}
-{f'Code Reference: {code_ref}' if code_ref else ''}
-
+{accessible_text + chr(10) if accessible_text else ''}Size: {widget.width()} x {widget.height()}
+{f'Code Reference: {code_ref}' + chr(10) if code_ref else ''}
 Hierarchy (child → parent):
-{chr(10).join(f"  {i}. {h}" for i, h in enumerate(hierarchy[:5]))}
+{chr(10).join(f"  {i}. {h}" for i, h in enumerate(hierarchy[:6]))}
 
 Stylesheet Selector:
   {selector_text}
