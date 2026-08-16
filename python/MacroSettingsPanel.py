@@ -4025,9 +4025,13 @@ class ScrollWheelTestPanel(QWidget):
         stats_layout.setSpacing(10)
 
         self.up_lbl = self._create_stat_card("SCROLL UP", "0", stats_layout)
+        self.up_lbl.setObjectName("ScrollUpValLbl")
         self.down_lbl = self._create_stat_card("SCROLL DOWN", "0", stats_layout)
+        self.down_lbl.setObjectName("ScrollDownValLbl")
         self.vel_lbl = self._create_stat_card("CURRENT VELOCITY", "0 lines/s", stats_layout)
+        self.vel_lbl.setObjectName("ScrollCurrentVelValLbl")
         self.max_vel_lbl = self._create_stat_card("MAX VELOCITY", "0 lines/s", stats_layout)
+        self.max_vel_lbl.setObjectName("ScrollMaxVelValLbl")
 
         main_layout.addLayout(stats_layout)
 
@@ -4324,9 +4328,13 @@ class PollingRateTestPanel(QWidget):
         stats_layout.setSpacing(10)
 
         self.current_lbl = self._create_stat_card("CURRENT (Hz)", "0", stats_layout)
+        self.current_lbl.setObjectName("PollingCurrentValLbl")
         self.peak_lbl = self._create_stat_card("PEAK (Hz)", "0", stats_layout)
+        self.peak_lbl.setObjectName("PollingPeakValLbl")
         self.avg_lbl = self._create_stat_card("AVERAGE (Hz)", "0", stats_layout)
+        self.avg_lbl.setObjectName("PollingAvgValLbl")
         self.latency_lbl = self._create_stat_card("LATENCY", "0.00 ms", stats_layout)
+        self.latency_lbl.setObjectName("PollingLatencyValLbl")
 
         main_layout.addLayout(stats_layout)
 
