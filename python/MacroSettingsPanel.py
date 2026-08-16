@@ -3660,10 +3660,12 @@ class DoubleClickTestPanel(QWidget):
         g_layout.setSpacing(2)
         
         g_title = QLabel("NEED HELP?")
+        g_title.setObjectName("GuideCardTitle")
         g_title.setAttribute(Qt.WA_TransparentForMouseEvents)
         g_title.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; background: transparent;")
         
         g_val = QLabel("GUIDE")
+        g_val.setObjectName("GuideCardVal")
         g_val.setAttribute(Qt.WA_TransparentForMouseEvents)
         g_val.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; background: transparent;")
         
@@ -3677,6 +3679,7 @@ class DoubleClickTestPanel(QWidget):
 
         # ── 3. MIDDLE ROW: CLICK ZONE CANVAS & VECTOR MOUSE & GRAPH ──
         mid_widget = QWidget()
+        mid_widget.setObjectName("DoubleClickMidRowWidget")
         mid_layout = QHBoxLayout(mid_widget)
         mid_layout.setContentsMargins(0, 0, 0, 0)
         mid_layout.setSpacing(12)
@@ -3699,8 +3702,10 @@ class DoubleClickTestPanel(QWidget):
         canvas_layout.setAlignment(Qt.AlignCenter)
         
         canvas_lbl1 = QLabel("INTERACTIVE CLICK TEST ZONE")
+        canvas_lbl1.setObjectName("DoubleClickZoneTitle")
         canvas_lbl1.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         canvas_lbl2 = QLabel("Click anywhere inside this area using Left, Right, Middle, or Side Mouse Buttons")
+        canvas_lbl2.setObjectName("DoubleClickZoneHint")
         canvas_lbl2.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         canvas_lbl1.setAlignment(Qt.AlignCenter)
         canvas_lbl2.setAlignment(Qt.AlignCenter)
@@ -3851,6 +3856,7 @@ class DoubleClickTestPanel(QWidget):
 
     def _show_guide(self):
         msg = QMessageBox(self)
+        msg.setObjectName("DoubleClickGuideDialog")
         msg.setWindowTitle("How To Use")
         msg.setText(
             "1. Hover your mouse inside the dashed 'CLICK TEST ZONE'.\n"
@@ -3861,6 +3867,7 @@ class DoubleClickTestPanel(QWidget):
         msg.setIcon(QMessageBox.Information)
         
         ok_btn = FadeHoverButton("OK", is_secondary=True, border_radius=6.0)
+        ok_btn.setObjectName("DoubleClickGuideOkBtn")
         ok_btn.setStyleSheet("""
             FadeHoverButton {
                 font-family: 'Orbitron', sans-serif;
