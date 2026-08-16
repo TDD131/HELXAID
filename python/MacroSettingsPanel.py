@@ -195,15 +195,11 @@ class HelxairoMacroGroupCardWidget(QFrame):
         header_layout.setSpacing(8)
 
         self.title_lbl = QLabel(macro_name)
-        self.title_lbl.setObjectName("HelxairoMacroGroupTitle")
-        self.title_lbl.setAccessibleName("Macro Group Title")
         self.title_lbl.setStyleSheet("color: #FFFFFF; font-weight: bold; font-family: 'Orbitron', sans-serif; font-size: 12px;")
         header_layout.addWidget(self.title_lbl)
 
         step_suffix = "step" if step_count == 1 else "steps"
         self.count_lbl = QLabel(f"({step_count} {step_suffix})")
-        self.count_lbl.setObjectName("HelxairoMacroGroupCount")
-        self.count_lbl.setAccessibleName("Macro Group Step Count")
         self.count_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px;")
         header_layout.addWidget(self.count_lbl)
 
@@ -212,7 +208,6 @@ class HelxairoMacroGroupCardWidget(QFrame):
 
         # Subtle Horizontal Separator Line
         line = QFrame()
-        line.setObjectName("HelxairoMacroGroupLine")
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("background-color: rgba(255, 255, 255, 0.06); min-height: 1px; max-height: 1px; border: none;")
         main_layout.addWidget(line)
@@ -224,22 +219,16 @@ class HelxairoMacroGroupCardWidget(QFrame):
             step_row.setSpacing(10)
 
             step_lbl = QLabel(f"Step {step_idx}")
-            step_lbl.setObjectName(f"HelxairoMacroStepNum_{step_idx}")
-            step_lbl.setAccessibleName(f"Step {step_idx} Number")
             step_lbl.setStyleSheet("color: #E0E0E0; font-weight: bold; font-family: 'Orbitron', sans-serif; font-size: 11px;")
             step_row.addWidget(step_lbl)
 
             key_lbl = QLabel(key_name)
-            key_lbl.setObjectName(f"HelxairoMacroKeyName_{step_idx}")
-            key_lbl.setAccessibleName(f"Step {step_idx} Key Name")
             key_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px;")
             step_row.addWidget(key_lbl)
 
             step_row.addStretch()
 
             interval_lbl = QLabel(f"Interval {delay_str}")
-            interval_lbl.setObjectName(f"HelxairoMacroInterval_{step_idx}")
-            interval_lbl.setAccessibleName(f"Step {step_idx} Interval")
             interval_lbl.setStyleSheet("""
                 color: #888888;
                 font-family: 'Orbitron', sans-serif;
@@ -1401,15 +1390,12 @@ class HelxairoMacroItemWidget(QFrame):
         # Status Icon (Pure Vector QPainter Toggle Button - Clickable to toggle macro on/off)
         is_enabled = getattr(self.macro, 'enabled', True)
         self.status_icon = MacroStatusCheckWidget(is_enabled=is_enabled)
-        self.status_icon.setObjectName("MacroItemStatusIcon")
-        self.status_icon.setAccessibleName("Macro Item Status Toggle")
         self.status_icon.clicked.connect(self._on_status_icon_clicked)
         header_layout.addWidget(self.status_icon, 0, Qt.AlignVCenter)
         
         # Title Label for Display Mode (Native Qt.AlignVCenter for 100% vertical centering)
         self.title_lbl = QLabel()
         self.title_lbl.setObjectName("MacroItemTitle")
-        self.title_lbl.setAccessibleName("Macro Item Title")
         self.title_lbl.setWordWrap(True)
         self.title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.title_lbl.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent; padding: 0px; margin: 0px;")
@@ -1418,7 +1404,6 @@ class HelxairoMacroItemWidget(QFrame):
         # Inline Name Edit Input (QTextEdit used when double-clicked to edit)
         self.name_edit = QTextEdit()
         self.name_edit.setObjectName("MacroItemInlineEdit")
-        self.name_edit.setAccessibleName("Macro Item Name Editor")
         self.name_edit.setMinimumHeight(24)
         self.name_edit.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.name_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1440,7 +1425,6 @@ class HelxairoMacroItemWidget(QFrame):
             
         self.hotkey_lbl = QLabel(f"  |  {trigger_str}")
         self.hotkey_lbl.setObjectName("MacroItemHotkey")
-        self.hotkey_lbl.setAccessibleName("Macro Item Hotkey")
         self.hotkey_lbl.setStyleSheet("color: #AAAAAA; font-size: 12px; font-weight: bold; font-family: 'Orbitron', sans-serif; background: transparent;")
         header_layout.addWidget(self.hotkey_lbl, 0, Qt.AlignVCenter)
         
@@ -1991,8 +1975,7 @@ class CpsResultOverlayPanel(QWidget):
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setObjectName("CpsResultOverlayPanel")
         
-        if parent_panel:
-            self.setGeometry(0, 0, parent_panel.width(), parent_panel.height())
+        self.setGeometry(0, 0, parent_panel.width(), parent_panel.height())
         self._setup_ui()
 
     def _setup_ui(self):
@@ -2019,7 +2002,6 @@ class CpsResultOverlayPanel(QWidget):
         
         self.card = QFrame()
         self.card.setObjectName("CpsResultCard")
-        self.card.setAccessibleName("CPS Result Modal Card")
         self.card.setFixedSize(480, 250)
         
         card_layout = QVBoxLayout(self.card)
@@ -2037,7 +2019,6 @@ class CpsResultOverlayPanel(QWidget):
         
         title_label = QLabel("BENCHMARK RESULT")
         title_label.setObjectName("CpsResultTitleLabel")
-        title_label.setAccessibleName("CPS Benchmark Result Header")
         title_label.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
         
         title_layout.addWidget(title_label)
@@ -2059,7 +2040,6 @@ class CpsResultOverlayPanel(QWidget):
         
         rank_lbl = QLabel(self.rank_badge)
         rank_lbl.setObjectName("CpsResultRankTag")
-        rank_lbl.setAccessibleName("CPS Rank Badge")
         rank_lbl.setFont(QFont("Orbitron", 15, QFont.Bold))
         rank_lbl.setStyleSheet(f"color: {self.rank_color}; font-family: 'Orbitron', sans-serif; background: transparent;")
         rank_row.addWidget(rank_lbl)
@@ -2067,7 +2047,6 @@ class CpsResultOverlayPanel(QWidget):
         # Universal Vector Star Rating with Sequential Animation
         self.star_widget = StarRatingWidget(rating=self.star_rating, max_stars=5, star_size=16, animate=True)
         self.star_widget.setObjectName("CpsResultStarRating")
-        self.star_widget.setAccessibleName("CPS Star Rating")
         rank_row.addWidget(self.star_widget)
 
         rank_row.addStretch()
@@ -2079,7 +2058,6 @@ class CpsResultOverlayPanel(QWidget):
         
         self.cps_stat = QLabel("CPS <span style='color: #888;'>0.0</span>")
         self.cps_stat.setObjectName("CpsStatBadge")
-        self.cps_stat.setAccessibleName("Average CPS Result Badge")
         self.cps_stat.setStyleSheet("""
             color: #E0E0E0;
             font-family: 'Orbitron', sans-serif;
@@ -2093,7 +2071,6 @@ class CpsResultOverlayPanel(QWidget):
         
         self.peak_stat = QLabel("PEAK <span style='color: #888;'>0.0</span>")
         self.peak_stat.setObjectName("PeakStatBadge")
-        self.peak_stat.setAccessibleName("Peak CPS Result Badge")
         self.peak_stat.setStyleSheet("""
             color: #E0E0E0;
             font-family: 'Orbitron', sans-serif;
@@ -2107,7 +2084,6 @@ class CpsResultOverlayPanel(QWidget):
         
         self.clicks_stat = QLabel("CLICKS <span style='color: #888;'>0</span>")
         self.clicks_stat.setObjectName("ClicksStatBadge")
-        self.clicks_stat.setAccessibleName("Total Clicks Result Badge")
         self.clicks_stat.setStyleSheet("""
             color: #E0E0E0;
             font-family: 'Orbitron', sans-serif;
@@ -2128,7 +2104,6 @@ class CpsResultOverlayPanel(QWidget):
         # Rank Description Text
         desc_lbl = QLabel(self.rank_desc)
         desc_lbl.setObjectName("CpsResultDescLabel")
-        desc_lbl.setAccessibleName("CPS Rank Description")
         desc_lbl.setWordWrap(True)
         desc_lbl.setStyleSheet("color: #A0A0A0; font-family: 'Orbitron', sans-serif; font-size: 12px; background: transparent;")
         body_layout.addWidget(desc_lbl)
@@ -2142,7 +2117,6 @@ class CpsResultOverlayPanel(QWidget):
         
         close_btn = FadeHoverButton("Close", is_secondary=False, border_radius=8.0, color_mode="default")
         close_btn.setObjectName("CpsResultCloseBtn")
-        close_btn.setAccessibleName("CPS Result Close Button")
         close_btn.setFixedSize(110, 34)
         close_btn.setFont(QFont("Orbitron", 10, QFont.Bold))
         close_btn.clicked.connect(self._on_close)
@@ -2333,7 +2307,6 @@ class CpsBenchmarkPanel(QWidget):
 
         self.back_btn = QPushButton()
         self.back_btn.setObjectName("CpsBackBtn")
-        self.back_btn.setAccessibleName("CPS Back Button")
         self.back_btn.setFixedSize(30, 26)
         self.back_btn.setIcon(QIcon(back_icon_path))
         self.back_btn.setIconSize(QSize(15, 15))
@@ -2360,7 +2333,6 @@ class CpsBenchmarkPanel(QWidget):
 
         title_lbl = QLabel("CPS BENCHMARK LAB")
         title_lbl.setObjectName("CpsHeaderTitle")
-        title_lbl.setAccessibleName("CPS Benchmark Lab Title")
         title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
         h_layout.addWidget(title_lbl)
 
@@ -2374,7 +2346,6 @@ class CpsBenchmarkPanel(QWidget):
 
         self.btn_combo = QComboBox()
         self.btn_combo.setObjectName("CpsBtnCombo")
-        self.btn_combo.setAccessibleName("CPS Target Button Selector")
         self.btn_combo.addItems(["Left Click", "Right Click", "Middle Click", "Any Button"])
         self.btn_combo.setFixedWidth(105)
         self.btn_combo.setFixedHeight(26)
@@ -2400,7 +2371,6 @@ class CpsBenchmarkPanel(QWidget):
 
         self.dur_combo = QComboBox()
         self.dur_combo.setObjectName("CpsDurCombo")
-        self.dur_combo.setAccessibleName("CPS Duration Selector")
         self.dur_combo.addItems(["5 Seconds", "10 Seconds", "15 Seconds", "30 Seconds", "Uncapped Live"])
         self.dur_combo.setFixedWidth(115)
         self.dur_combo.setFixedHeight(26)
@@ -2421,7 +2391,6 @@ class CpsBenchmarkPanel(QWidget):
         # Reset Button (Universal objectName CpsResetBtn + strict QSS dimensions)
         self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
         self.reset_btn.setObjectName("CpsResetBtn")
-        self.reset_btn.setAccessibleName("CPS Reset Button")
         self.reset_btn.setFixedSize(65, 26)
         self.reset_btn.setStyleSheet("""
             QPushButton#CpsResetBtn, FadeHoverButton#CpsResetBtn {
@@ -2445,19 +2414,19 @@ class CpsBenchmarkPanel(QWidget):
         metrics_layout.setSpacing(8)
 
         # Metric 1: Current CPS (1s sliding window)
-        self.card_cps_val = self._create_metric_card("CURRENT CPS", "0.0", "#FF5B06", "CpsCurrentCard", "CpsCurrentVal", "CpsCurrentTitle", "Current CPS Metric Card")
+        self.card_cps_val = self._create_metric_card("CURRENT CPS", "0.0", "#FF5B06")
         metrics_layout.addWidget(self.card_cps_val)
 
         # Metric 2: Peak CPS
-        self.card_peak_val = self._create_metric_card("PEAK CPS", "0.0", "#FDA903", "CpsPeakCard", "CpsPeakVal", "CpsPeakTitle", "Peak CPS Metric Card")
+        self.card_peak_val = self._create_metric_card("PEAK CPS", "0.0", "#FDA903")
         metrics_layout.addWidget(self.card_peak_val)
 
         # Metric 3: Total Clicks
-        self.card_clicks_val = self._create_metric_card("TOTAL CLICKS", "0", "#00FF66", "CpsClicksCard", "CpsClicksVal", "CpsClicksTitle", "Total Clicks Metric Card")
+        self.card_clicks_val = self._create_metric_card("TOTAL CLICKS", "0", "#00FF66")
         metrics_layout.addWidget(self.card_clicks_val)
 
         # Metric 4: Timer Remaining
-        self.card_timer_val = self._create_metric_card("TIME LEFT", "5.0s", "#00E5FF", "CpsTimerCard", "CpsTimerVal", "CpsTimerTitle", "Time Left Metric Card")
+        self.card_timer_val = self._create_metric_card("TIME LEFT", "5.0s", "#00E5FF")
         metrics_layout.addWidget(self.card_timer_val)
 
         main_layout.addLayout(metrics_layout)
@@ -2465,7 +2434,6 @@ class CpsBenchmarkPanel(QWidget):
         # ── 3. MAIN INTERACTIVE CLICK ZONE ────────────────────
         self.click_target_zone = QFrame()
         self.click_target_zone.setObjectName("CpsClickTargetZone")
-        self.click_target_zone.setAccessibleName("CPS Click Target Zone")
         self.click_target_zone.setFixedHeight(110)
         self.click_target_zone.setCursor(Qt.PointingHandCursor)
         self.click_target_zone.setStyleSheet("""
@@ -2488,7 +2456,6 @@ class CpsBenchmarkPanel(QWidget):
 
         self.target_status_lbl = QLabel("CLICK HERE TO START BENCHMARK")
         self.target_status_lbl.setObjectName("CpsTargetStatusLabel")
-        self.target_status_lbl.setAccessibleName("CPS Start Status Label")
         self.target_status_lbl.setFont(QFont("Orbitron", 15, QFont.Bold))
         self.target_status_lbl.setStyleSheet("color: #FFFFFF; background: transparent;")
         self.target_status_lbl.setAlignment(Qt.AlignCenter)
@@ -2496,7 +2463,6 @@ class CpsBenchmarkPanel(QWidget):
 
         self.target_hint_lbl = QLabel("Click manually or toggle your autoclicker inside this box to test CPS")
         self.target_hint_lbl.setObjectName("CpsTargetHintLabel")
-        self.target_hint_lbl.setAccessibleName("CPS Hint Description Label")
         self.target_hint_lbl.setFont(QFont("Orbitron", 10))
         self.target_hint_lbl.setStyleSheet("color: #888888; background: transparent;")
         self.target_hint_lbl.setAlignment(Qt.AlignCenter)
@@ -2708,14 +2674,12 @@ class CpsBenchmarkPanel(QWidget):
 
             self.history_list_widget.setItemWidget(list_item, item_widget)
 
-    def _create_metric_card(self, title, default_val, color_hex, card_id="CpsMetricCard", val_id="CpsMetricVal", title_id="CpsMetricTitle", accessible_name=None):
+    def _create_metric_card(self, title, default_val, color_hex):
         card = QFrame()
-        card.setObjectName(card_id)
-        if accessible_name:
-            card.setAccessibleName(accessible_name)
+        card.setObjectName("CpsMetricCard")
         card.setFixedHeight(48)
         card.setStyleSheet(f"""
-            QFrame#{card_id}, QFrame#CpsMetricCard {{
+            QFrame#CpsMetricCard {{
                 background-color: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 6px;
@@ -2726,18 +2690,14 @@ class CpsBenchmarkPanel(QWidget):
         layout.setSpacing(0)
 
         val_lbl = QLabel(default_val)
-        val_lbl.setObjectName(val_id)
-        if accessible_name:
-            val_lbl.setAccessibleName(f"{accessible_name} Value")
+        val_lbl.setObjectName("CpsMetricCardVal")
         val_lbl.setFont(QFont("Orbitron", 16, QFont.Bold))
         val_lbl.setStyleSheet(f"color: {color_hex}; background: transparent;")
         val_lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(val_lbl)
 
         title_lbl = QLabel(title)
-        title_lbl.setObjectName(title_id)
-        if accessible_name:
-            title_lbl.setAccessibleName(f"{accessible_name} Title")
+        title_lbl.setObjectName("CpsMetricCardTitle")
         title_lbl.setFont(QFont("Orbitron", 8))
         title_lbl.setStyleSheet("color: #777777; background: transparent;")
         title_lbl.setAlignment(Qt.AlignCenter)
@@ -3016,12 +2976,9 @@ class CpsBenchmarkPanel(QWidget):
             while self._click_timestamps and self._click_timestamps[0] < cutoff_2s:
                 self._click_timestamps.popleft()
 
-            # Atomic snapshot of timestamps to prevent mutation race conditions
-            timestamps_snapshot = list(self._click_timestamps)
-
             # 1. Calculate Current CPS (1.0s sliding window)
             cutoff_1s = now - 1.0
-            clicks_in_1s = sum(1 for t in timestamps_snapshot if t >= cutoff_1s)
+            clicks_in_1s = sum(1 for t in self._click_timestamps if t >= cutoff_1s)
             if elapsed < 1.0:
                 self._current_cps = clicks_in_1s / elapsed
             else:
@@ -3029,7 +2986,7 @@ class CpsBenchmarkPanel(QWidget):
 
             # 2. Calculate Burst CPS (0.5s sliding window)
             cutoff_05s = now - 0.5
-            clicks_in_05s = sum(1 for t in timestamps_snapshot if t >= cutoff_05s)
+            clicks_in_05s = sum(1 for t in self._click_timestamps if t >= cutoff_05s)
             burst_cps = clicks_in_05s / 0.5
 
             # 3. Calculate Avg CPS
@@ -3076,6 +3033,16 @@ class CpsBenchmarkPanel(QWidget):
         val = durations[idx] if idx < len(durations) else 5.0
         self._test_duration = val
         self.reset_benchmark()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_result_banner()
+
+    def _reposition_result_banner(self):
+        if hasattr(self, 'result_banner') and hasattr(self, 'click_target_zone') and self.result_banner.isVisible():
+            w = min(self.click_target_zone.width() - 30, 720)
+            h = 44
+            x = max(0, (self.click_target_zone.width() - w) // 2)
 
 
 
@@ -3564,7 +3531,6 @@ class DoubleClickTestPanel(QWidget):
 
         self.back_btn = QPushButton()
         self.back_btn.setObjectName("DoubleClickBackBtn")
-        self.back_btn.setAccessibleName("Double Click Back Button")
         self.back_btn.setFixedSize(30, 26)
         self.back_btn.setIcon(QIcon(back_icon_path))
         self.back_btn.setIconSize(QSize(15, 15))
@@ -3591,7 +3557,6 @@ class DoubleClickTestPanel(QWidget):
 
         title_lbl = QLabel("DOUBLE CLICK & MICROSWITCH CHATTER LAB")
         title_lbl.setObjectName("DoubleClickHeaderTitle")
-        title_lbl.setAccessibleName("Double Click & Chatter Lab Title")
         title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         h_layout.addWidget(title_lbl)
 
@@ -3603,8 +3568,7 @@ class DoubleClickTestPanel(QWidget):
         h_layout.addWidget(thresh_lbl)
 
         self.threshold_slider = QSlider(Qt.Horizontal)
-        self.threshold_slider.setObjectName("DoubleClickThreshSlider")
-        self.threshold_slider.setAccessibleName("Chatter Threshold Slider")
+        self.threshold_slider.setObjectName("DoubleClickThresholdSlider")
         self.threshold_slider.setRange(10, 120)
         self.threshold_slider.setValue(50)
         self.threshold_slider.setFixedWidth(100)
@@ -3632,7 +3596,6 @@ class DoubleClickTestPanel(QWidget):
 
         self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
         self.reset_btn.setObjectName("DoubleClickResetBtn")
-        self.reset_btn.setAccessibleName("Double Click Reset Button")
         self.reset_btn.setFixedSize(65, 26)
         self.reset_btn.setStyleSheet("""
             QPushButton#DoubleClickResetBtn, FadeHoverButton#DoubleClickResetBtn {
@@ -3659,25 +3622,24 @@ class DoubleClickTestPanel(QWidget):
         stats_layout.setContentsMargins(0, 0, 0, 0)
         stats_layout.setSpacing(10)
 
-        self.card_total = self._create_stat_card("TOTAL CLICKS", "0", "#ffffff", "DoubleClickCardTotal", "DoubleClickValTotal", "DoubleClickTitleTotal", "Total Clicks Card")
-        self.total_val_lbl = self.card_total.findChild(QLabel, "DoubleClickValTotal")
+        self.card_total = self._create_stat_card("TOTAL CLICKS", "0", "#ffffff")
+        self.total_val_lbl = self.card_total.findChild(QLabel, "StatValLbl")
         stats_layout.addWidget(self.card_total)
 
-        self.card_faults = self._create_stat_card("CHATTER FAULTS", "0", "#FF3333", "DoubleClickCardFaults", "DoubleClickValFaults", "DoubleClickTitleFaults", "Chatter Faults Card")
-        self.faults_val_lbl = self.card_faults.findChild(QLabel, "DoubleClickValFaults")
+        self.card_faults = self._create_stat_card("CHATTER FAULTS", "0", "#FF3333")
+        self.faults_val_lbl = self.card_faults.findChild(QLabel, "StatValLbl")
         stats_layout.addWidget(self.card_faults)
 
-        self.card_bounce = self._create_stat_card("BOUNCE RATIO", "0.0 %", "#FFB74D", "DoubleClickCardBounce", "DoubleClickValBounce", "DoubleClickTitleBounce", "Bounce Ratio Card")
-        self.bounce_val_lbl = self.card_bounce.findChild(QLabel, "DoubleClickValBounce")
+        self.card_bounce = self._create_stat_card("BOUNCE RATIO", "0.0 %", "#FFB74D")
+        self.bounce_val_lbl = self.card_bounce.findChild(QLabel, "StatValLbl")
         stats_layout.addWidget(self.card_bounce)
 
-        self.card_health = self._create_stat_card("SWITCH HEALTH", "100%", "#00E676", "DoubleClickCardHealth", "DoubleClickValHealth", "DoubleClickTitleHealth", "Switch Health Card")
-        self.health_val_lbl = self.card_health.findChild(QLabel, "DoubleClickValHealth")
+        self.card_health = self._create_stat_card("SWITCH HEALTH", "100%", "#00E676")
+        self.health_val_lbl = self.card_health.findChild(QLabel, "StatValLbl")
         stats_layout.addWidget(self.card_health)
 
         self.btn_guide = QPushButton()
         self.btn_guide.setObjectName("GuideCardBtn")
-        self.btn_guide.setAccessibleName("Double Click Help Guide Button")
         self.btn_guide.setCursor(Qt.PointingHandCursor)
         self.btn_guide.setStyleSheet("""
             QPushButton#GuideCardBtn {
@@ -3698,12 +3660,10 @@ class DoubleClickTestPanel(QWidget):
         g_layout.setSpacing(2)
         
         g_title = QLabel("NEED HELP?")
-        g_title.setObjectName("DoubleClickGuideTitle")
         g_title.setAttribute(Qt.WA_TransparentForMouseEvents)
         g_title.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; background: transparent;")
         
         g_val = QLabel("GUIDE")
-        g_val.setObjectName("DoubleClickGuideVal")
         g_val.setAttribute(Qt.WA_TransparentForMouseEvents)
         g_val.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; background: transparent;")
         
@@ -3717,14 +3677,12 @@ class DoubleClickTestPanel(QWidget):
 
         # ── 3. MIDDLE ROW: CLICK ZONE CANVAS & VECTOR MOUSE & GRAPH ──
         mid_widget = QWidget()
-        mid_widget.setObjectName("DoubleClickMidWidget")
         mid_layout = QHBoxLayout(mid_widget)
         mid_layout.setContentsMargins(0, 0, 0, 0)
         mid_layout.setSpacing(12)
 
         self.click_canvas = QFrame()
         self.click_canvas.setObjectName("DoubleClickTestZoneFrame")
-        self.click_canvas.setAccessibleName("Double Click Interactive Zone")
         self.click_canvas.setCursor(Qt.CrossCursor)
         self.click_canvas.setStyleSheet("""
             QFrame#DoubleClickTestZoneFrame {
@@ -3741,10 +3699,8 @@ class DoubleClickTestPanel(QWidget):
         canvas_layout.setAlignment(Qt.AlignCenter)
         
         canvas_lbl1 = QLabel("INTERACTIVE CLICK TEST ZONE")
-        canvas_lbl1.setObjectName("DoubleClickTestZoneTitle")
         canvas_lbl1.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         canvas_lbl2 = QLabel("Click anywhere inside this area using Left, Right, Middle, or Side Mouse Buttons")
-        canvas_lbl2.setObjectName("DoubleClickTestZoneSub")
         canvas_lbl2.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         canvas_lbl1.setAlignment(Qt.AlignCenter)
         canvas_lbl2.setAlignment(Qt.AlignCenter)
@@ -3755,45 +3711,40 @@ class DoubleClickTestPanel(QWidget):
         mid_layout.addWidget(self.click_canvas, 2)
 
         self.mouse_graphic = HelxairoMouseGraphicWidget()
-        self.mouse_graphic.setObjectName("DoubleClickMouseGraphic")
         mid_layout.addWidget(self.mouse_graphic, 0)
 
         main_layout.addWidget(mid_widget, 1)
 
         # ── 4. OSCILLOSCOPE WAVEFORM GRAPH ───────────────────
         self.pulse_graph = HelxairoPulseGraphWidget()
-        self.pulse_graph.setObjectName("DoubleClickPulseGraph")
         main_layout.addWidget(self.pulse_graph)
 
         # ── 5. EVENT HISTORY TABLE ───────────────────────────
         self.log_table = HelxairoChatterLogTableWidget()
-        self.log_table.setObjectName("DoubleClickLogTable")
         self.log_table.setMaximumHeight(140)
         main_layout.addWidget(self.log_table)
 
-    def _create_stat_card(self, title: str, init_val: str, color_hex: str, card_id="DoubleClickStatCard", val_id="DoubleClickStatVal", title_id="DoubleClickStatTitle", accessible_name=None) -> QFrame:
+    def _create_stat_card(self, title: str, init_val: str, color_hex: str) -> QFrame:
         card = QFrame()
-        card.setObjectName(card_id)
-        if accessible_name:
-            card.setAccessibleName(accessible_name)
-        card.setStyleSheet(f"""
-            QFrame#{card_id}, QFrame {{
+        card.setObjectName("DoubleClickStatCard")
+        card.setStyleSheet("""
+            QFrame {
                 background-color: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
                 padding: 8px;
-            }}
+            }
         """)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(2)
 
         title_lbl = QLabel(title)
-        title_lbl.setObjectName(title_id)
+        title_lbl.setObjectName("DoubleClickStatTitleLbl")
         title_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold;")
         
         val_lbl = QLabel(init_val)
-        val_lbl.setObjectName(val_id)
+        val_lbl.setObjectName("StatValLbl")
         val_lbl.setStyleSheet(f"color: {color_hex}; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
 
         layout.addWidget(title_lbl)
@@ -4012,7 +3963,6 @@ class ScrollWheelTestPanel(QWidget):
 
         self.back_btn = QPushButton()
         self.back_btn.setObjectName("ScrollBackBtn")
-        self.back_btn.setAccessibleName("Scroll Wheel Back Button")
         self.back_btn.setFixedSize(30, 26)
         self.back_btn.setIcon(QIcon(back_icon_path))
         self.back_btn.setIconSize(QSize(15, 15))
@@ -4039,14 +3989,12 @@ class ScrollWheelTestPanel(QWidget):
 
         title_lbl = QLabel("SCROLL WHEEL & ENCODER LAB")
         title_lbl.setObjectName("ScrollHeaderTitle")
-        title_lbl.setAccessibleName("Scroll Wheel & Encoder Lab Title")
         title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         h_layout.addWidget(title_lbl)
         h_layout.addStretch()
 
         self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
         self.reset_btn.setObjectName("ScrollResetBtn")
-        self.reset_btn.setAccessibleName("Scroll Reset Button")
         self.reset_btn.setFixedSize(65, 26)
         self.reset_btn.setStyleSheet("""
             QPushButton#ScrollResetBtn, FadeHoverButton#ScrollResetBtn {
@@ -4069,20 +4017,19 @@ class ScrollWheelTestPanel(QWidget):
         stats_layout = QHBoxLayout()
         stats_layout.setSpacing(10)
 
-        self.up_lbl = self._create_stat_card("SCROLL UP", "0", stats_layout, "ScrollCardUp", "ScrollValUp", "ScrollTitleUp", "Scroll Up Card")
-        self.down_lbl = self._create_stat_card("SCROLL DOWN", "0", stats_layout, "ScrollCardDown", "ScrollValDown", "ScrollTitleDown", "Scroll Down Card")
-        self.vel_lbl = self._create_stat_card("CURRENT VELOCITY", "0 lines/s", stats_layout, "ScrollCardVelocity", "ScrollValVelocity", "ScrollTitleVelocity", "Current Velocity Card")
-        self.max_vel_lbl = self._create_stat_card("MAX VELOCITY", "0 lines/s", stats_layout, "ScrollCardMaxVelocity", "ScrollValMaxVelocity", "ScrollTitleMaxVelocity", "Max Velocity Card")
+        self.up_lbl = self._create_stat_card("SCROLL UP", "0", stats_layout)
+        self.down_lbl = self._create_stat_card("SCROLL DOWN", "0", stats_layout)
+        self.vel_lbl = self._create_stat_card("CURRENT VELOCITY", "0 lines/s", stats_layout)
+        self.max_vel_lbl = self._create_stat_card("MAX VELOCITY", "0 lines/s", stats_layout)
 
         main_layout.addLayout(stats_layout)
 
         # Log visualizer area
         self.log_area = QTextEdit()
         self.log_area.setObjectName("ScrollLogArea")
-        self.log_area.setAccessibleName("Scroll Event Log Terminal")
         self.log_area.setReadOnly(True)
         self.log_area.setStyleSheet("""
-            QTextEdit#ScrollLogArea, QTextEdit {
+            QTextEdit {
                 background: rgba(255, 255, 255, 0.02);
                 border: 1px solid rgba(255, 255, 255, 0.05);
                 border-radius: 6px;
@@ -4102,29 +4049,27 @@ class ScrollWheelTestPanel(QWidget):
         """)
         main_layout.addWidget(self.log_area, 1)
 
-    def _create_stat_card(self, title, init_val, parent_layout, card_id="ScrollStatCard", val_id="ScrollStatVal", title_id="ScrollStatTitle", accessible_name=None):
+    def _create_stat_card(self, title, init_val, parent_layout):
         card = QFrame()
-        card.setObjectName(card_id)
-        if accessible_name:
-            card.setAccessibleName(accessible_name)
-        card.setStyleSheet(f"""
-            QFrame#{card_id}, QFrame {{
+        card.setObjectName("ScrollStatCard")
+        card.setStyleSheet("""
+            QFrame {
                 background: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
-            }}
+            }
         """)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setAlignment(Qt.AlignCenter)
         
         t_lbl = QLabel(title)
-        t_lbl.setObjectName(title_id)
+        t_lbl.setObjectName("ScrollStatTitle")
         t_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px; border: none; background: transparent;")
         t_lbl.setAlignment(Qt.AlignCenter)
         
         v_lbl = QLabel(init_val)
-        v_lbl.setObjectName(val_id)
+        v_lbl.setObjectName("ScrollStatVal")
         v_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: bold; border: none; background: transparent;")
         v_lbl.setAlignment(Qt.AlignCenter)
         
@@ -4297,7 +4242,7 @@ class PollingRateTestPanel(QWidget):
         header_frame = QFrame()
         header_frame.setObjectName("PollingHeaderFrame")
         header_frame.setStyleSheet("""
-            QFrame#PollingHeaderFrame, QFrame {
+            QFrame {
                 background-color: rgba(255, 255, 255, 0.02);
                 border: 1px solid rgba(255, 255, 255, 0.05);
                 border-radius: 8px;
@@ -4312,7 +4257,6 @@ class PollingRateTestPanel(QWidget):
 
         self.back_btn = QPushButton()
         self.back_btn.setObjectName("PollingBackBtn")
-        self.back_btn.setAccessibleName("Polling Rate Back Button")
         self.back_btn.setFixedSize(30, 26)
         self.back_btn.setIcon(QIcon(back_icon_path))
         self.back_btn.setIconSize(QSize(15, 15))
@@ -4339,14 +4283,12 @@ class PollingRateTestPanel(QWidget):
 
         title_lbl = QLabel("POLLING RATE & LATENCY LAB")
         title_lbl.setObjectName("PollingHeaderTitle")
-        title_lbl.setAccessibleName("Polling Rate & Latency Lab Title")
         title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         h_layout.addWidget(title_lbl)
         h_layout.addStretch()
 
         self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
         self.reset_btn.setObjectName("PollingResetBtn")
-        self.reset_btn.setAccessibleName("Polling Reset Button")
         self.reset_btn.setFixedSize(65, 26)
         self.reset_btn.setStyleSheet("""
             QPushButton#PollingResetBtn, FadeHoverButton#PollingResetBtn {
@@ -4367,46 +4309,43 @@ class PollingRateTestPanel(QWidget):
         
         # Graph
         self.graph = PollingGraph()
-        self.graph.setObjectName("PollingGraphWidget")
-        self.graph.setAccessibleName("Polling Rate Real-time Graph")
+        self.graph.setObjectName("PollingRateGraph")
         main_layout.addWidget(self.graph, 1)
 
         # Stats Grid
         stats_layout = QHBoxLayout()
         stats_layout.setSpacing(10)
 
-        self.current_lbl = self._create_stat_card("CURRENT (Hz)", "0", stats_layout, "PollingCardCurrent", "PollingValCurrent", "PollingTitleCurrent", "Current Polling Rate Card")
-        self.peak_lbl = self._create_stat_card("PEAK (Hz)", "0", stats_layout, "PollingCardPeak", "PollingValPeak", "PollingTitlePeak", "Peak Polling Rate Card")
-        self.avg_lbl = self._create_stat_card("AVERAGE (Hz)", "0", stats_layout, "PollingCardAvg", "PollingValAvg", "PollingTitleAvg", "Average Polling Rate Card")
-        self.latency_lbl = self._create_stat_card("LATENCY", "0.00 ms", stats_layout, "PollingCardLatency", "PollingValLatency", "PollingTitleLatency", "Estimated Latency Card")
+        self.current_lbl = self._create_stat_card("CURRENT (Hz)", "0", stats_layout)
+        self.peak_lbl = self._create_stat_card("PEAK (Hz)", "0", stats_layout)
+        self.avg_lbl = self._create_stat_card("AVERAGE (Hz)", "0", stats_layout)
+        self.latency_lbl = self._create_stat_card("LATENCY", "0.00 ms", stats_layout)
 
         main_layout.addLayout(stats_layout)
 
-    def _create_stat_card(self, title, val, parent_layout, card_id="PollingStatCard", val_id="PollingStatVal", title_id="PollingStatTitle", accessible_name=None):
+    def _create_stat_card(self, title, val, parent_layout):
         card = QFrame()
-        card.setObjectName(card_id)
-        if accessible_name:
-            card.setAccessibleName(accessible_name)
-        card.setStyleSheet(f"""
-            QFrame#{card_id}, QFrame {{
+        card.setObjectName("PollingStatCard")
+        card.setStyleSheet("""
+            QFrame {
                 background-color: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
-            }}
+            }
         """)
         layout = QVBoxLayout(card)
         layout.setAlignment(Qt.AlignCenter)
         
         t_lbl = QLabel(title)
-        t_lbl.setObjectName(title_id)
+        t_lbl.setObjectName("PollingStatTitle")
         t_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
         t_lbl.setAlignment(Qt.AlignCenter)
         
         v_lbl = QLabel(val)
-        v_lbl.setObjectName(val_id)
+        v_lbl.setObjectName("PollingStatVal")
         v_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 20px; font-weight: bold;")
         v_lbl.setAlignment(Qt.AlignCenter)
-
+        
         layout.addWidget(t_lbl)
         layout.addWidget(v_lbl)
         parent_layout.addWidget(card)
@@ -4887,8 +4826,7 @@ class MacroSettingsPanel(QWidget):
         header_layout = QHBoxLayout()
         
         header = QLabel("HELXAIRO")
-        header.setObjectName("HelxairoMainHeader")
-        header.setAccessibleName("HELXAIRO Main Header")
+        header.setObjectName("helxairo_headerTitle")
         header.setFont(QFont("Orbitron", 24, QFont.Bold))
         header.setStyleSheet("color: #FF5B06; padding: 0;")
         header_layout.addWidget(header)
@@ -4899,7 +4837,6 @@ class MacroSettingsPanel(QWidget):
         # ===== BATTERY INDICATOR =====
         battery_container = QWidget()
         battery_container.setObjectName("batteryContainer")
-        battery_container.setAccessibleName("Battery Status Container")
         battery_container.setStyleSheet("""
             QWidget#batteryContainer {
                 background: rgba(40, 40, 40, 0.8);
@@ -4915,7 +4852,6 @@ class MacroSettingsPanel(QWidget):
         # Battery icon (visual bar)
         self._battery_bar = QWidget()
         self._battery_bar.setObjectName("batteryBar")
-        self._battery_bar.setAccessibleName("Battery Level Bar")
         self._battery_bar.setFixedSize(30, 14)
         self._battery_bar.setStyleSheet("""
             QWidget#batteryBar {
@@ -4929,15 +4865,13 @@ class MacroSettingsPanel(QWidget):
         
         # Percentage text
         self._battery_label = QLabel("---%")
-        self._battery_label.setObjectName("batteryLabel")
-        self._battery_label.setAccessibleName("Battery Percentage Label")
+        self._battery_label.setObjectName("helxairo_batteryLabel")
         self._battery_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: bold;")
         battery_layout.addWidget(self._battery_label)
         
         # Charging indicator
         self._charging_label = QLabel("")
-        self._charging_label.setObjectName("chargingLabel")
-        self._charging_label.setAccessibleName("Battery Charging Status Label")
+        self._charging_label.setObjectName("helxairo_chargingLabel")
         self._charging_label.setStyleSheet("color: #FFC107; font-size: 12px;")
         battery_layout.addWidget(self._charging_label)
         
@@ -4953,7 +4887,6 @@ class MacroSettingsPanel(QWidget):
         
         self._refresh_btn = QPushButton()
         self._refresh_btn.setObjectName("helxairo_refreshBtn")
-        self._refresh_btn.setAccessibleName("Refresh Mouse Connection Button")
         self._refresh_btn.setFixedSize(32, 32)
         self._refresh_btn.setCursor(Qt.PointingHandCursor)
         self._refresh_btn.setToolTip("Refresh mouse connection")
@@ -4986,7 +4919,6 @@ class MacroSettingsPanel(QWidget):
         # ===== AHK MISSING ENGINE BANNER =====
         self._ahk_banner_container = QWidget()
         self._ahk_banner_container.setObjectName("ahkBannerContainer")
-        self._ahk_banner_container.setAccessibleName("AHK Banner Container")
         self._ahk_banner_container.setStyleSheet("""
             QWidget#ahkBannerContainer {
                 background: rgba(255, 91, 6, 0.08);
@@ -5015,7 +4947,6 @@ class MacroSettingsPanel(QWidget):
         # Download button
         self._ahk_download_btn = AnimatedButton("Download AHK Engine")
         self._ahk_download_btn.setObjectName("ahkDownloadBtn")
-        self._ahk_download_btn.setAccessibleName("Download AHK Engine Button")
         self._ahk_download_btn.setFont(QFont("Orbitron", 11, QFont.Bold))
         self._ahk_download_btn.setCursor(Qt.PointingHandCursor)
         self._ahk_download_btn.setStyleSheet("""
@@ -5067,7 +4998,6 @@ class MacroSettingsPanel(QWidget):
         for i, name in enumerate(tab_names):
             btn = QPushButton(name)
             btn.setObjectName(f"macroTabBtn_{i}")
-            btn.setAccessibleName(f"HELXAIRO {name} Tab Button")
             btn.setFixedHeight(35)
             btn.setCursor(Qt.PointingHandCursor)
             btn.setProperty("tab_index", i)
@@ -7596,6 +7526,7 @@ class MacroSettingsPanel(QWidget):
         hub_group_layout.setSpacing(12)
 
         hub_desc = QLabel("Comprehensive Mouse Performance & CPS Diagnostics Suite")
+        hub_desc.setObjectName("MouseTesterDesc")
         hub_desc.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
         hub_group_layout.addWidget(hub_desc)
 
@@ -7608,7 +7539,6 @@ class MacroSettingsPanel(QWidget):
         # Card 1: CPS Benchmark (Clickable -> Opens CPS Page)
         card_cps = QFrame()
         card_cps.setObjectName("CpsBenchmarkCard")
-        card_cps.setAccessibleName("CPS Benchmark Suite Card")
         card_cps.setCursor(Qt.PointingHandCursor)
         card_cps.setStyleSheet("""
             QFrame#CpsBenchmarkCard {
@@ -7640,7 +7570,6 @@ class MacroSettingsPanel(QWidget):
         # Card 2: Mouse Button & Double Click Test
         card_btn = QFrame()
         card_btn.setObjectName("ButtonTestCard")
-        card_btn.setAccessibleName("Button & Double Click Test Card")
         card_btn.setCursor(Qt.PointingHandCursor)
         card_btn.setStyleSheet("""
             QFrame#ButtonTestCard {
@@ -7656,10 +7585,10 @@ class MacroSettingsPanel(QWidget):
         """)
         btn_layout = QVBoxLayout(card_btn)
         btn_title = QLabel("Button & Double-Click Test")
-        btn_title.setObjectName("ButtonCardTitle")
+        btn_title.setObjectName("ButtonTestTitle")
         btn_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         btn_sub = QLabel("Interactive mouse button tester, debouncing & chatter detection")
-        btn_sub.setObjectName("ButtonCardSub")
+        btn_sub.setObjectName("ButtonTestSub")
         btn_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         btn_sub.setWordWrap(True)
         btn_layout.addWidget(btn_title)
@@ -7672,7 +7601,6 @@ class MacroSettingsPanel(QWidget):
         # Card 3: Scroll & Wheel Test
         card_scroll = QFrame()
         card_scroll.setObjectName("ScrollTestCard")
-        card_scroll.setAccessibleName("Scroll Wheel Test Card")
         card_scroll.setCursor(Qt.PointingHandCursor)
         card_scroll.setStyleSheet("""
             QFrame#ScrollTestCard {
@@ -7691,10 +7619,10 @@ class MacroSettingsPanel(QWidget):
         card_scroll.mousePressEvent = lambda e: self._benchmark_stack.setCurrentIndex(3)
         scroll_layout = QVBoxLayout(card_scroll)
         scroll_title = QLabel("Scroll Wheel Test")
-        scroll_title.setObjectName("ScrollCardTitle")
+        scroll_title.setObjectName("ScrollTestTitle")
         scroll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         scroll_sub = QLabel("Scroll direction, delta smoothness & wheel step counter")
-        scroll_sub.setObjectName("ScrollCardSub")
+        scroll_sub.setObjectName("ScrollTestSub")
         scroll_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         scroll_sub.setWordWrap(True)
         scroll_layout.addWidget(scroll_title)
@@ -7704,7 +7632,6 @@ class MacroSettingsPanel(QWidget):
         # Card 4: Polling Rate & Latency
         card_poll = QFrame()
         card_poll.setObjectName("PollingTestCard")
-        card_poll.setAccessibleName("Polling Rate Test Card")
         card_poll.setCursor(Qt.PointingHandCursor)
         card_poll.setStyleSheet("""
             QFrame#PollingTestCard {
@@ -7723,10 +7650,10 @@ class MacroSettingsPanel(QWidget):
         card_poll.mousePressEvent = lambda e: self._benchmark_stack.setCurrentIndex(4)
         poll_layout = QVBoxLayout(card_poll)
         poll_title = QLabel("Polling Rate & Latency")
-        poll_title.setObjectName("PollingCardTitle")
+        poll_title.setObjectName("PollingTestTitle")
         poll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         poll_sub = QLabel("Hz frequency report, motion smoothness & click latency estimation")
-        poll_sub.setObjectName("PollingCardSub")
+        poll_sub.setObjectName("PollingTestSub")
         poll_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         poll_sub.setWordWrap(True)
         poll_layout.addWidget(poll_title)
@@ -7747,7 +7674,6 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 1: DEDICATED CPS BENCHMARK PAGE ──────────
         cps_page = QWidget()
-        cps_page.setObjectName("CpsBenchmarkSubPage")
         cps_page_layout = QVBoxLayout(cps_page)
         cps_page_layout.setContentsMargins(12, 10, 12, 10)
         cps_page_layout.setSpacing(8)
@@ -7761,7 +7687,6 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 2: DEDICATED DOUBLE CLICK & CHATTER TEST PAGE ──────────
         dc_page = QWidget()
-        dc_page.setObjectName("DoubleClickSubPage")
         dc_page_layout = QVBoxLayout(dc_page)
         dc_page_layout.setContentsMargins(12, 10, 12, 10)
         dc_page_layout.setSpacing(8)
@@ -7774,7 +7699,6 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 3: DEDICATED SCROLL WHEEL TEST PAGE ──────────
         scroll_page = QWidget()
-        scroll_page.setObjectName("ScrollWheelSubPage")
         scroll_page_layout = QVBoxLayout(scroll_page)
         scroll_page_layout.setContentsMargins(12, 10, 12, 10)
         scroll_page_layout.setSpacing(8)
@@ -7787,7 +7711,6 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 4: DEDICATED POLLING RATE TEST PAGE ──────────
         poll_page = QWidget()
-        poll_page.setObjectName("PollingRateSubPage")
         poll_page_layout = QVBoxLayout(poll_page)
         poll_page_layout.setContentsMargins(12, 10, 12, 10)
         poll_page_layout.setSpacing(8)
@@ -7816,16 +7739,12 @@ class MacroSettingsPanel(QWidget):
         settings_layout.setSpacing(15)
         
         settings_header = QLabel("Settings")
-        settings_header.setObjectName("SettingsHeader")
-        settings_header.setAccessibleName("Settings Page Header")
         settings_header.setFont(QFont("Orbitron", 16, QFont.Bold))
         settings_header.setStyleSheet("color: #FF5B06;")
         settings_layout.addWidget(settings_header)
         
         # Indicator Drag Mode checkbox (KEPT per user request)
         self._drag_mode_checkbox = AnimatedCheckBox("Enable indicator drag mode (reposition button numbers on mouse image)")
-        self._drag_mode_checkbox.setObjectName("SettingsDragModeCheckbox")
-        self._drag_mode_checkbox.setAccessibleName("Enable Indicator Drag Mode Checkbox")
         self._drag_mode_checkbox.stateChanged.connect(self._toggle_indicator_drag_mode)
         settings_layout.addWidget(self._drag_mode_checkbox)
         
@@ -7833,7 +7752,6 @@ class MacroSettingsPanel(QWidget):
         
         # === GENERAL SETTINGS GROUP ===
         general_group = QGroupBox("General")
-        general_group.setObjectName("SettingsGeneralGroup")
         general_group.setStyleSheet("""
             QGroupBox {
                 color: #ff5b06;
@@ -7857,8 +7775,6 @@ class MacroSettingsPanel(QWidget):
         
         # Language dropdown
         self._language_combo = QComboBox()
-        self._language_combo.setObjectName("SettingsLanguageCombo")
-        self._language_combo.setAccessibleName("Application Language Selector")
         self._language_combo.addItems(["English", "Chinese"])
         self._language_combo.setStyleSheet(settings_combo_style)
         self._language_combo.currentTextChanged.connect(self._on_language_changed)
@@ -7866,8 +7782,6 @@ class MacroSettingsPanel(QWidget):
         
         # Sleep Time dropdown
         self._sleep_time_combo = QComboBox()
-        self._sleep_time_combo.setObjectName("SettingsSleepTimeCombo")
-        self._sleep_time_combo.setAccessibleName("Mouse Sleep Timeout Selector")
         self._sleep_time_combo.addItems(["10sec", "30sec", "1min", "2min", "5min", "10min", "15min"])
         self._sleep_time_combo.setStyleSheet(settings_combo_style)
         self._sleep_time_combo.currentTextChanged.connect(self._on_sleep_time_changed)
@@ -7877,7 +7791,6 @@ class MacroSettingsPanel(QWidget):
         
         # === ADVANCED SETTINGS GROUP ===
         advanced_group = QGroupBox("Advanced")
-        advanced_group.setObjectName("SettingsAdvancedGroup")
         advanced_group.setStyleSheet(general_group.styleSheet())
         advanced_layout = QVBoxLayout(advanced_group)
         advanced_layout.setSpacing(10)
@@ -7890,14 +7803,11 @@ class MacroSettingsPanel(QWidget):
         
         # Long Distance Mode checkbox
         self._long_distance_check = AnimatedCheckBox("Long Distance Mode")
-        self._long_distance_check.setObjectName("SettingsLongDistanceCheck")
-        self._long_distance_check.setAccessibleName("Long Distance Wireless Mode Checkbox")
         self._long_distance_check.stateChanged.connect(self._on_long_distance_changed)
         advanced_layout.addWidget(self._long_distance_check)
         
         # Description label
         long_dist_desc = QLabel("Increases anti-interference and power for wireless mode.\nMay reduce battery life.")
-        long_dist_desc.setObjectName("SettingsLongDistanceDesc")
         long_dist_desc.setStyleSheet("color: #888; font-size: 11px; margin-left: 26px;")
         long_dist_desc.setWordWrap(True)
         advanced_layout.addWidget(long_dist_desc)
@@ -7906,19 +7816,16 @@ class MacroSettingsPanel(QWidget):
         
         # === FIRMWARE INFO GROUP ===
         firmware_group = QGroupBox("Device Information")
-        firmware_group.setObjectName("SettingsFirmwareGroup")
         firmware_group.setStyleSheet(general_group.styleSheet())
         firmware_layout = QFormLayout(firmware_group)
         firmware_layout.setSpacing(10)
         
         # Firmware version labels (will be updated when connected)
         self._receiver_fw_label = QLabel("--")
-        self._receiver_fw_label.setObjectName("SettingsReceiverFwLabel")
         self._receiver_fw_label.setStyleSheet("color: #e0e0e0;")
         firmware_layout.addRow("Receiver Firmware:", self._receiver_fw_label)
         
         self._mouse_fw_label = QLabel("--")
-        self._mouse_fw_label.setObjectName("SettingsMouseFwLabel")
         self._mouse_fw_label.setStyleSheet("color: #e0e0e0;")
         firmware_layout.addRow("Mouse Firmware:", self._mouse_fw_label)
         
@@ -7926,7 +7833,6 @@ class MacroSettingsPanel(QWidget):
         
         # === PROFILE MANAGEMENT GROUP ===
         profile_mgmt_group = QGroupBox("Profile Management")
-        profile_mgmt_group.setObjectName("SettingsProfileMgmtGroup")
         profile_mgmt_group.setStyleSheet(general_group.styleSheet())
         profile_mgmt_layout = QHBoxLayout(profile_mgmt_group)
         profile_mgmt_layout.setSpacing(10)
@@ -7952,30 +7858,22 @@ class MacroSettingsPanel(QWidget):
         
         # Profile Selector (Synchronized with Home)
         self._profile_settings_combo = QComboBox()
-        self._profile_settings_combo.setObjectName("SettingsProfileCombo")
-        self._profile_settings_combo.setAccessibleName("Settings Profile Selector")
         self._profile_settings_combo.addItems(["Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5"])
         self._profile_settings_combo.setStyleSheet(settings_combo_style)
         self._profile_settings_combo.currentIndexChanged.connect(self._on_profile_changed)
         profile_mgmt_layout.addWidget(self._profile_settings_combo)
         
         export_btn = QPushButton("Export")
-        export_btn.setObjectName("SettingsExportBtn")
-        export_btn.setAccessibleName("Export Profile Settings Button")
         export_btn.setStyleSheet(mgmt_btn_style)
         export_btn.clicked.connect(self._export_profile)
         profile_mgmt_layout.addWidget(export_btn)
         
         import_btn = QPushButton("Import")
-        import_btn.setObjectName("SettingsImportBtn")
-        import_btn.setAccessibleName("Import Profile Settings Button")
         import_btn.setStyleSheet(mgmt_btn_style)
         import_btn.clicked.connect(self._import_profile)
         profile_mgmt_layout.addWidget(import_btn)
         
         restore_btn = QPushButton("Restore")
-        restore_btn.setObjectName("SettingsRestoreBtn")
-        restore_btn.setAccessibleName("Restore Factory Defaults Button")
         restore_btn.setStyleSheet(mgmt_btn_style)
         restore_btn.clicked.connect(self._restore_defaults)
         profile_mgmt_layout.addWidget(restore_btn)
@@ -7985,7 +7883,6 @@ class MacroSettingsPanel(QWidget):
         
         # === PAIR TOOL ===
         pair_group = QGroupBox("Wireless Pairing")
-        pair_group.setObjectName("SettingsPairGroup")
         pair_group.setStyleSheet(general_group.styleSheet())
         pair_outer_layout = QVBoxLayout(pair_group)
         pair_outer_layout.setSpacing(10)
@@ -7998,10 +7895,8 @@ class MacroSettingsPanel(QWidget):
         pair_outer_layout.addLayout(pair_layout)
         
         pair_btn = QPushButton("Pair Tool")
-        pair_btn.setObjectName("SettingsPairBtn")
-        pair_btn.setAccessibleName("Wireless Device Pairing Tool Button")
         pair_btn.setStyleSheet("""
-            QPushButton#SettingsPairBtn, QPushButton {
+            QPushButton {
                 background: #FF5B06;
                 color: white;
                 border: none;
@@ -8009,10 +7904,10 @@ class MacroSettingsPanel(QWidget):
                 padding: 10px 24px;
                 font-weight: bold;
             }
-            QPushButton#SettingsPairBtn:hover, QPushButton:hover {
+            QPushButton:hover {
                 background: #ff7a33;
             }
-            QPushButton#SettingsPairBtn:pressed, QPushButton:pressed {
+            QPushButton:pressed {
                 background: #cc4905;
             }
         """)
