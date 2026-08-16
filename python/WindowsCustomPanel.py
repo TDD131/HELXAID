@@ -1855,20 +1855,8 @@ class WindowsCustomPanel(QWidget):
         
         # Main layout
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        
-        # Scrollable content
-        scroll = SmoothScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        
-        content = QWidget()
-        content.setStyleSheet("background: transparent;")
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(24, 20, 24, 20)
-        content_layout.setSpacing(20)
+        main_layout.setContentsMargins(40, 30, 40, 30)
+        main_layout.setSpacing(24)
         
         # ===== HEADER =====
         header_container = QWidget()
@@ -1911,7 +1899,28 @@ class WindowsCustomPanel(QWidget):
                 border: 1px solid rgba(255, 91, 6, 0.3);
             }
         """)
-        content_layout.addWidget(header_container)
+        main_layout.addWidget(header_container)
+        
+        # Scrollable content
+        scroll = SmoothScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollArea > QWidget > QWidget {
+                background: transparent;
+            }
+        """)
+        
+        content = QWidget()
+        content.setStyleSheet("background: transparent;")
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 8, 0)
+        content_layout.setSpacing(16)
         
         # ===== INVISIBLE LOCK SCREEN CARD =====
         self._setup_lock_screen_card(content_layout)

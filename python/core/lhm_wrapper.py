@@ -92,6 +92,12 @@ class LHMEmbeddedReader:
             self._computer.Open()
             self._initialized = True
             print("[LHM Engine] LibreHardwareMonitorLib opened successfully (100% Exclusive)")
+            try:
+                import System
+                System.GC.Collect()
+                System.GC.WaitForPendingFinalizers()
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"[LHM Engine] Failed to initialize LibreHardwareMonitorLib: {e}")
             self._initialized = False

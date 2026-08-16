@@ -1005,16 +1005,20 @@ class DriveOverviewWidget(QWidget):
 
         if physical_disks is not None:
             self._latest_physical_disks = physical_disks
-            if self.combo_drive_selector.count() != len(physical_disks) + 1:
+            new_labels = ["TOTAL STORAGE"] + [
+                ((d.get('model') or f"Disk {d.get('index', 0)}") if len(d.get('model') or '') <= 24 else (d.get('model') or '')[:21] + "...")
+                for d in physical_disks
+            ]
+            current_labels = [self.combo_drive_selector.itemText(i) for i in range(self.combo_drive_selector.count())]
+            if new_labels != current_labels:
                 self.combo_drive_selector.blockSignals(True)
                 curr_idx = self.combo_drive_selector.currentIndex()
                 self.combo_drive_selector.clear()
-                self.combo_drive_selector.addItem("TOTAL STORAGE")
-                for d in physical_disks:
-                    model_name = d.get('model') or f"Disk {d.get('index', 0)}"
-                    d_label = model_name if len(model_name) <= 24 else model_name[:21] + "..."
+                for i, d_label in enumerate(new_labels):
                     self.combo_drive_selector.addItem(d_label)
-                    self.combo_drive_selector.setItemData(self.combo_drive_selector.count() - 1, d.get('model', ''), Qt.ToolTipRole)
+                    if i > 0:
+                        d = physical_disks[i - 1]
+                        self.combo_drive_selector.setItemData(i, d.get('model', ''), Qt.ToolTipRole)
                 if curr_idx < self.combo_drive_selector.count():
                     self.combo_drive_selector.setCurrentIndex(curr_idx)
                 self.combo_drive_selector.blockSignals(False)
@@ -5787,6 +5791,9 @@ class HardwarePanelWidget(QWidget):
                 matched_lhm = lhm_drives[lhm_idx]
 
             if matched_lhm:
+                lhm_name = matched_lhm.get('model') or matched_lhm.get('name', '')
+                if lhm_name and any(gen in d_model.lower() for gen in ('system storage', 'physical drive', 'storage')):
+                    disk['model'] = lhm_name
                 if matched_lhm.get('temp', 0) > 0:
                     disk['temp_c'] = matched_lhm['temp']
                 lhm_health = matched_lhm.get('health_percent', 0)
@@ -5808,6 +5815,9 @@ class HardwarePanelWidget(QWidget):
                 matched_lhm = lhm_drives[0]
 
             if matched_lhm:
+                lhm_name = matched_lhm.get('model') or matched_lhm.get('name', '')
+                if lhm_name and any(gen in hw_model.lower() for gen in ('system storage', 'physical drive', 'storage')):
+                    hw_val['model'] = lhm_name
                 if matched_lhm.get('temp', 0) > 0:
                     hw_val['temperature'] = matched_lhm['temp']
                 lhm_health = matched_lhm.get('health_percent', 0)
@@ -5821,12 +5831,13 @@ class HardwarePanelWidget(QWidget):
         self._drive_physical_disks = physical_disks
         self._drive_info_worker = None
 
+        if hasattr(self, 'drive_overview'):
+            disk_io = getattr(self, '_last_disk_io', {"read_mbps": 0, "write_mbps": 0})
+            self.drive_overview.set_data(partitions, hardware_info, disk_io, physical_disks)
+
         current_tab = self._page_stack.currentIndex() if hasattr(self, '_page_stack') else -1
         if current_tab == 3:  # Only render Drive cards if Drive tab is currently active
             self._render_drive_cards(partitions)
-            if hasattr(self, 'drive_overview'):
-                disk_io = getattr(self, '_last_disk_io', {"read_mbps": 0, "write_mbps": 0})
-                self.drive_overview.set_data(partitions, hardware_info, disk_io, physical_disks)
             if hasattr(self, "drive_refresh_label"):
                 self.drive_refresh_label.setText(f"{len(partitions)} volumes")
 
@@ -5994,23 +6005,269 @@ class HardwarePanelWidget(QWidget):
         return page
     
     def _create_network_page(self):
-        """Create Network detailed page with live per-process bandwidth monitoring.
-
-        Starts a NetworkMonitor QThread that samples psutil every second and
-        distributes observed network bytes across processes by their active
-        connection count. The tab updates live once data arrives.
+        """Create Network Diagnostics & Benchmark Suite for HELXTATS.
+        Structured with a Hub & Sub-Page architecture matching HELXAIRO Benchmark Lab:
+        - Sub-Page 0: Network Hub View (Feature Cards Selector)
+        - Sub-Page 1: Live Process Traffic Monitor
+        - Sub-Page 2: Network Speedtest Lab (Lazily loaded)
+        - Sub-Page 3: Usage History & Timeline Analytics (Lazily loaded)
         
         Component Name: NetworkPage
         """
-        from PySide6.QtWidgets import QComboBox, QScrollArea, QFrame, QProgressBar, QFileIconProvider
-        from PySide6.QtCore import QFileInfo
+        from PySide6.QtWidgets import QStackedWidget, QWidget, QVBoxLayout
+        from NetworkMonitor import NetworkMonitor
+
+        page = QWidget()
+        page.setObjectName("networkPage")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._net_stack = QStackedWidget(page)
+        self._net_stack.setObjectName("netStack")
+
+        # Sub-Page 0: Hub Selector View
+        hub_view = self._create_net_hub_view()
+        self._net_stack.addWidget(hub_view)
+
+        # Sub-Page 1: Live Process Traffic View
+        live_view = self._create_net_live_view(page)
+        self._net_stack.addWidget(live_view)
+
+        # Sub-Pages 2 & 3: Placeholders (lazily loaded on demand)
+        self._net_placeholder_speedtest = QWidget()
+        self._net_placeholder_speedtest.setObjectName("netPlaceholderSpeedtest")
+        self._net_stack.addWidget(self._net_placeholder_speedtest)
+
+        self._net_placeholder_history = QWidget()
+        self._net_placeholder_history.setObjectName("netPlaceholderHistory")
+        self._net_stack.addWidget(self._net_placeholder_history)
+
+        layout.addWidget(self._net_stack)
+        self._net_stack.setCurrentIndex(0)
+
+        # Ensure NetworkMonitor instance exists and its signal is connected
+        if not hasattr(self, '_net_monitor') or self._net_monitor is None:
+            self._net_monitor = NetworkMonitor(parent=None)
+            self._net_monitor_initialized = True
+
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                self._net_monitor.data_updated.disconnect(self._on_net_data_updated)
+            except Exception:
+                pass
+        self._net_monitor.data_updated.connect(self._on_net_data_updated)
+
+        if not self._net_monitor.isRunning():
+            self._net_monitor.start()
+            print("[Hardware] NetworkMonitor started in network page")
+        else:
+            print("[Hardware] NetworkMonitor already running, connected signal")
+
+        # Shutdown monitor when the page widget is destroyed
+        page.destroyed.connect(lambda: self._stop_net_monitor())
+
+        return page
+
+    def _create_net_hub_view(self):
+        """Create Network Diagnostics & Benchmark Lab Hub Selector Grid matching HELXAIRO Benchmark Lab exactly."""
+        from PySide6.QtWidgets import (
+            QFrame, QVBoxLayout, QLabel, 
+            QGridLayout, QWidget, QGroupBox, QSizePolicy
+        )
+        from PySide6.QtCore import Qt
+        from smooth_scroll import SmoothScrollArea
+
+        hub_scroll = SmoothScrollArea()
+        hub_scroll.setObjectName("netHubScroll")
+        hub_scroll.setWidgetResizable(True)
+        hub_scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical { background: #1e1e1e; width: 6px; margin: 0px; }
+            QScrollBar::handle:vertical { background: #444; min-height: 20px; border-radius: 3px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+
+        content = QWidget()
+        content.setObjectName("netHubContent")
+        content.setStyleSheet("background: transparent;")
+        hub_layout = QVBoxLayout(content)
+        hub_layout.setContentsMargins(0, 0, 0, 0)
+        hub_layout.setSpacing(15)
+
+        # Network Lab Group Box (Matches Benchmark Lab GroupBox in HELXAIRO)
+        hub_group = QGroupBox("Network Lab")
+        hub_group.setObjectName("netHubGroup")
+        hub_group.setStyleSheet("""
+            QGroupBox {
+                color: #ff5b06;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 16px;
+                font-weight: bold;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+                margin-top: 10px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """)
+        hub_group_layout = QVBoxLayout(hub_group)
+        hub_group_layout.setContentsMargins(16, 20, 16, 16)
+        hub_group_layout.setSpacing(12)
+
+        hub_desc = QLabel("Comprehensive Network Performance & Traffic Diagnostics Suite")
+        hub_desc.setObjectName("netHubDesc")
+        hub_desc.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        hub_group_layout.addWidget(hub_desc)
+
+        # 2x2 Grid of Feature Cards (Matches HELXAIRO Benchmark Lab)
+        grid_container = QWidget()
+        grid_container.setObjectName("netHubGrid")
+        grid_layout = QGridLayout(grid_container)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(15)
+
+        # ── Card 1: Live Traffic Monitor ──
+        card1 = QFrame()
+        card1.setObjectName("netCardLiveTraffic")
+        card1.setCursor(Qt.PointingHandCursor)
+        card1.setMinimumHeight(105)
+        card1.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        card1.setStyleSheet("""
+            QFrame#netCardLiveTraffic {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#netCardLiveTraffic:hover {
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+            QFrame#netCardLiveTraffic QLabel {
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+        """)
+        c1_lay = QVBoxLayout(card1)
+        c1_lay.setContentsMargins(0, 0, 0, 0)
+        c1_lay.setSpacing(6)
+        c1_title = QLabel("Live Traffic Monitor")
+        c1_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent; border: none;")
+        c1_sub = QLabel("Real-time per-process network bandwidth consumption, active sockets & live throughput charts")
+        c1_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent; border: none;")
+        c1_sub.setWordWrap(True)
+        c1_lay.addWidget(c1_title)
+        c1_lay.addWidget(c1_sub)
+        c1_lay.addStretch()
+
+        card1.mousePressEvent = lambda e: self._switch_net_subpage(1)
+        grid_layout.addWidget(card1, 0, 0)
+
+        # ── Card 2: Network Speedtest Lab ──
+        card2 = QFrame()
+        card2.setObjectName("netCardSpeedtest")
+        card2.setCursor(Qt.PointingHandCursor)
+        card2.setMinimumHeight(105)
+        card2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        card2.setStyleSheet("""
+            QFrame#netCardSpeedtest {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#netCardSpeedtest:hover {
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+            QFrame#netCardSpeedtest QLabel {
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+        """)
+        c2_lay = QVBoxLayout(card2)
+        c2_lay.setContentsMargins(0, 0, 0, 0)
+        c2_lay.setSpacing(6)
+        c2_title = QLabel("Network Speedtest Lab")
+        c2_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent; border: none;")
+        c2_sub = QLabel("Multi-stream download, upload, ping latency, vector tachometer gauge & gaming benchmark")
+        c2_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent; border: none;")
+        c2_sub.setWordWrap(True)
+        c2_lay.addWidget(c2_title)
+        c2_lay.addWidget(c2_sub)
+        c2_lay.addStretch()
+
+        card2.mousePressEvent = lambda e: self._switch_net_subpage(2)
+        grid_layout.addWidget(card2, 0, 1)
+
+        # ── Card 3: Network Adapter & Service Guide ──
+        card_guide = QFrame()
+        card_guide.setObjectName("netCardGuide")
+        card_guide.setCursor(Qt.PointingHandCursor)
+        card_guide.setMinimumHeight(105)
+        card_guide.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        card_guide.setStyleSheet("""
+            QFrame#netCardGuide {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 15px;
+            }
+            QFrame#netCardGuide:hover {
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+            QFrame#netCardGuide QLabel {
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+        """)
+        cg_lay = QVBoxLayout(card_guide)
+        cg_lay.setContentsMargins(0, 0, 0, 0)
+        cg_lay.setSpacing(6)
+        cg_title = QLabel("Network Adapter & Service Guide")
+        cg_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent; border: none;")
+        cg_sub = QLabel("Hardware network interface controller diagnostics, ETW service configuration & troubleshooting wizard")
+        cg_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent; border: none;")
+        cg_sub.setWordWrap(True)
+        cg_lay.addWidget(cg_title)
+        cg_lay.addWidget(cg_sub)
+        cg_lay.addStretch()
+
+        card_guide.mousePressEvent = lambda e: self._open_settings_for_net()
+        grid_layout.addWidget(card_guide, 1, 0, 1, 2)
+
+        hub_group_layout.addWidget(grid_container)
+        hub_layout.addWidget(hub_group)
+        hub_layout.addStretch()
+
+        hub_scroll.setWidget(content)
+        return hub_scroll
+
+    def _create_net_live_view(self, parent_page):
+        """Create the live process monitor sub-page with a top navigation bar."""
+        from PySide6.QtWidgets import QComboBox, QFrame, QProgressBar, QFileIconProvider, QPushButton
+        from PySide6.QtCore import QFileInfo, QSize
         from PySide6.QtGui import QIcon
         from smooth_scroll import SmoothScrollArea
-        from NetworkMonitor import NetworkMonitor
         import psutil
         import os
 
-        # -- One-time NIC baseline for the adapter combo --
+        # One-time NIC baseline for the adapter combo
         nic_stats = psutil.net_io_counters(pernic=True)
         active_nics = [
             name for name, s in nic_stats.items()
@@ -6018,53 +6275,15 @@ class HardwarePanelWidget(QWidget):
         ]
         display_nic = max(active_nics, key=lambda n: nic_stats[n].bytes_sent + nic_stats[n].bytes_recv) if active_nics else None
 
-
-
         page = QWidget()
-        page.setObjectName("networkPage")
+        page.setObjectName("netLiveView")
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(10, 10, 10, 0)
-        layout.setSpacing(20)
-
-        # ---- 1. Top Section (Stats & Limit) ----------------------------------
-        top_section = QHBoxLayout()
-        top_section.setSpacing(20)
-
-        # Left: Session total - starts at 0, updated live by the monitor
-        total_data_layout = QVBoxLayout()
-        total_data_layout.setSpacing(2)
-        self._net_total_lbl = QLabel("0 B")
-        self._net_total_lbl.setObjectName("netTotalLabel")
-        self._net_total_lbl.setStyleSheet("color: #ffffff; font-size: 32px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
-        self._net_nic_lbl = QLabel("Loading history...")
-        self._net_nic_lbl.setObjectName("netNicLabel")
-        self._net_nic_lbl.setStyleSheet("color: #FF5B06; font-size: 11px; font-weight: 600; background: transparent;")
-        total_data_layout.addWidget(self._net_total_lbl)
-        total_data_layout.addWidget(self._net_nic_lbl)
-        total_data_layout.addStretch()
-        top_section.addLayout(total_data_layout)
-
-        # Middle: Info text
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(4)
-        info_title = QLabel("Network usage")
-        info_title.setObjectName("netInfoTitle")
-        info_title.setStyleSheet("color: #e0e0e0; font-size: 14px; font-weight: bold; background: transparent;")
-        info_desc = QLabel("Real-time network consumption by process.")
-        info_desc.setObjectName("netInfoDesc")
-        info_desc.setWordWrap(True)
-        info_desc.setStyleSheet("color: #888888; font-size: 11px; background: transparent;")
-        info_layout.addWidget(info_title)
-        info_layout.addWidget(info_desc)
-        info_layout.addStretch()
-        top_section.addLayout(info_layout, stretch=1)
-
-        # Right: Adapter selector
-        ctrl_layout = QVBoxLayout()
-        ctrl_layout.setSpacing(10)
+        layout.setContentsMargins(10, 8, 10, 0)
+        layout.setSpacing(14)
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        arrow_icon_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+        arrow_icon_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace('\\', '/')
 
         combo_style = f"""
             QComboBox {{
@@ -6114,6 +6333,90 @@ class HardwarePanelWidget(QWidget):
             }}
         """
 
+        # ---- Top Header Bar with Back Button ----
+        header_bar = QFrame()
+        header_bar.setObjectName("netLiveHeaderBar")
+        header_bar.setFixedHeight(38)
+        header_bar.setStyleSheet("""
+            QFrame#netLiveHeaderBar {
+                background: rgba(255, 255, 255, 0.03);
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_bar)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        back_btn = QPushButton()
+        back_btn.setObjectName("netLiveBackBtn")
+        back_btn.setFixedSize(30, 26)
+        back_btn.setIcon(QIcon(back_icon_path))
+        back_btn.setIconSize(QSize(15, 15))
+        back_btn.setToolTip("Back to Network Hub")
+        back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.setStyleSheet("""
+            QPushButton#netLiveBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#netLiveBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        back_btn.clicked.connect(lambda: self._net_stack.setCurrentIndex(0))
+        h_layout.addWidget(back_btn)
+
+        title_lbl = QLabel("LIVE PROCESS TRAFFIC MONITOR")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron'; font-size: 13px; font-weight: bold; background: transparent;")
+        h_layout.addWidget(title_lbl)
+        h_layout.addStretch()
+
+        layout.addWidget(header_bar)
+
+        # ---- 1. Top Section (Stats & Limit) ----------------------------------
+        top_section = QHBoxLayout()
+        top_section.setSpacing(20)
+
+        # Left: Session total
+        total_data_layout = QVBoxLayout()
+        total_data_layout.setSpacing(2)
+        self._net_total_lbl = QLabel("0 B")
+        self._net_total_lbl.setObjectName("netTotalLabel")
+        self._net_total_lbl.setStyleSheet("color: #ffffff; font-size: 32px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
+        self._net_nic_lbl = QLabel("Loading history...")
+        self._net_nic_lbl.setObjectName("netNicLabel")
+        self._net_nic_lbl.setStyleSheet("color: #FF5B06; font-size: 11px; font-weight: 600; background: transparent;")
+        total_data_layout.addWidget(self._net_total_lbl)
+        total_data_layout.addWidget(self._net_nic_lbl)
+        total_data_layout.addStretch()
+        top_section.addLayout(total_data_layout)
+
+        # Middle: Info text
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(4)
+        info_title = QLabel("Network usage")
+        info_title.setObjectName("netInfoTitle")
+        info_title.setStyleSheet("color: #e0e0e0; font-size: 14px; font-weight: bold; background: transparent;")
+        info_desc = QLabel("Real-time network consumption by process.")
+        info_desc.setObjectName("netInfoDesc")
+        info_desc.setWordWrap(True)
+        info_desc.setStyleSheet("color: #888888; font-size: 11px; background: transparent;")
+        info_layout.addWidget(info_title)
+        info_layout.addWidget(info_desc)
+        info_layout.addStretch()
+        top_section.addLayout(info_layout, stretch=1)
+
+        # Right: Adapter selector
+        ctrl_layout = QVBoxLayout()
+        ctrl_layout.setSpacing(10)
+
         def _get_wifi_ssid() -> str:
             try:
                 import subprocess, re
@@ -6150,7 +6453,7 @@ class HardwarePanelWidget(QWidget):
 
         layout.addLayout(top_section)
 
-        # ---- 2. Middle Section (section title) --------------------------------
+        # ---- 2. Middle Section (section title & filter) -----------------------
         filter_section = QHBoxLayout()
         stat_title = QLabel("Usage statistics")
         stat_title.setObjectName("netStatTitle")
@@ -6158,7 +6461,6 @@ class HardwarePanelWidget(QWidget):
         filter_section.addWidget(stat_title)
         filter_section.addStretch()
 
-        # "Total History" dropdown filter
         self._net_time_filter = QComboBox()
         self._net_time_filter.setObjectName("netTimeFilter")
         self._net_time_filter.addItems(["3 Hours", "24 Hours", "7 Days", "30 Days", "Total History"])
@@ -6240,34 +6542,33 @@ class HardwarePanelWidget(QWidget):
         self._net_list_layout.addWidget(self._net_placeholder_widget)
         self._net_list_layout.addWidget(self._net_disabled_guide_widget)
 
-        # Dict: process name -> {'size_lbl': QLabel, 'prog': QProgressBar}
         self._net_rows = {}
         self._net_icon_provider = QFileIconProvider()
 
         scroll_area.setWidget(self._net_list_widget)
         layout.addWidget(scroll_area, stretch=1)
 
-        # Ensure NetworkMonitor instance exists and its signal is connected
-        if not hasattr(self, '_net_monitor') or self._net_monitor is None:
-            self._net_monitor = NetworkMonitor(parent=None)
-            self._net_monitor_initialized = True
-
-        try:
-            self._net_monitor.data_updated.disconnect(self._on_net_data_updated)
-        except Exception:
-            pass
-        self._net_monitor.data_updated.connect(self._on_net_data_updated)
-
-        if not self._net_monitor.isRunning():
-            self._net_monitor.start()
-            print("[Hardware] NetworkMonitor started in network page")
-        else:
-            print("[Hardware] NetworkMonitor already running, connected signal")
-
-        # Shutdown monitor when the page widget is destroyed
-        page.destroyed.connect(lambda: self._stop_net_monitor())
-
         return page
+
+    def _switch_net_subpage(self, index: int):
+        """Switch sub-page in Network Stack with lazy initialization."""
+        if index == 0 or index == 1:
+            self._net_stack.setCurrentIndex(index)
+        elif index == 2:
+            if not hasattr(self, '_net_speedtest_panel') or self._net_speedtest_panel is None:
+                from NetworkSpeedtestPanel import NetworkSpeedtestPanel
+                self._net_speedtest_panel = NetworkSpeedtestPanel(parent=self)
+                self._net_speedtest_panel.back_clicked.connect(lambda: self._net_stack.setCurrentIndex(0))
+                self._net_stack.insertWidget(2, self._net_speedtest_panel)
+            self._net_stack.setCurrentIndex(2)
+        elif index == 3:
+            if not hasattr(self, '_net_history_panel') or self._net_history_panel is None:
+                from NetworkHistoryPanel import NetworkHistoryPanel
+                self._net_history_panel = NetworkHistoryPanel(parent=self)
+                self._net_history_panel.back_clicked.connect(lambda: self._net_stack.setCurrentIndex(0))
+                self._net_stack.insertWidget(3, self._net_history_panel)
+            self._net_history_panel.refresh_data()
+            self._net_stack.setCurrentIndex(3)
 
     def _open_settings_for_net(self):
         """Helper to show Network Guide Wizard (matching HELXAIL guide) from network guide button."""
@@ -6281,6 +6582,12 @@ class HardwarePanelWidget(QWidget):
 
     def _stop_net_monitor(self):
         """Stop the NetworkMonitor thread gracefully."""
+        if hasattr(self, '_net_speedtest_panel') and self._net_speedtest_panel is not None:
+            try:
+                self._net_speedtest_panel.stop_speedtest()
+            except Exception:
+                pass
+
         if hasattr(self, '_net_monitor') and self._net_monitor is not None:
             try:
                 self._net_monitor.stop()
@@ -6773,8 +7080,8 @@ class HardwarePanelWidget(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(12)
         
-        # Configure pyqtgraph with transparent background
-        pg.setConfigOptions(antialias=True, background=None, foreground='#888888')
+        # Configure pyqtgraph with transparent background and lightweight rasterization
+        pg.setConfigOptions(antialias=False, background=None, foreground='#888888')
         
         # CPU Usage card with chart
         cpu_card = StatsCard("CPU Usage")
@@ -6791,6 +7098,11 @@ class HardwarePanelWidget(QWidget):
         self.cpu_chart.disableAutoRange(axis='y')  # Keep Y fixed at 0-100
         self.cpu_chart.enableAutoRange(axis='x')   # X auto-range
         self.cpu_curve = self.cpu_chart.plot(pen=pg.mkPen('#FF5B06', width=2))
+        try:
+            self.cpu_curve.setDownsampling(mode='peak', auto=True)
+            self.cpu_curve.setClipToView(True)
+        except Exception:
+            pass
         # Text label at leading edge showing current value
         self.cpu_leading_text = pg.TextItem(text='0%', color='#FF5B06', anchor=(0, 0.5))
         self.cpu_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
@@ -6846,6 +7158,11 @@ class HardwarePanelWidget(QWidget):
         self.ram_chart.disableAutoRange(axis='y')  # Keep Y fixed at 0-100
         self.ram_chart.enableAutoRange(axis='x')   # X auto-range
         self.ram_curve = self.ram_chart.plot(pen=pg.mkPen('#FDA903', width=2))
+        try:
+            self.ram_curve.setDownsampling(mode='peak', auto=True)
+            self.ram_curve.setClipToView(True)
+        except Exception:
+            pass
         # Text label at leading edge showing current value
         self.ram_leading_text = pg.TextItem(text='0%', color='#FDA903', anchor=(0, 0.5))
         self.ram_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
@@ -6959,9 +7276,12 @@ class HardwarePanelWidget(QWidget):
         self.disk_chart.hideAxis('bottom')
         self.disk_chart.getAxis('left').setWidth(30)
         self.disk_chart.disableAutoRange(axis='y')  # Keep Y fixed at 0-100
-        self.disk_chart.enableAutoRange(axis='x')   # X auto-range
-        self.disk_chart.getPlotItem().setXRange(0, 63, padding=0)  # Default to View All (60 data points + 3 padding for text)
         self.disk_usage_curve = self.disk_chart.plot(pen=pg.mkPen('#f97316', width=2), name='Usage')
+        try:
+            self.disk_usage_curve.setDownsampling(mode='peak', auto=True)
+            self.disk_usage_curve.setClipToView(True)
+        except Exception:
+            pass
         # Text label at leading edge showing current value
         self.disk_leading_text = pg.TextItem(text='0%', color='#f97316', anchor=(0, 0.5))
         self.disk_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
@@ -7730,7 +8050,14 @@ class HardwarePanelWidget(QWidget):
             # External monitors (LHM/HWiNFO) are launched on-demand via explicit user button click.
             pass
 
-        QTimer.singleShot(1000, _deferred_show_tasks)
+        # Schedule safe working set compaction 600ms after layout renders
+        def _compact_ws():
+            try:
+                from hardware_wrapper import trim_process_working_set
+                trim_process_working_set()
+            except Exception:
+                pass
+        QTimer.singleShot(600, _compact_ws)
             
         if getattr(self, '_is_boosting', False) and hasattr(self, '_boost_gradient_timer') and not self._boost_gradient_timer.isActive():
             self._boost_gradient_timer.start(33)
@@ -7743,6 +8070,11 @@ class HardwarePanelWidget(QWidget):
             self._boost_gradient_timer.stop()
         import gc
         gc.collect()
+        try:
+            from hardware_wrapper import trim_process_working_set
+            trim_process_working_set()
+        except Exception:
+            pass
     
     def _install_librehwmon(self):
         """Download and install hardware monitoring tool (LHM or HWiNFO)."""

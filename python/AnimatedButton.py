@@ -558,6 +558,8 @@ class FadeHoverButton(QPushButton):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        if not self.isEnabled():
+            painter.setOpacity(0.35)
         rect = QRectF(self.rect())
         adjusted_rect = rect.adjusted(0.5, 0.5, -0.5, -0.5)
 
@@ -640,7 +642,10 @@ class FadeHoverButton(QPushButton):
         if has_text or has_icon:
             font = self.font()
             font.setFamily("Orbitron")
-            font.setPixelSize(12)
+            if self.height() <= 24:
+                font.setPixelSize(10)
+            else:
+                font.setPixelSize(12)
             font.setBold(True)
             painter.setFont(font)
             painter.setPen(QColor(text_r, text_g, text_b))

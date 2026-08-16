@@ -1417,7 +1417,8 @@ def _query_wmi(namespace: str, query: str) -> List[Dict]:
         initialized = True
         locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
         service = locator.ConnectServer(".", f"root\\{namespace}")
-        for item in service.ExecQuery(query):
+        results = service.ExecQuery(query)
+        for item in results:
             row = {}
             for prop in item.Properties_:
                 try:
@@ -1425,6 +1426,7 @@ def _query_wmi(namespace: str, query: str) -> List[Dict]:
                 except Exception:
                     pass
             rows.append(row)
+        del results, service, locator
     except Exception:
         return []
     finally:
@@ -1451,20 +1453,42 @@ def _infer_media_type(model: str, media_type: str, interface_type: str, pnp_id: 
 
 def get_drive_hardware_info(partitions: Optional[List[Dict]] = None) -> Dict[str, Dict]:
     """
-    Get hardware mapping for partitions without re-querying if partitions are provided.
+    Get hardware mapping for partitions with actual physical disk models.
     """
     if partitions is None:
         partitions = get_drive_partitions_info()
+
+    # Get physical disks to map real models to partitions
+    physical_disks = get_physical_disks_info(partitions=partitions)
 
     hardware: Dict[str, Dict] = {}
     for partition in partitions:
         mountpoint = partition.get("drive", "")
         if not mountpoint:
             continue
+        
+        # Find matching physical disk for this partition
+        matching_disk = None
+        for pdisk in physical_disks:
+            if mountpoint in pdisk.get("logicals", []) or partition.get("letter", "") in [l.rstrip(":\\/") for l in pdisk.get("logicals", [])]:
+                matching_disk = pdisk
+                break
+        if not matching_disk and len(physical_disks) == 1:
+            matching_disk = physical_disks[0]
+
+        if matching_disk:
+            model_name = matching_disk.get("model", f"Storage ({mountpoint})")
+            bus_type = matching_disk.get("media_type", partition.get("drive_type", "Storage"))
+            media_type = matching_disk.get("media_type", partition.get("drive_type", "Storage"))
+        else:
+            model_name = f"Storage ({mountpoint})"
+            bus_type = "Storage"
+            media_type = partition.get("drive_type", "Storage")
+
         hardware[mountpoint] = {
-            "model": f"Storage ({mountpoint})",
-            "bus_type": "Storage",
-            "media_type": partition.get("drive_type", "Storage"),
+            "model": model_name,
+            "bus_type": bus_type,
+            "media_type": media_type,
             "smart_status": "OK",
             "temperature": None,
         }
@@ -1473,7 +1497,7 @@ def get_drive_hardware_info(partitions: Optional[List[Dict]] = None) -> Dict[str
 
 def get_physical_disks_info(partitions: Optional[List[Dict]] = None) -> List[Dict]:
     """
-    Query physical disk drive objects using ultra-fast native Win32 DeviceIoControl.
+    Query physical disk drive objects using native Win32 DeviceIoControl with robust WMI fallback.
     """
     if partitions is None:
         partitions = get_drive_partitions_info()
@@ -1481,6 +1505,7 @@ def get_physical_disks_info(partitions: Optional[List[Dict]] = None) -> List[Dic
     if not partitions:
         return []
 
+    drive_to_disk = {}
     if os.name == "nt":
         try:
             k32 = ctypes.windll.kernel32
@@ -1491,7 +1516,6 @@ def get_physical_disks_info(partitions: Optional[List[Dict]] = None) -> List[Dic
             IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS = 0x00560000
 
             # 1. Map Logical Drives to Physical Disk Numbers
-            drive_to_disk = {}
             for p in partitions:
                 let = p.get("letter", "").rstrip(":\\/")
                 if not let:
@@ -1525,7 +1549,7 @@ def get_physical_disks_info(partitions: Optional[List[Dict]] = None) -> List[Dic
                             drive_to_disk.setdefault(disk_num, []).append(p.get("drive", f"{let}:\\"))
                     k32.CloseHandle(h_vol)
 
-            # 2. Enumerate Physical Drives
+            # 2. Enumerate Physical Drives via DeviceIoControl
             physical_disks = []
             BUS_TYPES = {
                 0x00: "Unknown", 0x01: "SCSI", 0x02: "ATAPI", 0x03: "ATA",
@@ -1609,9 +1633,49 @@ def get_physical_disks_info(partitions: Optional[List[Dict]] = None) -> List[Dic
 
                 k32.CloseHandle(handle)
 
-            if physical_disks:
+            # Check if physical disks returned non-generic models
+            has_real_models = physical_disks and any(not d.get("model", "").startswith("Physical Drive ") for d in physical_disks)
+            if has_real_models:
                 return physical_disks
-        except Exception as err:
+        except Exception:
+            pass
+
+        # 3. Fallback: Query Win32_DiskDrive via WMI (non-admin, works on Intel RST / VMD / all NVMe SSDs)
+        try:
+            wmi_disks = _query_wmi("cimv2", "SELECT Index, DeviceID, Model, Size, MediaType, InterfaceType, PNPDeviceID FROM Win32_DiskDrive")
+            if wmi_disks:
+                wmi_physical_disks = []
+                for d in wmi_disks:
+                    d_idx = int(d.get("Index", 0) if d.get("Index") is not None else 0)
+                    raw_model = str(d.get("Model", "")).strip()
+                    model = raw_model or f"Physical Drive {d_idx}"
+                    size_bytes = int(d.get("Size") or 0)
+                    mtype = _infer_media_type(model, str(d.get("MediaType", "")), str(d.get("InterfaceType", "")), str(d.get("PNPDeviceID", "")))
+                    
+                    logicals = drive_to_disk.get(d_idx, [])
+                    if not logicals and len(wmi_disks) == 1:
+                        logicals = [p.get("drive") for p in partitions if p.get("drive")]
+                    
+                    matching_parts = [p for p in partitions if p.get("drive") in logicals]
+                    part_total = sum(int(p.get("total_bytes", 0)) for p in matching_parts) if matching_parts else sum(int(p.get("total_bytes", 0)) for p in partitions)
+
+                    wmi_physical_disks.append({
+                        "index": d_idx,
+                        "device_id": d.get("DeviceID", f"\\\\.\\PhysicalDrive{d_idx}"),
+                        "model": model,
+                        "size_bytes": size_bytes if size_bytes > 0 else part_total,
+                        "media_type": mtype,
+                        "smart_status": "OK",
+                        "health_pct": 100,
+                        "health_text": "100% HEALTHY",
+                        "wear_pct": 0,
+                        "read_errors": 0,
+                        "temp_c": 0,
+                        "logicals": logicals,
+                    })
+                if wmi_physical_disks:
+                    return wmi_physical_disks
+        except Exception:
             pass
 
     # Fallback to logical partition aggregation if Win32 querying is unavailable

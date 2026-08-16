@@ -6742,6 +6742,15 @@ class GameLauncher(QWidget):
         else:
             self.content_stack.setCurrentIndex(index)
 
+        # Compact inactive working set memory 600ms after tab switch
+        def _trim_panel_ws():
+            try:
+                import ctypes
+                ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+            except Exception:
+                pass
+        QTimer.singleShot(600, _trim_panel_ws)
+
         if is_profiling:
             elapsed_ms = (time.perf_counter() - t_start) * 1000.0
 

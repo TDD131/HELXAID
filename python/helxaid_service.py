@@ -18,6 +18,7 @@ except ImportError:
     pass
 
 PIPE_NAME = r'\\.\pipe\HelxaidCpuPipe'
+_service_lhm_computer = None
 
 class HelxaidHelperService(win32serviceutil.ServiceFramework):
     _svc_name_ = 'HelxaidHelperService'
@@ -39,10 +40,19 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
         self.running = True
 
     def SvcStop(self):
+        global _service_lhm_computer
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         self.running = False
         win32event.SetEvent(self.stop_event)
         
+        # Safely close persistent LHM computer handle if initialized
+        if _service_lhm_computer is not None:
+            try:
+                _service_lhm_computer.Close()
+            except Exception:
+                pass
+            _service_lhm_computer = None
+
         # Connect to pipe just to unblock the WaitNamedPipe/ConnectNamedPipe loop
         try:
             handle = win32file.CreateFile(
@@ -266,45 +276,56 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 # Read LHM sensors from SYSTEM context (elevated) so AMD SMU Tdie temp is accessible.
                 try:
                     import sys as _sys
-                    # Build DLL search paths scanning all user AppData dirs
-                    dll_candidates = []
-                    users_dir = "C:\\Users"
-                    if os.path.exists(users_dir):
-                        for u in os.listdir(users_dir):
-                            if u.lower() in ["public", "default", "default user", "all users"]:
-                                continue
-                            p = os.path.join(users_dir, u, "AppData", "Roaming", "HELXAID",
-                                             "tools", "librehardwaremonitor", "LibreHardwareMonitorLib.dll")
-                            if os.path.exists(p):
-                                dll_candidates.append(p)
-                    
-                    dll_path = dll_candidates[0] if dll_candidates else None
-                    if not dll_path:
-                        return {"status": "error", "message": "LibreHardwareMonitorLib.dll not found"}
-                    
-                    # Unblock Zone.Identifier stream if present (Mark of the Web)
-                    zone_id = dll_path + ":Zone.Identifier"
-                    if os.path.exists(zone_id):
-                        try: os.remove(zone_id)
-                        except Exception: pass
+                    global _service_lhm_computer
+                    if _service_lhm_computer is None:
+                        # Build DLL search paths scanning all user AppData dirs
+                        dll_candidates = []
+                        users_dir = "C:\\Users"
+                        if os.path.exists(users_dir):
+                            for u in os.listdir(users_dir):
+                                if u.lower() in ["public", "default", "default user", "all users"]:
+                                    continue
+                                p = os.path.join(users_dir, u, "AppData", "Roaming", "HELXAID",
+                                                 "tools", "librehardwaremonitor", "LibreHardwareMonitorLib.dll")
+                                if os.path.exists(p):
+                                    dll_candidates.append(p)
+                        
+                        dll_path = dll_candidates[0] if dll_candidates else None
+                        if not dll_path:
+                            return {"status": "error", "message": "LibreHardwareMonitorLib.dll not found"}
+                        
+                        # Unblock Zone.Identifier stream if present (Mark of the Web)
+                        zone_id = dll_path + ":Zone.Identifier"
+                        if os.path.exists(zone_id):
+                            try: os.remove(zone_id)
+                            except Exception: pass
 
-                    dll_dir = os.path.dirname(os.path.abspath(dll_path))
-                    if dll_dir not in _sys.path:
-                        _sys.path.append(dll_dir)
-                    if hasattr(os, 'add_dll_directory') and os.path.exists(dll_dir):
-                        try: os.add_dll_directory(dll_dir)
-                        except Exception: pass
+                        dll_dir = os.path.dirname(os.path.abspath(dll_path))
+                        if dll_dir not in _sys.path:
+                            _sys.path.append(dll_dir)
+                        if hasattr(os, 'add_dll_directory') and os.path.exists(dll_dir):
+                            try: os.add_dll_directory(dll_dir)
+                            except Exception: pass
 
-                    import clr
+                        import clr
+                        clr.AddReference(os.path.abspath(dll_path))
+                        from LibreHardwareMonitor.Hardware import Computer  # type: ignore[import-not-found, import-untyped]  # noqa: F401
+                        
+                        c = Computer()
+                        c.IsCpuEnabled = True
+                        c.IsGpuEnabled = True
+                        c.IsStorageEnabled = True
+                        c.IsMotherboardEnabled = True
+                        c.Open()
+                        _service_lhm_computer = c
+                        try:
+                            import System
+                            System.GC.Collect()
+                        except Exception:
+                            pass
+                    
                     import math
-                    clr.AddReference(os.path.abspath(dll_path))
-                    from LibreHardwareMonitor.Hardware import Computer  # type: ignore[import-not-found, import-untyped]  # noqa: F401
-                    
-                    c = Computer()
-                    c.IsCpuEnabled = True
-                    c.IsGpuEnabled = True
-                    c.IsStorageEnabled = True
-                    c.Open()
+                    c = _service_lhm_computer
                     
                     out = {
                         "available": True,

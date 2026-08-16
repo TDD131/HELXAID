@@ -64,8 +64,20 @@ def _query_wmi_fast(namespace: str, query: str) -> list:
     except Exception:
         return []
 
+def trim_process_working_set():
+    """Safely compact the process working set, returning cold/unreferenced memory pages to standby."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+            ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+        except Exception:
+            pass
+
 _pdh_query_handle = None
 _pdh_counter_handle = None
+_nvml_initialized = False
+_nvml_unavailable = False
+_nvml_device_handle = None
 
 def _get_pdh_cpu_freq_ghz() -> float:
     """Read dynamic real-time CPU frequency using Windows PDH Processor Performance counter."""
@@ -283,33 +295,45 @@ class HardwareMonitor:
             pass
 
         # Priority 2: NVIDIA GPU via pynvml — most accurate NVIDIA data, always overrides LHM dGPU values
-        try:
-            import pynvml
-            import warnings
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            try:
-                dgpu_temp = float(pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU))
-                gpu_temp  = dgpu_temp
-            except Exception: pass
-            try:
-                dgpu_load = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
-                gpu_load  = dgpu_load
-            except Exception: pass
-            try:
-                dgpu_power = float(pynvml.nvmlDeviceGetPowerUsage(handle)) / 1000.0
-                gpu_power  = dgpu_power
-            except Exception: pass
-            try:
-                gpu_fan_speed = float(pynvml.nvmlDeviceGetFanSpeed(handle))
-                fan_speed = max(fan_speed, gpu_fan_speed)
-            except Exception: pass
-            if dgpu_temp > 0 and status == "unavailable":
-                status = "pynvml"
-        except Exception:
-            pass
+        global _nvml_initialized, _nvml_unavailable, _nvml_device_handle
+        if not _nvml_unavailable:
+            if not _nvml_initialized:
+                try:
+                    import pynvml
+                    import warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        pynvml.nvmlInit()
+                    _nvml_device_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                    _nvml_initialized = True
+                except Exception:
+                    _nvml_unavailable = True
+                    _nvml_device_handle = None
+
+            if _nvml_initialized and _nvml_device_handle is not None:
+                try:
+                    import pynvml
+                    handle = _nvml_device_handle
+                    try:
+                        dgpu_temp = float(pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU))
+                        gpu_temp  = dgpu_temp
+                    except Exception: pass
+                    try:
+                        dgpu_load = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
+                        gpu_load  = dgpu_load
+                    except Exception: pass
+                    try:
+                        dgpu_power = float(pynvml.nvmlDeviceGetPowerUsage(handle)) / 1000.0
+                        gpu_power  = dgpu_power
+                    except Exception: pass
+                    try:
+                        gpu_fan_speed = float(pynvml.nvmlDeviceGetFanSpeed(handle))
+                        fan_speed = max(fan_speed, gpu_fan_speed)
+                    except Exception: pass
+                    if dgpu_temp > 0 and status == "unavailable":
+                        status = "pynvml"
+                except Exception:
+                    pass
 
         # Priority 3: AMD CPU Tdie via Zero-UAC service (SYSTEM context = SMU access)
         # Only needed when cpu_temp is still 0 (AMD Ryzen non-admin limitation)
