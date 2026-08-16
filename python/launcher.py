@@ -9386,10 +9386,6 @@ Stylesheet Selector:
         if hasattr(self, 'macro_panel'):
             return
         try:
-            if self.hw_manager is None:
-                from macro_system.integration.hardware_manager import get_hardware_manager
-                self.hw_manager = get_hardware_manager()
-                self.hw_manager.start_manager()
             from MacroSettingsPanel import MacroSettingsPanel
             self.macro_panel = MacroSettingsPanel(self)
             self.content_stack.addWidget(self.macro_panel)
@@ -17108,7 +17104,6 @@ if __name__ == "__main__":
                 'MacroSettingsPanel',
                 'WindowsCustomPanel',
                 'CrosshairWidget',
-                'macro_system.integration.hardware_manager',
             ]
             for mod in modules:
                 try:

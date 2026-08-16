@@ -20,9 +20,6 @@ from PySide6.QtWidgets import (
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen, QTextDocument, QTextCursor
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize, QVariantAnimation, QAbstractAnimation
-# FurycubeHID is NOT imported here -- ButtonAction is lazy-imported where needed (line ~2989).
-# Loading this module at import time pulled in the hidapi DLL, adding ~200ms to startup.
-from macro_system.integration.hardware_manager import get_hardware_manager
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton
 
 
@@ -983,123 +980,6 @@ class AdaptiveSpinBox(SafeSpinBox):
                     selection-background-color: #FF5B06;
                 }}
             """)
-
-
-class DeviceWarningOverlay(QWidget):
-    """
-    Overlay panel that displays a warning when the mouse is disconnected
-    or not a Furycube G13 Pro device. Used in DPI tab, Advanced settings,
-    and Wireless Pairing sections.
-    """
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAttribute(Qt.WA_StyledBackground)
-        self.setObjectName("deviceWarningOverlay")
-        self.setMinimumHeight(80)
-        self.setMinimumWidth(300)
-        self.setStyleSheet("""
-            QWidget#deviceWarningOverlay {
-                background: rgba(255, 60, 60, 0.15);
-                border: 1px solid rgba(255, 60, 60, 0.4);
-                border-radius: 8px;
-            }
-        """)
-        
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(12)
-        
-        # Warning icon
-        icon_label = QLabel("!")
-        icon_label.setStyleSheet("""
-            QLabel {
-                color: #ff6b6b;
-                font-size: 24px;
-                font-weight: bold;
-                background: transparent;
-            }
-        """)
-        icon_label.setFixedWidth(30)
-        icon_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(icon_label)
-        
-        # Warning text container
-        text_container = QWidget()
-        text_container.setStyleSheet("background: transparent;")
-        text_layout = QVBoxLayout(text_container)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(2)
-        
-        self._title_label = QLabel("Device Not Connected")
-        self._title_label.setStyleSheet("""
-            QLabel {
-                color: #ff6b6b;
-                font-size: 14px;
-                font-weight: bold;
-                background: transparent;
-            }
-        """)
-        text_layout.addWidget(self._title_label)
-        
-        self._desc_label = QLabel("Connect your Furycube G13 Pro to use this feature.")
-        self._desc_label.setStyleSheet("""
-            QLabel {
-                color: #aa8888;
-                font-size: 11px;
-                background: transparent;
-            }
-        """)
-        text_layout.addWidget(self._desc_label)
-        
-        layout.addWidget(text_container, 1)
-        # Show by default - will be hidden if device is connected
-        self.show()
-    
-    def set_disconnected(self):
-        """Set overlay to show disconnected state."""
-        self._title_label.setText("Device Not Connected")
-        self._desc_label.setText("Connect your Furycube G13 Pro to use this feature.")
-        self.show()
-    
-    def set_wrong_device(self, device_name: str = ""):
-        """Set overlay to show wrong device state."""
-        self._title_label.setText("Unsupported Device")
-        if device_name:
-            self._desc_label.setText(f"Connected device '{device_name}' is not a Furycube G13 Pro.")
-        else:
-            self._desc_label.setText("The connected device is not a Furycube G13 Pro.")
-        self.show()
-    
-    def check_and_update(self, hw_manager):
-        """
-        Check hardware state and update overlay visibility.
-        Returns True if device is connected and correct, False otherwise.
-        
-        Args:
-            hw_manager: HardwareManager instance to query state from
-            
-        Returns:
-            bool: True if device is OK (connected + correct device), False otherwise
-        """
-        try:
-            state = hw_manager.get_state()
-            connected = state.get('connected', False)
-            
-            if not connected:
-                self.set_disconnected()
-                return False
-            
-            # Check if device is Furycube G13 Pro
-            # The HardwareManager/FurycubeHID only connects to Furycube devices,
-            # so if connected=True, it's the correct device
-            self.hide()
-            return True
-            
-        except Exception as e:
-            print(f"[DeviceWarningOverlay] Error checking state: {e}")
-            self.set_disconnected()
-            return False
 
 
 class MacroStatusCheckWidget(QWidget):
@@ -4462,27 +4342,12 @@ class MacroSettingsPanel(QWidget):
         self._current_macro_events = []
         self.setObjectName("macroPanel")
         
-        # UI now ONLY uses HardwareManager to avoid thread contention/freezes
-        self._hw_manager = get_hardware_manager()
-        QTimer.singleShot(0, self._hw_manager.start_manager)  # Start the background thread on tick 0
         self._setup_ui()
         
         # Timer for fast UI status updates (macro lists, active markers)
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(200)
         self._refresh_timer.timeout.connect(self._refresh_macro_status)
-        
-        # Timer for battery polling (every 3 seconds)
-        self._battery_timer = QTimer(self)
-        self._battery_timer.setInterval(3000)
-        self._battery_timer.timeout.connect(self._update_battery_display)
-        self._battery_timer.start()
-        
-        # Initial battery read after 1 second delay
-        QTimer.singleShot(1000, self._update_battery_display)
-        
-        # Initial device warning check after HardwareManager has time to initialize
-        QTimer.singleShot(2000, self._check_device_warnings_initial)
         
         # Auto-initialize and start macro bridge (deferred by 1.5s for zero-latency page switch)
         QTimer.singleShot(1500, self._auto_init_macro_system)
@@ -4833,90 +4698,7 @@ class MacroSettingsPanel(QWidget):
         header.setFont(QFont("Orbitron", 24, QFont.Bold))
         header.setStyleSheet("color: #FF5B06; padding: 0;")
         header_layout.addWidget(header)
-        
         header_layout.addStretch()
-        
-        
-        # ===== BATTERY INDICATOR =====
-        battery_container = QWidget()
-        battery_container.setObjectName("batteryContainer")
-        battery_container.setStyleSheet("""
-            QWidget#batteryContainer {
-                background: rgba(40, 40, 40, 0.8);
-                border: none;
-                border-radius: 8px;
-                padding: 4px 8px;
-            }
-        """)
-        battery_layout = QHBoxLayout(battery_container)
-        battery_layout.setContentsMargins(8, 4, 8, 4)
-        battery_layout.setSpacing(6)
-        
-        # Battery icon (visual bar)
-        self._battery_bar = QWidget()
-        self._battery_bar.setObjectName("batteryBar")
-        self._battery_bar.setFixedSize(30, 14)
-        self._battery_bar.setStyleSheet("""
-            QWidget#batteryBar {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #4CAF50, stop:1 #8BC34A);
-                border: none;
-                border-radius: 3px;
-            }
-        """)
-        battery_layout.addWidget(self._battery_bar)
-        
-        # Percentage text
-        self._battery_label = QLabel("---%")
-        self._battery_label.setObjectName("helxairo_batteryLabel")
-        self._battery_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: bold;")
-        battery_layout.addWidget(self._battery_label)
-        
-        # Charging indicator
-        self._charging_label = QLabel("")
-        self._charging_label.setObjectName("helxairo_chargingLabel")
-        self._charging_label.setStyleSheet("color: #FFC107; font-size: 12px;")
-        battery_layout.addWidget(self._charging_label)
-        
-        header_layout.addWidget(battery_container)
-        
-        # ===== MOUSE REFRESH BUTTON =====
-        # Placed directly to the right of the battery container.
-        # Triggers a force_reconnect command via HardwareManager so the app
-        # re-enumerates USB/wireless devices without requiring a full restart.
-        import os as _os
-        _script_dir = _os.path.dirname(_os.path.abspath(__file__))
-        _refresh_icon_path = _os.path.join(_script_dir, "UI Icons", "refresh.png")
-        
-        self._refresh_btn = QPushButton()
-        self._refresh_btn.setObjectName("helxairo_refreshBtn")
-        self._refresh_btn.setFixedSize(32, 32)
-        self._refresh_btn.setCursor(Qt.PointingHandCursor)
-        self._refresh_btn.setToolTip("Refresh mouse connection")
-        
-        if _os.path.exists(_refresh_icon_path):
-            from PySide6.QtGui import QIcon as _QIcon
-            self._refresh_btn.setIcon(_QIcon(_refresh_icon_path))
-            from PySide6.QtCore import QSize as _QSize
-            self._refresh_btn.setIconSize(_QSize(18, 18))
-        
-        self._refresh_btn.setStyleSheet("""
-            QPushButton#helxairo_refreshBtn {
-                background: rgba(40, 40, 40, 0.8);
-                border: none;
-                border-radius: 8px;
-                padding: 0px;
-            }
-            QPushButton#helxairo_refreshBtn:hover {
-                background: rgba(255, 91, 6, 0.25);
-                border-color: transparent;
-            }
-            QPushButton#helxairo_refreshBtn:pressed {
-                background: rgba(255, 91, 6, 0.5);
-            }
-        """)
-        self._refresh_btn.clicked.connect(self._on_refresh_connection_clicked)
-        header_layout.addWidget(self._refresh_btn)
         layout.addLayout(header_layout)
         
         # ===== AHK MISSING ENGINE BANNER =====
@@ -5201,7 +4983,7 @@ class MacroSettingsPanel(QWidget):
                 disable_act.triggered.connect(lambda checked, b=btn, idx=btn_idx: (b.setText("   Disable"), self._on_button_mapping_changed(idx, "Disable")))
                 
                 btn.setMenu(menu)
-                # Make clicking anywhere on button open the menu (like Furycube)
+                # Make clicking anywhere on button open the menu
                 btn.clicked.connect(lambda checked, b=btn: b.showMenu())
             
             self._button_mapping_btns.append(btn)
@@ -5447,7 +5229,7 @@ class MacroSettingsPanel(QWidget):
         mouse_container.setAttribute(Qt.WA_TranslucentBackground)
         mouse_container.setStyleSheet("background: transparent;")
         
-        # Mouse image from Furycube
+        # Mouse image layout
         mouse_label = QLabel(mouse_container)
         mouse_label.setAlignment(Qt.AlignCenter)
         mouse_label.setStyleSheet("background: transparent;")
@@ -5470,7 +5252,7 @@ class MacroSettingsPanel(QWidget):
             mouse_label.setText("Mouse Image Not Found")
             mouse_label.setStyleSheet("color: #666; font-size: 14px; background: transparent;")
         
-        # Button indicator positions (x, y) - based on Furycube mouse layout
+        # Button indicator positions (x, y) - mouse layout
         # Looking at mouse image:
         # - Left click area is on the upper-left portion of mouse body
         # - Scroll wheel is the white ring near top-center
@@ -7201,7 +6983,7 @@ class MacroSettingsPanel(QWidget):
     def _show_left_click_protection(self):
         """
         Show protection dialog when user tries to change button 1 (Left Click).
-        This matches Furycube's behavior where Left Click must remain assigned to button 1.
+        Left Click must remain assigned to button 1 to prevent lockout.
         """
         dialog = QMessageBox(self)
         dialog.setWindowTitle("Button Protection")
@@ -7366,95 +7148,16 @@ class MacroSettingsPanel(QWidget):
                 except Exception as e:
                     print(f"[HELXAIRO] Failed to sync macro to Hook: {e}")
 
-    def _on_dpi_effect_changed(self, index: int):
-        """Handle DPI effect mode change."""
-        mode_id = self._effect_combo.currentData()
-        if mode_id is None: 
-            mode_id = 1
-            
-        # Update visibility/enabled state based on mode
-        if hasattr(self, '_brightness_slider') and hasattr(self, '_speed_slider'):
-            is_off = (mode_id == 0)
-            is_steady = (mode_id == 1)
-            is_breathing = (mode_id == 2)
-            
-            # Brightness only works in Steady mode
-            self._brightness_slider.setEnabled(is_steady)
-            
-            # Speed only works in Breathing/Dynamic modes
-            self._speed_slider.setEnabled(is_breathing and not is_off)
-
-        self._hw_manager.enqueue('set_dpi_effect_mode', mode_id)
-            
-        self._save_helxairo_settings()
-
-    def _on_dpi_brightness_changed(self, value: int):
-        """Handle DPI brightness change."""
-        self._hw_manager.enqueue('set_dpi_effect_brightness', value)
-        print(f"[HELXAIRO] Setting brightness to {value}")
-            
-        self._save_helxairo_settings()
-
-    def _on_dpi_speed_changed(self, value: int):
-        """Handle DPI speed change."""
-        self._hw_manager.enqueue('set_dpi_effect_speed', value)
-        self._save_helxairo_settings()
 
     def _save_helxairo_settings(self):
-        """Save HELXAIRO settings (indicator positions, button mappings) to file."""
-        if getattr(self, '_loading_settings', False):
-            return
-            
-        # Collect DPI stage values
-        stage_values = {}
-        if hasattr(self, '_dpi_stage_boxes'):
-            for i, box in enumerate(self._dpi_stage_boxes):
-                if hasattr(box, 'dpi_value'):
-                    stage_values[str(i)] = box.dpi_value
-
-        # Identify selected polling rate
-        pooling_rate_idx = getattr(self, '_current_polling', 0)
-
-        # Collect current DPI Colors
-        current_colors = []
-        if hasattr(self, '_dpi_stage_boxes'):
-            for box in self._dpi_stage_boxes:
-                if hasattr(box, 'dpi_value') and hasattr(box, 'color'):
-                    current_colors.append([box.dpi_value, box.color])
-
+        """Save HELXAIRO settings to file."""
         settings = {
             'button_mappings': getattr(self, '_button_mappings', self._get_default_button_mappings()),
-            'dpi_settings': {
-                'stages_count': int(self._dpi_stages_combo.currentText()) if hasattr(self, '_dpi_stages_combo') else 6,
-                'current_stage_index': getattr(self, '_current_dpi_stage', 0),
-                'stage_values': stage_values,
-                'polling_rate_index': pooling_rate_idx,
-                'dpi_colors': current_colors
-            },
-            'dpi_effect_settings': {
-                'mode': self._effect_combo.currentData() if hasattr(self, '_effect_combo') else 1,
-                'brightness': self._brightness_slider.value() if hasattr(self, '_brightness_slider') else 8,
-                'speed': self._speed_slider.value() if hasattr(self, '_speed_slider') else 5
-            },
-            'sensor_settings': {
-                'lod_index': self._lod_combo.currentIndex() if hasattr(self, '_lod_combo') else 0,
-                'ripple': self._ripple_check.isChecked() if hasattr(self, '_ripple_check') else False,
-                'angle_snap': self._angle_snap_check.isChecked() if hasattr(self, '_angle_snap_check') else False,
-                'motion_sync': self._motion_sync_check.isChecked() if hasattr(self, '_motion_sync_check') else False,
-                'debounce_time': self._debounce_slider.value() if hasattr(self, '_debounce_slider') else 10,
-                'bypass_anti_cheat': self._anticheat_toggle.isChecked() if hasattr(self, '_anticheat_toggle') else False,
-                'hardware_native_scroll': self._hardware_native_toggle.isChecked() if hasattr(self, '_hardware_native_toggle') else False,
-                'pagedown_emulation': self._pagedown_emulation_toggle.isChecked() if hasattr(self, '_pagedown_emulation_toggle') else False,
-                'sensor_mode': self._mode_combo.currentIndex() if hasattr(self, '_mode_combo') else 0,
-                'highest_performance': self._highest_perf_check.isChecked() if hasattr(self, '_highest_perf_check') else False,
-                'perf_time': self._perf_time_combo.currentText() if hasattr(self, '_perf_time_combo') else "1min"
-            }
+            'bypass_anti_cheat': self._anticheat_toggle.isChecked() if hasattr(self, '_anticheat_toggle') else False,
         }
-        
         try:
             with open(self._get_helxairo_settings_path(), 'w') as f:
                 json.dump(settings, f, indent=2)
-            # print("[HELXAIRO] Settings saved")
         except Exception as e:
             print(f"[HELXAIRO] Failed to save settings: {e}")
     
@@ -7466,34 +7169,12 @@ class MacroSettingsPanel(QWidget):
             
             # Load button mappings
             self._button_mappings = settings.get('button_mappings', self._get_default_button_mappings())
-            
-            # Load DPI settings
-            self._dpi_settings = settings.get('dpi_settings', {})
-            
-            # Restore custom DPI colors if saved
-            if 'dpi_colors' in self._dpi_settings:
-                try:
-                    loaded_colors = self._dpi_settings['dpi_colors']
-                    # loaded_colors is list of [dpi, color_hex]
-                    # We need to update existing defaults or override them
-                    # We'll store them to be used during UI setup or checking against defaults
-                    self._restored_dpi_colors = loaded_colors
-                except Exception as e:
-                    print(f"[HELXAIRO] Failed to parse saved DPI colors: {e}")
-            
-            # Load Sensor Settings
-            self._sensor_settings = settings.get('sensor_settings', {})
-            self._dpi_effect_settings = settings.get('dpi_effect_settings', {})
-            
-            print("[HELXAIRO] Settings loaded")
             return True
         except FileNotFoundError:
             self._button_mappings = self._get_default_button_mappings()
-            self._dpi_settings = {}
             return False
         except Exception as e:
             self._button_mappings = self._get_default_button_mappings()
-            self._dpi_settings = {}
             return False
     
     def _get_default_button_mappings(self):
@@ -7503,7 +7184,7 @@ class MacroSettingsPanel(QWidget):
     def _on_button_mapping_changed(self, button_index: int, new_action: str):
         """
         Handle button mapping change from dropdown menu.
-        Saves to local settings AND sends HID command to mouse hardware OR to OS-Level Hook.
+        Saves to local settings AND sends to Universal OS Hook / AHK Engine.
         
         Args:
             button_index: Button index (0-4)
@@ -7515,9 +7196,6 @@ class MacroSettingsPanel(QWidget):
         self._button_mappings[button_index] = new_action
         self._save_helxairo_settings()
         print(f"[HELXAIRO] Button {button_index + 1} mapped to: {new_action}")
-        
-        # Hardware Mapping (Mouse internal flash memory)
-        self._send_button_mapping_to_hardware(button_index, new_action)
         
         # Update AHK Plugin Engine
         if hasattr(self, '_ahk_manager') and self._ahk_manager:
@@ -7638,206 +7316,6 @@ class MacroSettingsPanel(QWidget):
         except Exception as e:
             print(f"[HELXAIRO] Failed to send Scroll Injection Mode setting to Hook Engine: {e}")
 
-    def _on_sensor_mode_changed(self, index: int):
-        """Handle sensor mode change."""
-        try:
-            # Check for Corded selection in Wireless mode
-            is_corded_selection = (index == 2) # Index 2 is "Corded"
-            conn_type = self._hw_manager.get_state()['connection_type']
-            
-            if is_corded_selection and conn_type == 'wireless':
-                QMessageBox.warning(self, "Connection Required", 
-                                  "Please connect the USB cable to use Corded mode.\n\n"
-                                  "This mode provides direct hardware connection for lowest latency.")
-                
-                # Revert to PREVIOUS mode (instead of Default HP)
-                # This ensures we go back to LP if we were on LP
-                rev_idx = str(self._last_sensor_mode_index)
-                print(f"[HELXAIRO] Reverting to previous mode: {rev_idx}")
-                self._mode_combo.setCurrentIndex(self._last_sensor_mode_index)
-                return
-
-            self._hw_manager.enqueue('set_sensor_mode', index)
-            self._save_helxairo_settings()
-            
-            # Update last known valid mode
-            if index != 2: # Don't save Corded as "previous" if it was a mistake? 
-                           # Actually, if we successfully set it (wired), we should save it?
-                           # But here we are in the success block. 
-                           # If wired, we can be in Corded mode.
-                self._last_sensor_mode_index = index
-            elif conn_type == 'wired':
-                # If we are wired and set to corded, that is valid
-                self._last_sensor_mode_index = index
-        except Exception as e:
-            print(f"[HELXAIRO] Failed to set sensor mode: {e}")
-
-    def _on_highest_perf_changed(self, checked: bool):
-        """Handle highest performance checkbox."""
-        self._save_helxairo_settings()
-        
-        try:
-            self._hw_manager.enqueue('set_highest_performance', checked)
-        except Exception as e:
-            print(f"[HELXAIRO] Failed to set highest perf: {e}")
-
-    def _on_perf_time_changed(self, text: str):
-        """Handle performance time change."""
-        self._save_helxairo_settings()
-        
-        try:
-            # Map text to value
-            mapping = {"10s": 1, "30s": 2, "1min": 3, "2min": 4, "5min": 5, "10min": 6}
-            val = mapping.get(text, 3) # default 1min
-            self._hw_manager.enqueue('set_performance_time', val)
-        except Exception as e:
-            print(f"[HELXAIRO] Failed to set perf time: {e}")
-
-    def _on_ripple_changed(self, checked: bool):
-        """Handle Ripple Control change."""
-        self._save_helxairo_settings()
-        try:
-            self._hw_manager.enqueue('set_ripple', checked)
-            print(f"[HELXAIRO] Ripple control: {'ON' if checked else 'OFF'}")
-        except Exception as e:
-            print(f"[HELXAIRO] Ripple update failed: {e}")
-
-    def _on_angle_snap_changed(self, checked: bool):
-        """Handle Angle Snapping change."""
-        self._save_helxairo_settings()
-        try:
-            self._hw_manager.enqueue('set_angle_snapping', checked)
-            print(f"[HELXAIRO] Angle snap: {'ON' if checked else 'OFF'}")
-        except Exception as e:
-            print(f"[HELXAIRO] Angle Snap update failed: {e}")
-
-    def _on_motion_sync_changed(self, checked: bool):
-        """Handle Motion Sync change."""
-        self._save_helxairo_settings()
-        try:
-            self._hw_manager.enqueue('set_motion_sync', checked)
-            print(f"[HELXAIRO] Motion sync: {'ON' if checked else 'OFF'}")
-        except Exception as e:
-            print(f"[HELXAIRO] Motion Sync update failed: {e}")
-
-    def _on_lod_changed(self, index: int):
-        """Handle LOD change (0=1mm, 1=2mm)."""
-        value = index + 1
-        self._save_helxairo_settings()
-        try:
-            self._hw_manager.enqueue('set_lod', value)
-            print(f"[HELXAIRO] LOD set to {value}mm")
-        except Exception as e:
-            print(f"[HELXAIRO] LOD update failed: {e}")
-
-    def _update_sensor_ui_for_connection(self):
-        """
-        Update the UI states based on whether the mouse is Wired or Wireless.
-        """
-        try:
-            print("[TIMING] Inside _update_sensor_ui: about to get_state()", flush=True)
-            conn_type = self._hw_manager.get_state()['connection_type']
-            print(f"[TIMING] get_state() returned, conn_type={conn_type}", flush=True)
-            
-            model = self._mode_combo.model()
-            corded_index = 2 # Index of "Corded" in ["LP", "HP", "Corded"]
-
-            if conn_type == 'wireless':
-                # Wireless Mode:
-                # - "Corded" option visible and ENABLED
-                # - "Highest Performance" & "Perf Time" ENABLED
-                
-                # Enable "Corded" item in dropdown (so user can click it to get prompt)
-                if model:
-                   item = model.item(corded_index)
-                   if item:
-                       item.setEnabled(True)
-                
-                # We do NOT auto-switch anymore based on user request.
-                # Logic moved to _on_sensor_mode_changed to show popup.
-                
-                self._highest_perf_check.setEnabled(True)
-                self._perf_time_combo.setEnabled(True)
-                self._highest_perf_check.setToolTip("Enable peak performance mode (consumes more battery)")
-                
-            elif conn_type == 'wired':
-                # Wired Mode:
-                # - "Corded" option enabled
-                # - "Highest Performance" & "Perf Time" DISABLED (irrelevant)
-                
-                # Enable "Corded" item
-                if model:
-                   item = model.item(corded_index)
-                   if item:
-                       item.setEnabled(True)
-                
-                # Auto-switch to Corded if not already
-                # actually, maybe just let user choose? But Corded makes sense.
-                # Let's just enable the item. User can select.
-                
-                self._highest_perf_check.setEnabled(False)
-                self._highest_perf_check.setChecked(True) # Force ON visually or OFF? Usually wired is max perf.
-                self._perf_time_combo.setEnabled(False)
-                
-                self._highest_perf_check.setToolTip("Always on max performance in Wired mode")
-                
-        except Exception as e:
-            print(f"[HELXAIRO] Error updating UI for connection: {e}")
-
-    def _on_hardware_state_changed(self, state):
-        """Callback from HardwareManager when state updates (battery, connection, DPI)."""
-        # This is called from a background thread! Use QTimer.singleShot for UI updates.
-        QMetaObject.invokeMethod(self, "_update_ui_from_hw_state", Qt.QueuedConnection)
-
-    @Slot()
-    def _update_ui_from_hw_state(self):
-        """Sync UI with latest hardware state from manager cache."""
-        state = self._hw_manager.get_state()
-        
-        # 1. Battery Info (Handled by _update_battery_display timer now)
-        pass
-        
-        # 2. Connection Type
-        conn_type = state['connection_type']
-        if hasattr(self, '_conn_type_label'):
-            self._conn_type_label.setText(conn_type.capitalize())
-            
-    def _send_button_mapping_to_hardware(self, button_index: int, action_name: str):
-        """Send button mapping command to manager queue."""
-        
-        # Certain hardware firmwares (like Furycube) have corrupted memory addresses for Scroll/Media,
-        # which causes them to dual-output or output completely wrong keys (e.g. Backward).
-        # For these, we force the hardware to output its default physical click, and let our Universal OS Hook
-        # do the heavy lifting of injecting the requested action.
-        SOFTWARE_ONLY_ACTIONS = {
-            "Scroll Up", "Scroll Down", "Scroll Left", "Scroll Right",
-            "Play/Pause", "Next Track", "Prev Track", "Stop", "Mute", "Volume +", "Volume -",
-            "Macro", "Combo Key", "Fire Key"
-        }
-        
-        is_hw_native = hasattr(self, '_hardware_native_toggle') and self._hardware_native_toggle.isChecked()
-        
-        if action_name in SOFTWARE_ONLY_ACTIONS:
-            if is_hw_native and action_name in ("Scroll Up", "Scroll Down"):
-                pass  # Allow direct MCU hardware flash write for Scroll Up/Down!
-            else:
-                DEFAULT_MAPPING = ["Left Click", "Right Click", "Middle Click", "Forward", "Backward", "DPI Loop"]
-                if button_index < len(DEFAULT_MAPPING):
-                    action_name = DEFAULT_MAPPING[button_index]
-                
-        from FurycubeHID import ButtonAction
-        m = {
-            "Left Click": ButtonAction.LEFT_CLICK, "Right Click": ButtonAction.RIGHT_CLICK,
-            "Wheel Click": ButtonAction.MIDDLE_CLICK, "Middle Click": ButtonAction.MIDDLE_CLICK,
-            "Forward": ButtonAction.FORWARD, "Backward": ButtonAction.BACKWARD,
-            "Disable": ButtonAction.DISABLED, "DPI Loop": ButtonAction.DPI_LOOP,
-            "DPI +": ButtonAction.DPI_PLUS, "DPI -": ButtonAction.DPI_MINUS,
-            "Scroll Up": ButtonAction.SCROLL_UP, "Scroll Down": ButtonAction.SCROLL_DOWN,
-        }
-        code = m.get(action_name)
-        if code is not None:
-            self._hw_manager.enqueue('set_button_mapping', button_index, code)
-
     def _apply_saved_helxairo_settings(self):
         """Load and apply saved HELXAIRO settings on startup."""
         self._loading_settings = True
@@ -7885,8 +7363,6 @@ class MacroSettingsPanel(QWidget):
                 for i, mapping in enumerate(self._button_mappings):
                     if i < len(self._button_mapping_btns):
                         self._button_mapping_btns[i].setText(f"   {mapping}")
-                        # Sync to hardware
-                        self._send_button_mapping_to_hardware(i, mapping)
                         
             # Deferred sync to Universal OS Hook to ensure socket is initialized and Hook process is listening
             from PySide6.QtCore import QTimer
@@ -9297,177 +8773,4 @@ class MacroSettingsPanel(QWidget):
         self.record_status.setStyleSheet("color: #888;")
         self.save_recording_btn.setEnabled(False)
         self.play_recording_btn.setEnabled(False)
-
-    def _update_battery_display(self):
-        """Update battery UI using cached state from HardwareManager (Non-blocking)."""
-        if not hasattr(self, '_battery_label') or not hasattr(self, '_battery_bar') or not hasattr(self, '_charging_label'):
-            return
-        try:
-            state = self._hw_manager.get_state()
-            is_connected = state.get('connected', False)
-            
-            # Update device warning overlays
-            self._update_device_warnings(is_connected)
-            
-            if not is_connected:
-                self._battery_label.setText("---%")
-                self._charging_label.setText("")
-                self._battery_bar.setFixedWidth(30)
-                self._battery_bar.setStyleSheet("""
-                    QWidget#batteryBar {
-                        background: #444;
-                        border: none;
-                        border-radius: 3px;
-                    }
-                """)
-                return
-
-            # Get values from HardwareManager state (updated periodically in BG thread)
-            percentage = state.get('battery_level', -1)
-            is_charging = state.get('is_charging', False)
-
-            if percentage >= 0:
-                # Show ⚡ emoji and style text yellow while charging
-                if is_charging:
-                    self._charging_label.setText("⚡")
-                    self._charging_label.setStyleSheet("color: #FFD600; font-size: 14px;")
-                    self._battery_label.setText(f"{percentage}%")
-                    self._battery_label.setStyleSheet("color: #FFD600; font-size: 12px; font-weight: bold;")
-                else:
-                    self._charging_label.setText("")
-                    self._charging_label.setStyleSheet("")
-                    self._battery_label.setText(f"{percentage}%")
-                    self._battery_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: bold;")
-                
-                # Update bar width (max 30px)
-                bar_width = max(2, int((percentage / 100.0) * 30))
-                self._battery_bar.setFixedWidth(bar_width)
-                
-                # Bar color: amber while charging, level-based when not charging
-                if is_charging:
-                    color  = "#FFD600"
-                    color2 = "#FFA000"
-                elif percentage <= 15:
-                    color  = "#ff3333"
-                    color2 = "#cc0000"
-                elif percentage <= 30:
-                    color  = "#ffaa00"
-                    color2 = "#cc8800"
-                else:
-                    color  = "#4CAF50"
-                    color2 = "#8BC34A"
-                    
-                self._battery_bar.setStyleSheet(f"""
-                    QWidget#batteryBar {{
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                            stop:0 {color}, stop:1 {color2});
-                        border: none;
-                        border-radius: 3px;
-                    }}
-                """)
-            else:
-                self._battery_label.setText("READING...")
-        except Exception as e:
-            print(f"[MacroSettingsPanel] Battery update error: {e}")
-    
-    def _update_device_warnings(self, is_connected: bool):
-        """
-        Update all device warning overlays based on connection state.
-        Called periodically from _update_battery_display.
-        
-        Args:
-            is_connected: Whether the Furycube G13 Pro is connected
-        """
-        try:
-            # Update DPI tab warning
-            if hasattr(self, '_dpi_device_warning'):
-                if is_connected:
-                    self._dpi_device_warning.hide()
-                else:
-                    self._dpi_device_warning.set_disconnected()
-                    self._dpi_device_warning.show()
-                    print("[HELXAIRO] DPI warning shown (disconnected)")
-            
-            # Update Advanced settings warning
-            if hasattr(self, '_advanced_device_warning'):
-                if is_connected:
-                    self._advanced_device_warning.hide()
-                else:
-                    self._advanced_device_warning.set_disconnected()
-                    self._advanced_device_warning.show()
-            
-            # Update Wireless Pairing warning
-            if hasattr(self, '_pairing_device_warning'):
-                if is_connected:
-                    self._pairing_device_warning.hide()
-                else:
-                    self._pairing_device_warning.set_disconnected()
-                    self._pairing_device_warning.show()
-                    
-        except Exception as e:
-            print(f"[MacroSettingsPanel] Device warning update error: {e}")
-    
-    def _check_device_warnings_initial(self):
-        """Initial check of device warnings when panel first loads."""
-        try:
-            state = self._hw_manager.get_state()
-            is_connected = state.get('connected', False)
-            print(f"[HELXAIRO] Device warning check: connected={is_connected}")
-            self._update_device_warnings(is_connected)
-        except Exception as e:
-            print(f"[MacroSettingsPanel] Initial device warning check error: {e}")
-            # Default to showing warning if we can't check state
-            self._update_device_warnings(False)
-    
-    def _on_refresh_connection_clicked(self):
-        """Force the HardwareManager to re-enumerate and reconnect to the mouse.
-        
-        Useful when the mouse was unplugged/replugged or the wireless dongle lost
-        sync since the app started. Enqueues a high-priority 'force_reconnect'
-        command and provides brief visual feedback on the button.
-        """
-        if not hasattr(self, '_refresh_btn'):
-            return
-        
-        # Visual feedback: disable button temporarily and update tooltip
-        self._refresh_btn.setEnabled(False)
-        self._refresh_btn.setToolTip("Refreshing...")
-        self._refresh_btn.setStyleSheet("""
-            QPushButton#helxairo_refreshBtn {
-                background: rgba(255, 91, 6, 0.4);
-                border: none;
-                border-radius: 8px;
-                padding: 0px;
-            }
-        """)
-        
-        # Enqueue the reconnect at high priority so it runs before polling
-        self._hw_manager.enqueue('force_reconnect', priority=1)
-        
-        def _restore_btn():
-            """Restore button state after reconnect attempt completes."""
-            if hasattr(self, '_refresh_btn') and self._refresh_btn:
-                self._refresh_btn.setEnabled(True)
-                self._refresh_btn.setToolTip("Refresh mouse connection")
-                self._refresh_btn.setStyleSheet("""
-                    QPushButton#helxairo_refreshBtn {
-                        background: rgba(40, 40, 40, 0.8);
-                        border: none;
-                        border-radius: 8px;
-                        padding: 0px;
-                    }
-                    QPushButton#helxairo_refreshBtn:hover {
-                        background: rgba(255, 91, 6, 0.25);
-                        border-color: transparent;
-                    }
-                    QPushButton#helxairo_refreshBtn:pressed {
-                        background: rgba(255, 91, 6, 0.5);
-                    }
-                """)
-            # Force immediate battery + connection UI refresh
-            self._update_battery_display()
-        
-        # Give the background thread ~2s to finish reconnect before restoring UI
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(2000, _restore_btn)
 
