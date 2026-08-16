@@ -3733,7 +3733,7 @@ class DoubleClickTestPanel(QWidget):
         card = QFrame()
         card.setObjectName("DoubleClickStatCard")
         card.setStyleSheet("""
-            QFrame {
+            QFrame#DoubleClickStatCard {
                 background-color: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
@@ -3746,11 +3746,11 @@ class DoubleClickTestPanel(QWidget):
 
         title_lbl = QLabel(title)
         title_lbl.setObjectName("DoubleClickStatTitleLbl")
-        title_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold;")
+        title_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; border: none; background: transparent;")
         
         val_lbl = QLabel(init_val)
         val_lbl.setObjectName("StatValLbl")
-        val_lbl.setStyleSheet(f"color: {color_hex}; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+        val_lbl.setStyleSheet(f"color: {color_hex}; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; border: none; background: transparent;")
 
         layout.addWidget(title_lbl)
         layout.addWidget(val_lbl)
@@ -3834,13 +3834,13 @@ class DoubleClickTestPanel(QWidget):
 
         if bounce_pct == 0.0:
             self.health_val_lbl.setText("100% PERFECT")
-            self.health_val_lbl.setStyleSheet("color: #00E676; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+            self.health_val_lbl.setStyleSheet("color: #00E676; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; border: none; background: transparent;")
         elif bounce_pct < 5.0:
             self.health_val_lbl.setText("GOOD (MINOR)")
-            self.health_val_lbl.setStyleSheet("color: #FFB74D; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+            self.health_val_lbl.setStyleSheet("color: #FFB74D; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; border: none; background: transparent;")
         else:
             self.health_val_lbl.setText("DEFECTIVE!")
-            self.health_val_lbl.setStyleSheet("color: #FF3333; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+            self.health_val_lbl.setStyleSheet("color: #FF3333; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; border: none; background: transparent;")
 
     def reset_test(self):
         self._event_counter = 0
@@ -4064,7 +4064,7 @@ class ScrollWheelTestPanel(QWidget):
         card = QFrame()
         card.setObjectName("ScrollStatCard")
         card.setStyleSheet("""
-            QFrame {
+            QFrame#ScrollStatCard {
                 background: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
@@ -4342,7 +4342,7 @@ class PollingRateTestPanel(QWidget):
         card = QFrame()
         card.setObjectName("PollingStatCard")
         card.setStyleSheet("""
-            QFrame {
+            QFrame#PollingStatCard {
                 background-color: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
@@ -4353,12 +4353,12 @@ class PollingRateTestPanel(QWidget):
         
         t_lbl = QLabel(title)
         t_lbl.setObjectName("PollingStatTitle")
-        t_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
+        t_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border: none; background: transparent;")
         t_lbl.setAlignment(Qt.AlignCenter)
         
         v_lbl = QLabel(val)
         v_lbl.setObjectName("PollingStatVal")
-        v_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 20px; font-weight: bold;")
+        v_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 20px; font-weight: bold; border: none; background: transparent;")
         v_lbl.setAlignment(Qt.AlignCenter)
         
         layout.addWidget(t_lbl)
