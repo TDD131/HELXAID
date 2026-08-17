@@ -18,8 +18,9 @@ from PySide6.QtWidgets import (
     QRadioButton, QFrame, QGraphicsOpacityEffect, QRubberBand, QApplication, QSizePolicy, QAbstractButton
 )
 from smooth_scroll import SmoothScrollArea
-from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen, QTextDocument, QTextCursor
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize, QVariantAnimation, QAbstractAnimation
+import math, random
+from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen, QTextDocument, QTextCursor, QRadialGradient
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QPointF, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize, QVariantAnimation, QAbstractAnimation
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton
 
 
@@ -1754,43 +1755,57 @@ class HelxairoLowIntervalWarningOverlayPanel(QWidget):
 class StarRatingWidget(QWidget):
     """
     Universal Vector Star Rating Widget for benchmark and score ratings (No Emojis, pure QPainter vector).
-    Supports optional sequential lighting animation.
+    Supports optional sequential lighting animation, full stars, and half stars.
     
     Component Name: StarRatingWidget
     """
-    def __init__(self, rating=5, max_stars=5, star_size=18, animate=True, parent=None):
+    def __init__(self, rating=5, max_stars=5, star_size=18, animate=True, star_color="#FFD600", parent=None):
         super().__init__(parent)
         self.setObjectName("StarRatingWidget")
-        self.target_rating = rating
+        self.target_rating = float(rating)
         self.max_stars = max_stars
         self.star_size = star_size
+        self.star_color = star_color
         self.setFixedSize(max_stars * (star_size + 4), star_size)
         
         if animate:
-            self.current_rating = 0
+            self.current_rating = 0.0
             self._timer = QTimer(self)
-            self._timer.setInterval(90)
+            self._timer.setInterval(80)
             self._timer.timeout.connect(self._step_star)
         else:
-            self.current_rating = rating
+            self.current_rating = float(rating)
             self._timer = None
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, '_timer') and self._timer:
+            self.start_animation()
+        else:
+            self.current_rating = self.target_rating
+            self.update()
 
     def start_animation(self):
         if hasattr(self, '_timer') and self._timer:
-            self.current_rating = 0
+            self.current_rating = 0.0
             self.update()
-            self._timer.start()
+            if not self._timer.isActive():
+                self._timer.start()
+        else:
+            self.current_rating = self.target_rating
+            self.update()
 
     def _step_star(self):
         if self.current_rating < self.target_rating:
-            self.current_rating += 1
+            self.current_rating = min(self.target_rating, self.current_rating + 1.0)
             self.update()
         else:
-            self._timer.stop()
+            if self._timer and self._timer.isActive():
+                self._timer.stop()
 
     def set_rating(self, rating):
-        self.target_rating = rating
-        self.current_rating = rating
+        self.target_rating = float(rating)
+        self.current_rating = float(rating)
         self.update()
 
     def paintEvent(self, event):
@@ -1807,7 +1822,7 @@ class StarRatingWidget(QWidget):
             cx = self.star_size / 2.0
             cy = self.star_size / 2.0
             outer_r = self.star_size / 2.0
-            inner_r = outer_r * 0.4
+            inner_r = outer_r * 0.42
             
             for k in range(10):
                 r = outer_r if k % 2 == 0 else inner_r
@@ -1820,14 +1835,30 @@ class StarRatingWidget(QWidget):
                     path.lineTo(x, y)
             path.closeSubpath()
 
-            if i < self.current_rating:
-                painter.setBrush(QBrush(QColor("#FFC107")))
+            # Fill Star based on rating progress
+            val = self.current_rating - i
+            if val >= 0.95:
+                # Fully lit star
+                painter.setBrush(QBrush(QColor(self.star_color)))
                 painter.setPen(Qt.NoPen)
-            else:
+                painter.drawPath(path)
+            elif val >= 0.35:
+                # Half-lit star
+                # 1. Base dark star
                 painter.setBrush(QBrush(QColor("#35353d")))
                 painter.setPen(Qt.NoPen)
+                painter.drawPath(path)
                 
-            painter.drawPath(path)
+                # 2. Golden left half
+                painter.setClipRect(QRectF(0, 0, cx, self.star_size))
+                painter.setBrush(QBrush(QColor(self.star_color)))
+                painter.drawPath(path)
+            else:
+                # Dark empty star
+                painter.setBrush(QBrush(QColor("#35353d")))
+                painter.setPen(Qt.NoPen)
+                painter.drawPath(path)
+                
             painter.restore()
 
 
@@ -4305,7 +4336,6 @@ class PollingRateTestPanel(QWidget):
             self._current_hz = target_hz  # Fast Attack
         else:
             self._current_hz += (target_hz - self._current_hz) * 0.1  # Slow Release
-            
         if self._current_hz < 5:
             self._current_hz = 0
             
@@ -4324,6 +4354,1759 @@ class PollingRateTestPanel(QWidget):
         self.peak_lbl.setText(str(self._peak_hz))
         self.avg_lbl.setText(str(self._avg_hz))
         self.latency_lbl.setText(f"{latency:.2f} ms")
+
+
+# =====================================================================
+# REFLEX LAB & AIM ARENA CLASSES
+# =====================================================================
+
+class TargetParticle:
+    """Vector particle explosion entity for Gridshot targets."""
+    def __init__(self, x: float, y: float, color: QColor):
+        import random, math
+        self.x = x
+        self.y = y
+        angle = random.uniform(0, 2 * math.pi)
+        speed = random.uniform(2.5, 7.5)
+        self.vx = math.cos(angle) * speed
+        self.vy = math.sin(angle) * speed
+        self.radius = random.uniform(2.0, 5.5)
+        self.alpha = 255
+        self.color = color
+
+    def update(self) -> bool:
+        self.x += self.vx
+        self.y += self.vy
+        self.alpha = max(0, self.alpha - 14)
+        self.radius = max(0.4, self.radius - 0.12)
+        return self.alpha > 0
+
+    def paint(self, painter: QPainter):
+        c = QColor(self.color)
+        c.setAlpha(int(self.alpha))
+        painter.setBrush(QBrush(c))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QPointF(self.x, self.y), self.radius, self.radius)
+
+
+class ReflexResultOverlay(QWidget):
+    """
+    Universal floating modal overlay panel displaying Reflex Benchmark results.
+    Includes rank evaluation, vector stars, structured vertical KPI stat cards, and retry/hub actions.
+    
+    Component Name: ReflexResultOverlay
+    """
+    def __init__(self, parent_panel, title="BENCHMARK RESULT", rank_badge="GODLIKE", star_rating=5, rank_color="#00FF88", metrics=None, on_retry=None, on_hub=None):
+        super().__init__(parent_panel)
+        self.parent_panel = parent_panel
+        self.on_retry = on_retry
+        self.on_hub = on_hub
+        self.metrics = metrics or []
+        self.rank_badge = rank_badge
+        self.star_rating = star_rating
+        self.rank_color = rank_color
+        
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("ReflexResultOverlay")
+        self.setGeometry(0, 0, parent_panel.width(), parent_panel.height())
+        self._setup_ui(title)
+
+    def _setup_ui(self, title_text):
+        self.setStyleSheet("""
+            QWidget#ReflexResultOverlay {
+                background-color: rgba(0, 0, 0, 0.78);
+            }
+            QFrame#ReflexResultCard {
+                background-color: #18181c;
+                border: none;
+                border-radius: 12px;
+            }
+            QWidget#ReflexResultTitleBar {
+                background-color: #22222a;
+                border: none;
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+            }
+        """)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.card = QFrame()
+        self.card.setObjectName("ReflexResultCard")
+        self.card.setFixedSize(540, 310)
+        
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 18)
+        card_layout.setSpacing(14)
+        
+        # 1. Header Title Bar
+        title_bar = QWidget()
+        title_bar.setObjectName("ReflexResultTitleBar")
+        title_bar.setFixedHeight(44)
+        t_layout = QHBoxLayout(title_bar)
+        t_layout.setContentsMargins(18, 0, 18, 0)
+        t_label = QLabel(title_text)
+        t_label.setObjectName("ReflexResultTitleLabel")
+        t_label.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
+        t_layout.addWidget(t_label)
+        t_layout.addStretch()
+        card_layout.addWidget(title_bar)
+        
+        # 2. Main Body Content
+        body = QWidget()
+        body.setObjectName("ReflexResultBody")
+        body.setStyleSheet("background: transparent;")
+        b_layout = QVBoxLayout(body)
+        b_layout.setContentsMargins(20, 4, 20, 4)
+        b_layout.setSpacing(14)
+        
+        # Rank Row (Badge + Vector Stars)
+        rank_row = QHBoxLayout()
+        rank_row.setSpacing(14)
+        rank_lbl = QLabel(self.rank_badge)
+        rank_lbl.setObjectName("ReflexResultRankTag")
+        rank_lbl.setFont(QFont("Orbitron", 15, QFont.Bold))
+        rank_lbl.setStyleSheet(f"color: {self.rank_color}; font-family: 'Orbitron', sans-serif; background: transparent;")
+        rank_row.addWidget(rank_lbl)
+        
+        self.star_widget = StarRatingWidget(rating=self.star_rating, max_stars=5, star_size=16, animate=True, star_color="#FFD600")
+        self.star_widget.setObjectName("ReflexResultStarRating")
+        rank_row.addWidget(self.star_widget)
+        rank_row.addStretch()
+        b_layout.addLayout(rank_row)
+        
+        # Metrics Grid - Vertical 2-Line KPI Stat Boxes
+        metrics_row = QHBoxLayout()
+        metrics_row.setSpacing(10)
+        for label, val in self.metrics:
+            box = QFrame()
+            box.setObjectName("ReflexStatBox")
+            box.setStyleSheet("""
+                QFrame#ReflexStatBox {
+                    background-color: #24242c;
+                    border: none;
+                    border-radius: 8px;
+                }
+            """)
+            box_layout = QVBoxLayout(box)
+            box_layout.setContentsMargins(6, 8, 6, 8)
+            box_layout.setSpacing(4)
+            
+            clean_label = label.rstrip(':').upper()
+            lbl_title = QLabel(clean_label)
+            lbl_title.setObjectName(f"StatTitle_{clean_label.replace(' ', '_')}")
+            lbl_title.setAlignment(Qt.AlignCenter)
+            lbl_title.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; background: transparent;")
+            box_layout.addWidget(lbl_title)
+            
+            lbl_val = QLabel(str(val))
+            lbl_val.setObjectName(f"StatVal_{clean_label.replace(' ', '_')}")
+            lbl_val.setAlignment(Qt.AlignCenter)
+            lbl_val.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: bold; background: transparent;")
+            box_layout.addWidget(lbl_val)
+            
+            metrics_row.addWidget(box, 1)
+            
+        b_layout.addLayout(metrics_row)
+        card_layout.addWidget(body)
+        
+        # 3. Action Buttons
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(20, 0, 20, 0)
+        btn_row.setSpacing(14)
+        
+        btn_retry = FadeHoverButton("Retry Test", is_secondary=False, border_radius=6.0)
+        btn_retry.setObjectName("ReflexRetryBtn")
+        btn_retry.setFixedHeight(36)
+        btn_retry.setStyleSheet("""
+            QPushButton#ReflexRetryBtn, FadeHoverButton#ReflexRetryBtn {
+                background-color: #FF5B06;
+                color: #ffffff;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+            }
+        """)
+        btn_retry.clicked.connect(self._handle_retry)
+        btn_row.addWidget(btn_retry)
+        
+        btn_hub = FadeHoverButton("Back to Hub", is_secondary=True, border_radius=6.0)
+        btn_hub.setObjectName("ReflexBackHubBtn")
+        btn_hub.setFixedHeight(36)
+        btn_hub.setStyleSheet("""
+            QPushButton#ReflexBackHubBtn, FadeHoverButton#ReflexBackHubBtn {
+                background-color: #2a2a35;
+                color: #E0E0E0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+            }
+        """)
+        btn_hub.clicked.connect(self._handle_hub)
+        btn_row.addWidget(btn_hub)
+        
+        card_layout.addLayout(btn_row)
+        
+        outer_layout.addStretch()
+        h_center = QHBoxLayout()
+        h_center.addStretch()
+        h_center.addWidget(self.card)
+        h_center.addStretch()
+        outer_layout.addLayout(h_center)
+        outer_layout.addStretch()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, 'star_widget') and self.star_widget:
+            self.star_widget.start_animation()
+
+    def _handle_retry(self):
+        self.close()
+        if self.on_retry:
+            self.on_retry()
+
+    def _handle_hub(self):
+        self.close()
+        if self.on_hub:
+            self.on_hub()
+
+    def resizeEvent(self, event):
+        if self.parent_panel:
+            self.setGeometry(0, 0, self.parent_panel.width(), self.parent_panel.height())
+        super().resizeEvent(event)
+
+
+class ReactionZoneWidget(QWidget):
+    """
+    Interactive State-Machine Reaction Test Area.
+    State 0: IDLE
+    State 1: WAITING (Red)
+    State 2: TRIGGERED (Green)
+    State 3: FALSE_START (Amber/Red warning)
+    State 4: RESULT (Round score display)
+    
+    Component Name: ReactionZoneWidget
+    """
+    round_finished = Signal(float)  # Latency in ms
+    session_finished = Signal(list, float)  # All rounds, average
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ReactionZoneWidget")
+        self.setCursor(Qt.PointingHandCursor)
+        self.state = 0  # 0=IDLE, 1=WAITING, 2=TRIGGERED, 3=FALSE_START, 4=RESULT
+        self.rounds = []
+        self.current_round_latency = 0.0
+        self._start_perf_time = 0.0
+        
+        self._trigger_timer = QTimer(self)
+        self._trigger_timer.setSingleShot(True)
+        self._trigger_timer.timeout.connect(self._on_trigger)
+
+    def reset_session(self):
+        self._trigger_timer.stop()
+        self.state = 0
+        self.rounds = []
+        self.current_round_latency = 0.0
+        self.update()
+
+    def mousePressEvent(self, event):
+        import time, random
+        if event.button() != Qt.LeftButton:
+            return
+
+        if self.state == 0 or self.state == 4 or self.state == 3:
+            # Start next round
+            if len(self.rounds) >= 5:
+                self.rounds = []
+            self.state = 1  # WAITING
+            self.update()
+            delay_ms = random.randint(1500, 4500)
+            self._trigger_timer.start(delay_ms)
+        elif self.state == 1:
+            # False start
+            self._trigger_timer.stop()
+            self.state = 3  # FALSE_START
+            self.update()
+        elif self.state == 2:
+            # Clicked on green
+            latency = (time.perf_counter() - self._start_perf_time) * 1000.0
+            self.current_round_latency = latency
+            self.rounds.append(latency)
+            self.state = 4  # RESULT
+            self.update()
+            self.round_finished.emit(latency)
+            
+            if len(self.rounds) >= 5:
+                avg = sum(self.rounds) / len(self.rounds)
+                self.session_finished.emit(self.rounds, avg)
+
+    def _on_trigger(self):
+        import time
+        self.state = 2  # TRIGGERED (GREEN)
+        self._start_perf_time = time.perf_counter()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Determine background color and text based on state
+        if self.state == 0:
+            bg_color = QColor("#1e2028")
+            title = "CLICK ANYWHERE TO START"
+            subtext = "When the screen turns green, click as quickly as you can."
+            sub_color = QColor("#a0a0b0")
+        elif self.state == 1:
+            bg_color = QColor("#661818")
+            title = "WAIT FOR GREEN..."
+            subtext = "Do not click yet!"
+            sub_color = QColor("#ffaaaa")
+        elif self.state == 2:
+            bg_color = QColor("#00C853")
+            title = "CLICK NOW!"
+            subtext = "CLICK CLICK CLICK!"
+            sub_color = QColor("#ffffff")
+        elif self.state == 3:
+            bg_color = QColor("#882020")
+            title = "TOO EARLY!"
+            subtext = "False start detected! Click to try this round again."
+            sub_color = QColor("#ffcccc")
+        elif self.state == 4:
+            bg_color = QColor("#1c2738")
+            title = f"{self.current_round_latency:.1f} MS"
+            round_idx = len(self.rounds)
+            subtext = f"Round {round_idx} of 5 completed. Click to continue."
+            sub_color = QColor("#88ccff")
+
+        # Draw smooth rounded card background
+        painter.setBrush(QBrush(bg_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(self.rect(), 12, 12)
+
+        # Draw decorative vector lightning / pulse waves
+        painter.setPen(QPen(QColor(255, 255, 255, 20), 2))
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        painter.drawEllipse(QPointF(cx, cy), 140, 140)
+        painter.drawEllipse(QPointF(cx, cy), 200, 200)
+
+        # Draw Title
+        painter.setFont(QFont("Orbitron", 22, QFont.Bold))
+        painter.setPen(QPen(QColor("#ffffff")))
+        title_rect = QRect(0, int(cy - 45), self.width(), 45)
+        painter.drawText(title_rect, Qt.AlignCenter, title)
+
+        # Draw Subtext
+        painter.setFont(QFont("Orbitron", 12))
+        painter.setPen(QPen(sub_color))
+        sub_rect = QRect(0, int(cy + 15), self.width(), 35)
+        painter.drawText(sub_rect, Qt.AlignCenter, subtext)
+
+
+class ReactionTimePanel(QWidget):
+    """
+    Reaction Time Test Suite Page.
+    
+    Component Name: ReactionTimePanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ReactionTimePanel")
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 12, 16, 16)
+        main_layout.setSpacing(12)
+
+        # ── 1. HEADER BAR ──────────────────────────────────────
+        header_frame = QWidget()
+        header_frame.setObjectName("ReactionHeaderFrame")
+        header_frame.setFixedHeight(40)
+        header_frame.setStyleSheet("""
+            QWidget#ReactionHeaderFrame {
+                background-color: rgba(26, 26, 26, 0.95);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("ReactionBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        if os.path.exists(back_icon_path):
+            self.back_btn.setIcon(QIcon(back_icon_path))
+            self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Reflex Hub")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#ReactionBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#ReactionBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self.back_clicked.emit)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("REACTION TIME TEST")
+        title_lbl.setObjectName("ReactionHeaderTitle")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+        h_layout.addStretch()
+
+        self.reset_btn = FadeHoverButton("Reset", is_secondary=True, border_radius=6.0)
+        self.reset_btn.setObjectName("ReactionResetBtn")
+        self.reset_btn.setFixedSize(65, 26)
+        self.reset_btn.setStyleSheet("""
+            QPushButton#ReactionResetBtn, FadeHoverButton#ReactionResetBtn {
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 26px;
+                max-height: 26px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.reset_btn.clicked.connect(self._on_reset)
+        h_layout.addWidget(self.reset_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. STATS & ROUNDS ROW ──────────────────────────────
+        stats_frame = QFrame()
+        stats_frame.setObjectName("ReactionStatsFrame")
+        stats_frame.setStyleSheet("""
+            QFrame#ReactionStatsFrame {
+                background-color: rgba(26, 26, 32, 0.9);
+                border: none;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        s_layout = QHBoxLayout(stats_frame)
+        s_layout.setContentsMargins(16, 8, 16, 8)
+        s_layout.setSpacing(20)
+
+        # Round indicator
+        self.round_lbl = QLabel("ROUND: <span style='color:#FF5B06;'>0 / 5</span>")
+        self.round_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        s_layout.addWidget(self.round_lbl)
+
+        # Best round
+        self.best_lbl = QLabel("BEST: <span style='color:#00FF88;'>--- ms</span>")
+        self.best_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        s_layout.addWidget(self.best_lbl)
+
+        # Average
+        self.avg_lbl = QLabel("AVERAGE: <span style='color:#FFD600;'>--- ms</span>")
+        self.avg_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        s_layout.addWidget(self.avg_lbl)
+
+        s_layout.addStretch()
+        main_layout.addWidget(stats_frame)
+
+        # ── 3. INTERACTIVE CLICK ZONE ──────────────────────────
+        self.zone = ReactionZoneWidget()
+        self.zone.round_finished.connect(self._on_round_done)
+        self.zone.session_finished.connect(self._on_session_done)
+        main_layout.addWidget(self.zone, 1)
+
+    def _on_round_done(self, latency):
+        rounds = self.zone.rounds
+        self.round_lbl.setText(f"ROUND: <span style='color:#FF5B06;'>{len(rounds)} / 5</span>")
+        best = min(rounds)
+        self.best_lbl.setText(f"BEST: <span style='color:#00FF88;'>{best:.1f} ms</span>")
+        avg = sum(rounds) / len(rounds)
+        self.avg_lbl.setText(f"AVERAGE: <span style='color:#FFD600;'>{avg:.1f} ms</span>")
+
+    def _on_session_done(self, rounds, avg):
+        # Determine Rank
+        if avg < 160:
+            rank, color, stars = "GODLIKE", "#00FF88", 5
+        elif avg < 195:
+            rank, color, stars = "ELITE MASTER", "#00E5FF", 4.5
+        elif avg < 235:
+            rank, color, stars = "DIAMOND PRO", "#7C4DFF", 4
+        elif avg < 280:
+            rank, color, stars = "PLATINUM", "#FFD600", 3
+        else:
+            rank, color, stars = "RECRUIT", "#FF5B06", 2
+
+        best = min(rounds)
+        metrics = [
+            ("Average:", f"{avg:.1f} ms"),
+            ("Best Round:", f"{best:.1f} ms"),
+            ("Consistency:", f"{max(rounds)-min(rounds):.1f} ms range")
+        ]
+
+        overlay = ReflexResultOverlay(
+            parent_panel=self,
+            title="REACTION BENCHMARK RESULT",
+            rank_badge=rank,
+            star_rating=stars,
+            rank_color=color,
+            metrics=metrics,
+            on_retry=self._on_reset,
+            on_hub=self.back_clicked.emit
+        )
+        overlay.show()
+
+    def _on_reset(self):
+        self.zone.reset_session()
+        self.round_lbl.setText("ROUND: <span style='color:#FF5B06;'>0 / 5</span>")
+        self.best_lbl.setText("BEST: <span style='color:#00FF88;'>--- ms</span>")
+        self.avg_lbl.setText("AVERAGE: <span style='color:#FFD600;'>--- ms</span>")
+
+
+class GridshotCanvasWidget(QWidget):
+    """
+    Interactive 2D Canvas for Gridshot Flicking Arena (60 FPS).
+    Supports Easy, Medium, Hard, and Extreme difficulty levels.
+    
+    Component Name: GridshotCanvasWidget
+    """
+    stats_updated = Signal(dict)  # time_left, score, hits, misses, accuracy, tps
+    game_finished = Signal(dict)
+
+    DIFFICULTIES = {
+        "easy": {
+            "normal_radius": 32.0,
+            "shrinking_init_radius": 52.0,
+            "shrinking_min_radius": 14.0,
+            "lifetime": 3.2,
+            "target_count": 3,
+            "score_mult": 0.85
+        },
+        "medium": {
+            "normal_radius": 24.0,
+            "shrinking_init_radius": 42.0,
+            "shrinking_min_radius": 8.0,
+            "lifetime": 2.4,
+            "target_count": 3,
+            "score_mult": 1.0
+        },
+        "hard": {
+            "normal_radius": 17.0,
+            "shrinking_init_radius": 34.0,
+            "shrinking_min_radius": 6.0,
+            "lifetime": 1.7,
+            "target_count": 4,
+            "score_mult": 1.35
+        },
+        "extreme": {
+            "normal_radius": 12.0,
+            "shrinking_init_radius": 32.0,
+            "shrinking_min_radius": 5.0,
+            "lifetime": 1.4,
+            "target_count": 4,
+            "score_mult": 1.75
+        }
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("GridshotCanvasWidget")
+        self.setCursor(Qt.CrossCursor)
+        self.is_running = False
+        self.difficulty = "medium"
+        self.time_left = 30.0
+        self.score = 0
+        self.hits = 0
+        self.misses = 0
+        self.streak = 0
+        self.spawn_count = 0
+        self.targets = []
+        self.particles = []
+        
+        self._fps_timer = QTimer(self)
+        self._fps_timer.setInterval(16)
+        self._fps_timer.timeout.connect(self._tick)
+
+    def set_difficulty(self, diff_key: str):
+        if diff_key in self.DIFFICULTIES:
+            self.difficulty = diff_key
+            if not self.is_running:
+                self.targets = []
+                cfg = self.DIFFICULTIES[self.difficulty]
+                for _ in range(cfg["target_count"]):
+                    self._spawn_target()
+                self.update()
+
+    def start_game(self):
+        self.is_running = True
+        self.time_left = 30.0
+        self.score = 0
+        self.hits = 0
+        self.misses = 0
+        self.streak = 0
+        self.spawn_count = 0
+        self.particles = []
+        self.targets = []
+        
+        cfg = self.DIFFICULTIES.get(self.difficulty, self.DIFFICULTIES["medium"])
+        for _ in range(cfg["target_count"]):
+            self._spawn_target()
+
+        self._fps_timer.start()
+
+    def stop_game(self):
+        self.is_running = False
+        self._fps_timer.stop()
+        self.update()
+
+    def _spawn_target(self):
+        import random, time, math
+        self.spawn_count += 1
+        w = max(120, self.width())
+        h = max(120, self.height())
+        padding = 55
+
+        cfg = self.DIFFICULTIES.get(self.difficulty, self.DIFFICULTIES["medium"])
+        
+        # Difficulty-based shrinking behavior:
+        # Easy: 0% shrinking (Murni 100% target normal/statis, tanpa shrinking)
+        # Medium: 33% (every 3rd target) shrinks
+        # Hard: 50% (every 2nd target) shrinks
+        # Extreme: 100% of targets shrink!
+        if self.difficulty == "easy":
+            is_shrinking = False
+        elif self.difficulty == "extreme":
+            is_shrinking = True
+        elif self.difficulty == "hard":
+            is_shrinking = (self.spawn_count % 2 == 0)
+        else:  # medium
+            is_shrinking = (self.spawn_count % 3 == 0)
+
+        if is_shrinking:
+            init_radius = cfg["shrinking_init_radius"]
+            min_radius = cfg["shrinking_min_radius"]
+            lifetime = cfg["lifetime"]
+            target_type = "shrinking"
+        else:
+            init_radius = cfg["normal_radius"]
+            min_radius = cfg["normal_radius"]
+            lifetime = 0.0
+            target_type = "normal"
+
+        for _ in range(60):
+            tx = random.uniform(padding, w - padding)
+            ty = random.uniform(padding, h - padding)
+            
+            overlap = False
+            for t in self.targets:
+                dist = math.hypot(tx - t['x'], ty - t['y'])
+                if dist < (init_radius + t['radius'] + 15):
+                    overlap = True
+                    break
+            if not overlap:
+                self.targets.append({
+                    'x': tx,
+                    'y': ty,
+                    'radius': init_radius,
+                    'initial_radius': init_radius,
+                    'min_radius': min_radius,
+                    'target_type': target_type,
+                    'spawn_time': time.perf_counter(),
+                    'lifetime': lifetime,
+                    'shrink_progress': 0.0
+                })
+                break
+
+    def mousePressEvent(self, event):
+        import time, math
+        if event.button() != Qt.LeftButton:
+            return
+
+        if not self.is_running:
+            self.start_game()
+            return
+
+        mx = event.position().x()
+        my = event.position().y()
+        
+        hit_idx = -1
+        for i, t in enumerate(self.targets):
+            dist = math.hypot(mx - t['x'], my - t['y'])
+            if dist <= (t['radius'] + 3.0):
+                hit_idx = i
+                break
+
+        if hit_idx != -1:
+            hit_target = self.targets.pop(hit_idx)
+            self.hits += 1
+            self.streak += 1
+            
+            # Particle explosion
+            particle_count = 16 if hit_target['target_type'] == 'shrinking' else 12
+            particle_color = QColor("#FF7A00") if hit_target['target_type'] == 'shrinking' else QColor("#FF5B06")
+            for _ in range(particle_count):
+                self.particles.append(TargetParticle(hit_target['x'], hit_target['y'], particle_color))
+                
+            # Score Calculation with Speed, Precision & Difficulty Bonus
+            speed_mult = max(1.0, 2.2 - (time.perf_counter() - hit_target['spawn_time']))
+            streak_bonus = min(2.5, 1.0 + (self.streak * 0.05))
+            cfg = self.DIFFICULTIES.get(self.difficulty, self.DIFFICULTIES["medium"])
+            score_diff_mult = cfg["score_mult"]
+            
+            if hit_target['target_type'] == 'shrinking':
+                base_pts = 1200 + int((1.0 - (hit_target['radius'] / hit_target['initial_radius'])) * 800)
+            else:
+                base_pts = 1000
+                
+            pts = int(base_pts * speed_mult * streak_bonus * score_diff_mult)
+            self.score += pts
+            
+            self._spawn_target()
+        else:
+            self.misses += 1
+            self.streak = 0
+            self.score = max(0, self.score - 150)
+
+        self._emit_stats()
+        self.update()
+
+    def _tick(self):
+        import time
+        self.time_left = max(0.0, self.time_left - 0.016)
+        now = time.perf_counter()
+        
+        # 1. Update shrinking targets & handle expiration
+        expired_targets = []
+        for t in self.targets:
+            if t['target_type'] == 'shrinking' and t['lifetime'] > 0:
+                elapsed = now - t['spawn_time']
+                progress = min(1.0, elapsed / t['lifetime'])
+                t['shrink_progress'] = progress
+                t['radius'] = max(t['min_radius'], t['initial_radius'] * (1.0 - progress) + t['min_radius'] * progress)
+                
+                if elapsed >= t['lifetime']:
+                    expired_targets.append(t)
+
+        for exp_t in expired_targets:
+            if exp_t in self.targets:
+                self.targets.remove(exp_t)
+                self.misses += 1
+                self.streak = 0
+                for _ in range(8):
+                    self.particles.append(TargetParticle(exp_t['x'], exp_t['y'], QColor("#777777")))
+                self._spawn_target()
+
+        # 2. Update particle physics
+        self.particles = [p for p in self.particles if p.update()]
+        
+        self._emit_stats()
+        self.update()
+
+        if self.time_left <= 0.0:
+            self.stop_game()
+            total_clicks = self.hits + self.misses
+            acc = (self.hits / total_clicks * 100.0) if total_clicks > 0 else 0.0
+            tps = self.hits / 30.0
+            self.game_finished.emit({
+                'score': self.score,
+                'hits': self.hits,
+                'misses': self.misses,
+                'accuracy': acc,
+                'tps': tps,
+                'difficulty': self.difficulty.upper()
+            })
+
+    def _emit_stats(self):
+        total_clicks = self.hits + self.misses
+        acc = (self.hits / total_clicks * 100.0) if total_clicks > 0 else 100.0
+        elapsed = 30.0 - self.time_left
+        tps = (self.hits / elapsed) if elapsed > 0.5 else 0.0
+        self.stats_updated.emit({
+            'time_left': self.time_left,
+            'score': self.score,
+            'hits': self.hits,
+            'misses': self.misses,
+            'accuracy': acc,
+            'tps': tps
+        })
+
+    def paintEvent(self, event):
+        import time, math
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Canvas background
+        painter.setBrush(QBrush(QColor("#111116")))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(self.rect(), 12, 12)
+
+        # Draw grid pattern
+        painter.setPen(QPen(QColor(255, 255, 255, 8), 1))
+        step = 40
+        for x in range(0, self.width(), step):
+            painter.drawLine(x, 0, x, self.height())
+        for y in range(0, self.height(), step):
+            painter.drawLine(0, y, self.width(), y)
+
+        if not self.is_running:
+            # Start Overlay
+            painter.setBrush(QBrush(QColor(0, 0, 0, 160)))
+            painter.drawRoundedRect(self.rect(), 12, 12)
+            
+            cx = self.width() / 2.0
+            cy = self.height() / 2.0
+            
+            painter.setFont(QFont("Orbitron", 20, QFont.Bold))
+            painter.setPen(QPen(QColor("#FF5B06")))
+            painter.drawText(QRect(0, int(cy - 40), self.width(), 40), Qt.AlignCenter, "CLICK TO START GRIDSHOT")
+            
+            painter.setFont(QFont("Orbitron", 11))
+            painter.setPen(QPen(QColor("#888888")))
+            painter.drawText(QRect(0, int(cy + 10), self.width(), 30), Qt.AlignCenter, f"Difficulty: {self.difficulty.upper()} | 30 Seconds Challenge")
+            return
+
+        # Draw Targets
+        now = time.time()
+        pulse = (math.sin(now * 8.0) + 1.0) * 0.5
+        
+        for t in self.targets:
+            tx = t['x']
+            ty = t['y']
+            r = t['radius']
+            is_shrinking = (t['target_type'] == 'shrinking')
+            
+            if is_shrinking:
+                outer_r = r + (pulse * 5.0) + 2.0
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(255, 122, 0, int(150 + pulse * 105)), 2.5))
+                painter.drawEllipse(QPointF(tx, ty), outer_r, outer_r)
+
+                grad = QRadialGradient(tx, ty, r)
+                grad.setColorAt(0.0, QColor("#FFA726"))
+                grad.setColorAt(0.7, QColor("#FF6D00"))
+                grad.setColorAt(1.0, QColor("#D50000"))
+                painter.setBrush(QBrush(grad))
+                painter.setPen(QPen(QColor("#ffffff"), 1.5))
+                painter.drawEllipse(QPointF(tx, ty), r, r)
+
+                dot_r = max(2.5, r * 0.2)
+                painter.setBrush(QBrush(QColor("#ffffff")))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(QPointF(tx, ty), dot_r, dot_r)
+            else:
+                outer_r = r + (pulse * 6.0)
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor(255, 91, 6, int(120 + pulse * 100)), 2))
+                painter.drawEllipse(QPointF(tx, ty), outer_r, outer_r)
+
+                grad = QRadialGradient(tx, ty, r)
+                grad.setColorAt(0.0, QColor("#FF8A06"))
+                grad.setColorAt(0.8, QColor("#FF5B06"))
+                grad.setColorAt(1.0, QColor("#C43800"))
+                painter.setBrush(QBrush(grad))
+                painter.setPen(QPen(QColor("#ffffff"), 1.5))
+                painter.drawEllipse(QPointF(tx, ty), r, r)
+
+                painter.setBrush(QBrush(QColor("#ffffff")))
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(QPointF(tx, ty), max(2.5, r * 0.2), max(2.5, r * 0.2))
+
+        # Draw Particles
+        for p in self.particles:
+            p.paint(painter)
+
+
+GRIDSHOT_DIFFICULTY_RANKS = {
+    "easy": [
+        (65000, "WARRIOR", "#00FF88", 5),
+        (50000, "MARKSMAN", "#00E5FF", 4),
+        (35000, "CADET", "#FFD600", 3),
+        (20000, "SCOUT", "#FF5B06", 2),
+        (0,     "ROOKIE", "#888888", 1),
+    ],
+    "medium": [
+        (80000, "COMMANDER", "#00FF88", 5),
+        (60000, "SHARPSHOOTER", "#7C4DFF", 4),
+        (42000, "GLADIATOR", "#FFD600", 3),
+        (25000, "VANGUARD", "#FF5B06", 2),
+        (0,     "SOLDIER", "#888888", 1),
+    ],
+    "hard": [
+        (100000, "GRANDMASTER", "#00FF88", 5),
+        (75000,  "APEX HUNTER", "#00E5FF", 4),
+        (52000,  "SNIPER PRO", "#FFD600", 3),
+        (30000,  "ASSASSIN", "#FF5B06", 2),
+        (0,      "VETERAN", "#888888", 1),
+    ],
+    "extreme": [
+        (125000, "GODLIKE", "#00FF88", 5),
+        (95000,  "IMMORTAL", "#00E5FF", 4),
+        (68000,  "AIM BOT", "#FFD600", 3),
+        (40000,  "HYPER TITAN", "#FF5B06", 2),
+        (0,      "CYBER REAPER", "#888888", 1),
+    ]
+}
+
+
+class GridshotArenaPanel(QWidget):
+    """
+    Gridshot Aim Arena Page.
+    
+    Component Name: GridshotArenaPanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("GridshotArenaPanel")
+        self.current_difficulty = "medium"
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 12, 16, 16)
+        main_layout.setSpacing(12)
+
+        # ── 1. HEADER BAR ──────────────────────────────────────
+        header_frame = QWidget()
+        header_frame.setObjectName("GridshotHeaderFrame")
+        header_frame.setFixedHeight(40)
+        header_frame.setStyleSheet("""
+            QWidget#GridshotHeaderFrame {
+                background-color: rgba(26, 26, 26, 0.95);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("GridshotBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        if os.path.exists(back_icon_path):
+            self.back_btn.setIcon(QIcon(back_icon_path))
+            self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Reflex Hub")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#GridshotBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#GridshotBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self._on_back)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("GRIDSHOT FLICK ARENA")
+        title_lbl.setObjectName("GridshotHeaderTitle")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+        h_layout.addStretch()
+
+        # Segmented Difficulty Selector
+        diff_container = QWidget()
+        diff_container.setObjectName("GridshotDiffContainer")
+        diff_container.setFixedHeight(28)
+        diff_container.setStyleSheet("""
+            QWidget#GridshotDiffContainer {
+                background-color: rgba(255, 255, 255, 0.05);
+                border-radius: 6px;
+            }
+        """)
+        diff_layout = QHBoxLayout(diff_container)
+        diff_layout.setContentsMargins(3, 3, 3, 3)
+        diff_layout.setSpacing(3)
+
+        self.diff_buttons = {}
+        for diff_key, diff_title in [("easy", "EASY"), ("medium", "MEDIUM"), ("hard", "HARD"), ("extreme", "EXTREME")]:
+            btn = QPushButton(diff_title)
+            btn.setObjectName(f"GridshotDiffBtn_{diff_key}")
+            btn.setFixedHeight(22)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda ch, k=diff_key: self._set_difficulty(k))
+            diff_layout.addWidget(btn)
+            self.diff_buttons[diff_key] = btn
+
+        h_layout.addWidget(diff_container)
+
+        self.reset_btn = FadeHoverButton("Restart", is_secondary=True, border_radius=6.0)
+        self.reset_btn.setObjectName("GridshotResetBtn")
+        self.reset_btn.setFixedSize(65, 26)
+        self.reset_btn.setStyleSheet("""
+            QPushButton#GridshotResetBtn, FadeHoverButton#GridshotResetBtn {
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 26px;
+                max-height: 26px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.reset_btn.clicked.connect(self._on_restart)
+        h_layout.addWidget(self.reset_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. LIVE KPI TELEMETRY BAR ──────────────────────────
+        kpi_frame = QFrame()
+        kpi_frame.setObjectName("GridshotKpiFrame")
+        kpi_frame.setStyleSheet("""
+            QFrame#GridshotKpiFrame {
+                background-color: rgba(26, 26, 32, 0.9);
+                border: none;
+                border-radius: 8px;
+                padding: 8px;
+            }
+        """)
+        k_layout = QHBoxLayout(kpi_frame)
+        k_layout.setContentsMargins(16, 6, 16, 6)
+        k_layout.setSpacing(20)
+
+        self.time_lbl = QLabel("TIME: <span style='color:#FF5B06;'>30.0s</span>")
+        self.time_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        k_layout.addWidget(self.time_lbl)
+
+        self.score_lbl = QLabel("SCORE: <span style='color:#00FF88;'>0</span>")
+        self.score_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        k_layout.addWidget(self.score_lbl)
+
+        self.acc_lbl = QLabel("ACCURACY: <span style='color:#FFD600;'>100.0%</span>")
+        self.acc_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        k_layout.addWidget(self.acc_lbl)
+
+        self.tps_lbl = QLabel("TPS: <span style='color:#00E5FF;'>0.0</span>")
+        self.tps_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        k_layout.addWidget(self.tps_lbl)
+
+        k_layout.addStretch()
+        main_layout.addWidget(kpi_frame)
+
+        # ── 3. 2D AIM CANVAS ──────────────────────────────────
+        self.canvas = GridshotCanvasWidget()
+        self.canvas.stats_updated.connect(self._on_stats)
+        self.canvas.game_finished.connect(self._on_game_over)
+        main_layout.addWidget(self.canvas, 1)
+
+        self._set_difficulty("medium")
+
+    def _set_difficulty(self, key):
+        self.current_difficulty = key
+        self.canvas.set_difficulty(key)
+        for d_key, btn in self.diff_buttons.items():
+            if d_key == key:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FF5B06;
+                        color: #ffffff;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 2px 8px;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: transparent;
+                        color: #888888;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 2px 8px;
+                    }
+                    QPushButton:hover {
+                        color: #ffffff;
+                        background-color: rgba(255, 255, 255, 0.08);
+                    }
+                """)
+
+    def _on_stats(self, s):
+        self.time_lbl.setText(f"TIME: <span style='color:#FF5B06;'>{s['time_left']:.1f}s</span>")
+        self.score_lbl.setText(f"SCORE: <span style='color:#00FF88;'>{s['score']:,}</span>")
+        self.acc_lbl.setText(f"ACCURACY: <span style='color:#FFD600;'>{s['accuracy']:.1f}%</span>")
+        self.tps_lbl.setText(f"TPS: <span style='color:#00E5FF;'>{s['tps']:.1f}</span>")
+
+    def _on_game_over(self, data):
+        score = data['score']
+        acc = data['accuracy']
+        tps = data['tps']
+        diff_key = self.current_difficulty.lower()
+        diff_label = diff_key.upper()
+        
+        ranks_list = GRIDSHOT_DIFFICULTY_RANKS.get(diff_key, GRIDSHOT_DIFFICULTY_RANKS["medium"])
+        rank, color, stars = ranks_list[-1][1], ranks_list[-1][2], ranks_list[-1][3]
+        for min_s, r_title, r_color, r_stars in ranks_list:
+            if score >= min_s:
+                rank, color, stars = r_title, r_color, r_stars
+                break
+
+        metrics = [
+            ("Difficulty:", diff_label),
+            ("Final Score:", f"{score:,}"),
+            ("Accuracy:", f"{acc:.1f}%"),
+            ("Hit Rate:", f"{tps:.1f} TPS")
+        ]
+
+        overlay = ReflexResultOverlay(
+            parent_panel=self,
+            title="GRIDSHOT FLICK EVALUATION",
+            rank_badge=rank,
+            star_rating=stars,
+            rank_color=color,
+            metrics=metrics,
+            on_retry=self._on_restart,
+            on_hub=self._on_back
+        )
+        overlay.show()
+
+    def _on_restart(self):
+        self.canvas.start_game()
+
+    def _on_back(self):
+        self.canvas.stop_game()
+        self.back_clicked.emit()
+
+
+class TrackingCanvasWidget(QWidget):
+    """
+    Interactive 2D Canvas for Precision Tracking Lab (60 FPS).
+    Supports Easy, Medium, Hard, Extreme difficulties.
+    
+    Component Name: TrackingCanvasWidget
+    """
+    stats_updated = Signal(dict)  # time_left, dwell_time, accuracy, is_on_target
+    game_finished = Signal(dict)
+
+    DIFFICULTIES = {
+        "easy": {"orb_radius": 38.0, "base_speed": 2.4, "max_speed": 4.0},
+        "medium": {"orb_radius": 30.0, "base_speed": 3.5, "max_speed": 5.5},
+        "hard": {"orb_radius": 20.0, "base_speed": 5.0, "max_speed": 7.5},
+        "extreme": {"orb_radius": 14.0, "base_speed": 6.8, "max_speed": 9.5},
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("TrackingCanvasWidget")
+        self.setCursor(Qt.CrossCursor)
+        self.setMouseTracking(True)
+        self.is_running = False
+        self.difficulty = "medium"
+        self.time_left = 30.0
+        self.dwell_time = 0.0
+        self.cursor_pos = QPointF(-100, -100)
+        
+        # Orb physics
+        self.orb_x = 250.0
+        self.orb_y = 200.0
+        self.orb_vx = 3.2
+        self.orb_vy = 2.4
+        self.orb_radius = 30.0
+        self.is_on_target = False
+        
+        self._fps_timer = QTimer(self)
+        self._fps_timer.setInterval(16)
+        self._fps_timer.timeout.connect(self._tick)
+
+    def set_difficulty(self, diff_key: str):
+        if diff_key in self.DIFFICULTIES:
+            self.difficulty = diff_key
+            cfg = self.DIFFICULTIES[self.difficulty]
+            self.orb_radius = cfg["orb_radius"]
+            self.update()
+
+    def start_game(self):
+        self.is_running = True
+        self.time_left = 30.0
+        self.dwell_time = 0.0
+        self.orb_x = self.width() / 2.0
+        self.orb_y = self.height() / 2.0
+        cfg = self.DIFFICULTIES.get(self.difficulty, self.DIFFICULTIES["medium"])
+        self.orb_radius = cfg["orb_radius"]
+        self.orb_vx = cfg["base_speed"]
+        self.orb_vy = cfg["base_speed"] * 0.8
+        self._fps_timer.start()
+
+    def stop_game(self):
+        self.is_running = False
+        self._fps_timer.stop()
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        self.cursor_pos = event.position()
+        if not self.is_running and event.buttons() & Qt.LeftButton:
+            self.start_game()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and not self.is_running:
+            self.start_game()
+
+    def _tick(self):
+        import random, math
+        self.time_left = max(0.0, self.time_left - 0.016)
+        cfg = self.DIFFICULTIES.get(self.difficulty, self.DIFFICULTIES["medium"])
+        
+        # Move orb with smooth wall bounces & subtle velocity drift
+        self.orb_x += self.orb_vx
+        self.orb_y += self.orb_vy
+        
+        # Jitter acceleration slightly based on difficulty
+        drift = 0.25 if self.difficulty in ("hard", "extreme") else 0.15
+        self.orb_vx += random.uniform(-drift, drift)
+        self.orb_vy += random.uniform(-drift, drift)
+        
+        # Clamp velocity
+        speed = math.hypot(self.orb_vx, self.orb_vy)
+        max_s = cfg["max_speed"]
+        min_s = cfg["base_speed"] * 0.7
+        if speed > max_s:
+            self.orb_vx = (self.orb_vx / speed) * max_s
+            self.orb_vy = (self.orb_vy / speed) * max_s
+        elif speed < min_s:
+            self.orb_vx = (self.orb_vx / max(0.1, speed)) * min_s
+            self.orb_vy = (self.orb_vy / max(0.1, speed)) * min_s
+
+        # Wall bounce
+        pad = self.orb_radius + 15
+        if self.orb_x <= pad:
+            self.orb_x = pad
+            self.orb_vx = abs(self.orb_vx)
+        elif self.orb_x >= self.width() - pad:
+            self.orb_x = self.width() - pad
+            self.orb_vx = -abs(self.orb_vx)
+
+        if self.orb_y <= pad:
+            self.orb_y = pad
+            self.orb_vy = abs(self.orb_vy)
+        elif self.orb_y >= self.height() - pad:
+            self.orb_y = self.height() - pad
+            self.orb_vy = -abs(self.orb_vy)
+
+        # Check dwell
+        dist = math.hypot(self.cursor_pos.x() - self.orb_x, self.cursor_pos.y() - self.orb_y)
+        self.is_on_target = (dist <= self.orb_radius)
+        if self.is_on_target:
+            self.dwell_time += 0.016
+
+        elapsed = 30.0 - self.time_left
+        acc = (self.dwell_time / max(0.01, elapsed)) * 100.0
+        
+        self.stats_updated.emit({
+            'time_left': self.time_left,
+            'dwell_time': self.dwell_time,
+            'accuracy': acc,
+            'is_on_target': self.is_on_target
+        })
+        self.update()
+
+        if self.time_left <= 0.0:
+            self.stop_game()
+            self.game_finished.emit({
+                'dwell_time': self.dwell_time,
+                'total_time': 30.0,
+                'accuracy': (self.dwell_time / 30.0) * 100.0,
+                'difficulty': self.difficulty.upper()
+            })
+
+    def paintEvent(self, event):
+        import time, math
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Canvas background
+        painter.setBrush(QBrush(QColor("#111116")))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(self.rect(), 12, 12)
+
+        # Draw grid
+        painter.setPen(QPen(QColor(255, 255, 255, 8), 1))
+        step = 40
+        for x in range(0, self.width(), step):
+            painter.drawLine(x, 0, x, self.height())
+        for y in range(0, self.height(), step):
+            painter.drawLine(0, y, self.width(), y)
+
+        if not self.is_running:
+            # Start Overlay
+            painter.setBrush(QBrush(QColor(0, 0, 0, 160)))
+            painter.drawRoundedRect(self.rect(), 12, 12)
+            
+            cx = self.width() / 2.0
+            cy = self.height() / 2.0
+            
+            painter.setFont(QFont("Orbitron", 20, QFont.Bold))
+            painter.setPen(QPen(QColor("#FF5B06")))
+            painter.drawText(QRect(0, int(cy - 40), self.width(), 40), Qt.AlignCenter, "CLICK TO START TRACKING")
+            
+            painter.setFont(QFont("Orbitron", 11))
+            painter.setPen(QPen(QColor("#888888")))
+            painter.drawText(QRect(0, int(cy + 10), self.width(), 30), Qt.AlignCenter, f"Difficulty: {self.difficulty.upper()} | 30 Seconds Tracking Test")
+            return
+
+        # Draw Orb
+        now = time.time()
+        pulse = (math.sin(now * 10.0) + 1.0) * 0.5
+        
+        if self.is_on_target:
+            glow_color = QColor("#00FF88")
+            body_color = QColor("#00C853")
+            core_color = QColor("#ffffff")
+        else:
+            glow_color = QColor("#00E5FF")
+            body_color = QColor("#0091EA")
+            core_color = QColor("#E0F7FA")
+
+        # Outer aura
+        outer_r = self.orb_radius + (pulse * 8.0)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(glow_color.red(), glow_color.green(), glow_color.blue(), int(140 + pulse * 100)), 2.5))
+        painter.drawEllipse(QPointF(self.orb_x, self.orb_y), outer_r, outer_r)
+
+        # Solid body
+        from PySide6.QtGui import QRadialGradient
+        grad = QRadialGradient(self.orb_x, self.orb_y, self.orb_radius)
+        grad.setColorAt(0.0, core_color)
+        grad.setColorAt(0.6, glow_color)
+        grad.setColorAt(1.0, body_color)
+        painter.setBrush(QBrush(grad))
+        painter.setPen(QPen(QColor("#ffffff"), 1.5))
+        painter.drawEllipse(QPointF(self.orb_x, self.orb_y), self.orb_radius, self.orb_radius)
+
+        # Crosshair on cursor
+        painter.setPen(QPen(QColor(255, 91, 6, 180), 1.5))
+        cx = self.cursor_pos.x()
+        cy = self.cursor_pos.y()
+        painter.drawLine(int(cx - 10), int(cy), int(cx + 10), int(cy))
+        painter.drawLine(int(cx), int(cy - 10), int(cx), int(cy + 10))
+
+
+TRACKING_DIFFICULTY_RANKS = {
+    "easy": [
+        (85.0, "WARRIOR", "#00FF88", 5),
+        (70.0, "MARKSMAN", "#00E5FF", 4),
+        (50.0, "CADET", "#FFD600", 3),
+        (30.0, "SCOUT", "#FF5B06", 2),
+        (0.0,  "ROOKIE", "#888888", 1),
+    ],
+    "medium": [
+        (88.0, "COMMANDER", "#00FF88", 5),
+        (72.0, "SHARPSHOOTER", "#7C4DFF", 4),
+        (52.0, "GLADIATOR", "#FFD600", 3),
+        (32.0, "VANGUARD", "#FF5B06", 2),
+        (0.0,  "SOLDIER", "#888888", 1),
+    ],
+    "hard": [
+        (82.0, "GRANDMASTER", "#00FF88", 5),
+        (68.0, "APEX HUNTER", "#00E5FF", 4),
+        (48.0, "SNIPER PRO", "#FFD600", 3),
+        (28.0, "ASSASSIN", "#FF5B06", 2),
+        (0.0,  "VETERAN", "#888888", 1),
+    ],
+    "extreme": [
+        (78.0, "GODLIKE", "#00FF88", 5),
+        (62.0, "IMMORTAL", "#00E5FF", 4),
+        (42.0, "AIM BOT", "#FFD600", 3),
+        (24.0, "HYPER TITAN", "#FF5B06", 2),
+        (0.0,  "CYBER REAPER", "#888888", 1),
+    ]
+}
+
+
+class PrecisionTrackingPanel(QWidget):
+    """
+    Precision Tracking Lab Page.
+    
+    Component Name: PrecisionTrackingPanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("PrecisionTrackingPanel")
+        self.current_difficulty = "medium"
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 12, 16, 16)
+        main_layout.setSpacing(12)
+
+        # ── 1. HEADER BAR ──────────────────────────────────────
+        header_frame = QWidget()
+        header_frame.setObjectName("TrackingHeaderFrame")
+        header_frame.setFixedHeight(40)
+        header_frame.setStyleSheet("""
+            QWidget#TrackingHeaderFrame {
+                background-color: rgba(26, 26, 26, 0.95);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("TrackingBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        if os.path.exists(back_icon_path):
+            self.back_btn.setIcon(QIcon(back_icon_path))
+            self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Reflex Hub")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#TrackingBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#TrackingBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self._on_back)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("PRECISION TRACKING LAB")
+        title_lbl.setObjectName("TrackingHeaderTitle")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+        h_layout.addStretch()
+
+        # Segmented Difficulty Selector
+        diff_container = QWidget()
+        diff_container.setObjectName("TrackingDiffContainer")
+        diff_container.setFixedHeight(28)
+        diff_container.setStyleSheet("""
+            QWidget#TrackingDiffContainer {
+                background-color: rgba(255, 255, 255, 0.05);
+                border-radius: 6px;
+            }
+        """)
+        diff_layout = QHBoxLayout(diff_container)
+        diff_layout.setContentsMargins(3, 3, 3, 3)
+        diff_layout.setSpacing(3)
+
+        self.diff_buttons = {}
+        for diff_key, diff_title in [("easy", "EASY"), ("medium", "MEDIUM"), ("hard", "HARD"), ("extreme", "EXTREME")]:
+            btn = QPushButton(diff_title)
+            btn.setObjectName(f"TrackingDiffBtn_{diff_key}")
+            btn.setFixedHeight(22)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda ch, k=diff_key: self._set_difficulty(k))
+            diff_layout.addWidget(btn)
+            self.diff_buttons[diff_key] = btn
+
+        h_layout.addWidget(diff_container)
+
+        self.reset_btn = FadeHoverButton("Restart", is_secondary=True, border_radius=6.0)
+        self.reset_btn.setObjectName("TrackingResetBtn")
+        self.reset_btn.setFixedSize(65, 26)
+        self.reset_btn.setStyleSheet("""
+            QPushButton#TrackingResetBtn, FadeHoverButton#TrackingResetBtn {
+                min-width: 65px;
+                max-width: 65px;
+                min-height: 26px;
+                max-height: 26px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+            }
+        """)
+        self.reset_btn.clicked.connect(self._on_restart)
+        h_layout.addWidget(self.reset_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. LIVE KPI TELEMETRY BAR ──────────────────────────
+        kpi_frame = QFrame()
+        kpi_frame.setObjectName("TrackingKpiFrame")
+        kpi_frame.setStyleSheet("""
+            QFrame#TrackingKpiFrame {
+                background-color: rgba(26, 26, 32, 0.9);
+                border: none;
+                border-radius: 8px;
+                padding: 8px;
+            }
+        """)
+        k_layout = QHBoxLayout(kpi_frame)
+        k_layout.setContentsMargins(16, 6, 16, 6)
+        k_layout.setSpacing(20)
+
+        self.time_lbl = QLabel("TIME: <span style='color:#FF5B06;'>30.0s</span>")
+        self.time_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        k_layout.addWidget(self.time_lbl)
+
+        self.dwell_lbl = QLabel("DWELL: <span style='color:#00FF88;'>0.0s</span>")
+        self.dwell_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        k_layout.addWidget(self.dwell_lbl)
+
+        self.acc_lbl = QLabel("ACCURACY: <span style='color:#FFD600;'>0.0%</span>")
+        self.acc_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        k_layout.addWidget(self.acc_lbl)
+
+        self.status_lbl = QLabel("STATUS: <span style='color:#888888;'>OFF TARGET</span>")
+        self.status_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
+        k_layout.addWidget(self.status_lbl)
+
+        k_layout.addStretch()
+        main_layout.addWidget(kpi_frame)
+
+        # ── 3. 2D TRACKING CANVAS ──────────────────────────────
+        self.canvas = TrackingCanvasWidget()
+        self.canvas.stats_updated.connect(self._on_stats)
+        self.canvas.game_finished.connect(self._on_game_over)
+        main_layout.addWidget(self.canvas, 1)
+
+        self._set_difficulty("medium")
+
+    def _set_difficulty(self, key):
+        self.current_difficulty = key
+        self.canvas.set_difficulty(key)
+        for d_key, btn in self.diff_buttons.items():
+            if d_key == key:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FF5B06;
+                        color: #ffffff;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 2px 8px;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: transparent;
+                        color: #888888;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 10px;
+                        font-weight: bold;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 2px 8px;
+                    }
+                    QPushButton:hover {
+                        color: #ffffff;
+                        background-color: rgba(255, 255, 255, 0.08);
+                    }
+                """)
+
+    def _on_stats(self, s):
+        self.time_lbl.setText(f"TIME: <span style='color:#FF5B06;'>{s['time_left']:.1f}s</span>")
+        self.dwell_lbl.setText(f"DWELL: <span style='color:#00FF88;'>{s['dwell_time']:.1f}s</span>")
+        self.acc_lbl.setText(f"ACCURACY: <span style='color:#FFD600;'>{s['accuracy']:.1f}%</span>")
+        
+        if s['is_on_target']:
+            self.status_lbl.setText("STATUS: <span style='color:#00FF88; font-weight:bold;'>TRACKING</span>")
+        else:
+            self.status_lbl.setText("STATUS: <span style='color:#FF5B06;'>OFF TARGET</span>")
+
+    def _on_game_over(self, data):
+        acc = data['accuracy']
+        dwell = data['dwell_time']
+        diff_key = self.current_difficulty.lower()
+        diff_label = diff_key.upper()
+        
+        ranks_list = TRACKING_DIFFICULTY_RANKS.get(diff_key, TRACKING_DIFFICULTY_RANKS["medium"])
+        rank, color, stars = ranks_list[-1][1], ranks_list[-1][2], ranks_list[-1][3]
+        for min_acc, r_title, r_color, r_stars in ranks_list:
+            if acc >= min_acc:
+                rank, color, stars = r_title, r_color, r_stars
+                break
+
+        metrics = [
+            ("Difficulty:", diff_label),
+            ("Accuracy:", f"{acc:.1f}%"),
+            ("Time On Target:", f"{dwell:.1f}s / 30s"),
+            ("Consistency:", "High Precision")
+        ]
+
+        overlay = ReflexResultOverlay(
+            parent_panel=self,
+            title="PRECISION TRACKING RESULT",
+            rank_badge=rank,
+            star_rating=stars,
+            rank_color=color,
+            metrics=metrics,
+            on_retry=self._on_restart,
+            on_hub=self._on_back
+        )
+        overlay.show()
+
+    def _on_restart(self):
+        self.canvas.start_game()
+
+    def _on_back(self):
+        self.canvas.stop_game()
+        self.back_clicked.emit()
+
+
+class ReflexHubPanel(QWidget):
+    """
+    Reflex Lab Selection Hub with 3 Feature Cards.
+    
+    Component Name: ReflexHubPanel
+    """
+    mode_selected = Signal(int)  # 1: Reaction Time, 2: Gridshot, 3: Tracking
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ReflexHubPanel")
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(16)
+
+        # Header Info
+        header_lbl = QLabel("REFLEX & AIM ARENA")
+        header_lbl.setObjectName("ReflexHubHeaderTitle")
+        header_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+        main_layout.addWidget(header_lbl)
+
+        desc_lbl = QLabel("Universal Reflex Training, Flick Accuracy & Smooth Mouse Tracking Diagnostics Suite")
+        desc_lbl.setObjectName("ReflexHubHeaderDesc")
+        desc_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        main_layout.addWidget(desc_lbl)
+
+        # 3 Cards Row
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(16)
+
+        # Card 1: Reaction Test
+        card1 = self._create_card(
+            card_id="ReactionCard",
+            title="Reaction Time Test",
+            desc="Measure visual reflex latency in milliseconds across 5 rounds.",
+            badge="Speed Benchmark",
+            mode_idx=1
+        )
+        cards_row.addWidget(card1)
+
+        # Card 2: Gridshot Arena
+        card2 = self._create_card(
+            card_id="GridshotCard",
+            title="Gridshot Flick Arena",
+            desc="30s high-speed target flicking test. Measure TPS and accuracy %.",
+            badge="Aim Flicking",
+            mode_idx=2
+        )
+        cards_row.addWidget(card2)
+
+        # Card 3: Precision Tracking
+        card3 = self._create_card(
+            card_id="TrackingCard",
+            title="Precision Tracking Lab",
+            desc="Smooth continuous tracking test. Measure cursor dwell accuracy.",
+            badge="Smooth Tracking",
+            mode_idx=3
+        )
+        cards_row.addWidget(card3)
+
+        main_layout.addLayout(cards_row)
+        main_layout.addStretch()
+
+    def _create_card(self, card_id, title, desc, badge, mode_idx):
+        card = QFrame()
+        card.setObjectName(card_id)
+        card.setCursor(Qt.PointingHandCursor)
+        card.setFixedHeight(120)
+        card.setStyleSheet(f"""
+            QFrame#{card_id} {{
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 10px;
+            }}
+            QFrame#{card_id}:hover {{
+                background-color: rgba(255, 91, 6, 0.10);
+                border: 1px solid rgba(255, 91, 6, 0.5);
+            }}
+        """)
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(16, 14, 16, 14)
+        c_layout.setSpacing(6)
+
+        # Badge
+        badge_lbl = QLabel(badge.upper())
+        badge_lbl.setObjectName(f"{card_id}_Badge")
+        badge_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        badge_lbl.setStyleSheet("""
+            color: #FF5B06;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 9px;
+            font-weight: bold;
+            background-color: rgba(255, 91, 6, 0.15);
+            border-radius: 4px;
+            padding: 2px 6px;
+        """)
+        badge_lbl.setFixedHeight(18)
+        c_layout.addWidget(badge_lbl, 0, Qt.AlignLeft)
+
+        # Title
+        t_lbl = QLabel(title)
+        t_lbl.setObjectName(f"{card_id}_Title")
+        t_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        t_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: bold; background: transparent;")
+        c_layout.addWidget(t_lbl)
+
+        # Description
+        d_lbl = QLabel(desc)
+        d_lbl.setObjectName(f"{card_id}_Desc")
+        d_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        d_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px; background: transparent;")
+        d_lbl.setWordWrap(True)
+        c_layout.addWidget(d_lbl)
+        c_layout.addStretch()
+
+        card.mousePressEvent = lambda e: self.mode_selected.emit(mode_idx)
+        return card
 
 
 class MacroSettingsPanel(QWidget):
@@ -4776,7 +6559,7 @@ class MacroSettingsPanel(QWidget):
         tab_bar_layout.setSpacing(4)
         
         # Tab button names
-        tab_names = ["Home", "Macro", "Benchmark"]
+        tab_names = ["Home", "Macro", "Benchmark", "Reflex"]
         self._tab_buttons = []
         self._current_tab = 0  # Default to Home tab
         
@@ -5368,7 +7151,7 @@ class MacroSettingsPanel(QWidget):
         self._page_stack.addWidget(home_tab)
         
         # Add placeholders for remaining tabs (built deferred on tick 0)
-        for _ in range(2):
+        for _ in range(3):
             ph = QWidget()
             self._page_stack.addWidget(ph)
             
@@ -6881,6 +8664,38 @@ class MacroSettingsPanel(QWidget):
 
         benchmark_layout.addWidget(self._benchmark_stack)
         self._page_stack.addWidget(benchmark_tab)
+
+        # === REFLEX LAB TAB (Main Top Tab Page 4) ===
+        reflex_tab = QWidget()
+        reflex_tab.setObjectName("ReflexTab")
+        reflex_layout = QVBoxLayout(reflex_tab)
+        reflex_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._reflex_stack = QStackedWidget()
+        self._reflex_stack.setObjectName("ReflexStack")
+
+        # ── SUB-PAGE 0: REFLEX HUB ──
+        self.reflex_hub_panel = ReflexHubPanel()
+        self.reflex_hub_panel.mode_selected.connect(lambda idx: self._reflex_stack.setCurrentIndex(idx))
+        self._reflex_stack.addWidget(self.reflex_hub_panel)  # Index 0: Selection Hub
+
+        # ── SUB-PAGE 1: REACTION TIME TEST ──
+        self.reaction_panel = ReactionTimePanel()
+        self.reaction_panel.back_clicked.connect(lambda: self._reflex_stack.setCurrentIndex(0))
+        self._reflex_stack.addWidget(self.reaction_panel)    # Index 1: Reaction Test
+
+        # ── SUB-PAGE 2: GRIDSHOT FLICK ARENA ──
+        self.gridshot_panel = GridshotArenaPanel()
+        self.gridshot_panel.back_clicked.connect(lambda: self._reflex_stack.setCurrentIndex(0))
+        self._reflex_stack.addWidget(self.gridshot_panel)    # Index 2: Gridshot Arena
+
+        # ── SUB-PAGE 3: PRECISION TRACKING LAB ──
+        self.tracking_panel = PrecisionTrackingPanel()
+        self.tracking_panel.back_clicked.connect(lambda: self._reflex_stack.setCurrentIndex(0))
+        self._reflex_stack.addWidget(self.tracking_panel)    # Index 3: Precision Tracking
+
+        reflex_layout.addWidget(self._reflex_stack)
+        self._page_stack.addWidget(reflex_tab)
         
         # Default to Home tab
         self._page_stack.setCurrentIndex(0)
@@ -6914,6 +8729,7 @@ class MacroSettingsPanel(QWidget):
                 0: "HELXAIRO - Home",
                 1: "HELXAIRO - Macro",
                 2: "HELXAIRO - Benchmark",
+                3: "HELXAIRO - Reflex",
             }
             tab_label = tab_names.get(index, f"HELXAIRO Tab {index}")
             print(f"[Tab Profiler] {tab_label} initialized in {elapsed_ms:.2f} ms")
