@@ -4866,6 +4866,14 @@ class GameLauncher(QWidget):
 
     def _toggle_debug_from_shortcut(self):
         """Toggle debug console from F9 shortcut."""
+        focus_widget = QApplication.focusWidget()
+        if focus_widget:
+            w = focus_widget
+            while w:
+                if getattr(w, "_is_capturing", False):
+                    return
+                w = w.parent()
+
         # Key must be present in settings and True.
         # Fallback to False if missing.
         is_dev = self.settings.get("developer_mode", False)
@@ -4879,12 +4887,20 @@ class GameLauncher(QWidget):
             print("[Debug] F9 ignored: Developer Mode is not enabled in settings.")
 
     def _switch_panel_from_key(self, index):
-        """Global shortcut handler for numerical panel switching (Focus-Aware)."""
-        # Ignore navigation shortcuts only if user is actively typing in a text input field
+        """Global shortcut handler for numerical panel switching (Focus-Aware & Input Capture-Aware)."""
+        # Ignore navigation shortcuts if user is actively typing in text fields or in key recording/capturing mode
         focus_widget = QApplication.focusWidget()
-        from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox
-        if focus_widget and isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)):
-            return
+        if focus_widget:
+            from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox
+            if isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)):
+                return
+            
+            # Reject panel switching while any widget or parent is in input-capturing mode (e.g. TacticalInputCatcherButton)
+            w = focus_widget
+            while w:
+                if getattr(w, "_is_capturing", False):
+                    return
+                w = w.parent()
             
         # Specific handling for CPU panel (panel 2) which needs state reset
         if index == 2:
@@ -5036,6 +5052,11 @@ class GameLauncher(QWidget):
             shortcut.activated.connect(lambda idx=i-1: self._switch_panel_from_key(idx))
             self._nav_shortcuts.append(shortcut)
         
+        # Link launcher instance to global Spacebar filter
+        app_inst = QApplication.instance()
+        if hasattr(app_inst, '_spacebar_filter') and app_inst._spacebar_filter:
+            app_inst._spacebar_filter.set_launcher(self)
+
         # Set window size based on PHYSICAL screen resolution (ignore DPI scaling)
         screen = QApplication.primaryScreen()
         if screen:
@@ -6920,6 +6941,14 @@ class GameLauncher(QWidget):
 
     def _trigger_inspector(self):
         """Component Inspector - show info about widget under cursor."""
+        focus_widget = QApplication.focusWidget()
+        if focus_widget:
+            w = focus_widget
+            while w:
+                if getattr(w, "_is_capturing", False):
+                    return
+                w = w.parent()
+
         pos = self.mapFromGlobal(self.cursor().pos())
         widget = self.childAt(pos)
         if widget:
@@ -7012,7 +7041,6 @@ Stylesheet Selector:
             msg.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
             
             # Auto copy to clipboard for convenience
-            from PySide6.QtWidgets import QApplication
             QApplication.clipboard().setText(info)
             
             copy_btn = msg.addButton("Copy Info", QMessageBox.ActionRole)
@@ -17202,6 +17230,60 @@ if __name__ == "__main__":
     # Install the global filter to prevent accidental combobox scrolling
     combo_filter = ComboBoxScrollFilter(app)
     app.installEventFilter(combo_filter)
+    
+    class GlobalSpacebarFilter(QObject):
+        """Globally blocks Spacebar from activating buttons, checkboxes, sliders,
+        and other UI controls across the entire application, with explicit exceptions
+        for text input fields (QLineEdit, QTextEdit), key capturing widgets,
+        and HELXAIC (Music Player)."""
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._launcher_ref = None
+
+        def set_launcher(self, launcher):
+            self._launcher_ref = launcher
+
+        def eventFilter(self, obj, event):
+            if event.type() in (QEvent.KeyPress, QEvent.KeyRelease, QEvent.ShortcutOverride):
+                if hasattr(event, "key") and event.key() == Qt.Key_Space:
+                    # 1. Allow normal text typing in input fields
+                    from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit
+                    if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                        return False
+                    
+                    # 2. Allow key capture / recorder widgets (e.g. TacticalInputCatcherButton)
+                    if getattr(obj, "_is_capturing", False):
+                        return False
+                    
+                    # 3. Allow HELXAIC (Music Player) where Space is play/pause
+                    if self._is_in_helxaic(obj):
+                        return False
+                    
+                    # 4. Block Spacebar from clicking buttons, sliders, tabs, checklists everywhere else!
+                    event.accept()
+                    return True
+            return False
+
+        def _is_in_helxaic(self, obj) -> bool:
+            if not obj:
+                return False
+            w = obj
+            while w:
+                cname = w.__class__.__name__
+                oname = w.objectName() or ""
+                if "Music" in cname or "MediaLibrary" in cname or "music" in oname.lower() or "helxaic" in oname.lower():
+                    return True
+                w = w.parent() if hasattr(w, "parent") else None
+            
+            if self._launcher_ref and getattr(self._launcher_ref, "current_panel_index", -1) == 1:
+                return True
+                
+            return False
+
+    # Install the global filter to protect all UI controls from Spacebar activation
+    spacebar_filter = GlobalSpacebarFilter(app)
+    app._spacebar_filter = spacebar_filter
+    app.installEventFilter(spacebar_filter)
     
 
 

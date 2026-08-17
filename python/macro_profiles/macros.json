@@ -26,7 +26,7 @@
     "on_deactivate_actions": []
   },
   {
-    "id": "autoclicker_42336e",
+    "id": "autoclicker_2039d9",
     "name": "Auto-Clicker (Left Click)",
     "type": "ToggleMacro",
     "enabled": true,
@@ -45,14 +45,14 @@
       "type": "mouse_click",
       "button": "left"
     },
-    "repeat_interval_ms": 100,
+    "repeat_interval_ms": 500,
     "hold_key": null,
     "hold_button": null,
     "on_activate_actions": [],
     "on_deactivate_actions": []
   },
   {
-    "id": "autoclicker_2039d9",
+    "id": "autoclicker_1918c4",
     "name": "Auto-Clicker (Left Click)",
     "type": "ToggleMacro",
     "enabled": true,

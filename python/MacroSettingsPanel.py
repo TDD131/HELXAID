@@ -4,11 +4,15 @@ Macro Settings Panel
 A panel widget for the sidebar stack to configure macros, profiles, and layers.
 """
 
+from PySide6.QtCore import QRectF
 import os
+import sys
 import time
 import collections
 import json
 import re
+import atexit
+import ctypes
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QStackedWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QMenu,
@@ -836,10 +840,12 @@ class FloatingToast(QFrame):
         text_layout.setContentsMargins(0, 0, 0, 0)
 
         title_lbl = QLabel(title)
+        title_lbl.setObjectName("toastTitleLbl")
         title_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 600; background: transparent; border: none;")
         text_layout.addWidget(title_lbl)
 
         msg_lbl = QLabel(message)
+        msg_lbl.setObjectName("toastMsgLbl")
         msg_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent; border: none;")
         text_layout.addWidget(msg_lbl)
 
@@ -5990,6 +5996,7 @@ class PrecisionTrackingPanel(QWidget):
 class ReflexHubPanel(QWidget):
     """
     Reflex Lab Selection Hub with 3 Feature Cards.
+    Matching Benchmark Lab styling with enclosing QGroupBox.
     
     Component Name: ReflexHubPanel
     """
@@ -6003,54 +6010,1308 @@ class ReflexHubPanel(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(16)
+        main_layout.setSpacing(15)
 
-        # Header Info
-        header_lbl = QLabel("REFLEX & AIM ARENA")
-        header_lbl.setObjectName("ReflexHubHeaderTitle")
-        header_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
-        main_layout.addWidget(header_lbl)
+        _grp_style = """
+            QGroupBox {
+                color: #ff5b06;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 16px;
+                font-weight: bold;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+                margin-top: 10px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """
+
+        # Reflex & Aim Arena Group Box
+        hub_group = QGroupBox("Reflex & Aim Arena")
+        hub_group.setObjectName("ReflexArenaGroup")
+        hub_group.setStyleSheet(_grp_style)
+        hub_group_layout = QVBoxLayout(hub_group)
+        hub_group_layout.setContentsMargins(16, 20, 16, 16)
+        hub_group_layout.setSpacing(12)
 
         desc_lbl = QLabel("Universal Reflex Training, Flick Accuracy & Smooth Mouse Tracking Diagnostics Suite")
         desc_lbl.setObjectName("ReflexHubHeaderDesc")
-        desc_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
-        main_layout.addWidget(desc_lbl)
+        desc_lbl.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        hub_group_layout.addWidget(desc_lbl)
 
         # 3 Cards Row
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(16)
+        cards_container = QWidget()
+        cards_layout = QHBoxLayout(cards_container)
+        cards_layout.setContentsMargins(0, 0, 0, 0)
+        cards_layout.setSpacing(15)
 
         # Card 1: Reaction Test
         card1 = self._create_card(
             card_id="ReactionCard",
             title="Reaction Time Test",
             desc="Measure visual reflex latency in milliseconds across 5 rounds.",
-            badge="Speed Benchmark",
             mode_idx=1
         )
-        cards_row.addWidget(card1)
+        cards_layout.addWidget(card1)
 
         # Card 2: Gridshot Arena
         card2 = self._create_card(
             card_id="GridshotCard",
             title="Gridshot Flick Arena",
             desc="30s high-speed target flicking test. Measure TPS and accuracy %.",
-            badge="Aim Flicking",
             mode_idx=2
         )
-        cards_row.addWidget(card2)
+        cards_layout.addWidget(card2)
 
         # Card 3: Precision Tracking
         card3 = self._create_card(
             card_id="TrackingCard",
             title="Precision Tracking Lab",
             desc="Smooth continuous tracking test. Measure cursor dwell accuracy.",
-            badge="Smooth Tracking",
             mode_idx=3
         )
-        cards_row.addWidget(card3)
+        cards_layout.addWidget(card3)
 
-        main_layout.addLayout(cards_row)
+        hub_group_layout.addWidget(cards_container)
+        main_layout.addWidget(hub_group)
+        main_layout.addStretch()
+
+    def _create_card(self, card_id, title, desc, mode_idx):
+        card = QFrame()
+        card.setObjectName(card_id)
+        card.setCursor(Qt.PointingHandCursor)
+        card.setStyleSheet(f"""
+            QFrame#{card_id} {{
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+                padding: 15px;
+            }}
+            QFrame#{card_id}:hover {{
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
+            }}
+        """)
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(15, 15, 15, 15)
+        c_layout.setSpacing(6)
+
+        # Title
+        t_lbl = QLabel(title)
+        t_lbl.setObjectName(f"{card_id}_Title")
+        t_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        t_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
+        c_layout.addWidget(t_lbl)
+
+        # Description
+        d_lbl = QLabel(desc)
+        d_lbl.setObjectName(f"{card_id}_Desc")
+        d_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        d_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent;")
+        d_lbl.setWordWrap(True)
+        c_layout.addWidget(d_lbl)
+        c_layout.addStretch()
+
+        card.mousePressEvent = lambda e: self.mode_selected.emit(mode_idx)
+        return card
+
+
+# =====================================================================
+# ── TACTICAL TOOLS SUITE: FEATURE 1 — SNIPER DPI CLUTCH ─────────────
+# =====================================================================
+
+SPI_GETMOUSESPEED = 0x0070
+SPI_SETMOUSESPEED = 0x0071
+SPIF_SENDCHANGE = 0x0002
+
+
+class SniperClutchController(QObject):
+    """
+    Win32 Dynamic Precision Pointer Throttler.
+    Component Name: SniperClutchController
+    """
+    clutch_state_changed = Signal(bool, int, int)  # is_active, current_speed, baseline_speed
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SniperClutchController")
+        self.is_enabled = False
+        self.is_clutch_held = False
+        self.hold_to_trigger = False  # Default OFF (Toggle Mode)
+        self._last_phys_down = False
+        self.damping_percent = 40  # 40% of baseline speed
+        self.trigger_key = "Right Click"
+        
+        # Read system baseline speed once and anchor it
+        detected = self._get_system_mouse_speed()
+        self.baseline_speed = detected if (1 <= detected <= 20) else 10
+        self._calculate_clutch_speed()
+
+        # High-frequency watchdog (25ms) to detect physical key hold/release
+        self._watchdog = QTimer(self)
+        self._watchdog.setInterval(25)
+        self._watchdog.timeout.connect(self._poll_physical_trigger)
+        
+        atexit.register(self.force_restore)
+
+    def _get_system_mouse_speed(self) -> int:
+        try:
+            speed = ctypes.c_int()
+            ctypes.windll.user32.SystemParametersInfoW(SPI_GETMOUSESPEED, 0, ctypes.byref(speed), 0)
+            val = speed.value
+            return val if (1 <= val <= 20) else 10
+        except Exception:
+            return 10
+
+    def _set_system_mouse_speed(self, speed: int):
+        try:
+            val = max(1, min(20, int(speed)))
+            ctypes.windll.user32.SystemParametersInfoW(SPI_SETMOUSESPEED, 0, ctypes.c_void_p(val), SPIF_SENDCHANGE)
+        except Exception as e:
+            print(f"[SniperClutch] Failed to set pointer speed: {e}")
+
+    def set_enabled(self, enabled: bool):
+        self.is_enabled = enabled
+        if enabled:
+            # Refresh baseline before starting
+            if not self.is_clutch_held:
+                cur = self._get_system_mouse_speed()
+                if 1 <= cur <= 20:
+                    self.baseline_speed = cur
+                self._calculate_clutch_speed()
+            self._watchdog.start()
+            print(f"[SniperClutch] Armed & Enabled (Baseline: {self.baseline_speed}, Clutch: {self.clutch_speed}, Key: {self.trigger_key})")
+        else:
+            self._watchdog.stop()
+            self.force_restore()
+            print("[SniperClutch] Disarmed & Disabled")
+
+    def _calculate_clutch_speed(self):
+        self.clutch_speed = max(1, int(round(self.baseline_speed * (self.damping_percent / 100.0))))
+
+    def set_damping_percent(self, val: int):
+        self.damping_percent = max(10, min(90, int(val)))
+        self._calculate_clutch_speed()
+
+    def set_trigger_key(self, key_name: str):
+        self.trigger_key = key_name
+
+    def reset_to_standard_baseline(self):
+        """Emergency reset Windows speed back to 10."""
+        self.baseline_speed = 10
+        self._calculate_clutch_speed()
+        self._set_system_mouse_speed(10)
+        self.is_clutch_held = False
+        self.clutch_state_changed.emit(False, 10, 10)
+
+    def _get_vk_code(self, key_name: str) -> int:
+        raw = key_name.strip().lower()
+        mapping = {
+            "left click": 0x01,      # VK_LBUTTON
+            "mouse 1": 0x01,
+            "right click": 0x02,     # VK_RBUTTON
+            "rclick": 0x02,
+            "mouse 2": 0x02,
+            "middle click": 0x04,    # VK_MBUTTON
+            "wheel": 0x04,
+            "mouse 3": 0x04,
+            "mouse 4": 0x05,         # VK_XBUTTON1
+            "mouse button 4": 0x05,
+            "mouse 5": 0x06,         # VK_XBUTTON2
+            "mouse button 5": 0x06,
+            "left alt": 0xA4,        # VK_LMENU (0xA4)
+            "right alt": 0xA5,       # VK_RMENU (0xA5)
+            "alt": 0x12,             # VK_MENU
+            "left ctrl": 0xA2,       # VK_LCONTROL (0xA2)
+            "right ctrl": 0xA3,      # VK_RCONTROL (0xA3)
+            "ctrl": 0x11,            # VK_CONTROL
+            "control": 0x11,
+            "left shift": 0xA0,      # VK_LSHIFT (0xA0)
+            "right shift": 0xA1,     # VK_RSHIFT (0xA1)
+            "shift": 0x10,           # VK_SHIFT
+            "space": 0x20,           # VK_SPACE
+            "spacebar": 0x20,
+            "tab": 0x09,
+            "caps lock": 0x14,
+            "capslock": 0x14,
+            "enter": 0x0D,
+            "return": 0x0D,
+            "backspace": 0x08,
+            "delete": 0x2E,
+            "insert": 0x2D,
+        }
+        for i in range(1, 13):
+            mapping[f"f{i}"] = 0x70 + (i - 1)
+
+        if raw in mapping:
+            return mapping[raw]
+            
+        if len(raw) == 1:
+            return ord(raw.upper())
+            
+        if raw.startswith("key ") or raw.startswith("key_"):
+            char = raw.split()[-1]
+            if len(char) == 1:
+                return ord(char.upper())
+
+        return 0x01
+
+    def set_hold_to_trigger(self, hold: bool):
+        self.hold_to_trigger = bool(hold)
+        if not self.hold_to_trigger:
+            self._last_phys_down = False
+
+    def _poll_physical_trigger(self):
+        if not self.is_enabled:
+            return
+        vk = self._get_vk_code(self.trigger_key)
+        is_physically_down = bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+        
+        if self.hold_to_trigger:
+            # HOLD MODE: Active while key is physically held down
+            if is_physically_down and not self.is_clutch_held:
+                self._set_system_mouse_speed(self.clutch_speed)
+                self.is_clutch_held = True
+                self.clutch_state_changed.emit(True, self.clutch_speed, self.baseline_speed)
+            elif not is_physically_down and self.is_clutch_held:
+                self._set_system_mouse_speed(self.baseline_speed)
+                self.is_clutch_held = False
+                self.clutch_state_changed.emit(False, self.baseline_speed, self.baseline_speed)
+        else:
+            # TOGGLE MODE (Default): Press once to toggle on, press again to toggle off
+            if is_physically_down and not self._last_phys_down:
+                new_state = not self.is_clutch_held
+                self.is_clutch_held = new_state
+                target_speed = self.clutch_speed if new_state else self.baseline_speed
+                self._set_system_mouse_speed(target_speed)
+                self.clutch_state_changed.emit(new_state, target_speed, self.baseline_speed)
+            self._last_phys_down = is_physically_down
+
+    def force_restore(self):
+        self._set_system_mouse_speed(self.baseline_speed)
+        self.is_clutch_held = False
+        self.clutch_state_changed.emit(False, self.baseline_speed, self.baseline_speed)
+
+
+class TacticalInputCatcherButton(QPushButton):
+    """
+    Interactive Key & Mouse Input Catcher Widget.
+    Automatically captures ANY keyboard key or mouse button pressed.
+    Component Name: TacticalInputCatcherButton
+    """
+    input_captured = Signal(str)
+    win_key_swallowed = Signal()
+
+    def __init__(self, default_key="Right Click", parent=None):
+        super().__init__(parent)
+        self.setObjectName("TacticalInputCatcherBtn")
+        self._current_key = default_key
+        self._is_capturing = False
+        self._hook = None
+        self._hook_proc_ref = None
+        self.setFixedHeight(28)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+        self.win_key_swallowed.connect(self._on_win_key_swallowed, Qt.QueuedConnection)
+        self._update_display()
+
+    def _install_hook(self):
+        if self._hook is not None:
+            return
+        try:
+            from ctypes import wintypes
+            # Use isolated WinDLL handle to prevent argtypes collision with MediaKeyService/UniversalMacroHook
+            self._user32_dll = ctypes.WinDLL("user32", use_last_error=True)
+            
+            class KBDLLHOOKSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ("vkCode", wintypes.DWORD),
+                    ("scanCode", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.c_ulonglong)
+                ]
+            HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT))
+            
+            self._user32_dll.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+            self._user32_dll.SetWindowsHookExW.restype = wintypes.HHOOK
+            self._user32_dll.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+            self._user32_dll.UnhookWindowsHookEx.restype = wintypes.BOOL
+            self._user32_dll.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT)]
+            self._user32_dll.CallNextHookEx.restype = ctypes.c_longlong
+
+            def _low_level_kb_proc(nCode, wParam, lParam):
+                if nCode >= 0 and self._is_capturing:
+                    vk = lParam.contents.vkCode
+                    if vk in (0x5B, 0x5C):  # VK_LWIN, VK_RWIN
+                        if wParam in (0x0100, 0x0104):  # WM_KEYDOWN, WM_SYSKEYDOWN
+                            # Inject dummy key (0xE8) to permanently cancel Windows Start Menu trigger
+                            try:
+                                self._user32_dll.keybd_event(0xE8, 0, 0, 0)
+                                self._user32_dll.keybd_event(0xE8, 0, 2, 0)
+                            except Exception:
+                                pass
+                            self.win_key_swallowed.emit()
+                        return 1  # Swallow Windows key on both KEYDOWN & KEYUP!
+                return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
+
+            self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
+            self._hook = self._user32_dll.SetWindowsHookExW(13, self._hook_proc_ref, None, 0)
+            if not self._hook:
+                err = ctypes.get_last_error()
+                print(f"[TacticalInputCatcher] Hook install failed with code: {err}")
+        except Exception as e:
+            print(f"[TacticalInputCatcher] Hook install error: {e}")
+            self._hook = None
+
+    def _remove_hook(self):
+        if self._hook is not None:
+            try:
+                if hasattr(self, '_user32_dll') and self._user32_dll:
+                    self._user32_dll.UnhookWindowsHookEx(self._hook)
+                else:
+                    ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
+            except Exception:
+                pass
+            self._hook = None
+            self._hook_proc_ref = None
+
+    @Slot()
+    def _on_win_key_swallowed(self):
+        target_w = self.window() if self.window() else self
+        FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Windows Key is reserved by the OS (Please choose another key)")
+        QTimer.singleShot(150, lambda: self._finish_capture(self._current_key))
+
+    def set_captured_key(self, key_name: str):
+        self._current_key = key_name
+        self._is_capturing = False
+        self._update_display()
+
+    def get_captured_key(self) -> str:
+        return self._current_key
+
+    def _update_display(self):
+        if self._is_capturing:
+            self.setText("[ PRESS ANY KEY OR MOUSE BUTTON... ]")
+            self.setStyleSheet("""
+                QPushButton#TacticalInputCatcherBtn {
+                    background-color: #1e2128;
+                    color: #FF5B06;
+                    border: 1px solid #FF5B06;
+                    border-radius: 6px;
+                    padding: 0px 10px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    text-align: center;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+        else:
+            self.setText(f"BOUND: {self._current_key.upper()}")
+            self.setStyleSheet("""
+                QPushButton#TacticalInputCatcherBtn {
+                    background-color: #1e2128;
+                    color: #FFFFFF;
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-radius: 6px;
+                    padding: 0px 10px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    text-align: center;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+                QPushButton#TacticalInputCatcherBtn:hover {
+                    background-color: #1e2128;
+                    border: 1px solid #FF5B06;
+                    color: #FF5B06;
+                }
+            """)
+
+    def mousePressEvent(self, event):
+        if not self._is_capturing:
+            # Start capturing mode
+            self._is_capturing = True
+            self._update_display()
+            self.setFocus()
+            self.grabKeyboard()
+            self.grabMouse()
+            self._install_hook()
+            event.accept()
+        else:
+            # Capture the pressed mouse button (Reject Left Click)
+            btn = event.button()
+            if btn == Qt.LeftButton:
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Left Click is reserved for primary shooting / clicking")
+                self._finish_capture(self._current_key)
+                event.accept()
+                return
+
+            btn_name = "Right Click"
+            if btn == Qt.RightButton:
+                btn_name = "Right Click"
+            elif btn == Qt.MiddleButton:
+                btn_name = "Middle Click"
+            elif btn == Qt.BackButton or btn == Qt.XButton1:
+                btn_name = "Mouse 4"
+            elif btn == Qt.ForwardButton or btn == Qt.XButton2:
+                btn_name = "Mouse 5"
+
+            self._finish_capture(btn_name)
+            event.accept()
+
+    def keyPressEvent(self, event):
+        if self._is_capturing:
+            key = event.key()
+            if key == Qt.Key_Escape:
+                # Cancel capturing without changes
+                self._finish_capture(self._current_key)
+                event.accept()
+                return
+
+            if key in (Qt.Key_Meta, 0x5B, 0x5C):
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Windows Key is reserved by the OS (Please choose another key)")
+                self._finish_capture(self._current_key)
+                event.accept()
+                return
+
+            key_name = self._format_key(event)
+            self._finish_capture(key_name)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def _format_key(self, event) -> str:
+        key = event.key()
+        vk = event.nativeVirtualKey()
+        scan = event.nativeScanCode()
+
+        # Modifier keys (Distinguish Left vs Right)
+        if key == Qt.Key_Alt or vk in (0x12, 0xA4, 0xA5):
+            try:
+                if (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000) != 0:
+                    return "Right Alt"
+                elif (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) != 0:
+                    return "Left Alt"
+            except Exception:
+                pass
+            return "Right Alt" if (event.nativeModifiers() & 0x02000000 or vk == 0xA5) else "Left Alt"
+
+        if key == Qt.Key_Control or vk in (0x11, 0xA2, 0xA3):
+            try:
+                if (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000) != 0:
+                    return "Right Ctrl"
+                elif (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) != 0:
+                    return "Left Ctrl"
+            except Exception:
+                pass
+            return "Right Ctrl" if (event.nativeModifiers() & 0x02000000 or vk == 0xA3) else "Left Ctrl"
+
+        if key == Qt.Key_Shift or vk in (0x10, 0xA0, 0xA1):
+            try:
+                if (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000) != 0:
+                    return "Right Shift"
+                elif (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) != 0:
+                    return "Left Shift"
+            except Exception:
+                pass
+            return "Right Shift" if (scan == 54 or vk == 0xA1) else "Left Shift"
+
+        if key == Qt.Key_Space:
+            return "Spacebar"
+        elif key == Qt.Key_Tab:
+            return "Tab"
+        elif key == Qt.Key_CapsLock:
+            return "Caps Lock"
+        elif key in (Qt.Key_Return, Qt.Key_Enter):
+            return "Enter"
+        elif key == Qt.Key_Backspace:
+            return "Backspace"
+        elif key == Qt.Key_Delete:
+            return "Delete"
+        elif key == Qt.Key_Insert:
+            return "Insert"
+        elif key >= Qt.Key_F1 and key <= Qt.Key_F12:
+            return f"F{key - Qt.Key_F1 + 1}"
+
+        # Single alphanumeric characters (remove "Key " prefix)
+        text = event.text().strip().upper()
+        if text and len(text) == 1 and text.isprintable():
+            return text
+
+        seq = QKeySequence(key).toString().strip()
+        if seq:
+            if seq.startswith("Key "):
+                seq = seq[4:].strip()
+            return seq
+
+        return "Right Click"
+
+    def _finish_capture(self, key_name: str):
+        self._remove_hook()
+        try:
+            self.releaseKeyboard()
+            self.releaseMouse()
+        except Exception:
+            pass
+        self._current_key = key_name
+        self._is_capturing = False
+        self._update_display()
+        self.input_captured.emit(key_name)
+
+    def focusOutEvent(self, event):
+        if self._is_capturing:
+            self._remove_hook()
+            try:
+                self.releaseKeyboard()
+                self.releaseMouse()
+            except Exception:
+                pass
+            self._is_capturing = False
+            self._update_display()
+        super().focusOutEvent(event)
+
+
+class SniperAimCanvas(QWidget):
+    """
+    Live Aim Calibration Canvas for testing Sniper DPI Clutch.
+    Ultra-smooth, zero-latency canvas with cached background rendering.
+    Component Name: SniperAimCanvas
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SniperAimCanvas")
+        self.setMouseTracking(True)
+        self.is_clutch_active = False
+        self.current_speed = 10
+        self.baseline_speed = 10
+        self.cursor_pos = QPoint(150, 100)
+        self._bg_cache = None
+
+    def set_clutch_state(self, active: bool, cur_speed: int, base_speed: int):
+        if self.is_clutch_active != active or self.current_speed != cur_speed or self.baseline_speed != base_speed:
+            self.is_clutch_active = active
+            self.current_speed = cur_speed
+            self.baseline_speed = base_speed
+            self._render_background_cache()
+            self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._render_background_cache()
+
+    def mouseMoveEvent(self, event):
+        self.cursor_pos = event.pos()
+        self.update()
+
+    def _render_background_cache(self):
+        w = max(1, self.width())
+        h = max(1, self.height())
+        pixmap = QPixmap(w, h)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Canvas Background
+        bg_color = QColor(24, 18, 16, 240) if self.is_clutch_active else QColor(18, 18, 22, 240)
+        painter.setBrush(QBrush(bg_color))
+        border_pen = QPen(QColor(255, 91, 6, 160) if self.is_clutch_active else QColor(255, 255, 255, 25), 1)
+        painter.setPen(border_pen)
+        painter.drawRoundedRect(0, 0, w - 1, h - 1, 10, 10)
+
+        # Tactical Grid Lines
+        painter.setPen(QPen(QColor(255, 255, 255, 12), 1, Qt.DashLine))
+        for x in range(30, w, 30):
+            painter.drawLine(x, 0, x, h)
+        for y in range(30, h, 30):
+            painter.drawLine(0, y, w, y)
+
+        # Concentric Target Circles in Center
+        cx, cy = w // 2, h // 2
+        ring_pen = QPen(QColor(255, 91, 6, 140) if self.is_clutch_active else QColor(255, 255, 255, 30), 1.5)
+        painter.setPen(ring_pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QPointF(cx, cy), 40, 40)
+        painter.drawEllipse(QPointF(cx, cy), 80, 80)
+        painter.drawEllipse(QPointF(cx, cy), 120, 120)
+
+        # Center Crosshair
+        painter.setPen(QPen(QColor(255, 91, 6, 220) if self.is_clutch_active else QColor(255, 255, 255, 60), 1.5))
+        painter.drawLine(cx - 15, cy, cx + 15, cy)
+        painter.drawLine(cx, cy - 15, cx, cy + 15)
+
+        painter.end()
+        self._bg_cache = pixmap
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Draw Cached Background
+        if self._bg_cache is not None:
+            painter.drawPixmap(0, 0, self._bg_cache)
+        else:
+            self._render_background_cache()
+            if self._bg_cache is not None:
+                painter.drawPixmap(0, 0, self._bg_cache)
+
+        # Follow Cursor Reticle
+        cx_pos = max(10, min(self.width() - 10, self.cursor_pos.x()))
+        cy_pos = max(10, min(self.height() - 10, self.cursor_pos.y()))
+
+        reticle_color = QColor("#FF5B06") if self.is_clutch_active else QColor("#888888")
+        painter.setPen(QPen(reticle_color, 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QPoint(cx_pos, cy_pos), 14, 14)
+        painter.drawLine(cx_pos - 18, cy_pos, cx_pos + 18, cy_pos)
+        painter.drawLine(cx_pos, cy_pos - 18, cx_pos, cy_pos + 18)
+
+        # Telemetry Text Overlay
+        painter.setFont(QFont("Orbitron", 10, QFont.Bold))
+        if self.is_clutch_active:
+            painter.setPen(QColor("#FF5B06"))
+            status_text = f"[AIM ENGAGED] SNIPER CLUTCH ACTIVE [SPEED: {self.current_speed} / {self.baseline_speed}]"
+        else:
+            painter.setPen(QColor("#888888"))
+            status_text = f"[STANDBY] NORMAL POINTER SPEED [{self.baseline_speed} / 20] — Hold Trigger Key to Test"
+class SniperTriggerGuidePanel(QFrame):
+    """
+    Floating guide panel for Sniper DPI Clutch Trigger Key Validation Rules.
+    Matching HELRCUS / HELXAIL floating guide style.
+    
+    Component Name: SniperTriggerGuidePanel
+    """
+    closed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("SniperTriggerGuidePanel")
+        self._is_dragging = False
+        self._drag_start_pos = QPoint(0, 0)
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        self.setStyleSheet("""
+            QFrame#SniperTriggerGuidePanel {
+                background-color: rgba(22, 22, 26, 0.98);
+                border: none;
+                border-radius: 14px;
+            }
+            QWidget#GuideTitleBar {
+                background-color: rgba(14, 14, 16, 0.7);
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
+                border: none;
+            }
+            QLabel#GuideTitle {
+                color: #FFFFFF;
+                font-size: 14px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                border: none;
+                background: transparent;
+            }
+        """)
+        
+        self.setFixedSize(480, 340)
+        
+        main_vbox = QVBoxLayout(self)
+        main_vbox.setContentsMargins(0, 0, 0, 16)
+        main_vbox.setSpacing(10)
+        
+        # Title bar (Draggable)
+        self.title_bar = QWidget()
+        self.title_bar.setObjectName("GuideTitleBar")
+        self.title_bar.setFixedHeight(42)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(16, 0, 12, 0)
+        
+        info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg").replace('\\', '/')
+        if os.path.exists(info_icon_path):
+            icon_lbl = QLabel()
+            icon_lbl.setObjectName("SniperGuideIconLbl")
+            pixmap = QPixmap(info_icon_path)
+            if not pixmap.isNull():
+                icon_lbl.setPixmap(pixmap.scaled(18, 18, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            icon_lbl.setStyleSheet("background: transparent;")
+            tb_layout.addWidget(icon_lbl)
+            
+        title_lbl = QLabel("Trigger Key Validation Rules")
+        title_lbl.setObjectName("GuideTitle")
+        tb_layout.addWidget(title_lbl)
+        tb_layout.addStretch()
+        
+        main_vbox.addWidget(self.title_bar)
+        
+        # Content body with SmoothScrollArea
+        content_container = QWidget()
+        content_container.setObjectName("SniperGuideContentContainer")
+        body_vbox = QVBoxLayout(content_container)
+        body_vbox.setContentsMargins(16, 0, 16, 0)
+        body_vbox.setSpacing(0)
+        
+        rules_html = """
+        <p style='font-size: 12px; color: #aaa; line-height: 1.4; margin-bottom: 8px; font-family: Orbitron, sans-serif;'>
+        Standard rules to ensure custom trigger keys do not conflict with Windows OS & game controls:
+        </p>
+        <ul style='font-size: 12px; color: #e0e0e0; line-height: 1.7; margin-left: -15px; font-family: Orbitron, sans-serif;'>
+            <li><b>Left Click Restricted:</b> Left Click is reserved for primary interaction & shooting in games.</li>
+            <li><b>No Windows Key:</b> Win / Meta key is forbidden to prevent opening OS Start Menu.</li>
+            <li><b>No Escape Key:</b> Escape key is reserved for cancelling key capture & game menus.</li>
+            <li><b>Supported Mouse Buttons:</b> <b>Right Click</b>, <b>Middle Click</b>, <b>Mouse 4</b>, <b>Mouse 5</b>.</li>
+            <li><b>Supported Modifiers:</b> <b>Left/Right Alt</b>, <b>Left/Right Ctrl</b>, <b>Left/Right Shift</b>.</li>
+            <li><b>Supported Keyboard Keys:</b> <b>Spacebar</b>, <b>Tab</b>, <b>Caps Lock</b>, <b>Enter</b>, <b>A – Z</b>, <b>0 – 9</b>, <b>F1 – F12</b>.</li>
+        </ul>
+        """
+        rules_lbl = QLabel(rules_html)
+        rules_lbl.setObjectName("SniperGuideRulesLbl")
+        rules_lbl.setWordWrap(True)
+        rules_lbl.setStyleSheet("background: transparent; color: #e0e0e0;")
+        
+        self.scroll_area = SmoothScrollArea()
+        self.scroll_area.setObjectName("SniperGuideScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: rgba(0, 0, 0, 0.2);
+                width: 8px;
+                border-radius: 4px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 91, 6, 0.5);
+                border-radius: 4px;
+                min-height: 25px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 91, 6, 0.8);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+                height: 0;
+            }
+        """)
+        self.scroll_area.setWidget(rules_lbl)
+        body_vbox.addWidget(self.scroll_area, 1)
+        
+        main_vbox.addWidget(content_container, 1)
+        
+        # Action button (Got It - styled matching helxairo_acCreateBtn)
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(20, 0, 20, 0)
+        action_row.addStretch()
+        
+        got_it_btn = FadeHoverButton("Got It", border_radius=6.0)
+        got_it_btn.setObjectName("helxairo_guideGotItBtn")
+        got_it_btn.setFixedHeight(30)
+        got_it_btn.setFixedWidth(85)
+        got_it_btn.clicked.connect(self.close_panel)
+        action_row.addWidget(got_it_btn)
+        
+        main_vbox.addLayout(action_row)
+        
+        # Opacity & animation
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._opacity_effect.setOpacity(0.0)
+        
+        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._fade_anim.setDuration(200)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        self._opacity_effect.setOpacity(0.0)
+        self._fade_anim.start()
+        
+    def close_panel(self):
+        self.close()
+        self.closed.emit()
+        self.deleteLater()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and hasattr(self, "title_bar") and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        super().mouseReleaseEvent(event)
+
+
+class SniperClutchPanel(QWidget):
+    """
+    Sniper DPI Clutch Configuration & Calibration Panel.
+    Component Name: SniperClutchPanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SniperClutchPanel")
+        self.controller = SniperClutchController(self)
+        self._guide_panel = None
+        self._setup_ui()
+        # Default to DISABLED for clean startup safety
+        self._set_active_state(False)
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 12, 16, 16)
+        main_layout.setSpacing(12)
+
+        # ── 1. HEADER BAR ──────────────────────────────────────
+        header_frame = QWidget()
+        header_frame.setObjectName("SniperHeaderFrame")
+        header_frame.setFixedHeight(40)
+        header_frame.setStyleSheet("""
+            QWidget#SniperHeaderFrame {
+                background-color: rgba(26, 26, 26, 0.95);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("SniperBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        if os.path.exists(back_icon_path):
+            self.back_btn.setIcon(QIcon(back_icon_path))
+            self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Tactical Hub")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#SniperBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#SniperBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self._on_back)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("SNIPER DPI CLUTCH")
+        title_lbl.setObjectName("SniperHeaderTitle")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+        h_layout.addStretch()
+
+        self.reset_spd_btn = QPushButton("Reset Speed (10)")
+        self.reset_spd_btn.setObjectName("SniperResetSpeedBtn")
+        self.reset_spd_btn.setFixedSize(120, 26)
+        self.reset_spd_btn.setCursor(Qt.PointingHandCursor)
+        self.reset_spd_btn.setToolTip("Reset Windows pointer speed back to normal 10")
+        self.reset_spd_btn.setStyleSheet("""
+            QPushButton#SniperResetSpeedBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 0px 6px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#SniperResetSpeedBtn:hover {
+                background-color: rgba(255, 91, 6, 0.3);
+                color: #FFFFFF;
+            }
+        """)
+        self.reset_spd_btn.clicked.connect(self.controller.reset_to_standard_baseline)
+        h_layout.addWidget(self.reset_spd_btn)
+
+        self.enable_btn = QPushButton("DISABLED")
+        self.enable_btn.setObjectName("SniperEnableBtn")
+        self.enable_btn.setFixedSize(90, 26)
+        self.enable_btn.setCursor(Qt.PointingHandCursor)
+        self.enable_btn.setStyleSheet("""
+            QPushButton#SniperEnableBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                color: #888888;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 0px 8px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+        """)
+        self.enable_btn.clicked.connect(self._toggle_enable)
+        h_layout.addWidget(self.enable_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. CONFIGURATION CARDS (2 COLUMNS) ─────────────────
+        cfg_layout = QHBoxLayout()
+        cfg_layout.setSpacing(12)
+
+        # Card 1: Trigger Key Selection
+        key_card = QFrame()
+        key_card.setObjectName("SniperKeyCard")
+        key_card.setFixedHeight(76)
+        key_card.setStyleSheet("""
+            QFrame#SniperKeyCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        kc_layout = QVBoxLayout(key_card)
+        kc_layout.setContentsMargins(12, 10, 12, 10)
+        kc_layout.setSpacing(6)
+
+        kc_title = QLabel("TRIGGER KEY BINDING")
+        kc_title.setObjectName("SniperKeyTitle")
+        kc_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        kc_layout.addWidget(kc_title)
+
+        # Horizontal row for universal key input + info button + hold toggle
+        self.key_row_layout = QHBoxLayout()
+        self.key_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.key_row_layout.setSpacing(8)
+
+        # Universal Trigger Key Input Catcher Button
+        self.custom_key_input = TacticalInputCatcherButton(default_key="Right Click")
+        self.custom_key_input.setFixedHeight(28)
+        self.custom_key_input.setVisible(True)
+        self.custom_key_input.input_captured.connect(self._on_custom_input_captured)
+
+        # Info Button for Restricted Keys Guide
+        self.custom_info_btn = QPushButton()
+        self.custom_info_btn.setObjectName("SniperCustomInfoBtn")
+        self.custom_info_btn.setFixedSize(28, 28)
+        self.custom_info_btn.setCursor(Qt.PointingHandCursor)
+        info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg").replace('\\', '/')
+        if os.path.exists(info_icon_path):
+            self.custom_info_btn.setIcon(QIcon(info_icon_path))
+            self.custom_info_btn.setIconSize(QSize(26, 26))
+        self.custom_info_btn.setToolTip(
+            "RESTRICTED KEYS (Cannot be used):\n"
+            "• Left Click (Primary interaction/firing button)\n"
+            "• Windows Key (OS Reserved)\n"
+            "• Escape Key (Cancel action)\n\n"
+            "SUPPORTED KEYS:\n"
+            "• Right Click, Middle Click, Mouse 4, Mouse 5\n"
+            "• Alt, Ctrl, Shift, Spacebar, Tab, Caps Lock\n"
+            "• Any Letter (A-Z), Number, Function Keys (F1-F12)"
+        )
+        self.custom_info_btn.setStyleSheet("""
+            QPushButton#SniperCustomInfoBtn {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+            QPushButton#SniperCustomInfoBtn:hover {
+                background: transparent;
+                border: none;
+            }
+        """)
+        self.custom_info_btn.setVisible(True)
+        self.custom_info_btn.clicked.connect(self._show_restricted_keys_dialog)
+
+        # Hold to Trigger Toggle Switch (Standard HELXAID AnimatedCheckBox)
+        self.hold_toggle = AnimatedCheckBox("Hold to trigger")
+        self.hold_toggle.setObjectName("helxairo_sniperHoldToggle")
+        self.hold_toggle.setToolTip("When enabled (Hold mode): Clutch stays active while key is held down.\nWhen disabled (Toggle mode): Press key once to toggle clutch on/off.")
+        self.hold_toggle.setFixedSize(130, 28)
+        self.hold_toggle.setChecked(False)
+        self.hold_toggle.toggled.connect(self._on_hold_toggle_changed)
+        self.hold_toggle.stateChanged.connect(lambda s: self._on_hold_toggle_changed(s == 2))
+
+        self.key_row_layout.addWidget(self.custom_key_input, 1)
+        self.key_row_layout.addWidget(self.custom_info_btn)
+        self.key_row_layout.addWidget(self.hold_toggle)
+        kc_layout.addLayout(self.key_row_layout)
+        cfg_layout.addWidget(key_card, 1)
+
+        # Card 2: Damping Percentage Slider
+        damp_card = QFrame()
+        damp_card.setObjectName("SniperDampCard")
+        damp_card.setFixedHeight(76)
+        damp_card.setStyleSheet("""
+            QFrame#SniperDampCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        dc_layout = QVBoxLayout(damp_card)
+        dc_layout.setContentsMargins(12, 10, 12, 10)
+        dc_layout.setSpacing(6)
+
+        dc_title_row = QHBoxLayout()
+        dc_title = QLabel("AIM SENSITIVITY DAMPING")
+        dc_title.setObjectName("SniperDampTitle")
+        dc_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        dc_title_row.addWidget(dc_title)
+        dc_title_row.addStretch()
+
+        self.damp_val_lbl = QLabel("40% (Slow)")
+        self.damp_val_lbl.setObjectName("SniperDampValLabel")
+        self.damp_val_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        dc_title_row.addWidget(self.damp_val_lbl)
+        dc_layout.addLayout(dc_title_row)
+
+        self.damp_slider = QSlider(Qt.Horizontal)
+        self.damp_slider.setObjectName("SniperDampSlider")
+        self.damp_slider.setRange(10, 80)
+        self.damp_slider.setValue(40)
+        self.damp_slider.setStyleSheet("""
+            QSlider#SniperDampSlider::groove:horizontal {
+                height: 4px;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 2px;
+            }
+            QSlider#SniperDampSlider::sub-page:horizontal {
+                background: #FF5B06;
+                border-radius: 2px;
+            }
+            QSlider#SniperDampSlider::handle:horizontal {
+                background: #FFFFFF;
+                width: 12px;
+                height: 12px;
+                margin: -4px 0;
+                border-radius: 6px;
+            }
+        """)
+        self.damp_slider.valueChanged.connect(self._on_damp_changed)
+        dc_layout.addWidget(self.damp_slider)
+        cfg_layout.addWidget(damp_card, 1)
+
+        main_layout.addLayout(cfg_layout)
+
+        # ── 3. LIVE AIM TEST CANVAS ────────────────────────────
+        self.aim_canvas = SniperAimCanvas()
+        self.controller.clutch_state_changed.connect(self.aim_canvas.set_clutch_state)
+        main_layout.addWidget(self.aim_canvas, 1)
+
+    def _toggle_enable(self):
+        new_state = not self.controller.is_enabled
+        self._set_active_state(new_state)
+
+    def _set_active_state(self, active: bool):
+        self.controller.set_enabled(active)
+        if active:
+            self.enable_btn.setText("ACTIVE")
+            self.enable_btn.setStyleSheet("""
+                QPushButton#SniperEnableBtn {
+                    background-color: #00FF88;
+                    color: #000000;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+        else:
+            self.enable_btn.setText("DISABLED")
+            self.enable_btn.setStyleSheet("""
+                QPushButton#SniperEnableBtn {
+                    background-color: rgba(255, 255, 255, 0.08);
+                    color: #888888;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+
+    def _on_hold_toggle_changed(self, checked: bool):
+        self.controller.set_hold_to_trigger(checked)
+        mode_str = "Hold Mode" if checked else "Toggle Mode"
+        print(f"[SniperClutch] Trigger Mode Changed: {mode_str} (Hold to trigger: {checked})")
+
+    def _on_custom_input_captured(self, key_name: str):
+        self.controller.set_trigger_key(key_name)
+        print(f"[SniperClutch] Trigger Key Captured & Bound: {key_name}")
+
+    def _show_restricted_keys_dialog(self):
+        try:
+            if self._guide_panel is not None:
+                if self._guide_panel.isVisible():
+                    self._guide_panel.close_panel()
+                    self._guide_panel = None
+                    return
+        except (RuntimeError, Exception):
+            self._guide_panel = None
+
+        target_parent = self.window() if self.window() else self
+        self._guide_panel = SniperTriggerGuidePanel(target_parent)
+        self._guide_panel.closed.connect(self._on_guide_panel_destroyed)
+        self._guide_panel.destroyed.connect(self._on_guide_panel_destroyed)
+        gx = max(20, (target_parent.width() - self._guide_panel.width()) // 2)
+        gy = max(20, (target_parent.height() - self._guide_panel.height()) // 2)
+        self._guide_panel.move(gx, gy)
+        self._guide_panel.show()
+
+    def _on_guide_panel_destroyed(self):
+        self._guide_panel = None
+
+    def _on_damp_changed(self, val):
+        self.controller.set_damping_percent(val)
+        desc = "Ultra Slow" if val <= 20 else ("Slow" if val <= 45 else ("Medium" if val <= 65 else "Subtle"))
+        self.damp_val_lbl.setText(f"{val}% ({desc})")
+
+    def _on_back(self):
+        self.controller.force_restore()
+        self.back_clicked.emit()
+
+
+class TacticalToolsHubPanel(QWidget):
+    """
+    Tactical Utilities Hub with 6 Tool Cards.
+    
+    Component Name: TacticalToolsHubPanel
+    """
+    tool_selected = Signal(int)  # 1: Sniper Clutch, 2: Clamp, 3: Rapid-Fire, 4: Anti-AFK, 5: Boss Key, 6: Loupe
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("TacticalToolsHubPanel")
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(16)
+
+        # Header Info
+        header_lbl = QLabel("TACTICAL GAMING UTILITIES")
+        header_lbl.setObjectName("TacticalHubHeaderTitle")
+        header_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
+        main_layout.addWidget(header_lbl)
+
+        desc_lbl = QLabel("Hardware-Level Pointer Control, Multi-Screen Lockdown & Automation Suite")
+        desc_lbl.setObjectName("TacticalHubHeaderDesc")
+        desc_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        main_layout.addWidget(desc_lbl)
+
+        # 6 Cards Grid (2 Rows x 3 Columns)
+        cards_grid = QGridLayout()
+        cards_grid.setSpacing(14)
+
+        # Card 1: Sniper DPI Clutch
+        c1 = self._create_card(
+            card_id="SniperClutchCard",
+            title="Sniper DPI Clutch",
+            desc="Dynamic on-hold cursor sensitivity dampener for pixel-perfect sniping.",
+            badge="Precision Aim",
+            mode_idx=1
+        )
+        cards_grid.addWidget(c1, 0, 0)
+
+        # Card 2: Cursor Clamp
+        c2 = self._create_card(
+            card_id="CursorClampCard",
+            title="Monitor Cursor Clamp",
+            desc="Locks mouse cursor inside primary screen or game window to prevent border leaks.",
+            badge="Multi-Screen Lock",
+            mode_idx=2
+        )
+        cards_grid.addWidget(c2, 0, 1)
+
+        # Card 3: Universal Rapid-Fire
+        c3 = self._create_card(
+            card_id="RapidFireCard",
+            title="Universal Rapid-Fire",
+            desc="High-frequency burst & full-auto trigger with humanized Gaussian timing jitter.",
+            badge="Trigger Assist",
+            mode_idx=3
+        )
+        cards_grid.addWidget(c3, 0, 2)
+
+        # Card 4: Smart Anti-AFK
+        c4 = self._create_card(
+            card_id="AntiAfkCard",
+            title="Smart Anti-AFK",
+            desc="Humanized natural Bezier wander and WASD keeper to avoid idle disconnects.",
+            badge="Automation",
+            mode_idx=4
+        )
+        cards_grid.addWidget(c4, 1, 0)
+
+        # Card 5: Instant Boss Key
+        c5 = self._create_card(
+            card_id="BossKeyCard",
+            title="Instant Boss Key",
+            desc="Sub-30ms emergency panic trigger to minimize game, mute audio and focus work app.",
+            badge="Stealth Panic",
+            mode_idx=5
+        )
+        cards_grid.addWidget(c5, 1, 1)
+
+        # Card 6: Crosshair Sniper Loupe
+        c6 = self._create_card(
+            card_id="SniperLoupeCard",
+            title="Crosshair Sniper Loupe",
+            desc="Hardware-accelerated 60 FPS transparent floating 2x-5x crosshair zoom lens.",
+            badge="Optics Zoom",
+            mode_idx=6
+        )
+        cards_grid.addWidget(c6, 1, 2)
+
+        main_layout.addLayout(cards_grid)
         main_layout.addStretch()
 
     def _create_card(self, card_id, title, desc, badge, mode_idx):
@@ -6105,7 +7366,7 @@ class ReflexHubPanel(QWidget):
         c_layout.addWidget(d_lbl)
         c_layout.addStretch()
 
-        card.mousePressEvent = lambda e: self.mode_selected.emit(mode_idx)
+        card.mousePressEvent = lambda e: self.tool_selected.emit(mode_idx)
         return card
 
 
@@ -6120,6 +7381,10 @@ class MacroSettingsPanel(QWidget):
         super().__init__(parent)
         self._bridge = None  # Will be set lazily
         self._recording = False
+        self._recorder = None
+        self._player = None
+        self._recording_listener = None
+        self._current_recording = None
         self._mouse_listener = None
         self._keyboard_listener = None
         self._current_macro_events = []
@@ -6559,7 +7824,7 @@ class MacroSettingsPanel(QWidget):
         tab_bar_layout.setSpacing(4)
         
         # Tab button names
-        tab_names = ["Home", "Macro", "Benchmark", "Reflex"]
+        tab_names = ["Home", "Macro", "Benchmark", "Reflex", "Tactical"]
         self._tab_buttons = []
         self._current_tab = 0  # Default to Home tab
         
@@ -8696,6 +9961,28 @@ class MacroSettingsPanel(QWidget):
 
         reflex_layout.addWidget(self._reflex_stack)
         self._page_stack.addWidget(reflex_tab)
+
+        # === TACTICAL TOOLS TAB (Main Top Tab Page 5) ===
+        tactical_tab = QWidget()
+        tactical_tab.setObjectName("TacticalTab")
+        tactical_layout = QVBoxLayout(tactical_tab)
+        tactical_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._tactical_stack = QStackedWidget()
+        self._tactical_stack.setObjectName("TacticalStack")
+
+        # ── SUB-PAGE 0: TACTICAL HUB ──
+        self.tactical_hub_panel = TacticalToolsHubPanel()
+        self.tactical_hub_panel.tool_selected.connect(lambda idx: self._tactical_stack.setCurrentIndex(idx))
+        self._tactical_stack.addWidget(self.tactical_hub_panel)  # Index 0: Hub
+
+        # ── SUB-PAGE 1: SNIPER DPI CLUTCH ──
+        self.sniper_clutch_panel = SniperClutchPanel()
+        self.sniper_clutch_panel.back_clicked.connect(lambda: self._tactical_stack.setCurrentIndex(0))
+        self._tactical_stack.addWidget(self.sniper_clutch_panel)  # Index 1: Sniper DPI Clutch
+
+        tactical_layout.addWidget(self._tactical_stack)
+        self._page_stack.addWidget(tactical_tab)
         
         # Default to Home tab
         self._page_stack.setCurrentIndex(0)
@@ -8730,6 +10017,7 @@ class MacroSettingsPanel(QWidget):
                 1: "HELXAIRO - Macro",
                 2: "HELXAIRO - Benchmark",
                 3: "HELXAIRO - Reflex",
+                4: "HELXAIRO - Tactical",
             }
             tab_label = tab_names.get(index, f"HELXAIRO Tab {index}")
             print(f"[Tab Profiler] {tab_label} initialized in {elapsed_ms:.2f} ms")
@@ -10309,9 +11597,6 @@ class MacroSettingsPanel(QWidget):
         """Initialize the macro recorder if not already."""
         if self._recorder is None:
             try:
-                from .macro_system.core.macro_engine import MacroEngine, MacroState
-                from .macro_system.core.input_listener import MouseButton
-                from .macro_system.integration.hardware_manager import get_hardware_manager
                 from macro_system.core.macro_recorder import MacroRecorder, MacroPlayer
                 from macro_system.core.input_listener import InputListener
                 self._recorder = MacroRecorder()
