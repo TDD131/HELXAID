@@ -352,17 +352,20 @@ class ProcessRow(QFrame):
         
         # Icon placeholder
         icon_label = QLabel("")
+        icon_label.setObjectName("procRowIcon")
         icon_label.setFixedSize(24, 24)
         icon_label.setStyleSheet("font-size: 16px; background: transparent;")
         layout.addWidget(icon_label)
         
         # Name
         name_label = QLabel(proc.name)
+        name_label.setObjectName("procRowName")
         name_label.setStyleSheet("color: #e0e0e0; font-size: 12px; background: transparent;")
         layout.addWidget(name_label, 1)
         
         # Memory usage
         mem_label = QLabel(format_memory_size(int(proc.memory_mb * 1024 * 1024)))
+        mem_label.setObjectName("procRowMem")
         mem_label.setFixedWidth(80)
         mem_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         mem_label.setStyleSheet("color: #888888; font-size: 12px; background: transparent;")
@@ -420,6 +423,7 @@ class ServiceRow(QFrame):
         
         # Name
         name_label = QLabel(svc["display"])
+        name_label.setObjectName("svcRowName")
         name_label.setFixedWidth(150)
         name_label.setWordWrap(True)
         name_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 500; background: transparent;")
@@ -428,12 +432,14 @@ class ServiceRow(QFrame):
         # Status
         status_color = "#4ade80" if status == "Running" else "#888888"
         status_label = QLabel(status)
+        status_label.setObjectName("svcRowStatus")
         status_label.setFixedWidth(70)
         status_label.setStyleSheet(f"color: {status_color}; font-size: 11px; background: transparent;")
         layout.addWidget(status_label)
         
         # Description
         desc_label = QLabel(svc["desc"])
+        desc_label.setObjectName("svcRowDesc")
         desc_label.setStyleSheet("color: #666666; font-size: 10px; background: transparent;")
         desc_label.setWordWrap(True)
         layout.addWidget(desc_label, 1)
@@ -602,6 +608,7 @@ class RamCleanerPresetDialog(QDialog):
         
         # Select all checkbox
         self._select_all = QCheckBox("Select all")
+        self._select_all.setObjectName("ramCleanerSelectAll")
         self._select_all.setStyleSheet("""
             QCheckBox {
                 color: #e0e0e0;
@@ -622,6 +629,7 @@ class RamCleanerPresetDialog(QDialog):
         
         # Selection count
         self._count_label = QLabel("0 out of 0 items selected")
+        self._count_label.setObjectName("ramCleanerCountLabel")
         self._count_label.setStyleSheet("color: #666666; font-size: 11px; background: transparent;")
         layout.addWidget(self._count_label)
         
@@ -629,10 +637,12 @@ class RamCleanerPresetDialog(QDialog):
         
         # Column headers (will be updated per tab)
         self._col_name = QLabel("Name")
+        self._col_name.setObjectName("ramCleanerColName")
         self._col_name.setStyleSheet("color: #aaaaaa; font-size: 11px; font-weight: 600; background: transparent;")
         layout.addWidget(self._col_name)
         
         self._col_extra = QLabel("Description")
+        self._col_extra.setObjectName("ramCleanerColExtra")
         self._col_extra.setFixedWidth(200)
         self._col_extra.setStyleSheet("color: #aaaaaa; font-size: 11px; font-weight: 600; background: transparent;")
         layout.addWidget(self._col_extra)
@@ -693,6 +703,7 @@ class RamCleanerPresetDialog(QDialog):
         scroll = self._create_scroll_area()
         
         self._processes_container = QWidget()
+        self._processes_container.setObjectName("ramCleanerProcessesContainer")
         self._processes_container.setStyleSheet("background: transparent;")
         self._processes_layout = QVBoxLayout(self._processes_container)
         self._processes_layout.setContentsMargins(0, 0, 0, 0)

@@ -70,6 +70,7 @@ class PlaylistWidget(QWidget):
         
         # --- Header Section ---
         header = QWidget()
+        header.setObjectName("playlistHeader")
         header.setFixedHeight(220)
         # Gradient background for header (semi-transparent for video background)
         header.setStyleSheet("""
@@ -84,6 +85,7 @@ class PlaylistWidget(QWidget):
         
         # Big Cover Art
         self.cover_label = QLabel()
+        self.cover_label.setObjectName("playlistCoverLabel")
         self.cover_label.setFixedSize(160, 160)
         self.cover_label.setStyleSheet("""
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF5B06, stop:1 #FDA903);
@@ -94,6 +96,7 @@ class PlaylistWidget(QWidget):
         # Icon inside cover
         # Icon inside cover
         self.icon_label = QLabel("")
+        self.icon_label.setObjectName("playlistIconLabel")
         self.icon_label.setStyleSheet("font-size: 64px; color: rgba(255, 255, 255, 0.5); background: transparent;")
         self.icon_label.setAlignment(Qt.AlignCenter)
         cover_layout = QVBoxLayout(self.cover_label)
@@ -104,9 +107,11 @@ class PlaylistWidget(QWidget):
         info_col.setAlignment(Qt.AlignBottom)
         
         type_label = QLabel("PLAYLIST")
+        type_label.setObjectName("playlistTypeLabel")
         type_label.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: bold; background: transparent;")
         
         self.title_label = QLabel("Local Music")
+        self.title_label.setObjectName("playlistTitleLabel")
         self.title_label.setStyleSheet("""
             color: #FFFFFF;
             font-size: 48px;
@@ -115,6 +120,7 @@ class PlaylistWidget(QWidget):
         """)
         
         self.stats_label = QLabel("0 songs")
+        self.stats_label.setObjectName("playlistStatsLabel")
         self.stats_label.setStyleSheet("color: #b3b3b3; font-size: 13px; font-weight: 600; background: transparent;")
         
         info_col.addWidget(type_label)
@@ -127,6 +133,7 @@ class PlaylistWidget(QWidget):
 
         # Settings Button (Top Right)
         self.settings_btn = AnimatedButton()
+        self.settings_btn.setObjectName("playlistSettingsBtn")
         self.settings_btn.setFixedSize(48, 48)
         # Use QIcon with the image file
         icon_path = os.path.join(os.path.dirname(__file__), "UI Icons", "setting-icon.png")
@@ -163,10 +170,11 @@ class PlaylistWidget(QWidget):
         
         layout.addWidget(header)
         
-
+ 
         
         # --- Song List Table ---
         self.table = QTableWidget()
+        self.table.setObjectName("playlistSongTable")
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["#", "Title ▾", "Date Added", "Length"])
         self.table.setShowGrid(False)

@@ -113,6 +113,7 @@ class FloatingInvalidPathPanel(QFrame):
 
         # 2. Content Widget
         content_widget = QWidget()
+        content_widget.setObjectName("mediaLibraryPopupContent")
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(20, 16, 20, 18)
 
@@ -237,6 +238,7 @@ class MediaLibraryPage(QWidget):
         
         # --- Top Area ---
         top_container = QWidget()
+        top_container.setObjectName("mediaLibraryTopContainer")
         top_container.setStyleSheet("background: rgba(18, 18, 18, 120);")
         top_layout = QVBoxLayout(top_container)
         top_layout.setContentsMargins(30, 20, 30, 20)
@@ -246,10 +248,12 @@ class MediaLibraryPage(QWidget):
         header_layout = QHBoxLayout()
         
         self.allow_same_btn = AnimatedCheckBox("Allow Same folder")
+        self.allow_same_btn.setObjectName("mediaLibraryAllowSameBtn")
         self.allow_same_btn.setCursor(Qt.PointingHandCursor)
         self.allow_same_btn.toggled.connect(self._on_allow_same_toggled)
         
         self.stats_label = QLabel("0 tracks | 0:00 total | 0 folder(s)")
+        self.stats_label.setObjectName("mediaLibraryStatsLabel")
         self.stats_label.setStyleSheet("color: #b3b3b3; font-size: 13px; font-weight: bold;")
         
         header_layout.addWidget(self.allow_same_btn)
@@ -258,6 +262,7 @@ class MediaLibraryPage(QWidget):
         
         # Search Bar
         self.search_bar = QLineEdit()
+        self.search_bar.setObjectName("mediaLibrarySearchBar")
         self.search_bar.setPlaceholderText("Search library... (title, artist, album)")
         self.search_bar.setStyleSheet("""
             QLineEdit {
@@ -280,6 +285,7 @@ class MediaLibraryPage(QWidget):
         
         # --- Tree Widget ---
         self.tree = QTreeWidget()
+        self.tree.setObjectName("mediaLibraryTree")
         self.tree.setColumnCount(5)
         self.tree.setHeaderLabels(["#", "Title", "Artist", "Album", "Duration"])
         self.tree.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -692,6 +698,7 @@ class MediaLibraryPage(QWidget):
         selected = self.tree.selectedItems()
         
         menu = QMenu(self)
+        menu.setObjectName("mediaLibraryContextMenu")
         menu.setStyleSheet("""
             QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; }
             QMenu::item { padding: 6px 20px; border-radius: 4px; }

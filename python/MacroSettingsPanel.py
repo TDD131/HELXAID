@@ -197,11 +197,13 @@ class HelxairoMacroGroupCardWidget(QFrame):
         header_layout.setSpacing(8)
 
         self.title_lbl = QLabel(macro_name)
+        self.title_lbl.setObjectName("HelxairoMacroGroupCardTitle")
         self.title_lbl.setStyleSheet("color: #FFFFFF; font-weight: bold; font-family: 'Orbitron', sans-serif; font-size: 12px;")
         header_layout.addWidget(self.title_lbl)
 
         step_suffix = "step" if step_count == 1 else "steps"
         self.count_lbl = QLabel(f"({step_count} {step_suffix})")
+        self.count_lbl.setObjectName("HelxairoMacroGroupCardCount")
         self.count_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px;")
         header_layout.addWidget(self.count_lbl)
 
@@ -210,6 +212,7 @@ class HelxairoMacroGroupCardWidget(QFrame):
 
         # Subtle Horizontal Separator Line
         line = QFrame()
+        line.setObjectName("HelxairoMacroGroupCardSeparator")
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("background-color: rgba(255, 255, 255, 0.06); min-height: 1px; max-height: 1px; border: none;")
         main_layout.addWidget(line)
@@ -221,16 +224,19 @@ class HelxairoMacroGroupCardWidget(QFrame):
             step_row.setSpacing(10)
 
             step_lbl = QLabel(f"Step {step_idx}")
+            step_lbl.setObjectName(f"HelxairoMacroGroupCardStep_{step_idx}")
             step_lbl.setStyleSheet("color: #E0E0E0; font-weight: bold; font-family: 'Orbitron', sans-serif; font-size: 11px;")
             step_row.addWidget(step_lbl)
 
             key_lbl = QLabel(key_name)
+            key_lbl.setObjectName(f"HelxairoMacroGroupCardKey_{step_idx}")
             key_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px;")
             step_row.addWidget(key_lbl)
 
             step_row.addStretch()
 
             interval_lbl = QLabel(f"Interval {delay_str}")
+            interval_lbl.setObjectName(f"HelxairoMacroGroupCardInterval_{step_idx}")
             interval_lbl.setStyleSheet("""
                 color: #888888;
                 font-family: 'Orbitron', sans-serif;
@@ -677,6 +683,7 @@ def enable_rubber_band_selection(list_widget: QListWidget):
     list_widget._smoother = SmoothListScroller(list_widget)
     
     rubber_band = QRubberBand(QRubberBand.Rectangle, list_widget.viewport())
+    rubber_band.setObjectName("helxairo_rubberBand")
     rubber_band.setStyleSheet("""
         QRubberBand {
             background-color: rgba(255, 91, 6, 0.2);
@@ -1660,11 +1667,13 @@ class HelxairoLowIntervalWarningOverlayPanel(QWidget):
         
         # SVG Warning Icon (No emoji, vector SVG icon)
         icon_lbl = QLabel()
+        icon_lbl.setObjectName("HelxairoWarningIcon")
         icon_lbl.setFixedSize(20, 20)
         icon_lbl.setPixmap(QPixmap(warning_icon_path).scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         icon_lbl.setStyleSheet("background: transparent;")
         
         title_label = QLabel(self.panel_title)
+        title_label.setObjectName("HelxairoWarningTitle")
         title_label.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
         
         title_layout.addWidget(icon_lbl)
@@ -1680,12 +1689,14 @@ class HelxairoLowIntervalWarningOverlayPanel(QWidget):
         scroll_area.setFrameShape(QFrame.NoFrame)
         
         scroll_content = QWidget()
+        scroll_content.setObjectName("HelxairoWarningScrollContent")
         scroll_content.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setContentsMargins(20, 4, 16, 4)
         scroll_layout.setSpacing(0)
         
         msg_lbl = QLabel(self.panel_desc)
+        msg_lbl.setObjectName("HelxairoWarningMessage")
         msg_lbl.setWordWrap(True)
         msg_lbl.setStyleSheet("color: #D8D8D8; font-family: 'Orbitron', sans-serif; font-size: 13px; line-height: 1.5; background: transparent;")
         scroll_layout.addWidget(msg_lbl)
@@ -1700,10 +1711,14 @@ class HelxairoLowIntervalWarningOverlayPanel(QWidget):
         
         if self.is_extreme_risk:
             cancel_btn = FadeHoverButton("Cancel", is_secondary=False, border_radius=8.0, color_mode="green")
+            cancel_btn.setObjectName("HelxairoWarningCancelBtn")
             proceed_btn = FadeHoverButton(self.proceed_text, is_secondary=False, border_radius=8.0, color_mode="red")
+            proceed_btn.setObjectName("HelxairoWarningProceedBtn")
         else:
             cancel_btn = FadeHoverButton("Cancel", is_secondary=True, border_radius=8.0)
+            cancel_btn.setObjectName("HelxairoWarningCancelBtn")
             proceed_btn = FadeHoverButton(self.proceed_text, is_secondary=False, border_radius=8.0, color_mode="default")
+            proceed_btn.setObjectName("HelxairoWarningProceedBtn")
             
         cancel_btn.setFixedSize(100, 36)
         cancel_btn.clicked.connect(self.close)
@@ -3633,16 +3648,19 @@ class DoubleClickTestPanel(QWidget):
         mid_layout.addWidget(self.click_canvas, 2)
 
         self.mouse_graphic = HelxairoMouseGraphicWidget()
+        self.mouse_graphic.setObjectName("DoubleClickMouseGraphic")
         mid_layout.addWidget(self.mouse_graphic, 0)
 
         main_layout.addWidget(mid_widget, 1)
 
         # ── 4. OSCILLOSCOPE WAVEFORM GRAPH ───────────────────
         self.pulse_graph = HelxairoPulseGraphWidget()
+        self.pulse_graph.setObjectName("DoubleClickPulseGraph")
         main_layout.addWidget(self.pulse_graph)
 
         # ── 5. EVENT HISTORY TABLE ───────────────────────────
         self.log_table = HelxairoChatterLogTableWidget()
+        self.log_table.setObjectName("DoubleClickLogTable")
         self.log_table.setMaximumHeight(140)
         main_layout.addWidget(self.log_table)
 
@@ -4073,6 +4091,7 @@ class ScrollWheelTestPanel(QWidget):
 class PollingGraph(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("PollingGraph")
         self.setMinimumHeight(150)
         self._history = collections.deque([0.0]*60, maxlen=60)
         
@@ -4129,6 +4148,7 @@ class PollingRateTestPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("PollingRateTestPanel")
         self._mouse_hook = None
         self._ui_timer = QTimer(self)
         self._ui_timer.timeout.connect(self._update_ui)
@@ -4818,16 +4838,19 @@ class ReactionTimePanel(QWidget):
 
         # Round indicator
         self.round_lbl = QLabel("ROUND: <span style='color:#FF5B06;'>0 / 5</span>")
+        self.round_lbl.setObjectName("ReactionRoundLbl")
         self.round_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         s_layout.addWidget(self.round_lbl)
 
         # Best round
         self.best_lbl = QLabel("BEST: <span style='color:#00FF88;'>--- ms</span>")
+        self.best_lbl.setObjectName("ReactionBestLbl")
         self.best_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         s_layout.addWidget(self.best_lbl)
 
         # Average
         self.avg_lbl = QLabel("AVERAGE: <span style='color:#FFD600;'>--- ms</span>")
+        self.avg_lbl.setObjectName("ReactionAvgLbl")
         self.avg_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         s_layout.addWidget(self.avg_lbl)
 
@@ -4836,6 +4859,7 @@ class ReactionTimePanel(QWidget):
 
         # ── 3. INTERACTIVE CLICK ZONE ──────────────────────────
         self.zone = ReactionZoneWidget()
+        self.zone.setObjectName("ReactionInteractiveZone")
         self.zone.round_finished.connect(self._on_round_done)
         self.zone.session_finished.connect(self._on_session_done)
         main_layout.addWidget(self.zone, 1)
@@ -5401,18 +5425,22 @@ class GridshotArenaPanel(QWidget):
         k_layout.setSpacing(20)
 
         self.time_lbl = QLabel("TIME: <span style='color:#FF5B06;'>30.0s</span>")
+        self.time_lbl.setObjectName("GridshotTimeLbl")
         self.time_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         k_layout.addWidget(self.time_lbl)
 
         self.score_lbl = QLabel("SCORE: <span style='color:#00FF88;'>0</span>")
+        self.score_lbl.setObjectName("GridshotScoreLbl")
         self.score_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         k_layout.addWidget(self.score_lbl)
 
         self.acc_lbl = QLabel("ACCURACY: <span style='color:#FFD600;'>100.0%</span>")
+        self.acc_lbl.setObjectName("GridshotAccLbl")
         self.acc_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         k_layout.addWidget(self.acc_lbl)
 
         self.tps_lbl = QLabel("TPS: <span style='color:#00E5FF;'>0.0</span>")
+        self.tps_lbl.setObjectName("GridshotTpsLbl")
         self.tps_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         k_layout.addWidget(self.tps_lbl)
 
@@ -5421,6 +5449,7 @@ class GridshotArenaPanel(QWidget):
 
         # ── 3. 2D AIM CANVAS ──────────────────────────────────
         self.canvas = GridshotCanvasWidget()
+        self.canvas.setObjectName("GridshotCanvas")
         self.canvas.stats_updated.connect(self._on_stats)
         self.canvas.game_finished.connect(self._on_game_over)
         main_layout.addWidget(self.canvas, 1)
@@ -5882,18 +5911,22 @@ class PrecisionTrackingPanel(QWidget):
         k_layout.setSpacing(20)
 
         self.time_lbl = QLabel("TIME: <span style='color:#FF5B06;'>30.0s</span>")
+        self.time_lbl.setObjectName("PrecisionTrackingTimeLbl")
         self.time_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         k_layout.addWidget(self.time_lbl)
 
         self.dwell_lbl = QLabel("DWELL: <span style='color:#00FF88;'>0.0s</span>")
+        self.dwell_lbl.setObjectName("PrecisionTrackingDwellLbl")
         self.dwell_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         k_layout.addWidget(self.dwell_lbl)
 
         self.acc_lbl = QLabel("ACCURACY: <span style='color:#FFD600;'>0.0%</span>")
+        self.acc_lbl.setObjectName("PrecisionTrackingAccLbl")
         self.acc_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         k_layout.addWidget(self.acc_lbl)
 
         self.status_lbl = QLabel("STATUS: <span style='color:#888888;'>OFF TARGET</span>")
+        self.status_lbl.setObjectName("PrecisionTrackingStatusLbl")
         self.status_lbl.setStyleSheet("color:#E0E0E0; font-family:'Orbitron', sans-serif; font-size:12px; font-weight:bold;")
         k_layout.addWidget(self.status_lbl)
 
@@ -5902,6 +5935,7 @@ class PrecisionTrackingPanel(QWidget):
 
         # ── 3. 2D TRACKING CANVAS ──────────────────────────────
         self.canvas = TrackingCanvasWidget()
+        self.canvas.setObjectName("PrecisionTrackingCanvas")
         self.canvas.stats_updated.connect(self._on_stats)
         self.canvas.game_finished.connect(self._on_game_over)
         main_layout.addWidget(self.canvas, 1)
@@ -6046,6 +6080,7 @@ class ReflexHubPanel(QWidget):
 
         # 3 Cards Row
         cards_container = QWidget()
+        cards_container.setObjectName("ReflexCardsContainer")
         cards_layout = QHBoxLayout(cards_container)
         cards_layout.setContentsMargins(0, 0, 0, 0)
         cards_layout.setSpacing(15)
@@ -7025,6 +7060,7 @@ class SniperClutchPanel(QWidget):
 
         # Universal Trigger Key Input Catcher Button
         self.custom_key_input = TacticalInputCatcherButton(default_key="Right Click")
+        self.custom_key_input.setObjectName("SniperCustomKeyInput")
         self.custom_key_input.setFixedHeight(28)
         self.custom_key_input.setVisible(True)
         self.custom_key_input.input_captured.connect(self._on_custom_input_captured)
@@ -7135,6 +7171,7 @@ class SniperClutchPanel(QWidget):
 
         # ── 3. LIVE AIM TEST CANVAS ────────────────────────────
         self.aim_canvas = SniperAimCanvas()
+        self.aim_canvas.setObjectName("SniperAimCanvas")
         self.controller.clutch_state_changed.connect(self.aim_canvas.set_clutch_state)
         main_layout.addWidget(self.aim_canvas, 1)
 
@@ -7218,6 +7255,689 @@ class SniperClutchPanel(QWidget):
         self.back_clicked.emit()
 
 
+
+
+class Win32Rect(ctypes.Structure):
+    _fields_ = [
+        ("left", wintypes.LONG),
+        ("top", wintypes.LONG),
+        ("right", wintypes.LONG),
+        ("bottom", wintypes.LONG),
+    ]
+
+
+class CursorClampController(QObject):
+    """
+    Multi-Monitor Hardware-Enforced Cursor Clamping Engine.
+    Uses Win32 user32.ClipCursor with zero-overhead focus & bounds tracking.
+    
+    Component Name: CursorClampController
+    """
+    clamp_state_changed = Signal(bool, str)   # (is_clamped, status_desc)
+    cursor_pos_updated = Signal(int, int)     # (global_x, global_y)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.is_enabled = False
+        self.is_clamped = False
+        self.clamp_mode = "primary_monitor"   # "primary_monitor" | "game_window"
+        self.auto_release_on_unfocus = True
+        self.sound_enabled = True
+        self.manual_override = False          # Temporary hotkey release
+        self._last_rect = None
+        self._active_target_name = "Primary Screen"
+        
+        # High-DPI Win32 Per-Monitor Awareness V2
+        try:
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        except Exception:
+            pass
+
+        # High-frequency, ultra-lightweight focus & position polling timer (40ms = 25 FPS)
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(40)
+        self._poll_timer.timeout.connect(self._on_poll_tick)
+
+        # Emergency cleanup hook
+        atexit.register(self.release_clamp)
+        if QApplication.instance():
+            QApplication.instance().aboutToQuit.connect(self.release_clamp)
+
+    def set_enabled(self, enabled: bool):
+        self.is_enabled = enabled
+        if enabled:
+            self.manual_override = False
+            self._poll_timer.start()
+            self._check_and_apply_clamp()
+            if self.sound_enabled:
+                self._play_sound(True)
+        else:
+            self._poll_timer.stop()
+            self.release_clamp()
+            if self.sound_enabled:
+                self._play_sound(False)
+
+    def set_clamp_mode(self, mode: str):
+        self.clamp_mode = mode
+        if self.is_enabled:
+            self._last_rect = None
+            self._check_and_apply_clamp()
+
+    def set_auto_release(self, auto_rel: bool):
+        self.auto_release_on_unfocus = auto_rel
+
+    def set_sound_enabled(self, enabled: bool):
+        self.sound_enabled = enabled
+
+    def toggle_manual_override(self):
+        """Emergency / Temporary Toggle Hotkey Handler."""
+        if not self.is_enabled:
+            self.set_enabled(True)
+            return
+
+        self.manual_override = not self.manual_override
+        if self.manual_override:
+            self.release_clamp()
+            self.clamp_state_changed.emit(False, "OVERRIDDEN (FREE)")
+            if self.sound_enabled:
+                self._play_sound(False)
+        else:
+            self._check_and_apply_clamp()
+            if self.sound_enabled:
+                self._play_sound(True)
+
+    def _play_sound(self, locked: bool):
+        try:
+            if locked:
+                ctypes.windll.user32.MessageBeep(0x00000040)  # MB_ICONASTERISK
+            else:
+                ctypes.windll.user32.MessageBeep(0x00000000)  # MB_OK
+        except Exception:
+            pass
+
+    def _on_poll_tick(self):
+        # 1. Hotkey check for emergency override: Ctrl + Alt + C
+        self._check_global_hotkey()
+
+        # 2. Track global cursor position
+        pt = wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        self.cursor_pos_updated.emit(pt.x, pt.y)
+
+        # 3. Focus and boundary clamp check
+        if self.is_enabled and not self.manual_override:
+            self._check_and_apply_clamp()
+
+    def _check_global_hotkey(self):
+        try:
+            ctrl_down = (ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) != 0
+            alt_down = (ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) != 0
+            c_down = (ctypes.windll.user32.GetAsyncKeyState(0x43) & 0x8000) != 0
+            
+            if ctrl_down and alt_down and c_down:
+                time.sleep(0.18)
+                self.toggle_manual_override()
+        except Exception:
+            pass
+
+    def _check_and_apply_clamp(self):
+        if not self.is_enabled or self.manual_override:
+            if self.is_clamped:
+                self.release_clamp()
+            return
+
+        hwnd_fg = ctypes.windll.user32.GetForegroundWindow()
+
+        # Check if foreground window is desktop / alt-tab / taskbar
+        if self.auto_release_on_unfocus and hwnd_fg:
+            class_name = ctypes.create_unicode_buffer(256)
+            ctypes.windll.user32.GetClassNameW(hwnd_fg, class_name, 256)
+            c_name = class_name.value.lower()
+            if c_name in ("shell_traywnd", "progman", "workerw", "multitaskingviewframe", "taskswitcherwnd", "cortana"):
+                if self.is_clamped:
+                    self.release_clamp()
+                    self.clamp_state_changed.emit(False, "PAUSED (OS FOCUS)")
+                return
+
+        target_rect = None
+
+        if self.clamp_mode == "primary_monitor":
+            w = ctypes.windll.user32.GetSystemMetrics(0)   # SM_CXSCREEN
+            h = ctypes.windll.user32.GetSystemMetrics(1)   # SM_CYSCREEN
+            target_rect = Win32Rect(0, 0, w, h)
+            self._active_target_name = f"Primary Monitor ({w}x{h})"
+        elif self.clamp_mode == "game_window":
+            if hwnd_fg:
+                r = Win32Rect()
+                ctypes.windll.user32.GetWindowRect(hwnd_fg, ctypes.byref(r))
+                w = r.right - r.left
+                h = r.bottom - r.top
+                if w > 100 and h > 100:
+                    target_rect = r
+                    title_buf = ctypes.create_unicode_buffer(256)
+                    ctypes.windll.user32.GetWindowTextW(hwnd_fg, title_buf, 256)
+                    self._active_target_name = title_buf.value or "Active Window"
+                else:
+                    target_rect = None
+
+        if target_rect:
+            rect_tuple = (target_rect.left, target_rect.top, target_rect.right, target_rect.bottom)
+            if not self.is_clamped or self._last_rect != rect_tuple:
+                self._apply_rect(target_rect)
+        else:
+            if self.is_clamped:
+                self.release_clamp()
+                self.clamp_state_changed.emit(False, "SEARCHING FOR TARGET")
+
+    def _apply_rect(self, rect: Win32Rect):
+        ctypes.windll.user32.ClipCursor(ctypes.byref(rect))
+        self._last_rect = (rect.left, rect.top, rect.right, rect.bottom)
+        self.is_clamped = True
+        desc = f"LOCKED TO {self._active_target_name.upper()}"
+        self.clamp_state_changed.emit(True, desc)
+
+    def release_clamp(self):
+        ctypes.windll.user32.ClipCursor(None)
+        self._last_rect = None
+        if self.is_clamped:
+            self.is_clamped = False
+            self.clamp_state_changed.emit(False, "UNLOCKED (FREE)")
+
+    def force_restore(self):
+        """Force cursor liberation and stop timers."""
+        self.set_enabled(False)
+        self.release_clamp()
+
+    def __del__(self):
+        self.release_clamp()
+
+
+class CursorClampCanvas(QWidget):
+    """
+    Live Multi-Monitor HUD Visualizer & Cursor Boundary Radar.
+    Renders top-down virtual monitor geometry, active boundary lines, and live pointer tracking.
+    
+    Component Name: CursorClampCanvas
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CursorClampCanvas")
+        self.setMinimumHeight(240)
+        self.is_clamped = False
+        self.status_text = "SYSTEM IDLE (FREE)"
+        self.cursor_x = 0
+        self.cursor_y = 0
+        self._pulse_alpha = 200
+        self._pulse_dir = -3
+        
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(30)
+        self._anim_timer.timeout.connect(self._step_pulse)
+        self._anim_timer.start()
+
+    def _step_pulse(self):
+        if self.is_clamped:
+            self._pulse_alpha += self._pulse_dir * 4
+            if self._pulse_alpha <= 90:
+                self._pulse_alpha = 90
+                self._pulse_dir = 3
+            elif self._pulse_alpha >= 230:
+                self._pulse_alpha = 230
+                self._pulse_dir = -3
+            self.update()
+
+    def set_clamp_state(self, is_clamped: bool, status_desc: str):
+        self.is_clamped = is_clamped
+        self.status_text = status_desc
+        self.update()
+
+    def set_cursor_pos(self, gx: int, gy: int):
+        self.cursor_x = gx
+        self.cursor_y = gy
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Background dark canvas
+        bg_brush = QBrush(QColor("#111115"))
+        painter.setBrush(bg_brush)
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(0, 0, w, h, 10, 10)
+
+        # 2. Subtle Tech Grid Pattern
+        grid_pen = QPen(QColor(255, 255, 255, 8), 1, Qt.DotLine)
+        painter.setPen(grid_pen)
+        step = 32
+        for x in range(0, w, step):
+            painter.drawLine(x, 0, x, h)
+        for y in range(0, h, step):
+            painter.drawLine(0, y, w, y)
+
+        # 3. Detect Connected Monitors
+        screens = QApplication.screens()
+        if not screens:
+            screens = [QApplication.primaryScreen()]
+
+        # Calculate bounding box of all screens in virtual coordinate space
+        min_x = min(s.geometry().left() for s in screens)
+        min_y = min(s.geometry().top() for s in screens)
+        max_x = max(s.geometry().right() for s in screens)
+        max_y = max(s.geometry().bottom() for s in screens)
+
+        virt_w = max(1, max_x - min_x)
+        virt_h = max(1, max_y - min_y)
+
+        # Usable canvas region with generous padding
+        pad_x = 40
+        pad_y = 50
+        draw_area_w = w - (pad_x * 2)
+        draw_area_h = h - (pad_y * 2) - 20
+
+        scale = min(draw_area_w / virt_w, draw_area_h / virt_h) * 0.88
+        offset_x = (w - (virt_w * scale)) / 2.0
+        offset_y = ((h - 20) - (virt_h * scale)) / 2.0 + 15
+
+        primary_screen = QApplication.primaryScreen()
+
+        # 4. Render Monitor Rectangles
+        for idx, screen in enumerate(screens):
+            s_geom = screen.geometry()
+            sx = offset_x + (s_geom.left() - min_x) * scale
+            sy = offset_y + (s_geom.top() - min_y) * scale
+            sw = s_geom.width() * scale
+            sh = s_geom.height() * scale
+
+            is_primary = (screen == primary_screen)
+
+            if is_primary:
+                if self.is_clamped:
+                    # Electric Neon Orange Clamped Boundary
+                    m_bg = QColor(255, 91, 6, 22)
+                    border_color = QColor(255, 91, 6, self._pulse_alpha)
+                    border_w = 2.5
+                else:
+                    m_bg = QColor(255, 255, 255, 12)
+                    border_color = QColor("#FF5B06")
+                    border_w = 1.5
+            else:
+                # Secondary Monitor
+                m_bg = QColor(255, 255, 255, 4)
+                border_color = QColor(255, 255, 255, 35)
+                border_w = 1.0
+
+            # Draw monitor body
+            painter.setBrush(QBrush(m_bg))
+            painter.setPen(QPen(border_color, border_w))
+            painter.drawRoundedRect(QRectF(sx, sy, sw, sh), 8, 8)
+
+            # Draw L-Corner Tech Brackets for Primary Monitor
+            if is_primary:
+                corner_pen = QPen(QColor("#FF5B06"), 2.0)
+                painter.setPen(corner_pen)
+                b_len = min(12.0, sw * 0.15)
+                # Top-Left
+                painter.drawLine(QPointF(sx, sy), QPointF(sx + b_len, sy))
+                painter.drawLine(QPointF(sx, sy), QPointF(sx, sy + b_len))
+                # Top-Right
+                painter.drawLine(QPointF(sx + sw, sy), QPointF(sx + sw - b_len, sy))
+                painter.drawLine(QPointF(sx + sw, sy), QPointF(sx + sw, sy + b_len))
+                # Bottom-Left
+                painter.drawLine(QPointF(sx, sy + sh), QPointF(sx + b_len, sy + sh))
+                painter.drawLine(QPointF(sx, sy + sh), QPointF(sx, sy + sh - b_len))
+                # Bottom-Right
+                painter.drawLine(QPointF(sx + sw, sy + sh), QPointF(sx + sw - b_len, sy + sh))
+                painter.drawLine(QPointF(sx + sw, sy + sh), QPointF(sx + sw, sy + sh - b_len))
+
+            # Monitor Label
+            painter.setFont(QFont("Orbitron", 9, QFont.Bold))
+            tag_color = QColor("#FF5B06") if is_primary else QColor("#888888")
+            painter.setPen(QPen(tag_color))
+            tag_text = f"DISPLAY {idx+1} (PRIMARY)" if is_primary else f"DISPLAY {idx+1}"
+            painter.drawText(QRectF(sx, sy + 10, sw, 20), Qt.AlignCenter, tag_text)
+
+            painter.setFont(QFont("Orbitron", 8))
+            painter.setPen(QPen(QColor("#AAAAAA")))
+            res_text = f"{s_geom.width()}x{s_geom.height()} @ {screen.refreshRate():.0f}Hz"
+            painter.drawText(QRectF(sx, sy + 30, sw, 20), Qt.AlignCenter, res_text)
+
+            # Lock badge inside primary display
+            if is_primary:
+                badge_text = "[ HARDWARE CLAMP LOCKED ]" if self.is_clamped else "[ UNLOCKED / FREE ]"
+                badge_color = QColor("#00FF88") if self.is_clamped else QColor("#777777")
+                painter.setFont(QFont("Orbitron", 8, QFont.Bold))
+                painter.setPen(QPen(badge_color))
+                painter.drawText(QRectF(sx, sy + sh - 28, sw, 20), Qt.AlignCenter, badge_text)
+
+        # 5. Live Cursor Pointer Target Crosshair
+        cx = offset_x + (self.cursor_x - min_x) * scale
+        cy = offset_y + (self.cursor_y - min_y) * scale
+
+        # Draw glowing dot
+        dot_color = QColor("#00FF88") if self.is_clamped else QColor("#00E5FF")
+        painter.setBrush(QBrush(dot_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QPointF(cx, cy), 4.5, 4.5)
+
+        # Outer Reticle Ring
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(dot_color, 1.2, Qt.DashLine))
+        painter.drawEllipse(QPointF(cx, cy), 11.0, 11.0)
+
+        # 6. Bottom HUD Coordinates Bar
+        hud_bg = QColor(0, 0, 0, 120)
+        painter.setBrush(QBrush(hud_bg))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(QRectF(15, h - 34, w - 30, 24), 6, 6)
+
+        painter.setFont(QFont("Orbitron", 8, QFont.Bold))
+        status_color = QColor("#00FF88") if self.is_clamped else QColor("#FF5B06")
+        painter.setPen(QPen(status_color))
+        hud_left = f"STATUS: {self.status_text}"
+        painter.drawText(QRectF(25, h - 34, w * 0.6, 24), Qt.AlignVCenter | Qt.AlignLeft, hud_left)
+
+        painter.setPen(QPen(QColor("#888888")))
+        hud_right = f"VIRTUAL CURSOR: X={self.cursor_x}, Y={self.cursor_y} | MONITORS: {len(screens)}"
+        painter.drawText(QRectF(w * 0.4, h - 34, w * 0.6 - 25, 24), Qt.AlignVCenter | Qt.AlignRight, hud_right)
+
+
+class CursorClampPanel(QWidget):
+    """
+    Multi-Monitor Cursor Clamp Configuration & Calibration Panel.
+    Component Name: CursorClampPanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CursorClampPanel")
+        self.controller = CursorClampController(self)
+        self._setup_ui()
+        self._set_active_state(False)
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(16, 12, 16, 16)
+        main_layout.setSpacing(12)
+
+        # ── 1. HEADER BAR ──────────────────────────────────────
+        header_frame = QWidget()
+        header_frame.setObjectName("CursorClampHeaderFrame")
+        header_frame.setFixedHeight(40)
+        header_frame.setStyleSheet("""
+            QWidget#CursorClampHeaderFrame {
+                background-color: rgba(26, 26, 26, 0.95);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(10)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("CursorClampBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        if os.path.exists(back_icon_path):
+            self.back_btn.setIcon(QIcon(back_icon_path))
+            self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Tactical Hub")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#CursorClampBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#CursorClampBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self._on_back)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("MULTI-MONITOR CURSOR CLAMP")
+        title_lbl.setObjectName("CursorClampHeaderTitle")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+        h_layout.addStretch()
+
+        self.unlock_btn = QPushButton("EMERGENCY UNLOCK (Ctrl+Alt+C)")
+        self.unlock_btn.setObjectName("CursorClampUnlockBtn")
+        self.unlock_btn.setFixedSize(220, 26)
+        self.unlock_btn.setCursor(Qt.PointingHandCursor)
+        self.unlock_btn.setToolTip("Immediately liberates cursor confinement across all monitors")
+        self.unlock_btn.setStyleSheet("""
+            QPushButton#CursorClampUnlockBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 0px 8px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#CursorClampUnlockBtn:hover {
+                background-color: rgba(255, 91, 6, 0.35);
+                color: #FFFFFF;
+            }
+        """)
+        self.unlock_btn.clicked.connect(self.controller.release_clamp)
+        h_layout.addWidget(self.unlock_btn)
+
+        self.enable_btn = QPushButton("DISABLED")
+        self.enable_btn.setObjectName("CursorClampEnableBtn")
+        self.enable_btn.setFixedSize(90, 26)
+        self.enable_btn.setCursor(Qt.PointingHandCursor)
+        self.enable_btn.setStyleSheet("""
+            QPushButton#CursorClampEnableBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                color: #888888;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 0px 8px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+        """)
+        self.enable_btn.clicked.connect(self._toggle_enable)
+        h_layout.addWidget(self.enable_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. CONFIGURATION CARDS (2 COLUMNS) ─────────────────
+        cfg_layout = QHBoxLayout()
+        cfg_layout.setSpacing(12)
+
+        # Card 1: Target Clamp Region Selection
+        mode_card = QFrame()
+        mode_card.setObjectName("CursorClampModeCard")
+        mode_card.setFixedHeight(84)
+        mode_card.setStyleSheet("""
+            QFrame#CursorClampModeCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        mc_layout = QVBoxLayout(mode_card)
+        mc_layout.setContentsMargins(12, 8, 12, 8)
+        mc_layout.setSpacing(4)
+
+        mc_title = QLabel("TARGET LOCK BOUNDARY")
+        mc_title.setObjectName("CursorClampModeTitle")
+        mc_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        mc_layout.addWidget(mc_title)
+
+        mc_row = QHBoxLayout()
+        mc_row.setSpacing(8)
+
+        self.rb_primary = QRadioButton("Primary Display")
+        self.rb_primary.setObjectName("CursorClampRbPrimary")
+        self.rb_primary.setChecked(True)
+        self.rb_primary.setStyleSheet("""
+            QRadioButton#CursorClampRbPrimary {
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                background: transparent;
+            }
+            QRadioButton#CursorClampRbPrimary::indicator:checked {
+                background-color: #FF5B06;
+                border: 2px solid #FFFFFF;
+                border-radius: 6px;
+            }
+        """)
+        self.rb_primary.toggled.connect(lambda c: self.controller.set_clamp_mode("primary_monitor") if c else None)
+        mc_row.addWidget(self.rb_primary)
+
+        self.rb_game = QRadioButton("Active Game Window")
+        self.rb_game.setObjectName("CursorClampRbGame")
+        self.rb_game.setStyleSheet("""
+            QRadioButton#CursorClampRbGame {
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                background: transparent;
+            }
+            QRadioButton#CursorClampRbGame::indicator:checked {
+                background-color: #FF5B06;
+                border: 2px solid #FFFFFF;
+                border-radius: 6px;
+            }
+        """)
+        self.rb_game.toggled.connect(lambda c: self.controller.set_clamp_mode("game_window") if c else None)
+        mc_row.addWidget(self.rb_game)
+        mc_layout.addLayout(mc_row)
+
+        self.cb_autorel = AnimatedCheckBox("Auto-Release on Alt+Tab / Lost Focus")
+        self.cb_autorel.setObjectName("CursorClampAutoReleaseCb")
+        self.cb_autorel.setChecked(True)
+        self.cb_autorel.toggled.connect(self.controller.set_auto_release)
+        mc_layout.addWidget(self.cb_autorel)
+
+        cfg_layout.addWidget(mode_card, 1)
+
+        # Card 2: Hotkey & Audio Feedback
+        hotkey_card = QFrame()
+        hotkey_card.setObjectName("CursorClampHotkeyCard")
+        hotkey_card.setFixedHeight(84)
+        hotkey_card.setStyleSheet("""
+            QFrame#CursorClampHotkeyCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        hc_layout = QVBoxLayout(hotkey_card)
+        hc_layout.setContentsMargins(12, 8, 12, 8)
+        hc_layout.setSpacing(4)
+
+        hc_title_row = QHBoxLayout()
+        hc_title = QLabel("GLOBAL QUICK TOGGLE HOTKEY")
+        hc_title.setObjectName("CursorClampHotkeyTitle")
+        hc_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        hc_title_row.addWidget(hc_title)
+        hc_title_row.addStretch()
+
+        hotkey_badge = QLabel("Ctrl + Alt + C")
+        hotkey_badge.setObjectName("CursorClampHotkeyBadge")
+        hotkey_badge.setStyleSheet("""
+            background-color: rgba(255, 91, 6, 0.2);
+            color: #FF5B06;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 10px;
+            font-weight: bold;
+            border-radius: 4px;
+            padding: 2px 8px;
+        """)
+        hc_title_row.addWidget(hotkey_badge)
+        hc_layout.addLayout(hc_title_row)
+
+        hc_desc = QLabel("Press Ctrl+Alt+C in any game to instantly lock/unlock border confinement.")
+        hc_desc.setObjectName("CursorClampHotkeyDesc")
+        hc_desc.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px;")
+        hc_layout.addWidget(hc_desc)
+
+        self.cb_sound = AnimatedCheckBox("Audible Lock / Unlock Notification Tone")
+        self.cb_sound.setObjectName("CursorClampSoundCb")
+        self.cb_sound.setChecked(True)
+        self.cb_sound.toggled.connect(self.controller.set_sound_enabled)
+        hc_layout.addWidget(self.cb_sound)
+
+        cfg_layout.addWidget(hotkey_card, 1)
+        main_layout.addLayout(cfg_layout)
+
+        # ── 3. LIVE MULTI-MONITOR RADAR CANVAS ─────────────────
+        self.clamp_canvas = CursorClampCanvas()
+        self.clamp_canvas.setObjectName("CursorClampCanvas")
+        self.controller.clamp_state_changed.connect(self.clamp_canvas.set_clamp_state)
+        self.controller.cursor_pos_updated.connect(self.clamp_canvas.set_cursor_pos)
+        main_layout.addWidget(self.clamp_canvas, 1)
+
+    def _toggle_enable(self):
+        new_state = not self.controller.is_enabled
+        self._set_active_state(new_state)
+
+    def _set_active_state(self, active: bool):
+        self.controller.set_enabled(active)
+        if active:
+            self.enable_btn.setText("ACTIVE")
+            self.enable_btn.setStyleSheet("""
+                QPushButton#CursorClampEnableBtn {
+                    background-color: #00FF88;
+                    color: #000000;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+        else:
+            self.enable_btn.setText("DISABLED")
+            self.enable_btn.setStyleSheet("""
+                QPushButton#CursorClampEnableBtn {
+                    background-color: rgba(255, 255, 255, 0.08);
+                    color: #888888;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+
+    def _on_back(self):
+        self.controller.force_restore()
+        self.back_clicked.emit()
+
+
 class TacticalToolsHubPanel(QWidget):
     """
     Tactical Utilities Hub with 6 Tool Cards.
@@ -7234,29 +7954,52 @@ class TacticalToolsHubPanel(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(16)
+        main_layout.setSpacing(15)
 
-        # Header Info
-        header_lbl = QLabel("TACTICAL GAMING UTILITIES")
-        header_lbl.setObjectName("TacticalHubHeaderTitle")
-        header_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold;")
-        main_layout.addWidget(header_lbl)
+        _grp_style = """
+            QGroupBox {
+                color: #ff5b06;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 16px;
+                font-weight: bold;
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+                margin-top: 10px;
+                padding: 15px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+            }
+        """
+
+        # Tactical Gaming Utilities Group Box
+        hub_group = QGroupBox("Tactical Gaming Utilities")
+        hub_group.setObjectName("TacticalGamingGroup")
+        hub_group.setStyleSheet(_grp_style)
+        hub_group_layout = QVBoxLayout(hub_group)
+        hub_group_layout.setContentsMargins(16, 20, 16, 16)
+        hub_group_layout.setSpacing(12)
 
         desc_lbl = QLabel("Hardware-Level Pointer Control, Multi-Screen Lockdown & Automation Suite")
         desc_lbl.setObjectName("TacticalHubHeaderDesc")
-        desc_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
-        main_layout.addWidget(desc_lbl)
+        desc_lbl.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        hub_group_layout.addWidget(desc_lbl)
 
         # 6 Cards Grid (2 Rows x 3 Columns)
-        cards_grid = QGridLayout()
-        cards_grid.setSpacing(14)
+        cards_container = QWidget()
+        cards_container.setObjectName("TacticalCardsContainer")
+        cards_grid = QGridLayout(cards_container)
+        cards_grid.setContentsMargins(0, 0, 0, 0)
+        cards_grid.setSpacing(15)
 
         # Card 1: Sniper DPI Clutch
         c1 = self._create_card(
             card_id="SniperClutchCard",
             title="Sniper DPI Clutch",
             desc="Dynamic on-hold cursor sensitivity dampener for pixel-perfect sniping.",
-            badge="Precision Aim",
             mode_idx=1
         )
         cards_grid.addWidget(c1, 0, 0)
@@ -7266,7 +8009,6 @@ class TacticalToolsHubPanel(QWidget):
             card_id="CursorClampCard",
             title="Monitor Cursor Clamp",
             desc="Locks mouse cursor inside primary screen or game window to prevent border leaks.",
-            badge="Multi-Screen Lock",
             mode_idx=2
         )
         cards_grid.addWidget(c2, 0, 1)
@@ -7276,7 +8018,6 @@ class TacticalToolsHubPanel(QWidget):
             card_id="RapidFireCard",
             title="Universal Rapid-Fire",
             desc="High-frequency burst & full-auto trigger with humanized Gaussian timing jitter.",
-            badge="Trigger Assist",
             mode_idx=3
         )
         cards_grid.addWidget(c3, 0, 2)
@@ -7286,7 +8027,6 @@ class TacticalToolsHubPanel(QWidget):
             card_id="AntiAfkCard",
             title="Smart Anti-AFK",
             desc="Humanized natural Bezier wander and WASD keeper to avoid idle disconnects.",
-            badge="Automation",
             mode_idx=4
         )
         cards_grid.addWidget(c4, 1, 0)
@@ -7296,7 +8036,6 @@ class TacticalToolsHubPanel(QWidget):
             card_id="BossKeyCard",
             title="Instant Boss Key",
             desc="Sub-30ms emergency panic trigger to minimize game, mute audio and focus work app.",
-            badge="Stealth Panic",
             mode_idx=5
         )
         cards_grid.addWidget(c5, 1, 1)
@@ -7306,62 +8045,46 @@ class TacticalToolsHubPanel(QWidget):
             card_id="SniperLoupeCard",
             title="Crosshair Sniper Loupe",
             desc="Hardware-accelerated 60 FPS transparent floating 2x-5x crosshair zoom lens.",
-            badge="Optics Zoom",
             mode_idx=6
         )
         cards_grid.addWidget(c6, 1, 2)
 
-        main_layout.addLayout(cards_grid)
+        hub_group_layout.addWidget(cards_container)
+        main_layout.addWidget(hub_group)
         main_layout.addStretch()
 
-    def _create_card(self, card_id, title, desc, badge, mode_idx):
+    def _create_card(self, card_id, title, desc, mode_idx):
         card = QFrame()
         card.setObjectName(card_id)
         card.setCursor(Qt.PointingHandCursor)
-        card.setFixedHeight(120)
         card.setStyleSheet(f"""
             QFrame#{card_id} {{
                 background-color: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.06);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 10px;
+                padding: 15px;
             }}
             QFrame#{card_id}:hover {{
-                background-color: rgba(255, 91, 6, 0.10);
-                border: 1px solid rgba(255, 91, 6, 0.5);
+                background-color: rgba(255, 91, 6, 0.08);
+                border-color: rgba(255, 91, 6, 0.5);
             }}
         """)
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(16, 14, 16, 14)
+        c_layout.setContentsMargins(15, 15, 15, 15)
         c_layout.setSpacing(6)
-
-        # Badge
-        badge_lbl = QLabel(badge.upper())
-        badge_lbl.setObjectName(f"{card_id}_Badge")
-        badge_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        badge_lbl.setStyleSheet("""
-            color: #FF5B06;
-            font-family: 'Orbitron', sans-serif;
-            font-size: 9px;
-            font-weight: bold;
-            background-color: rgba(255, 91, 6, 0.15);
-            border-radius: 4px;
-            padding: 2px 6px;
-        """)
-        badge_lbl.setFixedHeight(18)
-        c_layout.addWidget(badge_lbl, 0, Qt.AlignLeft)
 
         # Title
         t_lbl = QLabel(title)
         t_lbl.setObjectName(f"{card_id}_Title")
         t_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        t_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: bold; background: transparent;")
+        t_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; background: transparent;")
         c_layout.addWidget(t_lbl)
 
         # Description
         d_lbl = QLabel(desc)
         d_lbl.setObjectName(f"{card_id}_Desc")
         d_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        d_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px; background: transparent;")
+        d_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent;")
         d_lbl.setWordWrap(True)
         c_layout.addWidget(d_lbl)
         c_layout.addStretch()
@@ -7848,12 +8571,14 @@ class MacroSettingsPanel(QWidget):
         
         # === HOME TAB ===
         home_tab = QWidget()
+        home_tab.setObjectName("macroHomeTab")
         home_main_layout = QHBoxLayout(home_tab)
         home_main_layout.setContentsMargins(20, 20, 20, 20)
         home_main_layout.setSpacing(20)
         
         # ===== LEFT COLUMN - Button Mappings =====
         left_column = QWidget()
+        left_column.setObjectName("macroHomeLeftColumn")
         left_layout = QVBoxLayout(left_column)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(8)
@@ -7991,6 +8716,7 @@ class MacroSettingsPanel(QWidget):
             else:
                 # Create menu with submenus for buttons 2-5
                 menu = QMenu(btn)
+                menu.setObjectName(f"macroButtonMappingMenu_{i}")
                 menu.setStyleSheet(menu_style)
                 
                 # Store button index for lambda capture
@@ -8043,6 +8769,7 @@ class MacroSettingsPanel(QWidget):
         
         # Debounce Time
         debounce_label = QLabel("Debounce Time")
+        debounce_label.setObjectName("macroDebounceLabel")
         debounce_label.setStyleSheet("color: #888; font-size: 11px;")
         left_layout.addWidget(debounce_label)
         
@@ -8156,6 +8883,7 @@ class MacroSettingsPanel(QWidget):
         left_layout.addSpacing(8)
         
         execution_mode_label = QLabel("Macro Execution Mode")
+        execution_mode_label.setObjectName("macroExecutionModeLabel")
         execution_mode_label.setStyleSheet("color: #888; font-size: 11px;")
         left_layout.addWidget(execution_mode_label)
         
@@ -8265,6 +8993,7 @@ class MacroSettingsPanel(QWidget):
         
         # ===== CENTER COLUMN - Mouse Diagram with Button Indicators =====
         center_column = QWidget()
+        center_column.setObjectName("macroHomeCenterColumn")
         center_column.setAttribute(Qt.WA_TranslucentBackground)
         center_layout = QVBoxLayout(center_column)
         center_layout.setContentsMargins(0, 0, 0, 0)
@@ -8279,6 +9008,7 @@ class MacroSettingsPanel(QWidget):
         
         # Mouse image layout
         mouse_label = QLabel(mouse_container)
+        mouse_label.setObjectName("macroHomeMouseLabel")
         mouse_label.setAlignment(Qt.AlignCenter)
         mouse_label.setStyleSheet("background: transparent;")
         mouse_label.setAttribute(Qt.WA_TranslucentBackground)
@@ -8341,6 +9071,7 @@ class MacroSettingsPanel(QWidget):
         
         # ===== RIGHT COLUMN - Profile & Export =====
         right_column = QWidget()
+        right_column.setObjectName("macroHomeRightColumn")
         right_layout = QVBoxLayout(right_column)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(12)
@@ -8418,6 +9149,7 @@ class MacroSettingsPanel(QWidget):
         # Add placeholders for remaining tabs (built deferred on tick 0)
         for _ in range(3):
             ph = QWidget()
+            ph.setObjectName(f"macroPagePlaceholder_{_}")
             self._page_stack.addWidget(ph)
             
         layout.addWidget(self._page_stack, 1)
@@ -8786,10 +9518,13 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 0: MACRO EDITOR (Default Page) ──────────────
         page_editor = QWidget()
+        page_editor.setObjectName("macroEditorPage")
         page_editor_scroll = SmoothScrollArea()
+        page_editor_scroll.setObjectName("macroEditorScroll")
         page_editor_scroll.setWidgetResizable(True)
         page_editor_scroll.setStyleSheet(_scroll_style)
         page_editor_content = QWidget()
+        page_editor_content.setObjectName("macroEditorContent")
         page_editor_content.setStyleSheet("background: transparent;")
         layout_editor = QVBoxLayout(page_editor_content)
         layout_editor.setContentsMargins(0, 0, 0, 0)
@@ -8797,6 +9532,7 @@ class MacroSettingsPanel(QWidget):
 
         # Quick Actions (Auto-Clicker) Card at top of Editor
         quick_group = QGroupBox("Quick Actions")
+        quick_group.setObjectName("macroQuickGroup")
         quick_group.setStyleSheet(_grp_style)
         quick_layout = QVBoxLayout(quick_group)
         quick_layout.setSpacing(12)
@@ -8808,6 +9544,7 @@ class MacroSettingsPanel(QWidget):
 
         # 1. Macro Name Input
         ac_name_lbl = QLabel("Macro Name")
+        ac_name_lbl.setObjectName("macroAcNameLabel")
         ac_name_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
         ac_name_lbl.setAlignment(Qt.AlignVCenter)
         ac_layout.addWidget(ac_name_lbl, 0, Qt.AlignVCenter)
@@ -8822,6 +9559,7 @@ class MacroSettingsPanel(QWidget):
 
         # 2. Bound Apps Input
         ac_apps_lbl = QLabel("Bound Apps")
+        ac_apps_lbl.setObjectName("macroAcAppsLabel")
         ac_apps_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
         ac_apps_lbl.setAlignment(Qt.AlignVCenter)
         ac_apps_lbl.setToolTip("Auto-activate this profile when specified apps/games are running (comma-separated, e.g., gta5.exe, valorant.exe)")
@@ -8839,6 +9577,7 @@ class MacroSettingsPanel(QWidget):
 
         # 2. Auto Click Key Selector
         ac_lbl = QLabel("Auto Click Key")
+        ac_lbl.setObjectName("macroAcKeyLabel")
         ac_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
         ac_lbl.setAlignment(Qt.AlignVCenter)
         ac_layout.addWidget(ac_lbl, 0, Qt.AlignVCenter)
@@ -8853,12 +9592,14 @@ class MacroSettingsPanel(QWidget):
         ac_layout.addWidget(self.ac_button, 0, Qt.AlignVCenter)
 
         self.ac_custom_key = HotkeyRecordButton("E")
+        self.ac_custom_key.setObjectName("helxairo_acCustomKey")
         self.ac_custom_key.setFixedWidth(80)
         self.ac_custom_key.setFixedHeight(30)
         self.ac_custom_key.setVisible(False)
         ac_layout.addWidget(self.ac_custom_key, 0, Qt.AlignVCenter)
 
         interval_lbl = QLabel("Interval")
+        interval_lbl.setObjectName("macroAcIntervalLabel")
         interval_lbl.setStyleSheet("color: #e0e0e0;")
         interval_lbl.setAlignment(Qt.AlignVCenter)
         ac_layout.addWidget(interval_lbl, 0, Qt.AlignVCenter)
@@ -8885,11 +9626,13 @@ class MacroSettingsPanel(QWidget):
         ac_layout.addWidget(self.ac_unit, 0, Qt.AlignVCenter)
 
         hotkey_lbl = QLabel("Hotkey")
+        hotkey_lbl.setObjectName("macroAcHotkeyLabel")
         hotkey_lbl.setStyleSheet("color: #e0e0e0;")
         hotkey_lbl.setAlignment(Qt.AlignVCenter)
         ac_layout.addWidget(hotkey_lbl, 0, Qt.AlignVCenter)
 
         self.ac_hotkey = HotkeyRecordButton("F8")
+        self.ac_hotkey.setObjectName("helxairo_acHotkey")
         self.ac_hotkey.setFixedWidth(80)
         self.ac_hotkey.setFixedHeight(30)
         ac_layout.addWidget(self.ac_hotkey, 0, Qt.AlignVCenter)
@@ -8906,6 +9649,7 @@ class MacroSettingsPanel(QWidget):
         layout_editor.addWidget(quick_group)
 
         editor_group = QGroupBox("Macro Editor")
+        editor_group.setObjectName("macroEditorGroup")
         editor_group.setStyleSheet(_grp_style)
         editor_group_layout = QVBoxLayout(editor_group)
         editor_group_layout.setSpacing(12)
@@ -8917,6 +9661,7 @@ class MacroSettingsPanel(QWidget):
         # Left Column: Unified Macro list
         col1 = QVBoxLayout()
         col1_lbl = QLabel("Macro list")
+        col1_lbl.setObjectName("macroCol1Label")
         col1_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col1.addWidget(col1_lbl)
 
@@ -9059,6 +9804,7 @@ class MacroSettingsPanel(QWidget):
         col1_btns.setSpacing(6)
 
         self.editor_new_macro_btn = FadeHoverButton("", is_secondary=False)
+        self.editor_new_macro_btn.setObjectName("helxairo_editorNewMacroBtn")
         self.editor_new_macro_btn.setIcon(QIcon(os.path.join(icons_dir, "plus-icon.svg")))
         self.editor_new_macro_btn.setIconSize(QSize(16, 16))
         self.editor_new_macro_btn.setFixedHeight(32)
@@ -9107,6 +9853,7 @@ class MacroSettingsPanel(QWidget):
         # Middle Column: List of keys
         col2 = QVBoxLayout()
         col2_lbl = QLabel("List of keys")
+        col2_lbl.setObjectName("macroCol2Label")
         col2_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col2.addWidget(col2_lbl)
 
@@ -9158,11 +9905,13 @@ class MacroSettingsPanel(QWidget):
         col2_btns.setSpacing(10)
 
         self.editor_modify_key_btn = FadeHoverButton("Modify", is_secondary=True)
+        self.editor_modify_key_btn.setObjectName("helxairo_editorModifyKeyBtn")
         self.editor_modify_key_btn.setFixedHeight(32)
         self.editor_modify_key_btn.setToolTip("Modify selected key action")
         col2_btns.addWidget(self.editor_modify_key_btn)
 
         self.editor_delete_key_btn = FadeHoverButton("Delete", is_secondary=True)
+        self.editor_delete_key_btn.setObjectName("helxairo_editorDeleteKeyBtn")
         self.editor_delete_key_btn.setFixedHeight(32)
         self.editor_delete_key_btn.setToolTip("Delete selected key from sequence")
         col2_btns.addWidget(self.editor_delete_key_btn)
@@ -9176,6 +9925,7 @@ class MacroSettingsPanel(QWidget):
         col3.addSpacing(22)
 
         self.editor_start_record_btn = FadeHoverButton("Start recording", is_secondary=True)
+        self.editor_start_record_btn.setObjectName("helxairo_editorStartRecordBtn")
         self.editor_start_record_btn.setFixedHeight(36)
         col3.addWidget(self.editor_start_record_btn)
 
@@ -9188,14 +9938,17 @@ class MacroSettingsPanel(QWidget):
         """
         
         self.rb_auto_delay = QRadioButton("Auto insert delay")
+        self.rb_auto_delay.setObjectName("helxairo_rbAutoDelay")
         self.rb_auto_delay.setStyleSheet(_radio_style)
         col3.addWidget(self.rb_auto_delay)
 
         self.rb_default_delay = QRadioButton("Default delay")
+        self.rb_default_delay.setObjectName("helxairo_rbDefaultDelay")
         self.rb_default_delay.setStyleSheet(_radio_style)
         col3.addWidget(self.rb_default_delay)
 
         self.spin_default_delay = AdaptiveSpinBox()
+        self.spin_default_delay.setObjectName("helxairo_spinDefaultDelay")
         self.spin_default_delay.setRange(0, 9999)
         self.spin_default_delay.setValue(10)
         self.spin_default_delay.setAlignment(Qt.AlignCenter)
@@ -9206,23 +9959,28 @@ class MacroSettingsPanel(QWidget):
         col3.addSpacing(15)
 
         self.rb_cycle_release = QRadioButton("Cycle until the button is released")
+        self.rb_cycle_release.setObjectName("helxairo_rbCycleRelease")
         self.rb_cycle_release.setStyleSheet(_radio_style)
         col3.addWidget(self.rb_cycle_release)
 
         self.rb_cycle_any = QRadioButton("Cycle until any button is pressed")
+        self.rb_cycle_any.setObjectName("helxairo_rbCycleAny")
         self.rb_cycle_any.setStyleSheet(_radio_style)
         col3.addWidget(self.rb_cycle_any)
 
         self.rb_cycle_press = QRadioButton("Cycle until the button is pressed")
+        self.rb_cycle_press.setObjectName("helxairo_rbCyclePress")
         self.rb_cycle_press.setStyleSheet(_radio_style)
         col3.addWidget(self.rb_cycle_press)
 
         self.rb_cycle_times = QRadioButton("Cycle Times")
+        self.rb_cycle_times.setObjectName("helxairo_rbCycleTimes")
         self.rb_cycle_times.setStyleSheet(_radio_style)
         self.rb_cycle_times.setChecked(True)
         col3.addWidget(self.rb_cycle_times)
 
         self.spin_cycle_times = AdaptiveSpinBox()
+        self.spin_cycle_times.setObjectName("helxairo_spinCycleTimes")
         self.spin_cycle_times.setRange(1, 9999)
         self.spin_cycle_times.setValue(1)
         self.spin_cycle_times.setAlignment(Qt.AlignCenter)
@@ -9233,16 +9991,19 @@ class MacroSettingsPanel(QWidget):
         col3.addSpacing(15)
 
         lbl_insert = QLabel("Insert command")
+        lbl_insert.setObjectName("macroLblInsert")
         lbl_insert.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px;")
         col3.addWidget(lbl_insert)
 
         self.combo_insert_cmd = QComboBox()
+        self.combo_insert_cmd.setObjectName("helxairo_comboInsertCmd")
         self.combo_insert_cmd.setStyleSheet(_combo_style)
         col3.addWidget(self.combo_insert_cmd)
 
         col3.addStretch()
 
         self.editor_save_btn = FadeHoverButton("Save", is_secondary=False)
+        self.editor_save_btn.setObjectName("helxairo_editorSaveBtn")
         self.editor_save_btn.setIcon(QIcon(os.path.join(icons_dir, "save-floppy.svg")))
         self.editor_save_btn.setIconSize(QSize(16, 16))
         self.editor_save_btn.setFixedHeight(32)
@@ -9262,16 +10023,20 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 2: LIVE RECORDER ─────────────────────────────
         page_recorder = QWidget()
+        page_recorder.setObjectName("macroRecorderPage")
         page_recorder_scroll = SmoothScrollArea()
+        page_recorder_scroll.setObjectName("macroRecorderScroll")
         page_recorder_scroll.setWidgetResizable(True)
         page_recorder_scroll.setStyleSheet(_scroll_style)
         page_recorder_content = QWidget()
+        page_recorder_content.setObjectName("macroRecorderContent")
         page_recorder_content.setStyleSheet("background: transparent;")
         layout_recorder = QVBoxLayout(page_recorder_content)
         layout_recorder.setContentsMargins(0, 0, 0, 0)
         layout_recorder.setSpacing(15)
 
         recorder_group = QGroupBox("Record Macro")
+        recorder_group.setObjectName("macroRecorderGroup")
         recorder_group.setStyleSheet(_grp_style)
         recorder_layout = QVBoxLayout(recorder_group)
         recorder_layout.setSpacing(12)
@@ -9290,16 +10055,19 @@ class MacroSettingsPanel(QWidget):
         record_controls.addWidget(self.record_btn)
 
         self.record_status = QLabel("Ready")
+        self.record_status.setObjectName("helxairo_recordStatus")
         self.record_status.setStyleSheet("color: #888; font-size: 12px;")
         record_controls.addWidget(self.record_status)
 
         record_controls.addStretch()
 
         self.action_count_label = QLabel("0 actions")
+        self.action_count_label.setObjectName("helxairo_actionCountLabel")
         self.action_count_label.setStyleSheet("color: #A43F96; font-size: 12px; font-weight: bold;")
         record_controls.addWidget(self.action_count_label)
 
         self.playback_status = QLabel("")
+        self.playback_status.setObjectName("helxairo_playbackStatus")
         self.playback_status.setStyleSheet("color: #f39c12; font-weight: bold; font-size: 12px;")
         record_controls.addWidget(self.playback_status)
 
@@ -9309,14 +10077,17 @@ class MacroSettingsPanel(QWidget):
         options_row.setSpacing(15)
 
         self.record_mouse_cb = AnimatedCheckBox("Mouse Clicks")
+        self.record_mouse_cb.setObjectName("helxairo_recordMouseCb")
         self.record_mouse_cb.setChecked(True)
         options_row.addWidget(self.record_mouse_cb)
 
         self.record_movement_cb = AnimatedCheckBox("Mouse Movement")
+        self.record_movement_cb.setObjectName("helxairo_recordMovementCb")
         self.record_movement_cb.setChecked(False)
         options_row.addWidget(self.record_movement_cb)
 
         self.record_keyboard_cb = AnimatedCheckBox("Keyboard")
+        self.record_keyboard_cb.setObjectName("helxairo_recordKeyboardCb")
         self.record_keyboard_cb.setChecked(True)
         options_row.addWidget(self.record_keyboard_cb)
 
@@ -9327,6 +10098,7 @@ class MacroSettingsPanel(QWidget):
         playback_row.setSpacing(10)
 
         speed_lbl = QLabel("Speed:")
+        speed_lbl.setObjectName("macroRecorderSpeedLbl")
         speed_lbl.setStyleSheet("color: #e0e0e0;")
         playback_row.addWidget(speed_lbl)
 
@@ -9339,6 +10111,7 @@ class MacroSettingsPanel(QWidget):
         playback_row.addWidget(self.speed_combo)
 
         loops_lbl = QLabel("Loops:")
+        loops_lbl.setObjectName("macroRecorderLoopsLbl")
         loops_lbl.setStyleSheet("color: #e0e0e0;")
         playback_row.addWidget(loops_lbl)
 
@@ -9352,10 +10125,12 @@ class MacroSettingsPanel(QWidget):
         playback_row.addWidget(self.loop_spin)
 
         hotkey2_lbl = QLabel("Hotkey:")
+        hotkey2_lbl.setObjectName("macroRecorderHotkeyLbl")
         hotkey2_lbl.setStyleSheet("color: #e0e0e0;")
         playback_row.addWidget(hotkey2_lbl)
 
         self.playback_hotkey = HotkeyRecordButton("F9")
+        self.playback_hotkey.setObjectName("helxairo_playbackHotkey")
         playback_row.addWidget(self.playback_hotkey)
 
         playback_row.addStretch()
@@ -9398,16 +10173,20 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 3: PROFILES ─────────────────────────────────
         page_profiles = QWidget()
+        page_profiles.setObjectName("macroProfilesPage")
         page_profiles_scroll = SmoothScrollArea()
+        page_profiles_scroll.setObjectName("macroProfilesScroll")
         page_profiles_scroll.setWidgetResizable(True)
         page_profiles_scroll.setStyleSheet(_scroll_style)
         page_profiles_content = QWidget()
+        page_profiles_content.setObjectName("macroProfilesContent")
         page_profiles_content.setStyleSheet("background: transparent;")
         layout_profiles = QVBoxLayout(page_profiles_content)
         layout_profiles.setContentsMargins(0, 0, 0, 0)
         layout_profiles.setSpacing(15)
 
         profile_group = QGroupBox("Profiles")
+        profile_group.setObjectName("macroProfilesGroup")
         profile_group.setStyleSheet(_grp_style)
         profile_layout = QHBoxLayout(profile_group)
 
@@ -9565,10 +10344,12 @@ class MacroSettingsPanel(QWidget):
         page_mousetester = QWidget()
         page_mousetester.setObjectName("HelxairoMouseTesterPanel")
         page_mousetester_scroll = SmoothScrollArea()
+        page_mousetester_scroll.setObjectName("HelxairoMouseTesterScroll")
         page_mousetester_scroll.setWidgetResizable(True)
         page_mousetester_scroll.setStyleSheet(_scroll_style)
         
         page_mousetester_content = QWidget()
+        page_mousetester_content.setObjectName("HelxairoMouseTesterContent")
         page_mousetester_content.setStyleSheet("background: transparent;")
         mt_layout = QVBoxLayout(page_mousetester_content)
         mt_layout.setContentsMargins(15, 15, 15, 15)
@@ -9583,11 +10364,13 @@ class MacroSettingsPanel(QWidget):
         mt_group_layout.setSpacing(12)
 
         mt_desc = QLabel("Comprehensive Mouse Performance & CPS Diagnostics Suite")
+        mt_desc.setObjectName("HelxairoMouseTesterDesc")
         mt_desc.setStyleSheet("color: #a0a0a0; font-family: 'Orbitron', sans-serif; font-size: 12px;")
         mt_group_layout.addWidget(mt_desc)
 
         # Grid of Placeholder Feature Cards
         grid_container = QWidget()
+        grid_container.setObjectName("HelxairoMouseTesterGrid")
         grid_layout = QGridLayout(grid_container)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.setSpacing(15)
@@ -9607,8 +10390,10 @@ class MacroSettingsPanel(QWidget):
         """)
         cps_layout = QVBoxLayout(card_cps)
         cps_title = QLabel("CPS Benchmark")
+        cps_title.setObjectName("HelxairoCpsTestCardTitle")
         cps_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         cps_sub = QLabel("Real-time Click Per Second (CPS) Speed Test & High-Precision Counter")
+        cps_sub.setObjectName("HelxairoCpsTestCardSub")
         cps_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         cps_sub.setWordWrap(True)
         cps_layout.addWidget(cps_title)
@@ -9630,8 +10415,10 @@ class MacroSettingsPanel(QWidget):
         """)
         btn_layout = QVBoxLayout(card_btn)
         btn_title = QLabel("Button & Double-Click Test")
+        btn_title.setObjectName("HelxairoButtonTestCardTitle")
         btn_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         btn_sub = QLabel("Interactive mouse button tester, debouncing & chatter detection")
+        btn_sub.setObjectName("HelxairoButtonTestCardSub")
         btn_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         btn_sub.setWordWrap(True)
         btn_layout.addWidget(btn_title)
@@ -9653,8 +10440,10 @@ class MacroSettingsPanel(QWidget):
         """)
         scroll_layout = QVBoxLayout(card_scroll)
         scroll_title = QLabel("Scroll Wheel Test")
+        scroll_title.setObjectName("HelxairoScrollTestCardTitle")
         scroll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         scroll_sub = QLabel("Scroll direction, delta smoothness & wheel step counter")
+        scroll_sub.setObjectName("HelxairoScrollTestCardSub")
         scroll_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         scroll_sub.setWordWrap(True)
         scroll_layout.addWidget(scroll_title)
@@ -9676,8 +10465,10 @@ class MacroSettingsPanel(QWidget):
         """)
         poll_layout = QVBoxLayout(card_poll)
         poll_title = QLabel("Polling Rate & Latency")
+        poll_title.setObjectName("HelxairoPollingTestCardTitle")
         poll_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
         poll_sub = QLabel("Hz frequency report, motion smoothness & click latency estimation")
+        poll_sub.setObjectName("HelxairoPollingTestCardSub")
         poll_sub.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px;")
         poll_sub.setWordWrap(True)
         poll_layout.addWidget(poll_title)
@@ -9714,10 +10505,12 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 0: BENCHMARK HUB GRID (4 Cards Selector) ──
         hub_scroll = SmoothScrollArea()
+        hub_scroll.setObjectName("BenchmarkHubScroll")
         hub_scroll.setWidgetResizable(True)
         hub_scroll.setStyleSheet(_scroll_style)
         
         hub_content = QWidget()
+        hub_content.setObjectName("BenchmarkHubContent")
         hub_content.setStyleSheet("background: transparent;")
         hub_layout = QVBoxLayout(hub_content)
         hub_layout.setContentsMargins(20, 20, 20, 20)
@@ -9738,6 +10531,7 @@ class MacroSettingsPanel(QWidget):
 
         # 2x2 Grid of Feature Cards
         grid_container = QWidget()
+        grid_container.setObjectName("BenchmarkHubGrid")
         grid_layout = QGridLayout(grid_container)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.setSpacing(15)
@@ -9880,12 +10674,14 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 1: DEDICATED CPS BENCHMARK PAGE ──────────
         cps_page = QWidget()
+        cps_page.setObjectName("BenchmarkCpsPage")
         cps_page_layout = QVBoxLayout(cps_page)
         cps_page_layout.setContentsMargins(12, 10, 12, 10)
         cps_page_layout.setSpacing(8)
 
         # Active CPS Panel Suite (Back button integrated in header frame)
         self.cps_benchmark_panel = CpsBenchmarkPanel()
+        self.cps_benchmark_panel.setObjectName("BenchmarkCpsPanel")
         self.cps_benchmark_panel.back_clicked.connect(lambda: self._benchmark_stack.setCurrentIndex(0))
         cps_page_layout.addWidget(self.cps_benchmark_panel, 1)
 
@@ -9893,11 +10689,13 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 2: DEDICATED DOUBLE CLICK & CHATTER TEST PAGE ──────────
         dc_page = QWidget()
+        dc_page.setObjectName("BenchmarkDoubleClickPage")
         dc_page_layout = QVBoxLayout(dc_page)
         dc_page_layout.setContentsMargins(12, 10, 12, 10)
         dc_page_layout.setSpacing(8)
 
         self.double_click_panel = DoubleClickTestPanel()
+        self.double_click_panel.setObjectName("BenchmarkDoubleClickPanel")
         self.double_click_panel.back_clicked.connect(lambda: self._benchmark_stack.setCurrentIndex(0))
         dc_page_layout.addWidget(self.double_click_panel, 1)
 
@@ -9905,11 +10703,13 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 3: DEDICATED SCROLL WHEEL TEST PAGE ──────────
         scroll_page = QWidget()
+        scroll_page.setObjectName("BenchmarkScrollWheelPage")
         scroll_page_layout = QVBoxLayout(scroll_page)
         scroll_page_layout.setContentsMargins(12, 10, 12, 10)
         scroll_page_layout.setSpacing(8)
 
         self.scroll_wheel_panel = ScrollWheelTestPanel()
+        self.scroll_wheel_panel.setObjectName("BenchmarkScrollWheelPanel")
         self.scroll_wheel_panel.back_clicked.connect(lambda: self._benchmark_stack.setCurrentIndex(0))
         scroll_page_layout.addWidget(self.scroll_wheel_panel, 1)
 
@@ -9917,11 +10717,13 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 4: DEDICATED POLLING RATE TEST PAGE ──────────
         poll_page = QWidget()
+        poll_page.setObjectName("BenchmarkPollingRatePage")
         poll_page_layout = QVBoxLayout(poll_page)
         poll_page_layout.setContentsMargins(12, 10, 12, 10)
         poll_page_layout.setSpacing(8)
 
         self.polling_rate_panel = PollingRateTestPanel()
+        self.polling_rate_panel.setObjectName("BenchmarkPollingRatePanel")
         self.polling_rate_panel.back_clicked.connect(lambda: self._benchmark_stack.setCurrentIndex(0))
         poll_page_layout.addWidget(self.polling_rate_panel, 1)
 
@@ -9941,21 +10743,25 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 0: REFLEX HUB ──
         self.reflex_hub_panel = ReflexHubPanel()
+        self.reflex_hub_panel.setObjectName("ReflexHubPanel")
         self.reflex_hub_panel.mode_selected.connect(lambda idx: self._reflex_stack.setCurrentIndex(idx))
         self._reflex_stack.addWidget(self.reflex_hub_panel)  # Index 0: Selection Hub
 
         # ── SUB-PAGE 1: REACTION TIME TEST ──
         self.reaction_panel = ReactionTimePanel()
+        self.reaction_panel.setObjectName("ReflexReactionPanel")
         self.reaction_panel.back_clicked.connect(lambda: self._reflex_stack.setCurrentIndex(0))
         self._reflex_stack.addWidget(self.reaction_panel)    # Index 1: Reaction Test
 
         # ── SUB-PAGE 2: GRIDSHOT FLICK ARENA ──
         self.gridshot_panel = GridshotArenaPanel()
+        self.gridshot_panel.setObjectName("ReflexGridshotPanel")
         self.gridshot_panel.back_clicked.connect(lambda: self._reflex_stack.setCurrentIndex(0))
         self._reflex_stack.addWidget(self.gridshot_panel)    # Index 2: Gridshot Arena
 
         # ── SUB-PAGE 3: PRECISION TRACKING LAB ──
         self.tracking_panel = PrecisionTrackingPanel()
+        self.tracking_panel.setObjectName("ReflexTrackingPanel")
         self.tracking_panel.back_clicked.connect(lambda: self._reflex_stack.setCurrentIndex(0))
         self._reflex_stack.addWidget(self.tracking_panel)    # Index 3: Precision Tracking
 
@@ -9973,13 +10779,21 @@ class MacroSettingsPanel(QWidget):
 
         # ── SUB-PAGE 0: TACTICAL HUB ──
         self.tactical_hub_panel = TacticalToolsHubPanel()
+        self.tactical_hub_panel.setObjectName("TacticalHubPanel")
         self.tactical_hub_panel.tool_selected.connect(lambda idx: self._tactical_stack.setCurrentIndex(idx))
         self._tactical_stack.addWidget(self.tactical_hub_panel)  # Index 0: Hub
 
         # ── SUB-PAGE 1: SNIPER DPI CLUTCH ──
         self.sniper_clutch_panel = SniperClutchPanel()
+        self.sniper_clutch_panel.setObjectName("TacticalSniperClutchPanel")
         self.sniper_clutch_panel.back_clicked.connect(lambda: self._tactical_stack.setCurrentIndex(0))
         self._tactical_stack.addWidget(self.sniper_clutch_panel)  # Index 1: Sniper DPI Clutch
+
+        # ── SUB-PAGE 2: MULTI-MONITOR CURSOR CLAMP ──
+        self.cursor_clamp_panel = CursorClampPanel()
+        self.cursor_clamp_panel.setObjectName("TacticalCursorClampPanel")
+        self.cursor_clamp_panel.back_clicked.connect(lambda: self._tactical_stack.setCurrentIndex(0))
+        self._tactical_stack.addWidget(self.cursor_clamp_panel)  # Index 2: Cursor Clamp
 
         tactical_layout.addWidget(self._tactical_stack)
         self._page_stack.addWidget(tactical_tab)
@@ -10477,6 +11291,7 @@ class MacroSettingsPanel(QWidget):
     def _create_info_label(self, text: str) -> QLabel:
         """Create a styled info label for device info card."""
         label = QLabel(text)
+        label.setObjectName("helxairo_infoLabel")
         label.setStyleSheet("color: #888; font-size: 12px; font-weight: 500;")
         label.setFixedWidth(80)
         return label
@@ -10484,17 +11299,21 @@ class MacroSettingsPanel(QWidget):
     def _create_stat_widget(self, title: str, value: str) -> QWidget:
         """Create a stat widget with title and value for Quick Stats card."""
         widget = QWidget()
+        clean_title = re.sub(r'[^a-zA-Z0-9]', '', title) or "Stat"
+        widget.setObjectName(f"helxairo_statWidget_{clean_title}")
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(10, 5, 10, 5)
         layout.setSpacing(4)
         
         value_label = QLabel(value)
+        value_label.setObjectName(f"helxairo_statValue_{clean_title}")
         value_label.setFont(QFont("Orbitron", 24, QFont.Bold))
         value_label.setStyleSheet("color: #FF5B06;")
         value_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(value_label)
         
         title_label = QLabel(title)
+        title_label.setObjectName(f"helxairo_statTitle_{clean_title}")
         title_label.setFont(QFont("Orbitron", 10))
         title_label.setStyleSheet("color: #888;")
         title_label.setAlignment(Qt.AlignCenter)
@@ -10943,6 +11762,7 @@ class MacroSettingsPanel(QWidget):
         if not hasattr(self, 'macro_sort_btn'):
             return
         menu = QMenu(self)
+        menu.setObjectName("macroSortMenu")
         menu.setStyleSheet("""
             QMenu {
                 background-color: rgba(24, 26, 32, 0.95);
@@ -11230,6 +12050,7 @@ class MacroSettingsPanel(QWidget):
                         proceed_text="Proceed at Own Risk",
                         is_extreme_risk=True
                     )
+                    panel2.setObjectName("HelxairoExtremeWarningOverlay")
                     panel2.show()
                     panel2.raise_()
                 else:
@@ -11238,6 +12059,7 @@ class MacroSettingsPanel(QWidget):
                     self._ac_warning_ack = False
 
             warn_overlay = HelxairoLowIntervalWarningOverlayPanel(parent_window, on_first_proceed_ac)
+            warn_overlay.setObjectName("HelxairoLowIntervalWarningOverlay")
             warn_overlay.show()
             warn_overlay.raise_()
             return

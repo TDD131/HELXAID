@@ -104,12 +104,14 @@ class MusicSettingsDialog(QDialog):
         self.setup_ui()
         
     def setup_ui(self):
+        self.setObjectName("MusicSettingsDialog")
         layout = QVBoxLayout(self)
         layout.setSpacing(24) # Increased spacing
         layout.setContentsMargins(30, 30, 30, 30)
         
         # Header
         header_label = QLabel("Music Settings")
+        header_label.setObjectName("musicSettingsHeader")
         header_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #fff; margin-bottom: 5px;")
         layout.addWidget(header_label)
         
@@ -117,7 +119,9 @@ class MusicSettingsDialog(QDialog):
         dev_layout = QVBoxLayout()
         dev_layout.setSpacing(8)
         dev_label = QLabel("Audio Output Device")
+        dev_label.setObjectName("musicSettingsDevLabel")
         self.device_combo = QComboBox()
+        self.device_combo.setObjectName("musicSettingsDeviceCombo")
         self.populate_audio_devices()
         self.device_combo.currentIndexChanged.connect(self.change_audio_device)
         self.device_combo.setEditable(False)
@@ -131,7 +135,9 @@ class MusicSettingsDialog(QDialog):
         mode_layout = QVBoxLayout()
         mode_layout.setSpacing(8)
         mode_label = QLabel("Stereo Mode")
+        mode_label.setObjectName("musicSettingsModeLabel")
         self.mode_combo = QComboBox()
+        self.mode_combo.setObjectName("musicSettingsModeCombo")
         self.mode_combo.addItems([
             "Stereo (Default)", 
             "Mono", 
@@ -156,6 +162,7 @@ class MusicSettingsDialog(QDialog):
         folder_layout = QVBoxLayout()
         folder_layout.setSpacing(8)
         folder_label = QLabel("Music Folder")
+        folder_label.setObjectName("musicSettingsFolderLabel")
         
         folder_row = QHBoxLayout()
         folder_row.setSpacing(10)
@@ -213,6 +220,7 @@ class MusicSettingsDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         close_btn = QPushButton("Done")
+        close_btn.setObjectName("musicSettingsDoneBtn")
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.clicked.connect(self.accept)
         close_btn.setFixedWidth(120)

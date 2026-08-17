@@ -306,12 +306,14 @@ class MacroSettingsDialog(QDialog):
         
         # Header
         header = QLabel("Macro Settings")
+        header.setObjectName("macroDialogHeader")
         header.setFont(QFont("Orbitron", 18, QFont.Bold))
         header.setStyleSheet("color: #FF5B06; padding: 10px 0;")
         layout.addWidget(header)
         
         # Tabs
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("macroDialogTabs")
         layout.addWidget(self.tabs, 1)
         
         # Create tabs
@@ -324,11 +326,12 @@ class MacroSettingsDialog(QDialog):
         btn_layout.addStretch()
         
         self.save_btn = QPushButton("Save All")
-        self.save_btn.setObjectName("primaryBtn")
+        self.save_btn.setObjectName("macroDialogSaveBtn")
         self.save_btn.clicked.connect(self._save_all)
         btn_layout.addWidget(self.save_btn)
         
         self.close_btn = QPushButton("Close")
+        self.close_btn.setObjectName("macroDialogCloseBtn")
         self.close_btn.clicked.connect(self.close)
         btn_layout.addWidget(self.close_btn)
         
@@ -342,15 +345,18 @@ class MacroSettingsDialog(QDialog):
         
         # Status
         status_group = QGroupBox("Macro System Status")
+        status_group.setObjectName("macroDialogStatusGroup")
         status_layout = QHBoxLayout(status_group)
         
         self.status_label = QLabel("● Not Running")
+        self.status_label.setObjectName("macroDialogStatusLabel")
         self.status_label.setStyleSheet("color: #888; font-size: 14px;")
         status_layout.addWidget(self.status_label)
         
         status_layout.addStretch()
         
         self.toggle_btn = QPushButton("Start Macro System")
+        self.toggle_btn.setObjectName("macroDialogToggleBtn")
         self.toggle_btn.clicked.connect(self._toggle_system)
         status_layout.addWidget(self.toggle_btn)
         
@@ -358,28 +364,39 @@ class MacroSettingsDialog(QDialog):
         
         # Quick Actions
         quick_group = QGroupBox("Quick Actions")
+        quick_group.setObjectName("macroDialogQuickGroup")
         quick_layout = QVBoxLayout(quick_group)
         
         # Auto-clicker
         ac_layout = QHBoxLayout()
-        ac_layout.addWidget(QLabel("Auto-Clicker:"))
+        ac_lbl = QLabel("Auto-Clicker:")
+        ac_lbl.setObjectName("macroDialogAcLabel")
+        ac_layout.addWidget(ac_lbl)
         
         self.ac_button = QComboBox()
+        self.ac_button.setObjectName("macroDialogAcButton")
         self.ac_button.addItems(["Left Click", "Right Click", "Middle Click"])
         ac_layout.addWidget(self.ac_button)
         
-        ac_layout.addWidget(QLabel("Interval (ms):"))
+        interval_lbl = QLabel("Interval (ms):")
+        interval_lbl.setObjectName("macroDialogIntervalLabel")
+        ac_layout.addWidget(interval_lbl)
         self.ac_interval = SafeSpinBox()
+        self.ac_interval.setObjectName("macroDialogAcInterval")
         self.ac_interval.setRange(10, 5000)
         self.ac_interval.setValue(100)
         ac_layout.addWidget(self.ac_interval)
         
-        ac_layout.addWidget(QLabel("Toggle Key:"))
+        hotkey_lbl = QLabel("Toggle Key:")
+        hotkey_lbl.setObjectName("macroDialogHotkeyLabel")
+        ac_layout.addWidget(hotkey_lbl)
         self.ac_hotkey = QLineEdit("F6")
+        self.ac_hotkey.setObjectName("macroDialogAcHotkey")
         self.ac_hotkey.setMaximumWidth(60)
         ac_layout.addWidget(self.ac_hotkey)
         
         self.ac_create_btn = QPushButton("Create")
+        self.ac_create_btn.setObjectName("macroDialogAcCreateBtn")
         self.ac_create_btn.clicked.connect(self._create_autoclicker)
         ac_layout.addWidget(self.ac_create_btn)
         
@@ -388,19 +405,26 @@ class MacroSettingsDialog(QDialog):
         
         # Button Remap
         remap_layout = QHBoxLayout()
-        remap_layout.addWidget(QLabel("Button Remap:"))
+        remap_lbl = QLabel("Button Remap:")
+        remap_lbl.setObjectName("macroDialogRemapLabel")
+        remap_layout.addWidget(remap_lbl)
         
         self.remap_from = QComboBox()
+        self.remap_from.setObjectName("macroDialogRemapFrom")
         self.remap_from.addItems(["X1 (Side)", "X2 (Side)", "Middle"])
         remap_layout.addWidget(self.remap_from)
         
-        remap_layout.addWidget(QLabel("→"))
+        arrow_lbl = QLabel("→")
+        arrow_lbl.setObjectName("macroDialogArrowLabel")
+        remap_layout.addWidget(arrow_lbl)
         
         self.remap_to = QLineEdit("ctrl")
+        self.remap_to.setObjectName("macroDialogRemapTo")
         self.remap_to.setMaximumWidth(80)
         remap_layout.addWidget(self.remap_to)
         
         self.remap_create_btn = QPushButton("Create")
+        self.remap_create_btn.setObjectName("macroDialogRemapCreateBtn")
         self.remap_create_btn.clicked.connect(self._create_remap)
         remap_layout.addWidget(self.remap_create_btn)
         
@@ -411,17 +435,21 @@ class MacroSettingsDialog(QDialog):
         
         # Active Macros
         active_group = QGroupBox("Active Macros")
+        active_group.setObjectName("macroDialogActiveGroup")
         active_layout = QVBoxLayout(active_group)
         
         self.active_list = QListWidget()
+        self.active_list.setObjectName("macroDialogActiveList")
         active_layout.addWidget(self.active_list)
         
         active_btn_layout = QHBoxLayout()
         self.disable_all_btn = QPushButton("Disable All")
+        self.disable_all_btn.setObjectName("macroDialogDisableAllBtn")
         self.disable_all_btn.clicked.connect(self._disable_all)
         active_btn_layout.addWidget(self.disable_all_btn)
         
         self.delete_selected_btn = QPushButton("Delete Selected")
+        self.delete_selected_btn.setObjectName("macroDialogDeleteSelectedBtn")
         self.delete_selected_btn.clicked.connect(self._delete_selected)
         active_btn_layout.addWidget(self.delete_selected_btn)
         
@@ -435,10 +463,12 @@ class MacroSettingsDialog(QDialog):
     def _create_macros_tab(self):
         """Advanced macro creation tab."""
         tab = QWidget()
+        tab.setObjectName("macroDialogMacrosTab")
         layout = QVBoxLayout(tab)
         
         # Macro table
         self.macro_table = QTableWidget()
+        self.macro_table.setObjectName("macroDialogMacroTable")
         self.macro_table.setColumnCount(5)
         self.macro_table.setHorizontalHeaderLabels(["Name", "Type", "Trigger", "Status", "Actions"])
         self.macro_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -449,14 +479,17 @@ class MacroSettingsDialog(QDialog):
         btn_layout = QHBoxLayout()
         
         self.new_macro_btn = QPushButton("+ New Macro")
+        self.new_macro_btn.setObjectName("macroDialogNewMacroBtn")
         self.new_macro_btn.clicked.connect(self._new_macro)
         btn_layout.addWidget(self.new_macro_btn)
         
         self.edit_macro_btn = QPushButton("Edit")
+        self.edit_macro_btn.setObjectName("macroDialogEditMacroBtn")
         self.edit_macro_btn.clicked.connect(self._edit_macro)
         btn_layout.addWidget(self.edit_macro_btn)
         
         self.delete_macro_btn = QPushButton("Delete")
+        self.delete_macro_btn.setObjectName("macroDialogDeleteMacroBtn")
         self.delete_macro_btn.clicked.connect(self._delete_macro)
         btn_layout.addWidget(self.delete_macro_btn)
         
@@ -468,25 +501,32 @@ class MacroSettingsDialog(QDialog):
     def _create_profiles_tab(self):
         """Profile management tab."""
         tab = QWidget()
+        tab.setObjectName("macroDialogProfilesTab")
         layout = QHBoxLayout(tab)
         
         # Profile list
         left = QWidget()
+        left.setObjectName("macroDialogProfilesLeft")
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         
-        left_layout.addWidget(QLabel("Profiles"))
+        prof_title = QLabel("Profiles")
+        prof_title.setObjectName("macroDialogProfilesTitle")
+        left_layout.addWidget(prof_title)
         
         self.profile_list = QListWidget()
+        self.profile_list.setObjectName("macroDialogProfileList")
         self.profile_list.currentItemChanged.connect(self._on_profile_selected)
         left_layout.addWidget(self.profile_list)
         
         profile_btn_layout = QHBoxLayout()
         self.new_profile_btn = QPushButton("+")
+        self.new_profile_btn.setObjectName("macroDialogNewProfileBtn")
         self.new_profile_btn.clicked.connect(self._new_profile)
         profile_btn_layout.addWidget(self.new_profile_btn)
         
         self.delete_profile_btn = QPushButton("-")
+        self.delete_profile_btn.setObjectName("macroDialogDeleteProfileBtn")
         self.delete_profile_btn.clicked.connect(self._delete_profile)
         profile_btn_layout.addWidget(self.delete_profile_btn)
         
@@ -496,27 +536,34 @@ class MacroSettingsDialog(QDialog):
         
         # Profile details
         right = QWidget()
+        right.setObjectName("macroDialogProfilesRight")
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(10, 0, 0, 0)
         
         form = QFormLayout()
         
         self.profile_name = QLineEdit()
+        self.profile_name.setObjectName("macroDialogProfileName")
         form.addRow("Name:", self.profile_name)
         
         self.profile_apps = QLineEdit()
+        self.profile_apps.setObjectName("macroDialogProfileApps")
         self.profile_apps.setPlaceholderText("e.g., gta5.exe, valorant.exe")
         form.addRow("Bound Apps:", self.profile_apps)
         
         self.profile_hotkey = QLineEdit()
+        self.profile_hotkey.setObjectName("macroDialogProfileHotkey")
         self.profile_hotkey.setPlaceholderText("e.g., ctrl+shift+1")
         form.addRow("Activation Hotkey:", self.profile_hotkey)
         
         right_layout.addLayout(form)
         
         # Macros in profile
-        right_layout.addWidget(QLabel("Macros in this profile:"))
+        prof_macros_title = QLabel("Macros in this profile:")
+        prof_macros_title.setObjectName("macroDialogProfileMacrosTitle")
+        right_layout.addWidget(prof_macros_title)
         self.profile_macros = QListWidget()
+        self.profile_macros.setObjectName("macroDialogProfileMacros")
         right_layout.addWidget(self.profile_macros)
         
         layout.addWidget(right, 2)
@@ -584,10 +631,12 @@ class MacroSettingsDialog(QDialog):
                 
                 # Actions column
                 actions_widget = QWidget()
+                actions_widget.setObjectName(f"macroDialogActionsWidget_{row}")
                 actions_layout = QHBoxLayout(actions_widget)
                 actions_layout.setContentsMargins(4, 4, 4, 4)
                 
                 toggle_btn = QPushButton("Toggle")
+                toggle_btn.setObjectName(f"macroDialogToggleBtn_{macro.id}")
                 toggle_btn.setProperty("macro_id", macro.id)
                 toggle_btn.clicked.connect(lambda checked, m=macro: self._toggle_macro(m))
                 actions_layout.addWidget(toggle_btn)

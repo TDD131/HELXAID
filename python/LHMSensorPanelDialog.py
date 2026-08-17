@@ -24,18 +24,18 @@ class SensorCard(QFrame):
     """Card widget for individual hardware metrics."""
     def __init__(self, title: str, unit: str = "", color_hex: str = "#FF5B06", parent=None):
         super().__init__(parent)
-        self.setObjectName("SensorCard")
+        self.setObjectName("lhmSensorCard")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._unit = unit
         self._color_hex = color_hex
 
         self.setStyleSheet(f"""
-            QFrame#SensorCard {{
+            QFrame {{
                 background: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 10px;
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
             }}
-            QFrame#SensorCard:hover {{
+            QFrame:hover {{
                 border-color: {color_hex};
                 background: rgba(255, 255, 255, 0.06);
             }}
@@ -46,10 +46,12 @@ class SensorCard(QFrame):
         layout.setSpacing(4)
 
         self.lbl_title = QLabel(title.upper())
+        self.lbl_title.setObjectName("lhmSensorTitle")
         self.lbl_title.setStyleSheet("color: #888888; font-size: 10px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
         layout.addWidget(self.lbl_title)
 
         self.lbl_val = QLabel(f"-- {unit}")
+        self.lbl_val.setObjectName("lhmSensorValue")
         self.lbl_val.setStyleSheet(f"color: {color_hex}; font-size: 18px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
         layout.addWidget(self.lbl_val)
 
@@ -98,16 +100,19 @@ class LHMSensorPanelDialog(QDialog):
         header_row.setSpacing(12)
 
         icon_lbl = QLabel()
+        icon_lbl.setObjectName("lhmHeaderIcon")
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "libre.png")
         if os.path.exists(icon_path):
             icon_lbl.setPixmap(QPixmap(icon_path).scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         header_row.addWidget(icon_lbl)
 
         title_lbl = QLabel("LIBRE HARDWARE MONITOR")
+        title_lbl.setObjectName("lhmHeaderTitle")
         title_lbl.setStyleSheet("color: #ffffff; font-size: 18px; font-weight: 800; font-family: 'Orbitron'; background: transparent;")
         header_row.addWidget(title_lbl)
 
         sub_lbl = QLabel("• Live Sensor Feed (100% In-Process Engine)")
+        sub_lbl.setObjectName("lhmHeaderSub")
         sub_lbl.setStyleSheet("color: #00E5FF; font-size: 11px; font-weight: 600; font-family: 'Orbitron'; background: transparent;")
         header_row.addWidget(sub_lbl)
 
@@ -139,6 +144,7 @@ class LHMSensorPanelDialog(QDialog):
 
         # === SENSOR CARDS GRID ===
         scroll = QScrollArea()
+        scroll.setObjectName("lhmScrollArea")
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("""
             QScrollArea { border: none; background: transparent; }
@@ -147,6 +153,7 @@ class LHMSensorPanelDialog(QDialog):
         """)
 
         container = QWidget()
+        container.setObjectName("lhmGridContainer")
         container.setStyleSheet("background: transparent;")
         grid = QGridLayout(container)
         grid.setContentsMargins(0, 0, 0, 0)

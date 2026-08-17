@@ -21,6 +21,7 @@ class SpotlightOverlay(QWidget):
         # CRITICAL: Do NOT set WA_StyledBackground.
         # It forces Qt to paint a solid background before paintEvent, making the overlay black.
         # Child widgets are transparent by default; we paint everything ourselves.
+        self.setObjectName("spotlightOverlay")
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
 
         # Fill the entire parent
@@ -28,6 +29,7 @@ class SpotlightOverlay(QWidget):
 
         # --- Instruction label ---
         self._label = QLabel(instruction_text, self)
+        self._label.setObjectName("spotlightOverlayLabel")
         self._label.setWordWrap(True)
         self._label.setAlignment(Qt.AlignCenter)
         self._label.setFont(QFont("Orbitron", 11, QFont.Bold))

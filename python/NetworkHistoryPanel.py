@@ -7,6 +7,7 @@ Component Name: NetworkHistoryPanel
 """
 
 import os
+import re
 from typing import Dict, Any, List, Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
@@ -98,6 +99,7 @@ class NetworkHistoryPanel(QWidget):
 
         # Timeframe Dropdown
         tf_lbl = QLabel("Range:")
+        tf_lbl.setObjectName("netHistRangeLabel")
         tf_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron'; font-size: 11px;")
         h_layout.addWidget(tf_lbl)
 
@@ -125,6 +127,7 @@ class NetworkHistoryPanel(QWidget):
 
         # Export CSV Button
         export_btn = QPushButton("Export CSV")
+        export_btn.setObjectName("netHistExportBtn")
         export_btn.setFixedSize(85, 26)
         export_btn.setCursor(Qt.PointingHandCursor)
         export_btn.setStyleSheet("""
@@ -177,12 +180,14 @@ class NetworkHistoryPanel(QWidget):
 
         chart_title_row = QHBoxLayout()
         chart_title = QLabel("DAILY CONSUMPTION TIMELINE (GB)")
+        chart_title.setObjectName("netHistChartTitle")
         chart_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron'; font-size: 11px; font-weight: bold; background: transparent;")
         chart_title_row.addWidget(chart_title)
         chart_title_row.addStretch()
         c_layout.addLayout(chart_title_row)
 
         self.timeline_chart = pg.PlotWidget()
+        self.timeline_chart.setObjectName("netHistTimelinePlot")
         self.timeline_chart.setBackground(None)
         self.timeline_chart.showGrid(x=False, y=True, alpha=0.15)
         self.timeline_chart.hideAxis('bottom')
@@ -213,6 +218,7 @@ class NetworkHistoryPanel(QWidget):
 
         l_head = QHBoxLayout()
         l_title = QLabel("TOP BANDWIDTH CONSUMING APPLICATIONS")
+        l_title.setObjectName("netHistTopAppsTitle")
         l_title.setStyleSheet("color: #FF5B06; font-family: 'Orbitron'; font-size: 11px; font-weight: bold; background: transparent;")
         l_head.addWidget(l_title)
         l_head.addStretch()
@@ -247,6 +253,8 @@ class NetworkHistoryPanel(QWidget):
 
     def _build_stat_card(self, title: str, val: str, sub: str, color_hex: str):
         frame = QFrame()
+        clean_title = re.sub(r'[^a-zA-Z0-9]', '', title)
+        frame.setObjectName(f"netHistStatCard_{clean_title}")
         frame.setStyleSheet("""
             background-color: rgba(255, 255, 255, 0.03);
             border-radius: 8px;
@@ -257,12 +265,15 @@ class NetworkHistoryPanel(QWidget):
         layout.setSpacing(2)
 
         t_lbl = QLabel(title)
+        t_lbl.setObjectName(f"netHistStatTitle_{clean_title}")
         t_lbl.setStyleSheet(f"color: {color_hex}; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; background: transparent;")
         
         v_lbl = QLabel(val)
+        v_lbl.setObjectName(f"netHistStatVal_{clean_title}")
         v_lbl.setStyleSheet("color: #ffffff; font-family: 'Orbitron'; font-size: 14px; font-weight: bold; background: transparent;")
 
         s_lbl = QLabel(sub)
+        s_lbl.setObjectName(f"netHistStatSub_{clean_title}")
         s_lbl.setStyleSheet("color: #777777; font-family: 'Orbitron'; font-size: 9px; background: transparent;")
 
         layout.addWidget(t_lbl)
@@ -309,6 +320,7 @@ class NetworkHistoryPanel(QWidget):
             empty_item = QListWidgetItem(self.apps_list)
             empty_item.setSizeHint(QSize(0, 36))
             lbl = QLabel("No network usage recorded in this timeframe.")
+            lbl.setObjectName("netHistEmptyLbl")
             lbl.setStyleSheet("color: #666666; font-family: 'Orbitron'; font-size: 10px; background: transparent;")
             lbl.setAlignment(Qt.AlignCenter)
             self.apps_list.setItemWidget(empty_item, lbl)
@@ -318,7 +330,9 @@ class NetworkHistoryPanel(QWidget):
             item = QListWidgetItem(self.apps_list)
             item.setSizeHint(QSize(0, 36))
 
+            app_id = re.sub(r'[^a-zA-Z0-9]', '', app['name'])
             row_w = QWidget()
+            row_w.setObjectName(f"netHistAppRow_{app_id}")
             row_w.setStyleSheet("background: transparent;")
             r_lay = QHBoxLayout(row_w)
             r_lay.setContentsMargins(8, 2, 8, 2)
@@ -326,12 +340,14 @@ class NetworkHistoryPanel(QWidget):
 
             # Name
             name_lbl = QLabel(app["name"])
+            name_lbl.setObjectName(f"netHistAppName_{app_id}")
             name_lbl.setFixedWidth(150)
             name_lbl.setStyleSheet("color: #e0e0e0; font-weight: bold; font-size: 11px;")
             r_lay.addWidget(name_lbl)
 
             # Progress bar for share
             prog = QProgressBar()
+            prog.setObjectName(f"netHistAppProg_{app_id}")
             prog.setFixedHeight(4)
             prog.setTextVisible(False)
             prog.setValue(int(app["percentage"]))
@@ -343,6 +359,7 @@ class NetworkHistoryPanel(QWidget):
 
             # Total Bytes
             bytes_lbl = QLabel(self._fmt_bytes(app["bytes"]))
+            bytes_lbl.setObjectName(f"netHistAppBytes_{app_id}")
             bytes_lbl.setFixedWidth(90)
             bytes_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             bytes_lbl.setStyleSheet("color: #FDA903; font-family: 'Orbitron'; font-size: 10px; font-weight: bold;")
@@ -350,6 +367,7 @@ class NetworkHistoryPanel(QWidget):
 
             # Percentage
             pct_lbl = QLabel(f"{app['percentage']:.1f}%")
+            pct_lbl.setObjectName(f"netHistAppPct_{app_id}")
             pct_lbl.setFixedWidth(50)
             pct_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             pct_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron'; font-size: 10px;")
