@@ -6031,8 +6031,8 @@ class ReflexHubPanel(QWidget):
             }
         """
 
-        # Reflex & Aim Arena Group Box
-        hub_group = QGroupBox("Reflex & Aim Arena")
+        # Reflex & Aim Arena Group Box (Use && to escape mnemonic shortcut in Qt)
+        hub_group = QGroupBox("Reflex && Aim Arena")
         hub_group.setObjectName("ReflexArenaGroup")
         hub_group.setStyleSheet(_grp_style)
         hub_group_layout = QVBoxLayout(hub_group)
