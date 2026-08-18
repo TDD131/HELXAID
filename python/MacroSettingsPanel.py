@@ -9773,17 +9773,25 @@ class RapidFireTargetCanvas(QWidget):
         p.setBrush(QBrush(QColor("#0d1015")))
         p.drawRoundedRect(QRectF(0, 0, w, h), 10, 10)
 
-        # 2. Tactical Grid Lines
-        p.setPen(QPen(QColor(255, 255, 255, 8), 1, Qt.DotLine))
-        grid_step = 30
-        x = cx % grid_step
-        while x < w:
-            p.drawLine(QPointF(x, 0), QPointF(x, h))
-            x += grid_step
-        y = cy % grid_step
-        while y < h:
-            p.drawLine(QPointF(0, y), QPointF(w, y))
-            y += grid_step
+        # 2. Tactical Grid Lines (Centered precisely on target origin: cx, cy)
+        grid_pen = QPen(QColor(255, 255, 255, 18), 1, Qt.SolidLine)
+        p.setPen(grid_pen)
+        grid_step = 30.0
+
+        # Symmetrical Vertical Grid Lines (Exact alignment with cx)
+        start_x = cx - math.ceil(cx / grid_step) * grid_step
+        curr_x = start_x
+        while curr_x <= w + 1.0:
+            p.drawLine(QPointF(curr_x, 0), QPointF(curr_x, h))
+            curr_x += grid_step
+
+        # Symmetrical Horizontal Grid Lines (Exact alignment with cy)
+        start_y = cy - math.ceil(cy / grid_step) * grid_step
+        curr_y = start_y
+        while curr_y <= h + 1.0:
+            p.drawLine(QPointF(0, curr_y), QPointF(w, curr_y))
+            curr_y += grid_step
+
 
         # 3. Concentric Target Rings
         rings = [
@@ -9799,9 +9807,12 @@ class RapidFireTargetCanvas(QWidget):
             p.setBrush(Qt.NoBrush)
             p.drawEllipse(QPointF(cx, cy), radius, radius)
             if radius > 15:
-                p.setFont(QFont("Orbitron", 7))
-                p.setPen(QPen(QColor(255, 255, 255, 40)))
-                p.drawText(QRectF(cx - 15, cy - radius - 10, 30, 10), Qt.AlignCenter, label)
+                p.setFont(QFont("Orbitron", 8, QFont.Bold))
+                if label == "10":
+                    p.setPen(QColor(255, 91, 6, 200))
+                else:
+                    p.setPen(QColor(255, 255, 255, 120))
+                p.drawText(QRectF(cx - 15, cy - radius - 11, 30, 11), Qt.AlignCenter, label)
 
         # 4. Crosshair Reticle Lines with Recoil Offset
         recoil_cy = cy + self._recoil_offset_y
@@ -10186,22 +10197,24 @@ class RapidFirePanel(QWidget):
         self.burst_delay_slider.setValue(200)
         self.burst_delay_slider.setStyleSheet("""
             QSlider#RapidFireBurstDelaySlider::groove:horizontal {
-                border: none;
                 height: 4px;
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(60, 64, 72, 0.8);
                 border-radius: 2px;
+            }
+            QSlider#RapidFireBurstDelaySlider::handle:horizontal {
+                background: #e0e0e0;
+                width: 14px;
+                height: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+                border: none;
+            }
+            QSlider#RapidFireBurstDelaySlider::handle:horizontal:hover {
+                background: #ffffff;
             }
             QSlider#RapidFireBurstDelaySlider::sub-page:horizontal {
                 background: #FF5B06;
                 border-radius: 2px;
-            }
-            QSlider#RapidFireBurstDelaySlider::handle:horizontal {
-                background: #FFFFFF;
-                border: 2px solid #FF5B06;
-                width: 12px;
-                margin-top: -4px;
-                margin-bottom: -4px;
-                border-radius: 6px;
             }
         """)
         self.burst_delay_slider.valueChanged.connect(self._on_burst_delay_changed)
@@ -10283,22 +10296,24 @@ class RapidFirePanel(QWidget):
         self.speed_slider.setValue(18)
         self.speed_slider.setStyleSheet("""
             QSlider#RapidFireSpeedSlider::groove:horizontal {
-                border: none;
                 height: 4px;
-                background: rgba(255, 255, 255, 0.1);
+                background: rgba(60, 64, 72, 0.8);
                 border-radius: 2px;
+            }
+            QSlider#RapidFireSpeedSlider::handle:horizontal {
+                background: #e0e0e0;
+                width: 14px;
+                height: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+                border: none;
+            }
+            QSlider#RapidFireSpeedSlider::handle:horizontal:hover {
+                background: #ffffff;
             }
             QSlider#RapidFireSpeedSlider::sub-page:horizontal {
                 background: #FF5B06;
                 border-radius: 2px;
-            }
-            QSlider#RapidFireSpeedSlider::handle:horizontal {
-                background: #FFFFFF;
-                border: 2px solid #FF5B06;
-                width: 12px;
-                margin-top: -4px;
-                margin-bottom: -4px;
-                border-radius: 6px;
             }
         """)
         self.speed_slider.valueChanged.connect(self._on_speed_slider_changed)
