@@ -6346,16 +6346,26 @@ class TacticalInputCatcherButton(QPushButton):
 
     def __init__(self, default_key="Right Click", parent=None):
         super().__init__(parent)
-        self.setObjectName("TacticalInputCatcherBtn")
         self._current_key = default_key
         self._is_capturing = False
         self._hook = None
         self._hook_proc_ref = None
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(300)
+        self._anim_timer.timeout.connect(self._on_anim_tick)
+        self._anim_frames = [".", "..", "..."]
+        self._anim_index = 0
+        self.setObjectName("TacticalInputCatcherBtn")
         self.setFixedHeight(28)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self.win_key_swallowed.connect(self._on_win_key_swallowed, Qt.QueuedConnection)
         self._update_display()
+
+    def _on_anim_tick(self):
+        if self._is_capturing:
+            self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
+            self.setText(self._anim_frames[self._anim_index])
 
     def _install_hook(self):
         if self._hook is not None:
@@ -6427,6 +6437,12 @@ class TacticalInputCatcherButton(QPushButton):
     def set_captured_key(self, key_name: str):
         self._current_key = key_name
         self._is_capturing = False
+        if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self._update_display()
+
+    def setObjectName(self, name: str):
+        super().setObjectName(name)
         self._update_display()
 
     def get_captured_key(self) -> str:
@@ -6434,42 +6450,42 @@ class TacticalInputCatcherButton(QPushButton):
 
     def _update_display(self):
         if self._is_capturing:
-            self.setText("[ PRESS ANY KEY OR MOUSE BUTTON... ]")
             self.setStyleSheet("""
-                QPushButton#TacticalInputCatcherBtn {
-                    background-color: #1e2128;
-                    color: #FF5B06;
-                    border: 1px solid #FF5B06;
+                QPushButton {
+                    background: rgba(255, 255, 255, 0.1);
+                    color: #FFFFFF;
+                    border: none;
+                    padding: 0px 8px;
                     border-radius: 6px;
-                    padding: 0px 10px;
                     font-family: 'Orbitron', sans-serif;
-                    font-size: 10px;
+                    font-size: 14px;
                     font-weight: bold;
-                    text-align: center;
-                    min-height: 26px;
-                    max-height: 26px;
+                    min-height: 28px;
+                    max-height: 28px;
+                    height: 28px;
                 }
             """)
         else:
-            self.setText(f"BOUND: {self._current_key.upper()}")
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
+            self.setText(self._current_key.upper())
             self.setStyleSheet("""
-                QPushButton#TacticalInputCatcherBtn {
-                    background-color: #1e2128;
-                    color: #FFFFFF;
-                    border: 1px solid rgba(255, 255, 255, 0.12);
+                QPushButton {
+                    background: rgba(255, 255, 255, 0.1);
+                    color: #e0e0e0;
+                    border: none;
+                    padding: 0px 8px;
                     border-radius: 6px;
-                    padding: 0px 10px;
                     font-family: 'Orbitron', sans-serif;
                     font-size: 10px;
                     font-weight: bold;
-                    text-align: center;
-                    min-height: 26px;
-                    max-height: 26px;
+                    min-height: 28px;
+                    max-height: 28px;
+                    height: 28px;
                 }
-                QPushButton#TacticalInputCatcherBtn:hover {
-                    background-color: #1e2128;
-                    border: 1px solid #FF5B06;
-                    color: #FF5B06;
+                QPushButton:hover {
+                    background: rgba(255, 255, 255, 0.2);
+                    color: white;
                 }
             """)
 
@@ -6477,11 +6493,15 @@ class TacticalInputCatcherButton(QPushButton):
         if not self._is_capturing:
             # Start capturing mode
             self._is_capturing = True
+            self._anim_index = 0
+            self.setText(self._anim_frames[0])
             self._update_display()
             self.setFocus()
             self.grabKeyboard()
             self.grabMouse()
             self._install_hook()
+            if not self._anim_timer.isActive():
+                self._anim_timer.start()
             event.accept()
         else:
             # Capture the pressed mouse button (Reject Left Click)
@@ -8955,9 +8975,14 @@ class RapidFireHotkeyButton(QPushButton):
 
     def __init__(self, default_key="F8", parent=None):
         super().__init__(parent)
-        self.setObjectName("RapidFireHotkeyBtn")
         self._hotkey = default_key
         self._recording = False
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(300)
+        self._anim_timer.timeout.connect(self._on_anim_tick)
+        self._anim_frames = [".", "..", "..."]
+        self._anim_index = 0
+        self.setObjectName("RapidFireHotkeyBtn")
         self.setText(self._hotkey.upper())
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(28)
@@ -8965,10 +8990,21 @@ class RapidFireHotkeyButton(QPushButton):
         self._update_style()
         self.clicked.connect(self._toggle_recording)
 
+    def _on_anim_tick(self):
+        if self._recording:
+            self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
+            self.setText(self._anim_frames[self._anim_index])
+
     def set_hotkey(self, key_str: str):
         self._hotkey = key_str
         self.setText(key_str.upper())
         self._recording = False
+        if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self._update_style()
+
+    def setObjectName(self, name: str):
+        super().setObjectName(name)
         self._update_style()
 
     def get_hotkey(self) -> str:
@@ -8977,11 +9013,16 @@ class RapidFireHotkeyButton(QPushButton):
     def _toggle_recording(self):
         self._recording = not self._recording
         if self._recording:
-            self.setText("[ PRESS ANY KEY... ]")
+            self._anim_index = 0
+            self.setText(self._anim_frames[0])
             self._update_style()
             self.setFocus()
+            if not self._anim_timer.isActive():
+                self._anim_timer.start()
             self.recordingStarted.emit()
         else:
+            if self._anim_timer.isActive():
+                self._anim_timer.stop()
             self.setText(self._hotkey.upper())
             self._update_style()
             self.recordingStopped.emit()
@@ -8989,39 +9030,38 @@ class RapidFireHotkeyButton(QPushButton):
     def _update_style(self):
         if self._recording:
             self.setStyleSheet("""
-                QPushButton#RapidFireHotkeyBtn {
-                    background-color: #1e2128;
-                    color: #FF5B06;
-                    border: 1px solid #FF5B06;
-                    border-radius: 6px;
+                QPushButton {
+                    background: rgba(255, 255, 255, 0.1);
+                    color: #FFFFFF;
+                    border: none;
                     padding: 0px 8px;
+                    border-radius: 6px;
                     font-family: 'Orbitron', sans-serif;
-                    font-size: 10px;
+                    font-size: 14px;
                     font-weight: bold;
-                    text-align: center;
-                    min-height: 26px;
-                    max-height: 26px;
+                    min-height: 28px;
+                    max-height: 28px;
+                    height: 28px;
                 }
             """)
         else:
             self.setStyleSheet("""
-                QPushButton#RapidFireHotkeyBtn {
-                    background-color: #1e2128;
-                    color: #FFFFFF;
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    border-radius: 6px;
+                QPushButton {
+                    background: rgba(255, 255, 255, 0.1);
+                    color: #e0e0e0;
+                    border: none;
                     padding: 0px 8px;
+                    border-radius: 6px;
                     font-family: 'Orbitron', sans-serif;
                     font-size: 10px;
                     font-weight: bold;
-                    text-align: center;
-                    min-height: 26px;
-                    max-height: 26px;
+                    min-height: 28px;
+                    max-height: 28px;
+                    height: 28px;
                 }
-                QPushButton#RapidFireHotkeyBtn:hover {
-                    background-color: #1e2128;
-                    border: 1px solid #FF5B06;
-                    color: #FF5B06;
+                QPushButton:hover {
+                    background: rgba(255, 255, 255, 0.2);
+                    color: white;
                 }
             """)
 
@@ -9041,6 +9081,8 @@ class RapidFireHotkeyButton(QPushButton):
 
             if key == Qt.Key_Escape:
                 self._recording = False
+                if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                    self._anim_timer.stop()
                 self.setText(self._hotkey.upper())
                 self._update_style()
                 self.recordingStopped.emit()
@@ -9073,6 +9115,8 @@ class RapidFireHotkeyButton(QPushButton):
             self._hotkey = full_key
             self.setText(full_key.upper())
             self._recording = False
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
             self._update_style()
             self.recordingStopped.emit()
             self.hotkeyChanged.emit(full_key)
@@ -9083,6 +9127,8 @@ class RapidFireHotkeyButton(QPushButton):
     def focusOutEvent(self, event):
         if self._recording:
             self._recording = False
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
             self.setText(self._hotkey.upper())
             self._update_style()
             self.recordingStopped.emit()
@@ -10055,6 +10101,7 @@ class RapidFirePanel(QWidget):
         self.setObjectName("TacticalRapidFirePanel")
         self.controller = RapidFireController(self)
         self._setup_ui()
+        self._load_settings()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -10233,7 +10280,7 @@ class RapidFirePanel(QWidget):
 
         self.target_switcher = SlidingSegmentedPillTarget()
         self.target_switcher.setObjectName("RapidFireTargetTabFrame")
-        self.target_switcher.targetChanged.connect(self.controller.set_target_button)
+        self.target_switcher.targetChanged.connect(self._on_target_changed)
         c1_layout.addWidget(self.target_switcher)
 
         cfg_layout.addWidget(self.card1, 1)
@@ -10344,7 +10391,6 @@ class RapidFirePanel(QWidget):
         self.cb_jitter.setFixedHeight(26)
         self.cb_jitter.setChecked(True)
         self.cb_jitter.setToolTip("Injects microsecond Gaussian organic timing variation to prevent anti-cheat pattern detection.")
-        self.cb_jitter.toggled.connect(self.controller.set_humanize_jitter)
         self.cb_jitter.toggled.connect(self._on_jitter_toggled)
         c2_layout.addWidget(self.cb_jitter)
 
@@ -10387,13 +10433,13 @@ class RapidFirePanel(QWidget):
 
         self.trigger_input = TacticalInputCatcherButton(default_key="Left Click")
         self.trigger_input.setObjectName("RapidFireTriggerInput")
-        self.trigger_input.setFixedHeight(26)
+        self.trigger_input.setFixedHeight(28)
         self.trigger_input.input_captured.connect(self._on_trigger_captured)
         c3_row.addWidget(self.trigger_input, 1)
 
         self.arm_hotkey_btn = RapidFireHotkeyButton(default_key="F8")
         self.arm_hotkey_btn.setObjectName("RapidFireArmHotkeyBtn")
-        self.arm_hotkey_btn.setFixedHeight(26)
+        self.arm_hotkey_btn.setFixedHeight(28)
         self.arm_hotkey_btn.hotkeyChanged.connect(self._on_arm_hotkey_changed)
         c3_row.addWidget(self.arm_hotkey_btn, 1)
 
@@ -10408,7 +10454,7 @@ class RapidFirePanel(QWidget):
         self.cb_sound.setObjectName("RapidFireSoundCb")
         self.cb_sound.setChecked(True)
         self.cb_sound.setToolTip("Plays tone chime on engine arm/disarm.")
-        self.cb_sound.toggled.connect(self.controller.set_sound_enabled)
+        self.cb_sound.toggled.connect(self._on_sound_toggled)
         c3_layout.addWidget(self.cb_sound)
 
         cfg_layout.addWidget(self.card3, 1)
@@ -10422,7 +10468,7 @@ class RapidFirePanel(QWidget):
         self._card_anim.finished.connect(self._on_card_anim_finished)
 
         # ── 3. INTERACTIVE TARGET CANVAS ───────────────────────
-        self.target_canvas = RapidFireTargetCanvas()
+        self.target_canvas = RapidFireTargetCanvas(self)
         self.target_canvas.setObjectName("RapidFireTargetCanvas")
         self.controller.state_changed.connect(self.target_canvas.set_firing_state)
         self.controller.shot_dispatched.connect(self.target_canvas.record_shot)
@@ -10430,35 +10476,134 @@ class RapidFirePanel(QWidget):
         self.target_canvas.set_engine_enabled(self.controller.is_enabled)
         main_layout.addWidget(self.target_canvas, 1)
 
-        # Initialize burst delay slider visibility without animation on boot
-        self._update_burst_delay_visibility(animated=False)
+    def _get_settings_path(self) -> str:
+        appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+        base_dir = os.path.join(appdata, 'HELXAID')
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, 'helxairo_rapid_fire.json')
 
-    def _update_burst_delay_visibility(self, animated=True):
+    def _load_settings(self):
+        path = self._get_settings_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            if not isinstance(data, dict):
+                return
+
+            # 1. Firing Mode
+            if "mode" in data and data["mode"] in ("continuous", "burst_3", "burst_5"):
+                self.mode_switcher.set_mode(data["mode"])
+                self.controller.set_mode(data["mode"])
+                self.target_canvas.set_mode(data["mode"])
+
+            # 2. Trigger Type (Hold vs Single Click)
+            if "trigger_type" in data and data["trigger_type"] in ("hold", "single_click"):
+                self.trigger_type_switcher.set_trigger_type(data["trigger_type"])
+                self.controller.set_trigger_type(data["trigger_type"])
+
+            # 3. Target Button (Left M1 vs Right M2)
+            if "target_button" in data and data["target_button"] in ("left", "right"):
+                self.target_switcher.set_target(data["target_button"])
+                self.controller.set_target_button(data["target_button"])
+
+            # 4. Burst Delay
+            if "burst_delay_ms" in data:
+                b_delay = max(50, min(1000, int(data["burst_delay_ms"])))
+                self.burst_delay_slider.setValue(b_delay)
+                self.controller.set_burst_delay_ms(b_delay)
+
+            # 5. Cadence Speed
+            if "cadence_speed" in data:
+                c_speed = max(5, min(35, int(data["cadence_speed"])))
+                self.speed_slider.setValue(c_speed)
+                self.controller.set_target_cps(c_speed)
+                self.target_canvas.set_target_cps(c_speed)
+
+            # 6. Humanization Jitter
+            if "humanize_jitter" in data:
+                jitter = bool(data["humanize_jitter"])
+                self.cb_jitter.setChecked(jitter)
+                self.controller.set_humanize_jitter(jitter)
+                self.target_canvas.set_humanize_jitter(jitter)
+
+            # 7. Fire Trigger Key
+            if "fire_trigger" in data and data["fire_trigger"]:
+                trig = str(data["fire_trigger"])
+                self.trigger_input.set_captured_key(trig)
+                self.controller.set_trigger_key(trig)
+
+            # 8. Arm Toggle Hotkey
+            if "arm_hotkey" in data and data["arm_hotkey"]:
+                arm = str(data["arm_hotkey"])
+                self.arm_hotkey_btn.set_hotkey(arm)
+                self.controller.set_toggle_hotkey(arm)
+
+            # 9. Audible Tone Feedback
+            if "sound_enabled" in data:
+                snd = bool(data["sound_enabled"])
+                self.cb_sound.setChecked(snd)
+                self.controller.set_sound_enabled(snd)
+
+            self._update_burst_delay_visibility(animated=False)
+            print(f"[RapidFire] Settings successfully loaded from {path}")
+        except Exception as e:
+            print(f"[RapidFire] Error loading settings: {e}")
+
+    def _save_settings(self):
+        path = self._get_settings_path()
+        try:
+            settings = {
+                "mode": self.mode_switcher.get_mode(),
+                "burst_delay_ms": self.burst_delay_slider.value(),
+                "trigger_type": self.trigger_type_switcher.get_trigger_type(),
+                "target_button": self.target_switcher.get_target(),
+                "cadence_speed": self.speed_slider.value(),
+                "humanize_jitter": self.cb_jitter.isChecked(),
+                "fire_trigger": self.controller.trigger_key,
+                "arm_hotkey": self.controller.toggle_hotkey,
+                "sound_enabled": self.controller.sound_enabled
+            }
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2)
+        except Exception as e:
+            print(f"[RapidFire] Error saving settings: {e}")
+
+    def _update_burst_delay_visibility(self, animated: bool = True):
         is_burst = self.controller.mode in ("burst_3", "burst_5")
         is_hold = self.controller.trigger_type == "hold"
         show_burst_delay = is_burst and is_hold
 
-        target_pill_h = 28 if show_burst_delay else 38
-        cur_pill_h = self.mode_switcher.height()
-
-        if not animated or cur_pill_h == target_pill_h:
-            self._card_anim.stop()
-            self.burst_delay_frame.setVisible(show_burst_delay)
-            self._burst_opacity_effect.setOpacity(1.0 if show_burst_delay else 0.0)
-            self.burst_delay_frame.setMaximumHeight(44 if show_burst_delay else 0)
-            self.mode_switcher.setFixedHeight(target_pill_h)
-            self.trigger_type_switcher.setFixedHeight(target_pill_h)
-            self.target_switcher.setFixedHeight(target_pill_h)
+        if not animated:
+            if not show_burst_delay:
+                self.burst_delay_frame.setVisible(False)
+                self._burst_opacity_effect.setOpacity(0.0)
+                self.burst_delay_frame.setMaximumHeight(0)
+                self.mode_switcher.setFixedHeight(38)
+                self.trigger_type_switcher.setFixedHeight(38)
+                self.target_switcher.setFixedHeight(38)
+            else:
+                self.burst_delay_frame.setVisible(True)
+                self._burst_opacity_effect.setOpacity(1.0)
+                self.burst_delay_frame.setMaximumHeight(44)
+                self.mode_switcher.setFixedHeight(28)
+                self.trigger_type_switcher.setFixedHeight(28)
+                self.target_switcher.setFixedHeight(28)
             return
-
-        if show_burst_delay:
-            self.burst_delay_frame.setVisible(True)
 
         if self._card_anim.state() == QVariantAnimation.Running:
             self._card_anim.stop()
 
-        self._card_anim.setStartValue(cur_pill_h)
-        self._card_anim.setEndValue(target_pill_h)
+        start_h = self.mode_switcher.height()
+        target_h = 28 if show_burst_delay else 38
+
+        if show_burst_delay:
+            self.burst_delay_frame.setVisible(True)
+
+        self._card_anim.setStartValue(start_h)
+        self._card_anim.setEndValue(target_h)
         self._card_anim.start()
 
     def _on_card_anim_tick(self, val):
@@ -10494,10 +10639,16 @@ class RapidFirePanel(QWidget):
         self.controller.set_mode(mode_str)
         self.target_canvas.set_mode(mode_str)
         self._update_burst_delay_visibility(animated=True)
+        self._save_settings()
 
     def _on_trigger_type_changed(self, trigger_type: str):
         self.controller.set_trigger_type(trigger_type)
         self._update_burst_delay_visibility(animated=True)
+        self._save_settings()
+
+    def _on_target_changed(self, target_btn: str):
+        self.controller.set_target_button(target_btn)
+        self._save_settings()
 
     def _on_burst_delay_changed(self, val: int):
         self.controller.set_burst_delay_ms(val)
@@ -10506,9 +10657,16 @@ class RapidFirePanel(QWidget):
         else:
             txt = f"{val} ms"
         self.burst_delay_val_lbl.setText(txt)
+        self._save_settings()
 
     def _on_jitter_toggled(self, enabled: bool):
+        self.controller.set_humanize_jitter(enabled)
         self.target_canvas.set_humanize_jitter(enabled)
+        self._save_settings()
+
+    def _on_sound_toggled(self, enabled: bool):
+        self.controller.set_sound_enabled(enabled)
+        self._save_settings()
 
     def _on_speed_slider_changed(self, val: int):
         self.controller.set_target_cps(val)
@@ -10520,6 +10678,7 @@ class RapidFirePanel(QWidget):
         period_ms = int(1000.0 / max(1, val))
         hold_ms = min(14, int(period_ms * 0.4))
         self.speed_timing_lbl.setText(f"PERIOD: ~{period_ms}ms | HOLD: ~{hold_ms}ms | CADENCE: {val:.1f} Hz")
+        self._save_settings()
 
     def _on_speed_preset_selected(self, cps: int):
         self.speed_slider.setValue(cps)
@@ -10527,10 +10686,12 @@ class RapidFirePanel(QWidget):
     def _on_trigger_captured(self, key_name: str):
         self.controller.set_trigger_key(key_name)
         print(f"[RapidFire] Trigger Key bound to: {key_name}")
+        self._save_settings()
 
     def _on_arm_hotkey_changed(self, key_name: str):
         self.controller.set_toggle_hotkey(key_name)
         print(f"[RapidFire] Armed Toggle Hotkey bound to: {key_name}")
+        self._save_settings()
 
     def _on_reset_stats(self):
         self.target_canvas.clear_target()
