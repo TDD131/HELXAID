@@ -59,6 +59,7 @@ class TimeMaskLineEdit(QLineEdit):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("timeMaskLineEdit")
         self.setText("00:00")
         self.setMaxLength(5)
         self.setAlignment(Qt.AlignCenter)
@@ -300,6 +301,7 @@ class HotkeyRecordButton(QPushButton):
     
     def __init__(self, default_key: str = "Ctrl+Alt+L", parent=None, min_keys=3, forbidden_keys=None):
         super().__init__(parent)
+        self.setObjectName("hotkeyRecordBtn")
         self._recording = False
         self._min_keys = min_keys
         self._forbidden_keys = forbidden_keys or []
@@ -504,6 +506,7 @@ class FeatureCard(QFrame):
         
         if self._icon_path and os.path.exists(self._icon_path):
             icon_label = QLabel()
+            icon_label.setObjectName("featureCardIcon")
             icon_pixmap = get_cached_pixmap(self._icon_path, 28, 28)
             icon_label.setPixmap(icon_pixmap)
             icon_label.setFixedSize(28, 28)
@@ -514,6 +517,7 @@ class FeatureCard(QFrame):
         title_container.setSpacing(2)
         
         self.title_label = QLabel(self._title)
+        self.title_label.setObjectName("featureCardTitle")
         self.title_label.setStyleSheet("""
             color: #e0e0e0; 
             font-size: 16px; 
@@ -525,6 +529,7 @@ class FeatureCard(QFrame):
         
         if self._description:
             self.desc_label = QLabel(self._description)
+            self.desc_label.setObjectName("featureCardDesc")
             self.desc_label.setStyleSheet("""
                 color: #888888; 
                 font-size: 11px; 
@@ -570,6 +575,7 @@ class LockScreenOverlay(QWidget):
         layout.setContentsMargins(16, 16, 16, 16)
         
         container = QFrame()
+        container.setObjectName("lockScreenContainer")
         container.setStyleSheet("""
             QFrame {
                 background-color: rgba(20, 20, 22, 0.98);
@@ -589,22 +595,26 @@ class LockScreenOverlay(QWidget):
         lock_icon_path = os.path.join(SCRIPT_DIR, "UI Reguler", "lock.png")
         if os.path.exists(lock_icon_path):
             lock_icon_label = QLabel()
+            lock_icon_label.setObjectName("lockScreenIcon")
             lock_icon_label.setPixmap(get_cached_pixmap(lock_icon_path, 20, 20))
             lock_icon_label.setStyleSheet("border: none; background: transparent;")
             title_row.addWidget(lock_icon_label)
             
         title = QLabel("Screen is Locked")
+        title.setObjectName("lockScreenTitle")
         title.setStyleSheet("color: #E0E0E0; font-size: 16px; font-weight: 600; border: none; background: transparent;")
         title_row.addWidget(title)
         vbox.addLayout(title_row)
         
         hint = QLabel("Click Unlock to verify your identity")
+        hint.setObjectName("lockScreenHint")
         hint.setStyleSheet("color: #888; font-size: 11px; border: none; background: transparent;")
         hint.setAlignment(Qt.AlignCenter)
         vbox.addWidget(hint)
         
         # Unlock button
         unlock_btn = QPushButton("Unlock")
+        unlock_btn.setObjectName("lockScreenUnlockBtn")
         unlock_btn.setCursor(Qt.PointingHandCursor)
         unlock_btn.setFixedHeight(36)
         unlock_btn.setStyleSheet("""
@@ -769,6 +779,7 @@ class HelrcusHotkeyGuidePanel(QFrame):
         info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg")
         if os.path.exists(info_icon_path):
             icon_lbl = QLabel()
+            icon_lbl.setObjectName("GuideIcon")
             icon_lbl.setPixmap(get_cached_pixmap(info_icon_path, 18, 18))
             icon_lbl.setStyleSheet("background: transparent;")
             tb_layout.addWidget(icon_lbl)
@@ -782,6 +793,7 @@ class HelrcusHotkeyGuidePanel(QFrame):
         
         # Content body with SmoothScrollArea
         content_container = QWidget()
+        content_container.setObjectName("GuideContentContainer")
         body_vbox = QVBoxLayout(content_container)
         body_vbox.setContentsMargins(16, 0, 16, 0)
         body_vbox.setSpacing(0)
@@ -802,10 +814,12 @@ class HelrcusHotkeyGuidePanel(QFrame):
         </ul>
         """
         rules_lbl = QLabel(rules_html)
+        rules_lbl.setObjectName("GuideRulesLabel")
         rules_lbl.setWordWrap(True)
         rules_lbl.setStyleSheet("background: transparent;")
         
         self.scroll_area = SmoothScrollArea()
+        self.scroll_area.setObjectName("GuideScrollArea")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
         self.scroll_area.setStyleSheet("""
@@ -1868,6 +1882,7 @@ class WindowsCustomPanel(QWidget):
         title_section.setSpacing(4)
         
         title_label = QLabel("HELRCUS")
+        title_label.setObjectName("helrcusHeaderTitle")
         title_label.setStyleSheet("""
             color: #DDE6ED;
             font-size: 28px;
@@ -1879,6 +1894,7 @@ class WindowsCustomPanel(QWidget):
         title_section.addWidget(title_label)
         
         subtitle_label = QLabel("Windows Customization")
+        subtitle_label.setObjectName("helrcusHeaderSubtitle")
         subtitle_label.setStyleSheet("""
             color: #9DB2BF;
             font-size: 12px;
@@ -1903,6 +1919,7 @@ class WindowsCustomPanel(QWidget):
         
         # Scrollable content
         scroll = SmoothScrollArea()
+        scroll.setObjectName("helrcusScrollArea")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1917,6 +1934,7 @@ class WindowsCustomPanel(QWidget):
         """)
         
         content = QWidget()
+        content.setObjectName("helrcusContentWidget")
         content.setStyleSheet("background: transparent;")
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 8, 0)
@@ -1948,11 +1966,13 @@ class WindowsCustomPanel(QWidget):
         
         # Status indicator
         self._lock_status = QLabel("● Inactive")
+        self._lock_status.setObjectName("helrcusLockStatus")
         self._lock_status.setStyleSheet("color: #888888; font-size: 12px; font-weight: 500;")
         card.add_content(self._lock_status)
         
         # Separator
         sep = QFrame()
+        sep.setObjectName("helrcusLockSep")
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("background: rgba(255, 255, 255, 0.05); max-height: 1px; border: none;")
         card.add_content(sep)
@@ -1966,13 +1986,16 @@ class WindowsCustomPanel(QWidget):
         opacity_row.setSpacing(10)
         opacity_row.setAlignment(Qt.AlignVCenter)
         opacity_lbl = QLabel("Opacity:")
+        opacity_lbl.setObjectName("helrcusOpacityLabel")
         opacity_lbl.setFixedWidth(140)
         opacity_lbl.setStyleSheet("font-size: 12px;")
         self._opacity_slider = QSlider(Qt.Horizontal)
+        self._opacity_slider.setObjectName("helrcusOpacitySlider")
         self._opacity_slider.setRange(1, 100)
         self._opacity_slider.setValue(self._config["lock_screen"]["opacity"])
         self._opacity_slider.setFixedHeight(20)
         self._opacity_value = QLabel(f"{self._config['lock_screen']['opacity']}%")
+        self._opacity_value.setObjectName("helrcusOpacityValue")
         self._opacity_value.setFixedWidth(40)
         self._opacity_value.setStyleSheet("font-size: 12px; color: #FF5B06;")
         self._opacity_slider.valueChanged.connect(self._on_opacity_changed)
@@ -1986,10 +2009,12 @@ class WindowsCustomPanel(QWidget):
         hotkey_row.setSpacing(10)
         hotkey_row.setAlignment(Qt.AlignVCenter)
         hotkey_lbl = QLabel("Activation Hotkey:")
+        hotkey_lbl.setObjectName("helrcusActivationHotkeyLabel")
         hotkey_lbl.setFixedWidth(140)
         hotkey_lbl.setStyleSheet("font-size: 12px;")
         
         self._activation_hotkey_btn = HotkeyRecordButton(self._config["lock_screen"].get("hotkey", "Ctrl+Alt+L"))
+        self._activation_hotkey_btn.setObjectName("helrcusActivationHotkeyBtn")
         self._activation_hotkey_btn.hotkeyChanged.connect(self._on_activation_hotkey_changed)
         # Pause the OS-level hotkey while the user is recording a new one,
         # otherwise the current combo fires the lock screen before Qt captures it.
@@ -1997,9 +2022,11 @@ class WindowsCustomPanel(QWidget):
         self._activation_hotkey_btn.recordingStopped.connect(self._register_global_hotkey)
         
         hotkey_hint = QLabel("(Global activation)")
+        hotkey_hint.setObjectName("helrcusActivationHotkeyHint")
         hotkey_hint.setStyleSheet("color: #666; font-size: 10px;")
         
         rules_info_btn = QPushButton()
+        rules_info_btn.setObjectName("helrcusRulesInfoBtn")
         rules_info_btn.setFixedSize(24, 24)
         rules_info_btn.setCursor(Qt.PointingHandCursor)
         rules_info_btn.setToolTip("View Hotkey Rules")
@@ -2027,15 +2054,18 @@ class WindowsCustomPanel(QWidget):
         unlock_row.setSpacing(10)
         unlock_row.setAlignment(Qt.AlignVCenter)
         unlock_lbl = QLabel("Unlock Hotkey:")
+        unlock_lbl.setObjectName("helrcusUnlockHotkeyLabel")
         unlock_lbl.setFixedWidth(140)
         unlock_lbl.setStyleSheet("font-size: 12px;")
         
         self._unlock_hotkey_btn = HotkeyRecordButton(self._config["lock_screen"].get("unlock_hotkey", "Ctrl+Shift+L"))
+        self._unlock_hotkey_btn.setObjectName("helrcusUnlockHotkeyBtn")
         self._unlock_hotkey_btn.hotkeyChanged.connect(self._on_unlock_hotkey_changed)
         self._unlock_hotkey_btn.recordingStarted.connect(self._unregister_global_hotkey)
         self._unlock_hotkey_btn.recordingStopped.connect(self._register_global_hotkey)
         
         unlock_hint = QLabel("(Unlock when active)")
+        unlock_hint.setObjectName("helrcusUnlockHotkeyHint")
         unlock_hint.setStyleSheet("color: #666; font-size: 10px;")
         
         unlock_row.addWidget(unlock_lbl)
@@ -2054,6 +2084,7 @@ class WindowsCustomPanel(QWidget):
         info_row.setAlignment(Qt.AlignVCenter)
         
         info_icon_lbl = QLabel()
+        info_icon_lbl.setObjectName("helrcusLockInfoIcon")
         lock_key_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "lock-with-key.svg")
         if os.path.exists(lock_key_icon_path):
             info_icon_lbl.setPixmap(QPixmap(lock_key_icon_path).scaled(18, 18, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -2061,6 +2092,7 @@ class WindowsCustomPanel(QWidget):
         info_icon_lbl.setStyleSheet("background: transparent;")
         
         info_lbl = QLabel("Click lock screen → Unlock button → Windows lock screen (PIN / Fingerprint / Face)")
+        info_lbl.setObjectName("helrcusLockInfoLabel")
         info_lbl.setStyleSheet("color: #aaa; font-size: 11px; background: transparent;")
         info_lbl.setWordWrap(True)
         info_row.addWidget(info_icon_lbl)
@@ -2069,11 +2101,13 @@ class WindowsCustomPanel(QWidget):
         
         # Lock on app exit checkbox
         self._lock_on_exit_cb = AnimatedCheckBox("Lock workstation when HELXAID exits")
+        self._lock_on_exit_cb.setObjectName("helrcusLockOnExitCheckBox")
         self._lock_on_exit_cb.setChecked(self._config["lock_screen"]["lock_on_exit"])
         self._lock_on_exit_cb.toggled.connect(self._on_lock_exit_changed)
         controls_layout.addWidget(self._lock_on_exit_cb)
         
         controls_widget = QWidget()
+        controls_widget.setObjectName("helrcusLockControlsWidget")
         controls_widget.setLayout(controls_layout)
         card.add_content(controls_widget)
         
@@ -2083,7 +2117,7 @@ class WindowsCustomPanel(QWidget):
         btn_row.setAlignment(Qt.AlignVCenter)
         
         self._lock_activate_btn = QPushButton("  Activate Lock Screen")
-        self._lock_activate_btn.setObjectName("primaryBtn")
+        self._lock_activate_btn.setObjectName("helrcusActivateLockBtn")
         self._lock_activate_btn.setFixedHeight(40)
         # Set lock icon on button
         lock_btn_icon_path = os.path.join(script_dir, "UI Reguler", "lock.png")
@@ -2096,6 +2130,7 @@ class WindowsCustomPanel(QWidget):
         btn_row.addStretch()
         
         btn_widget = QWidget()
+        btn_widget.setObjectName("helrcusLockBtnWidget")
         btn_widget.setLayout(btn_row)
         card.add_content(btn_widget)
         
@@ -2106,6 +2141,7 @@ class WindowsCustomPanel(QWidget):
         tips_icon_path = os.path.join(script_dir, "UI Reguler", "tips.png")
         if os.path.exists(tips_icon_path):
             tips_icon = QLabel()
+            tips_icon.setObjectName("helrcusLockTipsIcon")
             tips_pix = QPixmap(tips_icon_path).scaled(14, 14, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             tips_icon.setPixmap(tips_pix)
             tips_icon.setFixedSize(14, 14)
@@ -2113,10 +2149,12 @@ class WindowsCustomPanel(QWidget):
             hotkey_row.addWidget(tips_icon)
         unlock_key = self._config["lock_screen"].get("unlock_hotkey", "Ctrl+Shift+L")
         self._hotkey_info = QLabel(f"Press {unlock_key} to unlock → Windows Lock Screen will appear")
+        self._hotkey_info.setObjectName("helrcusLockHotkeyInfo")
         self._hotkey_info.setStyleSheet("color: #aaa; font-size: 11px;")
         hotkey_row.addWidget(self._hotkey_info)
         hotkey_row.addStretch()
         hotkey_widget = QWidget()
+        hotkey_widget.setObjectName("helrcusLockHotkeyWidget")
         hotkey_widget.setLayout(hotkey_row)
         card.add_content(hotkey_widget)
         
@@ -2138,6 +2176,7 @@ class WindowsCustomPanel(QWidget):
         # Admin status
         is_admin = WindowsUpdateControl.is_admin()
         admin_status = QLabel("● Running as Administrator" if is_admin else "● Some features require Administrator")
+        admin_status.setObjectName("helrcusUpdateAdminStatus")
         admin_status.setStyleSheet(
             "color: #4CAF50; font-size: 11px;" if is_admin else "color: #FFA726; font-size: 11px;"
         )
@@ -2146,6 +2185,7 @@ class WindowsCustomPanel(QWidget):
         # Current status
         paused, pause_info = WindowsUpdateControl.get_update_status()
         self._update_status = QLabel(f"● Updates paused until {pause_info}" if paused else "● Updates active")
+        self._update_status.setObjectName("helrcusUpdateStatus")
         self._update_status.setStyleSheet(
             f"color: {'#FFA726' if paused else '#4CAF50'}; font-size: 12px; font-weight: 500;"
         )
@@ -2153,18 +2193,21 @@ class WindowsCustomPanel(QWidget):
         
         # Separator
         sep = QFrame()
+        sep.setObjectName("helrcusUpdateSep")
         sep.setFrameShape(QFrame.HLine)
         sep.setStyleSheet("background: rgba(255, 255, 255, 0.05); max-height: 1px; border: none;")
         card.add_content(sep)
         
         # Controls container
         controls = QWidget()
+        controls.setObjectName("helrcusUpdateControls")
         controls_layout = QVBoxLayout(controls)
         controls_layout.setContentsMargins(0, 8, 0, 0)
         controls_layout.setSpacing(14)
         
         # --- Pause Updates Section ---
         pause_lbl = QLabel("Pause until (DD/MM/YY):")
+        pause_lbl.setObjectName("helrcusPauseLabel")
         pause_lbl.setStyleSheet("font-size: 12px;")
         controls_layout.addWidget(pause_lbl)
         
@@ -2214,6 +2257,7 @@ class WindowsCustomPanel(QWidget):
 
         # Day input
         self._pause_day = QLineEdit()
+        self._pause_day.setObjectName("helrcusPauseDayInput")
         self._pause_day.setPlaceholderText("DD")
         self._pause_day.setFixedWidth(48)
         self._pause_day.setFixedHeight(36)
@@ -2223,6 +2267,7 @@ class WindowsCustomPanel(QWidget):
         self._pause_day.setStyleSheet(_input_style)
         
         sep1 = QLabel("/")
+        sep1.setObjectName("helrcusPauseDateSep1")
         sep1.setStyleSheet("color: #888; font-size: 14px; margin: 0px; background: transparent;")
         sep1.setFixedWidth(10)
         sep1.setFixedHeight(36)
@@ -2230,6 +2275,7 @@ class WindowsCustomPanel(QWidget):
         
         # Month input
         self._pause_month = QLineEdit()
+        self._pause_month.setObjectName("helrcusPauseMonthInput")
         self._pause_month.setPlaceholderText("MM")
         self._pause_month.setFixedWidth(48)
         self._pause_month.setFixedHeight(36)
@@ -2239,6 +2285,7 @@ class WindowsCustomPanel(QWidget):
         self._pause_month.setStyleSheet(_input_style)
         
         sep2 = QLabel("/")
+        sep2.setObjectName("helrcusPauseDateSep2")
         sep2.setStyleSheet("color: #888; font-size: 14px; margin: 0px; background: transparent;")
         sep2.setFixedWidth(10)
         sep2.setFixedHeight(36)
@@ -2246,6 +2293,7 @@ class WindowsCustomPanel(QWidget):
         
         # Year input
         self._pause_year = QLineEdit()
+        self._pause_year.setObjectName("helrcusPauseYearInput")
         self._pause_year.setPlaceholderText("YYYY")
         self._pause_year.setFixedWidth(64)
         self._pause_year.setFixedHeight(36)
@@ -2315,6 +2363,7 @@ class WindowsCustomPanel(QWidget):
         self._wu_resume_icon_path = os.path.join(script_dir, "UI Reguler", "loopRegular.png")
         
         self._toggle_update_btn = QPushButton()
+        self._toggle_update_btn.setObjectName("helrcusToggleUpdateBtn")
         self._toggle_update_btn.setFixedHeight(36)
         self._toggle_update_btn.setCursor(Qt.PointingHandCursor)
         self._toggle_update_btn.clicked.connect(self._on_toggle_update_clicked)
@@ -2334,6 +2383,7 @@ class WindowsCustomPanel(QWidget):
         
         # --- Disable Auto-Restart ---
         self._no_restart_cb = AnimatedCheckBox("Disable automatic restart after updates")
+        self._no_restart_cb.setObjectName("helrcusNoRestartCheckBox")
         self._no_restart_cb.setChecked(self._config["windows_update"]["disable_auto_restart"])
         self._no_restart_cb.toggled.connect(self._on_auto_restart_changed)
         controls_layout.addWidget(self._no_restart_cb)
@@ -2344,6 +2394,7 @@ class WindowsCustomPanel(QWidget):
         hours_row.setAlignment(Qt.AlignVCenter)
         
         hours_lbl = QLabel("Active hours:")
+        hours_lbl.setObjectName("helrcusActiveHoursLabel")
         hours_lbl.setFixedWidth(110)
         hours_lbl.setFixedHeight(36)
         hours_lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
@@ -2424,6 +2475,7 @@ class WindowsCustomPanel(QWidget):
         """
         
         self._hours_preset_combo = QComboBox()
+        self._hours_preset_combo.setObjectName("helrcusHoursPresetCombo")
         self._hours_preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self._hours_preset_combo.addItems(["Always Active", "8 Hours", "12 Hours", "18 Hours", "Customize"])
         # Set default selection from config
@@ -2440,6 +2492,7 @@ class WindowsCustomPanel(QWidget):
         
         # Custom duration container widget
         self._custom_hours_widget = QWidget()
+        self._custom_hours_widget.setObjectName("helrcusCustomHoursWidget")
         self._custom_hours_widget.setFixedHeight(36)
         self._custom_hours_widget.setStyleSheet("background: transparent; margin: 0px;")
         custom_layout = QHBoxLayout(self._custom_hours_widget)
@@ -2453,6 +2506,7 @@ class WindowsCustomPanel(QWidget):
         _sel_palette.setColor(QPalette.HighlightedText, QColor("#000000"))
 
         self._hours_start = QComboBox()
+        self._hours_start.setObjectName("helrcusHoursStartCombo")
         self._hours_start.setEditable(True)
         self._hours_start.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self._hours_start.addItems([f"{i:02d}:00" for i in range(24)])
@@ -2463,11 +2517,13 @@ class WindowsCustomPanel(QWidget):
         self._setup_time_combo_behavior(self._hours_start, _sel_palette)
         
         hours_to = QLabel("to")
+        hours_to.setObjectName("helrcusHoursToLabel")
         hours_to.setFixedHeight(36)
         hours_to.setAlignment(Qt.AlignCenter)
         hours_to.setStyleSheet("font-size: 12px; margin: 0px; background: transparent;")
         
         self._hours_end = QComboBox()
+        self._hours_end.setObjectName("helrcusHoursEndCombo")
         self._hours_end.setEditable(True)
         self._hours_end.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self._hours_end.addItems([f"{i:02d}:00" for i in range(24)])
@@ -2482,7 +2538,7 @@ class WindowsCustomPanel(QWidget):
         custom_layout.addWidget(self._hours_end, 0, Qt.AlignVCenter)
         
         self._apply_hours_btn = QPushButton("Apply")
-        self._apply_hours_btn.setObjectName("primaryBtn")
+        self._apply_hours_btn.setObjectName("helrcusApplyHoursBtn")
         self._apply_hours_btn.setFixedHeight(36)
         self._apply_hours_btn.setFixedWidth(90)
         self._apply_hours_btn.setStyleSheet(_primary_btn_style)
@@ -2500,7 +2556,6 @@ class WindowsCustomPanel(QWidget):
         # Hide custom duration selectors if not Customize
         self._custom_hours_widget.setVisible(self._hours_preset_combo.currentText() == "Customize")
         
-        
         card.add_content(controls)
         
         # Info note with icon
@@ -2510,16 +2565,19 @@ class WindowsCustomPanel(QWidget):
         tips_icon_path = os.path.join(script_dir, "UI Reguler", "tips.png")
         if os.path.exists(tips_icon_path):
             tips_icon2 = QLabel()
+            tips_icon2.setObjectName("helrcusUpdateTipsIcon")
             tips_pix2 = QPixmap(tips_icon_path).scaled(14, 14, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             tips_icon2.setPixmap(tips_pix2)
             tips_icon2.setFixedSize(14, 14)
             tips_icon2.setStyleSheet("background: transparent;")
             info_row.addWidget(tips_icon2)
         info_note = QLabel("Pause & active hours changes take effect immediately. Some options require admin privileges.")
+        info_note.setObjectName("helrcusUpdateInfoNote")
         info_note.setStyleSheet("color: #666; font-size: 11px; font-style: italic;")
         info_note.setWordWrap(True)
         info_row.addWidget(info_note, 1)
         info_widget = QWidget()
+        info_widget.setObjectName("helrcusUpdateInfoWidget")
         info_widget.setLayout(info_row)
         card.add_content(info_widget)
         
@@ -2631,14 +2689,14 @@ class WindowsCustomPanel(QWidget):
         if is_paused:
             self._toggle_update_btn.setText("  Resume Updates")
             self._toggle_update_btn.setStyleSheet(self._wu_secondary_btn_style)
-            self._toggle_update_btn.setObjectName("")  # Remove primaryBtn styling if any
+            self._toggle_update_btn.setObjectName("helrcusToggleUpdateBtn")
             if hasattr(self, '_wu_resume_icon_path') and os.path.exists(self._wu_resume_icon_path):
                 self._toggle_update_btn.setIcon(QIcon(self._wu_resume_icon_path))
                 self._toggle_update_btn.setIconSize(QSize(16, 16))
         else:
             self._toggle_update_btn.setText("  Pause Updates")
             self._toggle_update_btn.setStyleSheet(self._wu_primary_btn_style)
-            self._toggle_update_btn.setObjectName("primaryBtn")
+            self._toggle_update_btn.setObjectName("helrcusToggleUpdateBtn")
             if hasattr(self, '_wu_pause_icon_path') and os.path.exists(self._wu_pause_icon_path):
                 self._toggle_update_btn.setIcon(QIcon(self._wu_pause_icon_path))
                 self._toggle_update_btn.setIconSize(QSize(16, 16))
@@ -2731,6 +2789,7 @@ class WindowsCustomPanel(QWidget):
         """Setup segmented HH:MM time mask line edit for combo box."""
         current_val = combo.currentText()
         time_mask_edit = TimeMaskLineEdit(combo)
+        time_mask_edit.setObjectName("timeMaskLineEdit")
         combo.setLineEdit(time_mask_edit)
         
         line_edit = combo.lineEdit()

@@ -9852,30 +9852,58 @@ class RapidFireTargetCanvas(QWidget):
             p.drawEllipse(QPointF(dx, dy), r, r)
 
         # 7. TOP-LEFT HUD: CPS SPEEDOMETER GAUGE
-        gauge_x = 20
-        gauge_y = 20
-        gauge_w = 110
-        gauge_h = 75
-        p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(QColor(0, 0, 0, 100)))
-        p.drawRoundedRect(QRectF(gauge_x, gauge_y, gauge_w, gauge_h), 6, 6)
+        gauge_x = 15
+        gauge_y = 15
+        gauge_w = 126
+        gauge_h = 104
 
-        arc_rect = QRectF(gauge_x + 15, gauge_y + 8, 80, 80)
-        p.setPen(QPen(QColor(255, 255, 255, 20), 4, Qt.SolidLine, Qt.RoundCap))
-        p.drawArc(arc_rect, 30 * 16, 210 * 16)
-
-        pct = min(1.0, self._current_instant_cps / 40.0)
-        p.setPen(QPen(QColor("#FF5B06"), 4, Qt.SolidLine, Qt.RoundCap))
-        p.drawArc(arc_rect, 240 * 16, int(-210 * 16 * pct))
-
-        p.setFont(QFont("Orbitron", 11, QFont.Bold))
-        p.setPen(QColor("#FF5B06") if self._current_instant_cps > 0 else QColor("#888888"))
-        cps_str = f"{self._current_instant_cps:.1f}" if self._current_instant_cps > 0 else f"{self._target_cps:.0f}"
-        p.drawText(QRectF(gauge_x, gauge_y + 36, gauge_w, 16), Qt.AlignCenter, f"{cps_str} CPS")
-
-        p.setFont(QFont("Orbitron", 7))
+        # Header Title
+        p.setFont(QFont("Orbitron", 7, QFont.Bold))
         p.setPen(QColor("#888888"))
-        p.drawText(QRectF(gauge_x, gauge_y + 54, gauge_w, 12), Qt.AlignCenter, "REAL-TIME SPEED")
+        p.drawText(QRectF(gauge_x, gauge_y + 7, gauge_w, 12), Qt.AlignCenter, "REAL-TIME CADENCE")
+
+        # Large Circular Speedometer Arc (Shifted downward to y + 24 to avoid touching title)
+        arc_w = 72
+        arc_r = arc_w / 2.0
+        arc_x = gauge_x + (gauge_w - arc_w) / 2.0
+        arc_y = gauge_y + 24
+        arc_rect = QRectF(arc_x, arc_y, arc_w, arc_w)
+
+        # 240-degree sweeping tachometer arc (from bottom-left 210° to bottom-right -30°)
+        start_angle = 210
+        total_span = -240
+
+        # Background track arc
+        p.setPen(QPen(QColor(255, 255, 255, 20), 4, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(arc_rect, start_angle * 16, total_span * 16)
+
+        # Active glowing arc
+        pct = min(1.0, self._current_instant_cps / 40.0) if self._current_instant_cps > 0 else (self._target_cps / 40.0)
+        p.setPen(QPen(QColor("#FF5B06"), 4, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(arc_rect, start_angle * 16, int(total_span * 16 * pct))
+
+        # Glowing LED Needle Tip on Arc
+        current_deg = start_angle + (total_span * pct)
+        rad = math.radians(current_deg)
+        tip_cx = arc_x + arc_r
+        tip_cy = arc_y + arc_r
+        tip_x = tip_cx + arc_r * math.cos(rad)
+        tip_y = tip_cy - arc_r * math.sin(rad)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor("#FFFFFF")))
+        p.drawEllipse(QPointF(tip_x, tip_y), 2.5, 2.5)
+
+        # Main CPS Value (Positioned right in the center of the arc: y + 51)
+        p.setFont(QFont("Orbitron", 11, QFont.Bold))
+        p.setPen(QColor("#FF5B06") if self._current_instant_cps > 0 else QColor("#FFFFFF"))
+        cps_str = f"{self._current_instant_cps:.1f}" if self._current_instant_cps > 0 else f"{self._target_cps:.0f}"
+        p.drawText(QRectF(gauge_x, gauge_y + 51, gauge_w, 18), Qt.AlignCenter, f"{cps_str} CPS")
+
+        # Bottom Sub-Stat (PEAK at bottom opening: y + 84)
+        p.setFont(QFont("Orbitron", 7))
+        p.setPen(QColor("#777777"))
+        peak_val = max(self._target_cps, self._current_instant_cps)
+        p.drawText(QRectF(gauge_x, gauge_y + 84, gauge_w, 12), Qt.AlignCenter, f"PEAK: {peak_val:.0f} CPS")
 
         # 8. TOP-CENTER HUD: BURST CYCLE CADENCE & PIPS (Dynamic Animation)
         if self._mode in ("burst_3", "burst_5"):

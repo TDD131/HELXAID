@@ -652,6 +652,7 @@ class RamCleanerPresetDialog(QDialog):
     def _create_scroll_area(self) -> QScrollArea:
         """Create a styled scroll area."""
         scroll = SmoothScrollArea()
+        scroll.setObjectName("ramCleanerScrollArea")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setStyleSheet("""
