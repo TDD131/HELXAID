@@ -4870,7 +4870,7 @@ class GameLauncher(QWidget):
         if focus_widget:
             w = focus_widget
             while w:
-                if getattr(w, "_is_capturing", False):
+                if getattr(w, "_is_capturing", False) or getattr(w, "_recording", False):
                     return
                 w = w.parent()
 
@@ -4895,10 +4895,10 @@ class GameLauncher(QWidget):
             if isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)):
                 return
             
-            # Reject panel switching while any widget or parent is in input-capturing mode (e.g. TacticalInputCatcherButton)
+            # Reject panel switching while any widget or parent is in input-capturing / recording mode
             w = focus_widget
             while w:
-                if getattr(w, "_is_capturing", False):
+                if getattr(w, "_is_capturing", False) or getattr(w, "_recording", False):
                     return
                 w = w.parent()
             
@@ -6945,7 +6945,7 @@ class GameLauncher(QWidget):
         if focus_widget:
             w = focus_widget
             while w:
-                if getattr(w, "_is_capturing", False):
+                if getattr(w, "_is_capturing", False) or getattr(w, "_recording", False):
                     return
                 w = w.parent()
 

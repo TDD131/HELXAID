@@ -303,6 +303,8 @@ class HotkeyRecordButton(QPushButton):
         super().__init__(parent)
         self.setObjectName("hotkeyRecordBtn")
         self._recording = False
+        self._hook = None
+        self._hook_proc_ref = None
         self._min_keys = min_keys
         self._forbidden_keys = forbidden_keys or []
         self._hotkey = default_key
@@ -341,62 +343,220 @@ class HotkeyRecordButton(QPushButton):
                     color: white;
                 }
             """)
+
+    def _install_hook(self):
+        if self._hook is not None:
+            return
+        try:
+            from ctypes import wintypes
+            self._user32_dll = ctypes.WinDLL("user32", use_last_error=True)
             
+            class KBDLLHOOKSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ("vkCode", wintypes.DWORD),
+                    ("scanCode", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.c_ulonglong)
+                ]
+            HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT))
+            
+            self._user32_dll.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+            self._user32_dll.SetWindowsHookExW.restype = wintypes.HHOOK
+            self._user32_dll.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+            self._user32_dll.UnhookWindowsHookEx.restype = wintypes.BOOL
+            self._user32_dll.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT)]
+            self._user32_dll.CallNextHookEx.restype = ctypes.c_longlong
+
+            def _low_level_kb_proc(nCode, wParam, lParam):
+                if nCode >= 0 and self._recording:
+                    vk = lParam.contents.vkCode
+                    scan = lParam.contents.scanCode
+                    flags = lParam.contents.flags
+
+                    if vk in (0x5B, 0x5C):
+                        if wParam in (0x0100, 0x0104):
+                            try:
+                                self._user32_dll.keybd_event(0xE8, 0, 0, 0)
+                                self._user32_dll.keybd_event(0xE8, 0, 2, 0)
+                            except Exception:
+                                pass
+                        return 1
+
+                    if vk == 0x1B:
+                        if wParam in (0x0100, 0x0104):
+                            QTimer.singleShot(0, self._cancel_recording)
+                        return 1
+
+                    is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
+
+                    if wParam in (0x0100, 0x0104):
+                        if is_modifier:
+                            return 1
+                        else:
+                            # Must be A-Z for HELRCUS
+                            if 0x41 <= vk <= 0x5A:
+                                char = chr(vk).upper()
+                                mods = []
+                                if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
+                                    mods.append("Ctrl")
+                                if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
+                                    mods.append("Shift")
+                                if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
+                                    mods.append("Alt")
+
+                                if not mods:
+                                    QTimer.singleShot(0, lambda: self._show_prompt("Add Ctrl/Alt/Shift!"))
+                                    return 1
+
+                                full_key = "+".join(mods) + "+" + char
+                                QTimer.singleShot(0, lambda k=full_key: self._validate_and_commit(k))
+                            else:
+                                QTimer.singleShot(0, lambda: self._show_prompt("A-Z Letters Only!"))
+                            return 1
+                    elif wParam in (0x0101, 0x0105):
+                        return 1
+                return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
+
+            self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
+            self._hook = self._user32_dll.SetWindowsHookExW(13, self._hook_proc_ref, None, 0)
+        except Exception as e:
+            print(f"[HotkeyRecordButton] Hook install error: {e}")
+            self._hook = None
+
+    def _remove_hook(self):
+        if self._hook is not None:
+            try:
+                if hasattr(self, '_user32_dll') and self._user32_dll:
+                    self._user32_dll.UnhookWindowsHookEx(self._hook)
+                else:
+                    ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
+            except Exception:
+                pass
+            self._hook = None
+            self._hook_proc_ref = None
+
     def _start_recording(self):
         self._recording = True
         self.setText("Press key...")
         self._update_style()
         self.setFocus()
+        self.grabKeyboard()
+        self.grabMouse()
+        self._install_hook()
         self.recordingStarted.emit()
+
+    def _cancel_recording(self):
+        self._remove_hook()
+        try:
+            self.releaseKeyboard()
+            self.releaseMouse()
+        except Exception:
+            pass
+        self._recording = False
+        self.setText(self._hotkey.upper())
+        self._update_style()
+        self.recordingStopped.emit()
+
+    def _show_prompt(self, text: str):
+        self.setText(text)
+
+    def _validate_and_commit(self, full_key: str):
+        self._remove_hook()
+        try:
+            self.releaseKeyboard()
+            self.releaseMouse()
+        except Exception:
+            pass
+
+        # Rule 7: No Windows reserved system shortcuts
+        RESERVED_WIN_SHORTCUTS = {
+            "CTRL+C", "CTRL+V", "CTRL+X", "CTRL+A", "CTRL+Z", "CTRL+Y",
+            "CTRL+S", "CTRL+P", "CTRL+F", "CTRL+W", "CTRL+N", "CTRL+T",
+            "CTRL+O", "CTRL+H", "ALT+TAB", "ALT+F4", "ALT+ESC", "ALT+SPACE",
+            "CTRL+ALT+DEL", "CTRL+SHIFT+ESC", "CTRL+ESC"
+        }
+        if full_key.upper() in RESERVED_WIN_SHORTCUTS:
+            self.setText("Reserved Windows!")
+            self._recording = False
+            self._update_style()
+            self.recordingStopped.emit()
+            return
+            
+        # Rule 8: Global Shortcut Conflict Validation across HELXAID
+        try:
+            from MacroSettingsPanel import validate_shortcut_conflict, FloatingToast
+            is_valid, conflict_owner = validate_shortcut_conflict(full_key, owner_id="helrcus_lock")
+            if not is_valid:
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(
+                    target_w,
+                    "Shortcut Conflict",
+                    f"'{full_key}' is already assigned to {conflict_owner}. Please choose another hotkey."
+                )
+                self.setText("Already In Use!")
+                self._recording = False
+                self._update_style()
+                self.recordingStopped.emit()
+                return
+        except Exception:
+            if full_key.upper() in [k.upper() for k in self._forbidden_keys]:
+                self.setText("Already In Use!")
+                self._recording = False
+                self._update_style()
+                self.recordingStopped.emit()
+                return
+            
+        self._hotkey = full_key
+        self.setText(full_key.upper())
+        self._recording = False
+        self._update_style()
+        self.recordingStopped.emit()
+        self.hotkeyChanged.emit(full_key)
         
     def keyPressEvent(self, event):
         if self._recording:
             key = event.key()
-            
-            # Check for modifier keys pressed alone
+            if key == Qt.Key_Escape:
+                self._cancel_recording()
+                event.accept()
+                return
+
             if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
                 event.accept()
                 return
                 
-            # Rule 1: No Windows Key (Win Modifier or Meta Key)
             if (event.modifiers() & Qt.MetaModifier) or key in (Qt.Key_Meta, Qt.Key_Super_L, Qt.Key_Super_R):
                 self.setText("No Win Key!")
                 event.accept()
                 return
 
-            # Rule 2: No F1 - F24 Function Keys
             if Qt.Key_F1 <= key <= Qt.Key_F24:
                 self.setText("No F1-F12 Keys!")
                 event.accept()
                 return
 
-            # Rule 3: No Backspace, Delete, or Enter/Return Key
             if key in (Qt.Key_Backspace, Qt.Key_Delete, Qt.Key_Return, Qt.Key_Enter):
                 self.setText("No Enter/Del!")
                 event.accept()
                 return
 
-            # Rule 4: No Num Lock Key
             if key in (Qt.Key_NumLock, 0x01000035):
                 self.setText("No Num Lock!")
                 event.accept()
                 return
 
             key_name = self._key_to_name(key).upper()
-
-            # Rule 5: No Numpad or Numbers (0-9)
             if (Qt.Key_0 <= key <= Qt.Key_9) or (event.modifiers() & Qt.KeypadModifier) or "KP" in key_name or key_name.isdigit():
                 self.setText("No Numbers!")
                 event.accept()
                 return
 
-            # Rule 6: Letters A-Z Only for base key
             if not (Qt.Key_A <= key <= Qt.Key_Z):
                 self.setText("A-Z Letters Only!")
                 event.accept()
                 return
 
-            # Build modifier combination
             modifiers = []
             if event.modifiers() & Qt.ControlModifier:
                 modifiers.append("Ctrl")
@@ -411,41 +571,14 @@ class HotkeyRecordButton(QPushButton):
                 return
                 
             full_key = "+".join(modifiers) + "+" + key_name
-            
-            # Rule 7: No Windows reserved system shortcuts
-            RESERVED_WIN_SHORTCUTS = {
-                "CTRL+C", "CTRL+V", "CTRL+X", "CTRL+A", "CTRL+Z", "CTRL+Y",
-                "CTRL+S", "CTRL+P", "CTRL+F", "CTRL+W", "CTRL+N", "CTRL+T",
-                "CTRL+O", "CTRL+H", "ALT+TAB", "ALT+F4", "ALT+ESC", "ALT+SPACE",
-                "CTRL+ALT+DEL", "CTRL+SHIFT+ESC", "CTRL+ESC"
-            }
-            if full_key.upper() in RESERVED_WIN_SHORTCUTS:
-                self.setText("Reserved Windows!")
-                event.accept()
-                return
-                
-            # Rule 8: Key already in use / forbidden (activation != unlock)
-            if full_key.upper() in [k.upper() for k in self._forbidden_keys]:
-                self.setText("Already In Use!")
-                event.accept()
-                return
-                
-            self._hotkey = full_key
-            self.setText(full_key.upper())
-            self._recording = False
-            self._update_style()
-            self.recordingStopped.emit()
-            self.hotkeyChanged.emit(full_key)
+            self._validate_and_commit(full_key)
             event.accept()
         else:
             super().keyPressEvent(event)
             
     def focusOutEvent(self, event):
         if self._recording:
-            self._recording = False
-            self.setText(self._hotkey.upper())
-            self._update_style()
-            self.recordingStopped.emit()
+            self._cancel_recording()
         super().focusOutEvent(event)
         
     def _key_to_name(self, key: int) -> str:

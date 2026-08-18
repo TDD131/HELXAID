@@ -325,10 +325,13 @@ class HotkeyRecordButton(QPushButton):
     
     hotkeyChanged = Signal(str)
     
-    def __init__(self, default_key: str = "F6", parent=None):
+    def __init__(self, default_key="f6", parent=None):
         super().__init__(parent)
         self.setObjectName("HelxairoHotkeyBtn")
         self._recording = False
+        self._modifier_tapped_vk = None
+        self._hook = None
+        self._hook_proc_ref = None
         self._hotkey = default_key
         self.setText(default_key.upper())
         self.setFixedWidth(120)
@@ -343,7 +346,12 @@ class HotkeyRecordButton(QPushButton):
         self._anim_index = 0
         
         self._update_style()
-        
+
+    def _on_anim_tick(self):
+        if self._recording:
+            self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
+            self.setText(self._anim_frames[self._anim_index])
+
     def _update_style(self):
         if self._recording:
             self.setStyleSheet("""
@@ -384,22 +392,129 @@ class HotkeyRecordButton(QPushButton):
                     color: #ffffff;
                 }
             """)
+
+    def _install_hook(self):
+        if self._hook is not None:
+            return
+        try:
+            from ctypes import wintypes
+            self._user32_dll = ctypes.WinDLL("user32", use_last_error=True)
             
-    def _on_anim_tick(self):
-        if self._recording:
-            self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
-            self.setText(self._anim_frames[self._anim_index])
+            class KBDLLHOOKSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ("vkCode", wintypes.DWORD),
+                    ("scanCode", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.c_ulonglong)
+                ]
+            HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT))
+            
+            self._user32_dll.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+            self._user32_dll.SetWindowsHookExW.restype = wintypes.HHOOK
+            self._user32_dll.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+            self._user32_dll.UnhookWindowsHookEx.restype = wintypes.BOOL
+            self._user32_dll.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT)]
+            self._user32_dll.CallNextHookEx.restype = ctypes.c_longlong
+
+            def _low_level_kb_proc(nCode, wParam, lParam):
+                if nCode >= 0 and self._recording:
+                    vk = lParam.contents.vkCode
+                    scan = lParam.contents.scanCode
+                    flags = lParam.contents.flags
+
+                    if vk in (0x5B, 0x5C):
+                        if wParam in (0x0100, 0x0104):
+                            try:
+                                self._user32_dll.keybd_event(0xE8, 0, 0, 0)
+                                self._user32_dll.keybd_event(0xE8, 0, 2, 0)
+                            except Exception:
+                                pass
+                        return 1
+
+                    if vk == 0x1B:
+                        if wParam in (0x0100, 0x0104):
+                            QTimer.singleShot(0, lambda: self._finish_capture(self._hotkey))
+                        return 1
+
+                    is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
+
+                    if wParam in (0x0100, 0x0104):
+                        if is_modifier:
+                            self._modifier_tapped_vk = vk
+                            return 1
+                        else:
+                            self._modifier_tapped_vk = None
+                            mods = []
+                            if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
+                                mods.append("ctrl")
+                            if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
+                                mods.append("alt")
+                            if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
+                                mods.append("shift")
+
+                            base_key = format_tactical_vk(vk, scan, flags, fallback=self._hotkey or "f6").lower()
+                            full_key = "+".join(mods + [base_key]) if (mods and base_key not in mods) else base_key
+                            QTimer.singleShot(0, lambda k=full_key: self._finish_capture(k))
+                            return 1
+                    elif wParam in (0x0101, 0x0105):
+                        if is_modifier and self._modifier_tapped_vk is not None:
+                            tapped_vk = self._modifier_tapped_vk
+                            self._modifier_tapped_vk = None
+                            mod_name = "lshift" if (tapped_vk == 0xA0 or scan == 42) else ("rshift" if (tapped_vk == 0xA1 or scan == 54) else ("lctrl" if tapped_vk == 0xA2 else ("rctrl" if tapped_vk == 0xA3 else ("lalt" if tapped_vk == 0xA4 else "ralt"))))
+                            QTimer.singleShot(0, lambda k=mod_name: self._finish_capture(k))
+                        return 1
+                return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
+
+            self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
+            self._hook = self._user32_dll.SetWindowsHookExW(13, self._hook_proc_ref, None, 0)
+        except Exception as e:
+            print(f"[MacroHotkeyButton] Hook install error: {e}")
+            self._hook = None
+
+    def _remove_hook(self):
+        if self._hook is not None:
+            try:
+                if hasattr(self, '_user32_dll') and self._user32_dll:
+                    self._user32_dll.UnhookWindowsHookEx(self._hook)
+                else:
+                    ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
+            except Exception:
+                pass
+            self._hook = None
+            self._hook_proc_ref = None
 
     def _start_recording(self):
         self._recording = True
+        self._modifier_tapped_vk = None
         self._anim_index = 0
         self.setText(self._anim_frames[0])
         self._update_style()
         self.setFocus()
+        self.grabKeyboard()
+        self.grabMouse()
+        self._install_hook()
         if not self._anim_timer.isActive():
             self._anim_timer.start()
 
+    def _finish_capture(self, full_key: str):
+        self._remove_hook()
+        try:
+            self.releaseKeyboard()
+            self.releaseMouse()
+        except Exception:
+            pass
+        self._hotkey = full_key
+        self._stop_recording_ui()
+        self.hotkeyChanged.emit(full_key)
+
     def _stop_recording_ui(self):
+        self._remove_hook()
+        try:
+            self.releaseKeyboard()
+            self.releaseMouse()
+        except Exception:
+            pass
         self._recording = False
         if self._anim_timer.isActive():
             self._anim_timer.stop()
@@ -414,40 +529,19 @@ class HotkeyRecordButton(QPushButton):
                 event.accept()
                 return
             
-            # Build key name first (before checking modifiers)
             key_name = self._key_to_name(key)
-            
-            # If it's a modifier key alone and no other modifiers, record just the modifier
             if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta, Qt.Key_CapsLock):
-                # Use native scan code/virtual key to distinguish left/right
                 native_key = event.nativeVirtualKey()
-                
-                # Windows virtual key codes for left/right modifiers
                 modifier_names = {
-                    # Left modifiers (Windows VK codes)
-                    0xA0: "lshift",   # VK_LSHIFT
-                    0xA1: "rshift",   # VK_RSHIFT
-                    0xA2: "lctrl",    # VK_LCONTROL
-                    0xA3: "rctrl",    # VK_RCONTROL
-                    0xA4: "lalt",     # VK_LMENU
-                    0xA5: "ralt",     # VK_RMENU
-                    0x5B: "lwin",     # VK_LWIN
-                    0x5C: "rwin",     # VK_RWIN
-                    0x14: "capslock", # VK_CAPITAL
+                    0xA0: "lshift", 0xA1: "rshift", 0xA2: "lctrl", 0xA3: "rctrl",
+                    0xA4: "lalt", 0xA5: "ralt", 0x5B: "lwin", 0x5C: "rwin", 0x14: "capslock",
                 }
-                
-                # Fallback to generic names
                 generic_names = {
-                    Qt.Key_Control: "ctrl",
-                    Qt.Key_Shift: "shift", 
-                    Qt.Key_Alt: "alt",
-                    Qt.Key_Meta: "win",
-                    Qt.Key_CapsLock: "capslock"
+                    Qt.Key_Control: "ctrl", Qt.Key_Shift: "shift", 
+                    Qt.Key_Alt: "alt", Qt.Key_Meta: "win", Qt.Key_CapsLock: "capslock"
                 }
-                
                 full_key = modifier_names.get(native_key, generic_names.get(key, key_name))
             else:
-                # Add modifiers for non-modifier keys
                 modifiers = []
                 if event.modifiers() & Qt.ControlModifier:
                     modifiers.append("ctrl")
@@ -461,9 +555,7 @@ class HotkeyRecordButton(QPushButton):
                 else:
                     full_key = key_name
                 
-            self._hotkey = full_key
-            self._stop_recording_ui()
-            self.hotkeyChanged.emit(full_key)
+            self._finish_capture(full_key)
             event.accept()
         else:
             super().keyPressEvent(event)
@@ -6164,6 +6256,429 @@ SPI_GETMOUSESPEED = 0x0070
 SPI_SETMOUSESPEED = 0x0071
 SPIF_SENDCHANGE = 0x0002
 
+# Complete Universal Tactical Virtual Key Dictionary (Supports Mouse, Numpad, OEM Symbols, Navigation)
+TACTICAL_VK_MAP = {
+    # Mouse Buttons
+    "left click": 0x01, "mouse 1": 0x01, "mouse 1 (m1)": 0x01, "lclick": 0x01,
+    "right click": 0x02, "mouse 2": 0x02, "mouse 2 (m2)": 0x02, "rclick": 0x02,
+    "middle click": 0x04, "wheel": 0x04, "mouse 3": 0x04, "mouse 3 (m3)": 0x04, "mclick": 0x04,
+    "mouse 4": 0x05, "mouse button 4": 0x05, "xbutton1": 0x05, "mouse 4 (m4)": 0x05,
+    "mouse 5": 0x06, "mouse button 5": 0x06, "xbutton2": 0x06, "mouse 5 (m5)": 0x06,
+
+    # Modifier Keys
+    "left alt": 0xA4, "right alt": 0xA5, "alt": 0x12, "menu": 0x12,
+    "left ctrl": 0xA2, "right ctrl": 0xA3, "ctrl": 0x11, "control": 0x11,
+    "left shift": 0xA0, "right shift": 0xA1, "shift": 0x10,
+
+    # Standard Control & Navigation Keys
+    "space": 0x20, "spacebar": 0x20, "tab": 0x09, "caps lock": 0x14, "capslock": 0x14,
+    "enter": 0x0D, "return": 0x0D, "backspace": 0x08, "delete": 0x2E, "del": 0x2E, "insert": 0x2D, "ins": 0x2D,
+    "home": 0x24, "end": 0x23, "page up": 0x21, "pageup": 0x21, "pgup": 0x21,
+    "page down": 0x22, "pagedown": 0x22, "pgdn": 0x22,
+    "left": 0x25, "left arrow": 0x25, "arrow left": 0x25,
+    "up": 0x26, "up arrow": 0x26, "arrow up": 0x26,
+    "right": 0x27, "right arrow": 0x27, "arrow right": 0x27,
+    "down": 0x28, "down arrow": 0x28, "arrow down": 0x28,
+    "num lock": 0x90, "numlock": 0x90,
+    "scroll lock": 0x91, "scrolllock": 0x91,
+    "print screen": 0x2C, "printscreen": 0x2C, "prtsc": 0x2C, "prtscn": 0x2C,
+    "pause": 0x13, "pause break": 0x13,
+
+    # Numpad Digits (VK_NUMPAD0 0x60 .. VK_NUMPAD9 0x69)
+    "numpad 0": 0x60, "num 0": 0x60, "numpad0": 0x60, "num0": 0x60,
+    "numpad 1": 0x61, "num 1": 0x61, "numpad1": 0x61, "num1": 0x61,
+    "numpad 2": 0x62, "num 2": 0x62, "numpad2": 0x62, "num2": 0x62,
+    "numpad 3": 0x63, "num 3": 0x63, "numpad3": 0x63, "num3": 0x63,
+    "numpad 4": 0x64, "num 4": 0x64, "numpad4": 0x64, "num4": 0x64,
+    "numpad 5": 0x65, "num 5": 0x65, "numpad5": 0x65, "num5": 0x65,
+    "numpad 6": 0x66, "num 6": 0x66, "numpad6": 0x66, "num6": 0x66,
+    "numpad 7": 0x67, "num 7": 0x67, "numpad7": 0x67, "num7": 0x67,
+    "numpad 8": 0x68, "num 8": 0x68, "numpad8": 0x68, "num8": 0x68,
+    "numpad 9": 0x69, "num 9": 0x69, "numpad9": 0x69, "num9": 0x69,
+
+    # Numpad Operators & Special Keys
+    "numpad *": 0x6A, "numpad multiply": 0x6A, "numpad*": 0x6A, "num *": 0x6A,
+    "numpad +": 0x6B, "numpad plus": 0x6B, "numpad add": 0x6B, "numpad+": 0x6B, "num +": 0x6B,
+    "numpad separator": 0x6C,
+    "numpad -": 0x6D, "numpad minus": 0x6D, "numpad subtract": 0x6D, "numpad-": 0x6D, "num -": 0x6D,
+    "numpad .": 0x6E, "numpad decimal": 0x6E, "numpad dot": 0x6E, "numpad.": 0x6E, "num .": 0x6E,
+    "numpad /": 0x6F, "numpad divide": 0x6F, "numpad/": 0x6F, "num /": 0x6F,
+    "numpad enter": 0x0D,
+
+    # OEM Symbol Keys
+    "`": 0xC0, "~": 0xC0, "tilde": 0xC0, "backquote": 0xC0,
+    "-": 0xBD, "_": 0xBD, "minus": 0xBD, "dash": 0xBD,
+    "=": 0xBB, "+": 0xBB, "equals": 0xBB, "plus": 0xBB,
+    "[": 0xDB, "{": 0xDB, "left bracket": 0xDB, "open bracket": 0xDB,
+    "]": 0xDD, "}": 0xDD, "right bracket": 0xDD, "close bracket": 0xDD,
+    "\\": 0xDC, "|": 0xDC, "backslash": 0xDC, "pipe": 0xDC,
+    ";": 0xBA, ":": 0xBA, "semicolon": 0xBA, "colon": 0xBA,
+    "'": 0xDE, "\"": 0xDE, "quote": 0xDE, "single quote": 0xDE, "double quote": 0xDE,
+    ",": 0xBC, "<": 0xBC, "comma": 0xBC,
+    ".": 0xBE, ">": 0xBE, "period": 0xBE, "dot": 0xBE,
+    "/": 0xBF, "?": 0xBF, "slash": 0xBF, "question": 0xBF,
+}
+for _i in range(1, 25):
+    TACTICAL_VK_MAP[f"f{_i}"] = 0x70 + (_i - 1)
+
+
+def resolve_tactical_vk_code(key_name: str, fallback: int = 0x01) -> int:
+    """Resolve any mouse button, numpad key, function key, symbol, or letter to Win32 Virtual Key code."""
+    if not key_name:
+        return fallback
+    raw = key_name.strip().lower()
+    if raw in TACTICAL_VK_MAP:
+        return TACTICAL_VK_MAP[raw]
+    if len(raw) == 1:
+        return ord(raw.upper())
+    if raw.startswith("key ") or raw.startswith("key_"):
+        char = raw.split()[-1]
+        if len(char) == 1:
+            return ord(char.upper())
+    return fallback
+
+
+def normalize_shortcut_key(key_str: str) -> str:
+    """
+    Canonically normalizes a shortcut combination string.
+    E.g. 'Alt+Ctrl+l' -> 'Ctrl+Alt+L', 'numpad 1' -> 'Numpad 1', 'mouse 4' -> 'Mouse 4'.
+    """
+    if not key_str:
+        return ""
+    raw_parts = [p.strip() for p in str(key_str).split("+") if p.strip()]
+    if not raw_parts:
+        return ""
+
+    # Standardize modifier tokens
+    mod_order = {"ctrl": 1, "control": 1, "alt": 2, "shift": 3, "win": 4, "meta": 4, "super": 4}
+    mods_found = []
+    base_parts = []
+
+    for part in raw_parts:
+        low = part.lower()
+        if low in mod_order:
+            clean_mod = "Ctrl" if low in ("ctrl", "control") else ("Alt" if low == "alt" else ("Shift" if low == "shift" else "Win"))
+            if clean_mod not in mods_found:
+                mods_found.append(clean_mod)
+        else:
+            # Standardize base key representation
+            if low.startswith("numpad "):
+                num_suffix = low[7:].strip()
+                base_parts.append(f"Numpad {num_suffix.upper()}")
+            elif low in ("space", "spacebar"):
+                base_parts.append("Spacebar")
+            elif low in ("enter", "return"):
+                base_parts.append("Enter")
+            elif low.startswith("mouse ") or low.startswith("mouse_"):
+                base_parts.append(part.title())
+            elif low in ("right click", "left click", "middle click"):
+                base_parts.append(part.title())
+            elif len(part) == 1:
+                base_parts.append(part.upper())
+            else:
+                base_parts.append(part.upper())
+
+    # Sort modifiers in standard order: Ctrl -> Alt -> Shift -> Win
+    mods_found.sort(key=lambda m: mod_order.get(m.lower(), 99))
+
+    if not base_parts and mods_found:
+        return "+".join(mods_found)
+    return "+".join(mods_found + base_parts) if mods_found else "+".join(base_parts)
+
+
+def get_all_registered_global_shortcuts(exclude_owner: str = "") -> dict:
+    """
+    Dynamically scans and aggregates all registered global shortcuts across HELXAID modules.
+    Returns a dictionary mapping: normalized_shortcut -> "Feature Description (Module Name)"
+    """
+    registry = {}
+    appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+    helxaid_dir = os.path.join(appdata, 'HELXAID')
+
+    # 1. HELRCUS (Windows Customization / Screen Locker)
+    if exclude_owner != "helrcus_lock":
+        helrcus_path = os.path.join(helxaid_dir, 'helrcus_settings.json')
+        lock_hotkey = "Ctrl+Alt+L"
+        if os.path.exists(helrcus_path):
+            try:
+                with open(helrcus_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        lock_hotkey = data.get("lock_screen", {}).get("hotkey", "Ctrl+Alt+L")
+            except Exception:
+                pass
+        norm = normalize_shortcut_key(lock_hotkey)
+        if norm:
+            registry[norm] = "HELRCUS (Screen Locker)"
+
+    # 2. HELXAIRO: Sniper DPI Clutch
+    sniper_path = os.path.join(helxaid_dir, 'helxairo_sniper_clutch.json')
+    sniper_arm_k = "F7"
+    sniper_trig_k = "Right Click"
+    if os.path.exists(sniper_path):
+        try:
+            with open(sniper_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                sniper_arm_k = str(data.get("arm_hotkey") or "F7")
+                sniper_trig_k = str(data.get("trigger_key") or "Right Click")
+        except Exception:
+            pass
+
+    if exclude_owner != "sniper_arm":
+        norm = normalize_shortcut_key(sniper_arm_k)
+        if norm:
+            registry[norm] = "Sniper DPI Clutch (Master Arm)"
+
+    if exclude_owner != "sniper_trigger":
+        norm = normalize_shortcut_key(sniper_trig_k)
+        if norm:
+            registry[norm] = "Sniper DPI Clutch (Aim Trigger)"
+
+    # 3. HELXAIRO: Multi-Monitor Cursor Clamp
+    if exclude_owner != "cursor_clamp":
+        clamp_path = os.path.join(helxaid_dir, 'helxairo_cursor_clamp.json')
+        clamp_k = "Ctrl+Alt+C"
+        if os.path.exists(clamp_path):
+            try:
+                with open(clamp_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        clamp_k = str(data.get("trigger_key") or data.get("activation_hotkey") or "Ctrl+Alt+C")
+            except Exception:
+                pass
+        norm = normalize_shortcut_key(clamp_k)
+        if norm:
+            registry[norm] = "Cursor Clamp (Lock Toggle)"
+
+    # 4. HELXAIRO: Universal Rapid-Fire
+    rapid_path = os.path.join(helxaid_dir, 'helxairo_rapid_fire.json')
+    rapid_arm_k = "F8"
+    rapid_trig_k = "Left Click"
+    if os.path.exists(rapid_path):
+        try:
+            with open(rapid_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                rapid_arm_k = str(data.get("arm_hotkey") or "F8")
+                rapid_trig_k = str(data.get("fire_trigger") or "Left Click")
+        except Exception:
+            pass
+
+    if exclude_owner != "rapid_arm":
+        norm = normalize_shortcut_key(rapid_arm_k)
+        if norm:
+            registry[norm] = "Rapid-Fire (Master Arm)"
+
+    if exclude_owner != "rapid_trigger":
+        norm = normalize_shortcut_key(rapid_trig_k)
+        if norm:
+            registry[norm] = "Rapid-Fire (Fire Trigger)"
+
+    # 5. Windows OS Critical Reserved Shortcuts
+    win_reserved = {
+        "Ctrl+Alt+Del": "Windows Security Screen",
+        "Ctrl+Shift+Esc": "Windows Task Manager",
+        "Alt+Tab": "Windows App Switcher",
+        "Alt+F4": "Windows Close Application",
+        "Alt+Space": "Windows System Menu",
+        "Win+L": "Windows Lock Workstation",
+        "Win+D": "Windows Show Desktop",
+    }
+    for k, desc in win_reserved.items():
+        norm = normalize_shortcut_key(k)
+        if norm:
+            registry[norm] = f"Windows OS Reserved ({desc})"
+
+    return registry
+
+
+def validate_shortcut_conflict(proposed_key: str, owner_id: str = "") -> tuple:
+    """
+    Validates whether proposed_key conflicts with any existing global shortcuts.
+    Returns: (is_valid: bool, conflicting_owner_description: str)
+    If is_valid is True, conflicting_owner_description will be "".
+    """
+    if not proposed_key:
+        return False, "Empty Shortcut"
+
+    norm_proposed = normalize_shortcut_key(proposed_key)
+    if not norm_proposed:
+        return False, "Invalid Shortcut"
+
+    registry = get_all_registered_global_shortcuts(exclude_owner=owner_id)
+    if norm_proposed in registry:
+        return False, registry[norm_proposed]
+
+    return True, ""
+
+
+def is_tactical_hotkey_physically_down(hotkey_str: str) -> bool:
+    """
+    Win32 High-Performance State Checker for single keys, mouse buttons, or chord combinations.
+    E.g. 'Right Click', 'Numpad 1', 'F7', 'Ctrl+Right Click', 'Alt+Shift+X', 'Ctrl+Alt+C'.
+    """
+    if not hotkey_str:
+        return False
+    parts = [p.strip().lower() for p in str(hotkey_str).split('+') if p.strip()]
+    if not parts:
+        return False
+
+    for part in parts:
+        if part in ("ctrl", "control", "left ctrl", "right ctrl"):
+            ctrl_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or
+                             (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or
+                             (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000))
+            if not ctrl_down:
+                return False
+        elif part in ("alt", "left alt", "right alt", "menu"):
+            alt_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or
+                            (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or
+                            (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000))
+            if not alt_down:
+                return False
+        elif part in ("shift", "left shift", "right shift"):
+            shift_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or
+                              (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or
+                              (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000))
+            if not shift_down:
+                return False
+        else:
+            vk = resolve_tactical_vk_code(part, fallback=0)
+            if vk <= 0 or not (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000):
+                return False
+    return True
+
+
+def format_tactical_key_event(event, default_fallback: str = "Right Click") -> str:
+    """Format any QKeyEvent cleanly into human-readable string with explicit Numpad & Symbol differentiation."""
+    key = event.key()
+    vk = event.nativeVirtualKey()
+    scan = event.nativeScanCode()
+
+    # 1. Modifiers (Distinguish Left vs Right)
+    if key == Qt.Key_Alt or vk in (0x12, 0xA4, 0xA5):
+        try:
+            if (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000) != 0:
+                return "Right Alt"
+            elif (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) != 0:
+                return "Left Alt"
+        except Exception:
+            pass
+        return "Right Alt" if (event.nativeModifiers() & 0x02000000 or vk == 0xA5) else "Left Alt"
+
+    if key == Qt.Key_Control or vk in (0x11, 0xA2, 0xA3):
+        try:
+            if (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000) != 0:
+                return "Right Ctrl"
+            elif (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) != 0:
+                return "Left Ctrl"
+        except Exception:
+            pass
+        return "Right Ctrl" if (event.nativeModifiers() & 0x02000000 or vk == 0xA3) else "Left Ctrl"
+
+    if key == Qt.Key_Shift or vk in (0x10, 0xA0, 0xA1):
+        try:
+            if (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000) != 0:
+                return "Right Shift"
+            elif (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) != 0:
+                return "Left Shift"
+        except Exception:
+            pass
+        return "Right Shift" if (scan == 54 or vk == 0xA1) else "Left Shift"
+
+    # 2. Numpad Keys (VK 0x60 - 0x6F, Qt Numpad Keys & Numpad Enter)
+    if 0x60 <= vk <= 0x69:
+        return f"Numpad {vk - 0x60}"
+    if hasattr(Qt, 'Key_Numpad0') and Qt.Key_Numpad0 <= key <= Qt.Key_Numpad9:
+        return f"Numpad {key - Qt.Key_Numpad0}"
+    if vk == 0x6A or key == getattr(Qt, 'Key_NumpadMultiply', -1):
+        return "Numpad *"
+    if vk == 0x6B or key == getattr(Qt, 'Key_NumpadAdd', -1):
+        return "Numpad +"
+    if vk == 0x6C:
+        return "Numpad Separator"
+    if vk == 0x6D or key == getattr(Qt, 'Key_NumpadSubtract', -1):
+        return "Numpad -"
+    if vk == 0x6E or key == getattr(Qt, 'Key_NumpadPeriod', -1):
+        return "Numpad ."
+    if vk == 0x6F or key == getattr(Qt, 'Key_NumpadDivide', -1):
+        return "Numpad /"
+    if (vk == 0x0D or key in (Qt.Key_Return, Qt.Key_Enter)) and ((event.nativeModifiers() & 0x01000000) or scan in (284, 0x11C) or (event.modifiers() & Qt.KeypadModifier)):
+        return "Numpad Enter"
+
+    # 3. Navigation & Special Function Keys
+    if key == Qt.Key_Space:
+        return "Spacebar"
+    elif key == Qt.Key_Tab:
+        return "Tab"
+    elif key == Qt.Key_CapsLock:
+        return "Caps Lock"
+    elif key in (Qt.Key_Return, Qt.Key_Enter):
+        return "Enter"
+    elif key == Qt.Key_Backspace:
+        return "Backspace"
+    elif key == Qt.Key_Delete or vk == 0x2E:
+        return "Delete"
+    elif key == Qt.Key_Insert or vk == 0x2D:
+        return "Insert"
+    elif key == Qt.Key_Home or vk == 0x24:
+        return "Home"
+    elif key == Qt.Key_End or vk == 0x23:
+        return "End"
+    elif key == Qt.Key_PageUp or vk == 0x21:
+        return "Page Up"
+    elif key == Qt.Key_PageDown or vk == 0x22:
+        return "Page Down"
+    elif key == Qt.Key_Left or vk == 0x25:
+        return "Left"
+    elif key == Qt.Key_Up or vk == 0x26:
+        return "Up"
+    elif key == Qt.Key_Right or vk == 0x27:
+        return "Right"
+    elif key == Qt.Key_Down or vk == 0x28:
+        return "Down"
+    elif key == Qt.Key_NumLock or vk == 0x90:
+        return "Num Lock"
+    elif key == Qt.Key_ScrollLock or vk == 0x91:
+        return "Scroll Lock"
+    elif key == Qt.Key_Print or vk == 0x2C:
+        return "Print Screen"
+    elif key == Qt.Key_Pause or vk == 0x13:
+        return "Pause"
+    elif Qt.Key_F1 <= key <= Qt.Key_F24:
+        return f"F{key - Qt.Key_F1 + 1}"
+
+    # 4. OEM Symbol Keys
+    oem_symbol_map = {
+        0xC0: "`",
+        0xBD: "-",
+        0xBB: "=",
+        0xDB: "[",
+        0xDD: "]",
+        0xDC: "\\",
+        0xBA: ";",
+        0xDE: "'",
+        0xBC: ",",
+        0xBE: ".",
+        0xBF: "/",
+    }
+    if vk in oem_symbol_map:
+        return oem_symbol_map[vk]
+
+    # 5. Standard Alphanumeric Characters (A-Z, 0-9)
+    text = event.text().strip().upper()
+    if text and len(text) == 1 and text.isprintable():
+        return text
+
+    seq = QKeySequence(key).toString().strip()
+    if seq:
+        if seq.startswith("Key "):
+            seq = seq[4:].strip()
+        return seq
+
+    return default_fallback
+
 
 class SniperClutchController(QObject):
     """
@@ -6171,6 +6686,7 @@ class SniperClutchController(QObject):
     Component Name: SniperClutchController
     """
     clutch_state_changed = Signal(bool, int, int)  # is_active, current_speed, baseline_speed
+    enabled_state_changed = Signal(bool)           # is_enabled for UI & global state sync
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -6181,16 +6697,21 @@ class SniperClutchController(QObject):
         self._last_phys_down = False
         self.damping_percent = 40  # 40% of baseline speed
         self.trigger_key = "Right Click"
+        self.arm_hotkey = "F7"
+        self._last_arm_down = False
+        self.sound_enabled = True
         
-        # Read system baseline speed once and anchor it
+        # Read system baseline speed once and anchor it as user's original speed
         detected = self._get_system_mouse_speed()
-        self.baseline_speed = detected if (1 <= detected <= 20) else 10
+        self.user_original_speed = detected if (1 <= detected <= 20) else 10
+        self.baseline_speed = self.user_original_speed
         self._calculate_clutch_speed()
 
-        # High-frequency watchdog (25ms) to detect physical key hold/release
+        # High-frequency watchdog (25ms) to detect physical key hold/release & global arm hotkey
         self._watchdog = QTimer(self)
         self._watchdog.setInterval(25)
         self._watchdog.timeout.connect(self._poll_physical_trigger)
+        self._watchdog.start()
         
         atexit.register(self.force_restore)
 
@@ -6210,7 +6731,12 @@ class SniperClutchController(QObject):
         except Exception as e:
             print(f"[SniperClutch] Failed to set pointer speed: {e}")
 
+    def toggle_enabled(self):
+        self.set_enabled(not self.is_enabled)
+
     def set_enabled(self, enabled: bool):
+        if self.is_enabled == enabled:
+            return
         self.is_enabled = enabled
         if enabled:
             # Refresh baseline before starting
@@ -6219,12 +6745,11 @@ class SniperClutchController(QObject):
                 if 1 <= cur <= 20:
                     self.baseline_speed = cur
                 self._calculate_clutch_speed()
-            self._watchdog.start()
-            print(f"[SniperClutch] Armed & Enabled (Baseline: {self.baseline_speed}, Clutch: {self.clutch_speed}, Key: {self.trigger_key})")
+            print(f"[SniperClutch] Armed & Enabled (Baseline: {self.baseline_speed}, Clutch: {self.clutch_speed}, Key: {self.trigger_key}, ArmKey: {self.arm_hotkey})")
         else:
-            self._watchdog.stop()
             self.force_restore()
             print("[SniperClutch] Disarmed & Disabled")
+        self.enabled_state_changed.emit(self.is_enabled)
 
     def _calculate_clutch_speed(self):
         self.clutch_speed = max(1, int(round(self.baseline_speed * (self.damping_percent / 100.0))))
@@ -6238,65 +6763,22 @@ class SniperClutchController(QObject):
         self._hotkey_last_state = True
         self._suppress_hotkey_ticks = 20  # Debounce suppression for ~500ms after recording
 
+    def set_arm_hotkey(self, key_name: str):
+        self.arm_hotkey = key_name
+        self._last_arm_down = True  # Debounce initial click
+        print(f"[SniperClutch] Master Arm Hotkey updated to: {key_name}")
+
     def reset_to_standard_baseline(self):
-        """Emergency reset Windows speed back to 10."""
-        self.baseline_speed = 10
+        """Emergency reset Windows pointer speed back to user's original baseline speed."""
+        target_speed = getattr(self, 'user_original_speed', 10)
+        self.baseline_speed = target_speed
         self._calculate_clutch_speed()
-        self._set_system_mouse_speed(10)
+        self._set_system_mouse_speed(target_speed)
         self.is_clutch_held = False
-        self.clutch_state_changed.emit(False, 10, 10)
+        self.clutch_state_changed.emit(False, target_speed, target_speed)
 
     def _get_vk_code(self, key_name: str) -> int:
-        raw = key_name.strip().lower()
-        mapping = {
-            "left click": 0x01,      # VK_LBUTTON
-            "mouse 1": 0x01,
-            "right click": 0x02,     # VK_RBUTTON
-            "rclick": 0x02,
-            "mouse 2": 0x02,
-            "middle click": 0x04,    # VK_MBUTTON
-            "wheel": 0x04,
-            "mouse 3": 0x04,
-            "mouse 4": 0x05,         # VK_XBUTTON1
-            "mouse button 4": 0x05,
-            "mouse 5": 0x06,         # VK_XBUTTON2
-            "mouse button 5": 0x06,
-            "left alt": 0xA4,        # VK_LMENU (0xA4)
-            "right alt": 0xA5,       # VK_RMENU (0xA5)
-            "alt": 0x12,             # VK_MENU
-            "left ctrl": 0xA2,       # VK_LCONTROL (0xA2)
-            "right ctrl": 0xA3,      # VK_RCONTROL (0xA3)
-            "ctrl": 0x11,            # VK_CONTROL
-            "control": 0x11,
-            "left shift": 0xA0,      # VK_LSHIFT (0xA0)
-            "right shift": 0xA1,     # VK_RSHIFT (0xA1)
-            "shift": 0x10,           # VK_SHIFT
-            "space": 0x20,           # VK_SPACE
-            "spacebar": 0x20,
-            "tab": 0x09,
-            "caps lock": 0x14,
-            "capslock": 0x14,
-            "enter": 0x0D,
-            "return": 0x0D,
-            "backspace": 0x08,
-            "delete": 0x2E,
-            "insert": 0x2D,
-        }
-        for i in range(1, 13):
-            mapping[f"f{i}"] = 0x70 + (i - 1)
-
-        if raw in mapping:
-            return mapping[raw]
-            
-        if len(raw) == 1:
-            return ord(raw.upper())
-            
-        if raw.startswith("key ") or raw.startswith("key_"):
-            char = raw.split()[-1]
-            if len(char) == 1:
-                return ord(char.upper())
-
-        return 0x01
+        return resolve_tactical_vk_code(key_name, fallback=0x01)
 
     def set_hold_to_trigger(self, hold: bool):
         self.hold_to_trigger = bool(hold)
@@ -6304,10 +6786,22 @@ class SniperClutchController(QObject):
             self._last_phys_down = False
 
     def _poll_physical_trigger(self):
+        # 1. Global Master Arm/Disarm Hotkey
+        if self.arm_hotkey:
+            is_arm_down = is_tactical_hotkey_physically_down(self.arm_hotkey)
+            if is_arm_down and not self._last_arm_down:
+                self.toggle_enabled()
+            self._last_arm_down = is_arm_down
+
+        # 2. In-Game Aim Clutch Key (only evaluated when Armed & Enabled)
         if not self.is_enabled:
             return
-        vk = self._get_vk_code(self.trigger_key)
-        is_physically_down = bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+
+        if getattr(self, '_suppress_hotkey_ticks', 0) > 0:
+            self._suppress_hotkey_ticks -= 1
+            return
+
+        is_physically_down = is_tactical_hotkey_physically_down(self.trigger_key)
         
         if self.hold_to_trigger:
             # HOLD MODE: Active while key is physically held down
@@ -6335,19 +6829,114 @@ class SniperClutchController(QObject):
         self.clutch_state_changed.emit(False, self.baseline_speed, self.baseline_speed)
 
 
+def format_tactical_vk(vk: int, scan: int = 0, flags: int = 0, fallback: str = "Right Click") -> str:
+    """Format a Win32 Virtual Key + scan code + flags directly into a standardized key name."""
+    # 1. Modifiers
+    if vk in (0x12, 0xA4, 0xA5):
+        return "Right Alt" if (flags & 0x01 or vk == 0xA5) else "Left Alt"
+    if vk in (0x11, 0xA2, 0xA3):
+        return "Right Ctrl" if (flags & 0x01 or vk == 0xA3) else "Left Ctrl"
+    if vk in (0x10, 0xA0, 0xA1):
+        return "Right Shift" if (scan == 54 or vk == 0xA1) else "Left Shift"
+
+    # 2. Numpad Keys
+    if 0x60 <= vk <= 0x69:
+        return f"Numpad {vk - 0x60}"
+    if vk == 0x6A:
+        return "Numpad *"
+    if vk == 0x6B:
+        return "Numpad +"
+    if vk == 0x6C:
+        return "Numpad Separator"
+    if vk == 0x6D:
+        return "Numpad -"
+    if vk == 0x6E:
+        return "Numpad ."
+    if vk == 0x6F:
+        return "Numpad /"
+    if vk == 0x0D and (flags & 0x01 or scan in (284, 0x11C)):
+        return "Numpad Enter"
+
+    # 3. Control & Navigation
+    if vk == 0x20:
+        return "Spacebar"
+    if vk == 0x09:
+        return "Tab"
+    if vk == 0x14:
+        return "Caps Lock"
+    if vk == 0x0D:
+        return "Enter"
+    if vk == 0x08:
+        return "Backspace"
+    if vk == 0x2E:
+        return "Delete"
+    if vk == 0x2D:
+        return "Insert"
+    if vk == 0x24:
+        return "Home"
+    if vk == 0x23:
+        return "End"
+    if vk == 0x21:
+        return "Page Up"
+    if vk == 0x22:
+        return "Page Down"
+    if vk == 0x25:
+        return "Left"
+    if vk == 0x26:
+        return "Up"
+    if vk == 0x27:
+        return "Right"
+    if vk == 0x28:
+        return "Down"
+    if vk == 0x90:
+        return "Num Lock"
+    if vk == 0x91:
+        return "Scroll Lock"
+    if vk == 0x2C:
+        return "Print Screen"
+    if vk == 0x13:
+        return "Pause"
+    if 0x70 <= vk <= 0x87:  # F1 - F24
+        return f"F{vk - 0x70 + 1}"
+
+    # 4. OEM Symbols
+    oem_symbol_map = {
+        0xC0: "`", 0xBD: "-", 0xBB: "=", 0xDB: "[", 0xDD: "]", 0xDC: "\\",
+        0xBA: ";", 0xDE: "'", 0xBC: ",", 0xBE: ".", 0xBF: "/",
+    }
+    if vk in oem_symbol_map:
+        return oem_symbol_map[vk]
+
+    # 5. Top-row digits & letters (0x30-0x39, 0x41-0x5A)
+    if 0x30 <= vk <= 0x39:
+        return chr(vk)
+    if 0x41 <= vk <= 0x5A:
+        return chr(vk)
+
+    return fallback
+
+
 class TacticalInputCatcherButton(QPushButton):
     """
     Interactive Key & Mouse Input Catcher Widget.
-    Automatically captures ANY keyboard key or mouse button pressed.
+    Automatically captures ANY keyboard key, mouse button, or modifier chord combination.
     Component Name: TacticalInputCatcherButton
     """
     input_captured = Signal(str)
     win_key_swallowed = Signal()
+    _raw_key_captured = Signal(str)
+    _preview_modifier_changed = Signal(str)
 
-    def __init__(self, default_key="Right Click", parent=None):
+    def __init__(self, default_key="Right Click", owner_id="sniper_trigger", parent=None, allow_left_click=None):
         super().__init__(parent)
         self._current_key = default_key
+        self._owner_id = owner_id
+        if allow_left_click is None:
+            self._allow_left_click = (owner_id == "rapid_trigger" or default_key == "Left Click")
+        else:
+            self._allow_left_click = allow_left_click
         self._is_capturing = False
+        self._modifier_tapped_vk = None
         self._hook = None
         self._hook_proc_ref = None
         self._anim_timer = QTimer(self)
@@ -6360,12 +6949,21 @@ class TacticalInputCatcherButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self.win_key_swallowed.connect(self._on_win_key_swallowed, Qt.QueuedConnection)
+        self._raw_key_captured.connect(self._finish_capture, Qt.QueuedConnection)
+        self._preview_modifier_changed.connect(self._on_preview_modifier, Qt.QueuedConnection)
         self._update_display()
 
     def _on_anim_tick(self):
         if self._is_capturing:
             self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
             self.setText(self._anim_frames[self._anim_index])
+
+    @Slot(str)
+    def _on_preview_modifier(self, preview_text: str):
+        if self._is_capturing:
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
+            self.setText(preview_text.upper())
 
     def _install_hook(self):
         if self._hook is not None:
@@ -6395,16 +6993,70 @@ class TacticalInputCatcherButton(QPushButton):
             def _low_level_kb_proc(nCode, wParam, lParam):
                 if nCode >= 0 and self._is_capturing:
                     vk = lParam.contents.vkCode
+                    scan = lParam.contents.scanCode
+                    flags = lParam.contents.flags
+
+                    # 1. Windows Key Restricted
                     if vk in (0x5B, 0x5C):  # VK_LWIN, VK_RWIN
-                        if wParam in (0x0100, 0x0104):  # WM_KEYDOWN, WM_SYSKEYDOWN
-                            # Inject dummy key (0xE8) to permanently cancel Windows Start Menu trigger
+                        if wParam in (0x0100, 0x0104):
                             try:
                                 self._user32_dll.keybd_event(0xE8, 0, 0, 0)
                                 self._user32_dll.keybd_event(0xE8, 0, 2, 0)
                             except Exception:
                                 pass
                             self.win_key_swallowed.emit()
-                        return 1  # Swallow Windows key on both KEYDOWN & KEYUP!
+                        return 1  # Swallow Windows key
+
+                    # 2. Escape cancels capture
+                    if vk == 0x1B:  # VK_ESCAPE
+                        if wParam in (0x0100, 0x0104):
+                            self._raw_key_captured.emit(self._current_key)
+                        return 1
+
+                    # 3. Check modifier keys (Ctrl, Alt, Shift)
+                    is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
+
+                    if not hasattr(self, '_active_mods'):
+                        self._active_mods = set()
+
+                    if is_modifier:
+                        if wParam in (0x0100, 0x0104):  # WM_KEYDOWN, WM_SYSKEYDOWN
+                            if vk in (0x11, 0xA2, 0xA3):
+                                self._active_mods.add("Ctrl")
+                            elif vk in (0x12, 0xA4, 0xA5):
+                                self._active_mods.add("Alt")
+                            elif vk in (0x10, 0xA0, 0xA1):
+                                self._active_mods.add("Shift")
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
+                            if mods:
+                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
+                        elif wParam in (0x0101, 0x0105):  # WM_KEYUP, WM_SYSKEYUP
+                            if vk in (0x11, 0xA2, 0xA3):
+                                self._active_mods.discard("Ctrl")
+                            elif vk in (0x12, 0xA4, 0xA5):
+                                self._active_mods.discard("Alt")
+                            elif vk in (0x10, 0xA0, 0xA1):
+                                self._active_mods.discard("Shift")
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
+                            if mods:
+                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
+                        return 1
+                    else:
+                        if wParam in (0x0100, 0x0104):
+                            mods_set = set(self._active_mods)
+                            if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
+                                mods_set.add("Ctrl")
+                            if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
+                                mods_set.add("Alt")
+                            if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
+                                mods_set.add("Shift")
+
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in mods_set]
+                            base_key = format_tactical_vk(vk, scan, flags, fallback=self._current_key or "Right Click")
+                            full_key = "+".join(mods + [base_key]) if (mods and base_key not in mods) else base_key
+                            self._raw_key_captured.emit(full_key)
+                            return 1
+                        return 1
                 return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
 
             self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
@@ -6493,6 +7145,7 @@ class TacticalInputCatcherButton(QPushButton):
         if not self._is_capturing:
             # Start capturing mode
             self._is_capturing = True
+            self._modifier_tapped_vk = None
             self._anim_index = 0
             self.setText(self._anim_frames[0])
             self._update_display()
@@ -6504,26 +7157,40 @@ class TacticalInputCatcherButton(QPushButton):
                 self._anim_timer.start()
             event.accept()
         else:
-            # Capture the pressed mouse button (Reject Left Click)
+            # Capture the pressed mouse button + modifiers
             btn = event.button()
-            if btn == Qt.LeftButton:
-                target_w = self.window() if self.window() else self
-                FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Left Click is reserved for primary shooting / clicking")
-                self._finish_capture(self._current_key)
-                event.accept()
-                return
+            modifiers = []
+            try:
+                if (ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000) or (event.modifiers() & Qt.ControlModifier):
+                    modifiers.append("Ctrl")
+                if (ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000) or (event.modifiers() & Qt.AltModifier):
+                    modifiers.append("Alt")
+                if (ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000) or (event.modifiers() & Qt.ShiftModifier):
+                    modifiers.append("Shift")
+            except Exception:
+                pass
 
-            btn_name = "Right Click"
-            if btn == Qt.RightButton:
+            if btn == Qt.LeftButton:
+                if not modifiers and not self._allow_left_click:
+                    target_w = self.window() if self.window() else self
+                    FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Left Click alone is reserved for primary shooting / clicking")
+                    self._finish_capture(self._current_key)
+                    event.accept()
+                    return
+                btn_name = "Left Click"
+            elif btn == Qt.RightButton:
                 btn_name = "Right Click"
             elif btn == Qt.MiddleButton:
                 btn_name = "Middle Click"
-            elif btn == Qt.BackButton or btn == Qt.XButton1:
+            elif btn in (Qt.BackButton, Qt.XButton1):
                 btn_name = "Mouse 4"
-            elif btn == Qt.ForwardButton or btn == Qt.XButton2:
+            elif btn in (Qt.ForwardButton, Qt.XButton2):
                 btn_name = "Mouse 5"
+            else:
+                btn_name = "Right Click"
 
-            self._finish_capture(btn_name)
+            full_key = "+".join(modifiers + [btn_name]) if modifiers else btn_name
+            self._finish_capture(full_key)
             event.accept()
 
     def keyPressEvent(self, event):
@@ -6542,77 +7209,36 @@ class TacticalInputCatcherButton(QPushButton):
                 event.accept()
                 return
 
-            key_name = self._format_key(event)
-            self._finish_capture(key_name)
+            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt):
+                mods = []
+                if event.modifiers() & Qt.ControlModifier:
+                    mods.append("Ctrl")
+                if event.modifiers() & Qt.AltModifier:
+                    mods.append("Alt")
+                if event.modifiers() & Qt.ShiftModifier:
+                    mods.append("Shift")
+                if mods:
+                    self._on_preview_modifier(" + ".join(mods) + " + ...")
+                event.accept()
+                return
+
+            modifiers = []
+            if event.modifiers() & Qt.ControlModifier:
+                modifiers.append("Ctrl")
+            if event.modifiers() & Qt.AltModifier:
+                modifiers.append("Alt")
+            if event.modifiers() & Qt.ShiftModifier:
+                modifiers.append("Shift")
+
+            base_key = self._format_key(event)
+            full_key = "+".join(modifiers + [base_key]) if (modifiers and base_key not in modifiers) else base_key
+            self._finish_capture(full_key)
             event.accept()
         else:
             super().keyPressEvent(event)
 
     def _format_key(self, event) -> str:
-        key = event.key()
-        vk = event.nativeVirtualKey()
-        scan = event.nativeScanCode()
-
-        # Modifier keys (Distinguish Left vs Right)
-        if key == Qt.Key_Alt or vk in (0x12, 0xA4, 0xA5):
-            try:
-                if (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000) != 0:
-                    return "Right Alt"
-                elif (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) != 0:
-                    return "Left Alt"
-            except Exception:
-                pass
-            return "Right Alt" if (event.nativeModifiers() & 0x02000000 or vk == 0xA5) else "Left Alt"
-
-        if key == Qt.Key_Control or vk in (0x11, 0xA2, 0xA3):
-            try:
-                if (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000) != 0:
-                    return "Right Ctrl"
-                elif (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) != 0:
-                    return "Left Ctrl"
-            except Exception:
-                pass
-            return "Right Ctrl" if (event.nativeModifiers() & 0x02000000 or vk == 0xA3) else "Left Ctrl"
-
-        if key == Qt.Key_Shift or vk in (0x10, 0xA0, 0xA1):
-            try:
-                if (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000) != 0:
-                    return "Right Shift"
-                elif (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) != 0:
-                    return "Left Shift"
-            except Exception:
-                pass
-            return "Right Shift" if (scan == 54 or vk == 0xA1) else "Left Shift"
-
-        if key == Qt.Key_Space:
-            return "Spacebar"
-        elif key == Qt.Key_Tab:
-            return "Tab"
-        elif key == Qt.Key_CapsLock:
-            return "Caps Lock"
-        elif key in (Qt.Key_Return, Qt.Key_Enter):
-            return "Enter"
-        elif key == Qt.Key_Backspace:
-            return "Backspace"
-        elif key == Qt.Key_Delete:
-            return "Delete"
-        elif key == Qt.Key_Insert:
-            return "Insert"
-        elif key >= Qt.Key_F1 and key <= Qt.Key_F12:
-            return f"F{key - Qt.Key_F1 + 1}"
-
-        # Single alphanumeric characters (remove "Key " prefix)
-        text = event.text().strip().upper()
-        if text and len(text) == 1 and text.isprintable():
-            return text
-
-        seq = QKeySequence(key).toString().strip()
-        if seq:
-            if seq.startswith("Key "):
-                seq = seq[4:].strip()
-            return seq
-
-        return "Right Click"
+        return format_tactical_key_event(event, default_fallback=self._current_key or "Right Click")
 
     def _finish_capture(self, key_name: str):
         self._remove_hook()
@@ -6621,6 +7247,19 @@ class TacticalInputCatcherButton(QPushButton):
             self.releaseMouse()
         except Exception:
             pass
+
+        # Global Shortcut Conflict Validation
+        if key_name and key_name != self._current_key and key_name != "Escape":
+            is_valid, conflict_owner = validate_shortcut_conflict(key_name, owner_id=self._owner_id)
+            if not is_valid:
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(
+                    target_w,
+                    "Shortcut Conflict",
+                    f"'{key_name}' is already assigned to {conflict_owner}. Please choose another hotkey."
+                )
+                key_name = self._current_key
+
         self._current_key = key_name
         self._is_capturing = False
         self._update_display()
@@ -6634,7 +7273,9 @@ class TacticalInputCatcherButton(QPushButton):
                 self.releaseMouse()
             except Exception:
                 pass
-            self._is_capturing = False
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
+            self.setText(self._current_key.upper())
             self._update_display()
         super().focusOutEvent(event)
 
@@ -6744,15 +7385,16 @@ class SniperAimCanvas(QWidget):
             status_text = f"[STANDBY] NORMAL POINTER SPEED [{self.baseline_speed} / 20] — Hold Trigger Key to Test"
 class SniperTriggerGuidePanel(QFrame):
     """
-    Floating guide panel for Sniper DPI Clutch Trigger Key Validation Rules.
+    Floating guide panel for Sniper DPI Clutch Validation Rules (Trigger Key & Master Arm Hotkey).
     Matching HELRCUS / HELXAIL floating guide style.
     
     Component Name: SniperTriggerGuidePanel
     """
     closed = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, guide_type: str = "trigger"):
         super().__init__(parent)
+        self.guide_type = guide_type
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("SniperTriggerGuidePanel")
@@ -6783,7 +7425,7 @@ class SniperTriggerGuidePanel(QFrame):
             }
         """)
         
-        self.setFixedSize(480, 340)
+        self.setFixedSize(500, 350)
         
         main_vbox = QVBoxLayout(self)
         main_vbox.setContentsMargins(0, 0, 0, 16)
@@ -6806,7 +7448,8 @@ class SniperTriggerGuidePanel(QFrame):
             icon_lbl.setStyleSheet("background: transparent;")
             tb_layout.addWidget(icon_lbl)
             
-        title_lbl = QLabel("Trigger Key Validation Rules")
+        title_text = "Master Arm Hotkey Rules" if guide_type == "arm" else "Trigger Key Validation Rules"
+        title_lbl = QLabel(title_text)
         title_lbl.setObjectName("GuideTitle")
         tb_layout.addWidget(title_lbl)
         tb_layout.addStretch()
@@ -6820,19 +7463,36 @@ class SniperTriggerGuidePanel(QFrame):
         body_vbox.setContentsMargins(16, 0, 16, 0)
         body_vbox.setSpacing(0)
         
-        rules_html = """
-        <p style='font-size: 12px; color: #aaa; line-height: 1.4; margin-bottom: 8px; font-family: Orbitron, sans-serif;'>
-        Standard rules to ensure custom trigger keys do not conflict with Windows OS & game controls:
-        </p>
-        <ul style='font-size: 12px; color: #e0e0e0; line-height: 1.7; margin-left: -15px; font-family: Orbitron, sans-serif;'>
-            <li><b>Left Click Restricted:</b> Left Click is reserved for primary interaction & shooting in games.</li>
-            <li><b>No Windows Key:</b> Win / Meta key is forbidden to prevent opening OS Start Menu.</li>
-            <li><b>No Escape Key:</b> Escape key is reserved for cancelling key capture & game menus.</li>
-            <li><b>Supported Mouse Buttons:</b> <b>Right Click</b>, <b>Middle Click</b>, <b>Mouse 4</b>, <b>Mouse 5</b>.</li>
-            <li><b>Supported Modifiers:</b> <b>Left/Right Alt</b>, <b>Left/Right Ctrl</b>, <b>Left/Right Shift</b>.</li>
-            <li><b>Supported Keyboard Keys:</b> <b>Spacebar</b>, <b>Tab</b>, <b>Caps Lock</b>, <b>Enter</b>, <b>A – Z</b>, <b>0 – 9</b>, <b>F1 – F12</b>.</li>
-        </ul>
-        """
+        if guide_type == "arm":
+            rules_html = """
+            <p style='font-size: 12px; color: #aaa; line-height: 1.4; margin-bottom: 8px; font-family: Orbitron, sans-serif;'>
+            Standard rules to ensure Master Arm / Toggle Hotkey functions seamlessly across Windows OS & games:
+            </p>
+            <ul style='font-size: 12px; color: #e0e0e0; line-height: 1.7; margin-left: -15px; font-family: Orbitron, sans-serif;'>
+                <li><b>Global Background Scope:</b> Master Arm hotkey is monitored 24/7 globally even while playing fullscreen games.</li>
+                <li><b>No Windows Key:</b> Win / Meta key is restricted to prevent interference with OS Start Menu.</li>
+                <li><b>No Escape Key:</b> Escape key is reserved for cancelling key recording.</li>
+                <li><b>Supported Function Keys:</b> <b>F1 – F12</b> (e.g. <b>F7</b>, <b>F8</b>, <b>F10</b>).</li>
+                <li><b>Supported Numpad Keys:</b> <b>Numpad 0 – 9</b>, <b>Numpad +</b>, <b>Numpad -</b>, <b>Numpad *</b>, <b>Numpad /</b>.</li>
+                <li><b>Supported Combinations:</b> Modifier combos like <b>Ctrl+F7</b>, <b>Alt+X</b>, <b>Shift+F8</b>.</li>
+                <li><b>Supported Mouse Buttons:</b> <b>Middle Click</b>, <b>Mouse 4</b>, <b>Mouse 5</b>.</li>
+            </ul>
+            """
+        else:
+            rules_html = """
+            <p style='font-size: 12px; color: #aaa; line-height: 1.4; margin-bottom: 8px; font-family: Orbitron, sans-serif;'>
+            Standard rules to ensure custom trigger keys do not conflict with Windows OS & game controls:
+            </p>
+            <ul style='font-size: 12px; color: #e0e0e0; line-height: 1.7; margin-left: -15px; font-family: Orbitron, sans-serif;'>
+                <li><b>Left Click Restricted:</b> Left Click alone is reserved for primary shooting (combinations like <b>Ctrl+Left Click</b> are permitted).</li>
+                <li><b>No Windows Key:</b> Win / Meta key is forbidden to prevent opening OS Start Menu.</li>
+                <li><b>No Escape Key:</b> Escape key is reserved for cancelling key capture & game menus.</li>
+                <li><b>Supported Shortcut Combinations:</b> <b>Ctrl+Right Click</b>, <b>Alt+Mouse 4</b>, <b>Ctrl+E</b>, <b>Shift+X</b>, <b>Ctrl+Shift+L</b>.</li>
+                <li><b>Supported Mouse Buttons:</b> <b>Right Click</b>, <b>Middle Click</b>, <b>Mouse 4</b>, <b>Mouse 5</b>.</li>
+                <li><b>Supported Numpad Keys:</b> <b>Numpad 0 – 9</b>, <b>Numpad +</b>, <b>Numpad -</b>, <b>Numpad *</b>, <b>Numpad /</b>.</li>
+                <li><b>Supported Keyboard Keys:</b> <b>Spacebar</b>, <b>Tab</b>, <b>Caps Lock</b>, <b>Enter</b>, <b>A – Z</b>, <b>0 – 9</b>, <b>F1 – F12</b>.</li>
+            </ul>
+            """
         rules_lbl = QLabel(rules_html)
         rules_lbl.setObjectName("SniperGuideRulesLbl")
         rules_lbl.setWordWrap(True)
@@ -6944,8 +7604,10 @@ class SniperClutchPanel(QWidget):
         self.controller = SniperClutchController(self)
         self._guide_panel = None
         self._setup_ui()
+        self._load_settings()
+        self.controller.enabled_state_changed.connect(self._sync_active_ui)
         # Default to DISABLED for clean startup safety
-        self._set_active_state(False)
+        self._sync_active_ui(False)
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -6965,7 +7627,7 @@ class SniperClutchPanel(QWidget):
         """)
         h_layout = QHBoxLayout(header_frame)
         h_layout.setContentsMargins(8, 0, 10, 0)
-        h_layout.setSpacing(10)
+        h_layout.setSpacing(8)
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
@@ -7002,11 +7664,57 @@ class SniperClutchPanel(QWidget):
         h_layout.addWidget(title_lbl)
         h_layout.addStretch()
 
-        self.reset_spd_btn = QPushButton("Reset Speed (10)")
+        # Standalone "Arm Toggle:" text label (HELRCUS Style)
+        self.arm_lbl = QLabel("Arm Toggle:")
+        self.arm_lbl.setObjectName("SniperArmLabel")
+        self.arm_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        h_layout.addWidget(self.arm_lbl)
+
+        # Customizable Hotkey Button (HELRCUS Style pill box)
+        self.arm_hotkey_btn = CursorClampHotkeyButton(default_key="F7", owner_id="sniper_arm")
+        self.arm_hotkey_btn.setObjectName("SniperArmHotkeyBtn")
+        self.arm_hotkey_btn.setFixedWidth(100)
+        self.arm_hotkey_btn.hotkeyChanged.connect(self._on_arm_hotkey_changed)
+        h_layout.addWidget(self.arm_hotkey_btn)
+
+        # Info Button for Arm Hotkey Rules (Matches SniperCustomInfoBtn)
+        self.arm_info_btn = QPushButton()
+        self.arm_info_btn.setObjectName("SniperArmInfoBtn")
+        self.arm_info_btn.setFixedSize(26, 26)
+        self.arm_info_btn.setCursor(Qt.PointingHandCursor)
+        info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg").replace('\\', '/')
+        if os.path.exists(info_icon_path):
+            self.arm_info_btn.setIcon(QIcon(info_icon_path))
+            self.arm_info_btn.setIconSize(QSize(22, 22))
+        self.arm_info_btn.setToolTip(
+            "MASTER ARM TOGGLE RULES:\n"
+            "• Works globally across all fullscreen games\n"
+            "• Windows Key & Escape are restricted\n\n"
+            "SUPPORTED KEYS:\n"
+            "• Function Keys: F1 - F12 (e.g. F7, F8)\n"
+            "• Combinations: Ctrl+Key, Alt+Key, Shift+Key\n"
+            "• Numpad: Numpad 0-9, +, -, *, /\n"
+            "• Mouse: Middle Click, Mouse 4, Mouse 5"
+        )
+        self.arm_info_btn.setStyleSheet("""
+            QPushButton#SniperArmInfoBtn {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+            QPushButton#SniperArmInfoBtn:hover {
+                background: transparent;
+                border: none;
+            }
+        """)
+        self.arm_info_btn.clicked.connect(self._show_arm_rules_dialog)
+        h_layout.addWidget(self.arm_info_btn)
+
+        self.reset_spd_btn = QPushButton(f"Restore Speed ({self.controller.user_original_speed})")
         self.reset_spd_btn.setObjectName("SniperResetSpeedBtn")
-        self.reset_spd_btn.setFixedSize(120, 26)
+        self.reset_spd_btn.setFixedSize(130, 26)
         self.reset_spd_btn.setCursor(Qt.PointingHandCursor)
-        self.reset_spd_btn.setToolTip("Reset Windows pointer speed back to normal 10")
+        self.reset_spd_btn.setToolTip(f"Reset Windows pointer speed back to your original baseline ({self.controller.user_original_speed})")
         self.reset_spd_btn.setStyleSheet("""
             QPushButton#SniperResetSpeedBtn {
                 background-color: rgba(255, 255, 255, 0.08);
@@ -7081,7 +7789,7 @@ class SniperClutchPanel(QWidget):
         self.key_row_layout.setSpacing(8)
 
         # Universal Trigger Key Input Catcher Button
-        self.custom_key_input = TacticalInputCatcherButton(default_key="Right Click")
+        self.custom_key_input = TacticalInputCatcherButton(default_key="Right Click", owner_id="sniper_trigger")
         self.custom_key_input.setObjectName("SniperCustomKeyInput")
         self.custom_key_input.setFixedHeight(28)
         self.custom_key_input.setVisible(True)
@@ -7198,11 +7906,9 @@ class SniperClutchPanel(QWidget):
         main_layout.addWidget(self.aim_canvas, 1)
 
     def _toggle_enable(self):
-        new_state = not self.controller.is_enabled
-        self._set_active_state(new_state)
+        self.controller.toggle_enabled()
 
-    def _set_active_state(self, active: bool):
-        self.controller.set_enabled(active)
+    def _sync_active_ui(self, active: bool):
         if active:
             self.enable_btn.setText("ACTIVE")
             self.enable_btn.setStyleSheet("""
@@ -7236,14 +7942,146 @@ class SniperClutchPanel(QWidget):
                 }
             """)
 
+    def _on_arm_hotkey_changed(self, key_name: str):
+        norm_proposed = normalize_shortcut_key(key_name)
+        norm_trig = normalize_shortcut_key(self.custom_key_input.get_captured_key())
+        if norm_proposed and norm_proposed == norm_trig:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to Sniper DPI Clutch (Aim Trigger). Please choose another hotkey."
+            )
+            self.arm_hotkey_btn.set_hotkey(self.controller.arm_hotkey)
+            return
+
+        is_valid, conflict_owner = validate_shortcut_conflict(key_name, owner_id="sniper_arm")
+        if not is_valid:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to {conflict_owner}. Please choose another hotkey."
+            )
+            self.arm_hotkey_btn.set_hotkey(self.controller.arm_hotkey)
+            return
+
+        self.controller.set_arm_hotkey(key_name)
+        if hasattr(self, 'arm_hotkey_btn') and self.arm_hotkey_btn.get_hotkey() != key_name:
+            self.arm_hotkey_btn.set_hotkey(key_name)
+        print(f"[SniperClutch] Master Arm Hotkey bound to: {key_name}")
+        self._save_settings()
+
+    def _get_settings_path(self) -> str:
+        appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+        base_dir = os.path.join(appdata, 'HELXAID')
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, 'helxairo_sniper_clutch.json')
+
+    def _load_settings(self):
+        path = self._get_settings_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            if not isinstance(data, dict):
+                return
+
+            # 1. Trigger Key Binding
+            if "trigger_key" in data and data["trigger_key"]:
+                trig = str(data["trigger_key"])
+                self.custom_key_input.set_captured_key(trig)
+                self.controller.set_trigger_key(trig)
+
+            # 2. Master Arm Hotkey
+            if "arm_hotkey" in data and data["arm_hotkey"]:
+                arm_k = str(data["arm_hotkey"])
+                self.arm_hotkey_btn.set_hotkey(arm_k)
+                self.controller.set_arm_hotkey(arm_k)
+
+            # 3. Hold to Trigger Mode
+            if "hold_to_trigger" in data:
+                hold = bool(data["hold_to_trigger"])
+                self.hold_toggle.setChecked(hold)
+                self.controller.set_hold_to_trigger(hold)
+
+            # 4. Damping Percentage
+            if "damping_percent" in data:
+                damp = max(10, min(80, int(data["damping_percent"])))
+                self.damp_slider.setValue(damp)
+                self.controller.set_damping_percent(damp)
+
+            # 5. Original Baseline Speed
+            if "baseline_speed" in data:
+                b_spd = max(1, min(20, int(data["baseline_speed"])))
+                self.controller.user_original_speed = b_spd
+                self.controller.baseline_speed = b_spd
+                self.reset_spd_btn.setText(f"Restore Speed ({b_spd})")
+                self.reset_spd_btn.setToolTip(f"Reset Windows pointer speed back to your original baseline ({b_spd})")
+
+            # 6. Sibling Sanitization on startup
+            if normalize_shortcut_key(self.custom_key_input.get_captured_key()) == normalize_shortcut_key(self.arm_hotkey_btn.get_hotkey()):
+                print("[SniperClutch] Sibling conflict detected in saved settings, resetting Arm Hotkey to default 'F7'")
+                self.arm_hotkey_btn.set_hotkey("F7")
+                self.controller.set_arm_hotkey("F7")
+                self._save_settings()
+
+            print(f"[SniperClutch] Settings successfully loaded from {path}")
+        except Exception as e:
+            print(f"[SniperClutch] Error loading settings: {e}")
+
+    def _save_settings(self):
+        path = self._get_settings_path()
+        try:
+            settings = {
+                "trigger_key": self.controller.trigger_key,
+                "arm_hotkey": self.controller.arm_hotkey,
+                "hold_to_trigger": self.controller.hold_to_trigger,
+                "damping_percent": self.controller.damping_percent,
+                "baseline_speed": getattr(self.controller, 'user_original_speed', 10)
+            }
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2)
+        except Exception as e:
+            print(f"[SniperClutch] Error saving settings: {e}")
+
     def _on_hold_toggle_changed(self, checked: bool):
         self.controller.set_hold_to_trigger(checked)
         mode_str = "Hold Mode" if checked else "Toggle Mode"
         print(f"[SniperClutch] Trigger Mode Changed: {mode_str} (Hold to trigger: {checked})")
+        self._save_settings()
 
     def _on_custom_input_captured(self, key_name: str):
+        norm_proposed = normalize_shortcut_key(key_name)
+        norm_arm = normalize_shortcut_key(self.arm_hotkey_btn.get_hotkey())
+        if norm_proposed and norm_proposed == norm_arm:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to Sniper DPI Clutch (Master Arm). Please choose another hotkey."
+            )
+            self.custom_key_input.set_captured_key(self.controller.trigger_key)
+            return
+
+        is_valid, conflict_owner = validate_shortcut_conflict(key_name, owner_id="sniper_trigger")
+        if not is_valid:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to {conflict_owner}. Please choose another hotkey."
+            )
+            self.custom_key_input.set_captured_key(self.controller.trigger_key)
+            return
+
         self.controller.set_trigger_key(key_name)
+        if hasattr(self, 'custom_key_input') and self.custom_key_input.get_captured_key() != key_name:
+            self.custom_key_input.set_captured_key(key_name)
         print(f"[SniperClutch] Trigger Key Captured & Bound: {key_name}")
+        self._save_settings()
 
     def _show_restricted_keys_dialog(self):
         try:
@@ -7256,7 +8094,26 @@ class SniperClutchPanel(QWidget):
             self._guide_panel = None
 
         target_parent = self.window() if self.window() else self
-        self._guide_panel = SniperTriggerGuidePanel(target_parent)
+        self._guide_panel = SniperTriggerGuidePanel(target_parent, guide_type="trigger")
+        self._guide_panel.closed.connect(self._on_guide_panel_destroyed)
+        self._guide_panel.destroyed.connect(self._on_guide_panel_destroyed)
+        gx = max(20, (target_parent.width() - self._guide_panel.width()) // 2)
+        gy = max(20, (target_parent.height() - self._guide_panel.height()) // 2)
+        self._guide_panel.move(gx, gy)
+        self._guide_panel.show()
+
+    def _show_arm_rules_dialog(self):
+        try:
+            if self._guide_panel is not None:
+                if self._guide_panel.isVisible():
+                    self._guide_panel.close_panel()
+                    self._guide_panel = None
+                    return
+        except (RuntimeError, Exception):
+            self._guide_panel = None
+
+        target_parent = self.window() if self.window() else self
+        self._guide_panel = SniperTriggerGuidePanel(target_parent, guide_type="arm")
         self._guide_panel.closed.connect(self._on_guide_panel_destroyed)
         self._guide_panel.destroyed.connect(self._on_guide_panel_destroyed)
         gx = max(20, (target_parent.width() - self._guide_panel.width()) // 2)
@@ -7271,6 +8128,7 @@ class SniperClutchPanel(QWidget):
         self.controller.set_damping_percent(val)
         desc = "Ultra Slow" if val <= 20 else ("Slow" if val <= 45 else ("Medium" if val <= 65 else "Subtle"))
         self.damp_val_lbl.setText(f"{val}% ({desc})")
+        self._save_settings()
 
     def _on_back(self):
         self.controller.force_restore()
@@ -7292,29 +8150,198 @@ class CursorClampHotkeyButton(QPushButton):
     """
     Interactive Hotkey Record Button (HELRCUS Style).
     Records modifier combinations (Ctrl+Alt+C, Alt+X, Ctrl+Shift+L) & mouse buttons.
+    Equipped with Win32 WH_KEYBOARD_LL hook for Exclusive Input Capture.
     
     Component Name: CursorClampHotkeyButton
     """
     hotkeyChanged = Signal(str)
     recordingStarted = Signal()
     recordingStopped = Signal()
+    _raw_key_captured = Signal(str)
+    _preview_modifier_changed = Signal(str)
+    _modifier_required_prompt = Signal()
+    _win_key_swallowed = Signal()
 
-    def __init__(self, default_key: str = "Ctrl+Alt+C", parent=None):
+    def __init__(self, default_key: str = "Ctrl+Alt+C", owner_id: str = "cursor_clamp", parent=None):
         super().__init__(parent)
-        self.setObjectName("CursorClampUnlockBtn")
-        self._recording = False
         self._hotkey = default_key
+        self._owner_id = owner_id
+        self._recording = False
+        self._modifier_tapped_vk = None
+        self._hook = None
+        self._hook_proc_ref = None
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(300)
+        self._anim_timer.timeout.connect(self._on_anim_tick)
+        self._anim_frames = [".", "..", "..."]
+        self._anim_index = 0
+        self.setObjectName("CursorClampUnlockBtn")
         self.setText(default_key.upper())
-        self.setFixedHeight(26)
+        self.setFixedHeight(28)
         self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Click to record a new emergency unlock / toggle hotkey")
         self.clicked.connect(self._start_recording)
+        self._win_key_swallowed.connect(self._on_win_key_swallowed, Qt.QueuedConnection)
+        self._modifier_required_prompt.connect(self._on_modifier_required, Qt.QueuedConnection)
+        self._raw_key_captured.connect(self._finish_capture, Qt.QueuedConnection)
+        self._preview_modifier_changed.connect(self._on_preview_modifier, Qt.QueuedConnection)
         self._update_style()
+
+    def _on_anim_tick(self):
+        if self._recording:
+            self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
+            self.setText(self._anim_frames[self._anim_index])
+
+    @Slot(str)
+    def _on_preview_modifier(self, preview_text: str):
+        if self._recording:
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
+            self.setText(preview_text.upper())
+
+    @Slot()
+    def _on_modifier_required(self):
+        target_w = self.window() if self.window() else self
+        FloatingToast.show_toast(
+            target_w,
+            "Modifier Required",
+            "Please combine Letter & Number keys with Ctrl, Alt, or Shift!"
+        )
+
+    def _install_hook(self):
+        if self._hook is not None:
+            return
+        try:
+            from ctypes import wintypes
+            self._user32_dll = ctypes.WinDLL("user32", use_last_error=True)
+            
+            class KBDLLHOOKSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ("vkCode", wintypes.DWORD),
+                    ("scanCode", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.c_ulonglong)
+                ]
+            HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT))
+            
+            self._user32_dll.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+            self._user32_dll.SetWindowsHookExW.restype = wintypes.HHOOK
+            self._user32_dll.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+            self._user32_dll.UnhookWindowsHookEx.restype = wintypes.BOOL
+            self._user32_dll.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT)]
+            self._user32_dll.CallNextHookEx.restype = ctypes.c_longlong
+
+            def _low_level_kb_proc(nCode, wParam, lParam):
+                if nCode >= 0 and self._recording:
+                    vk = lParam.contents.vkCode
+                    scan = lParam.contents.scanCode
+                    flags = lParam.contents.flags
+
+                    # 1. Windows Key Restricted
+                    if vk in (0x5B, 0x5C):
+                        if wParam in (0x0100, 0x0104):
+                            try:
+                                self._user32_dll.keybd_event(0xE8, 0, 0, 0)
+                                self._user32_dll.keybd_event(0xE8, 0, 2, 0)
+                            except Exception:
+                                pass
+                            self._win_key_swallowed.emit()
+                        return 1
+
+                    # 2. Escape cancels capture
+                    if vk == 0x1B:
+                        if wParam in (0x0100, 0x0104):
+                            self._raw_key_captured.emit(self._hotkey)
+                        return 1
+
+                    # 3. Check modifier keys
+                    is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
+
+                    if not hasattr(self, '_active_mods'):
+                        self._active_mods = set()
+
+                    if is_modifier:
+                        if wParam in (0x0100, 0x0104):
+                            if vk in (0x11, 0xA2, 0xA3):
+                                self._active_mods.add("Ctrl")
+                            elif vk in (0x12, 0xA4, 0xA5):
+                                self._active_mods.add("Alt")
+                            elif vk in (0x10, 0xA0, 0xA1):
+                                self._active_mods.add("Shift")
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
+                            if mods:
+                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
+                        elif wParam in (0x0101, 0x0105):
+                            if vk in (0x11, 0xA2, 0xA3):
+                                self._active_mods.discard("Ctrl")
+                            elif vk in (0x12, 0xA4, 0xA5):
+                                self._active_mods.discard("Alt")
+                            elif vk in (0x10, 0xA0, 0xA1):
+                                self._active_mods.discard("Shift")
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
+                            if mods:
+                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
+                        return 1
+                    else:
+                        if wParam in (0x0100, 0x0104):
+                            mods_set = set(self._active_mods)
+                            if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
+                                mods_set.add("Ctrl")
+                            if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
+                                mods_set.add("Alt")
+                            if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
+                                mods_set.add("Shift")
+
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in mods_set]
+
+                            # Option B (Smart Filter): Letters A-Z and top-row digits require at least 1 modifier
+                            is_letter_or_digit = (0x41 <= vk <= 0x5A) or (0x30 <= vk <= 0x39)
+                            if is_letter_or_digit and not mods:
+                                self._modifier_required_prompt.emit()
+                                return 1
+
+                            base_key = format_tactical_vk(vk, scan, flags, fallback=self._hotkey or "C")
+                            full_key = "+".join(mods + [base_key]) if (mods and base_key not in mods) else base_key
+                            self._raw_key_captured.emit(full_key)
+                            return 1
+                        return 1
+                return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
+
+            self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
+            self._hook = self._user32_dll.SetWindowsHookExW(13, self._hook_proc_ref, None, 0)
+        except Exception as e:
+            print(f"[CursorClampHotkeyButton] Hook install error: {e}")
+            self._hook = None
+
+    def _remove_hook(self):
+        if self._hook is not None:
+            try:
+                if hasattr(self, '_user32_dll') and self._user32_dll:
+                    self._user32_dll.UnhookWindowsHookEx(self._hook)
+                else:
+                    ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
+            except Exception:
+                pass
+            self._hook = None
+            self._hook_proc_ref = None
+
+    @Slot()
+    def _on_win_key_swallowed(self):
+        target_w = self.window() if self.window() else self
+        FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Windows Key is reserved by the OS (Please choose another key)")
+        QTimer.singleShot(150, lambda: self._finish_capture(self._hotkey))
 
     def set_hotkey(self, key_str: str):
         self._hotkey = key_str
         self.setText(key_str.upper())
         self._recording = False
+        if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self._update_style()
+
+    def setObjectName(self, name: str):
+        super().setObjectName(name)
         self._update_style()
 
     def get_hotkey(self) -> str:
@@ -7324,44 +8351,80 @@ class CursorClampHotkeyButton(QPushButton):
         if self._recording:
             self.setStyleSheet("""
                 QPushButton {
-                    background-color: #FF5B06;
+                    background-color: rgba(255, 255, 255, 0.1);
                     color: #FFFFFF;
                     border: none;
-                    border-radius: 8px;
-                    padding: 0px 10px;
+                    border-radius: 6px;
+                    padding: 0px 8px;
                     font-family: 'Orbitron', sans-serif;
-                    font-size: 10px;
+                    font-size: 14px;
                     font-weight: bold;
-                    min-height: 26px;
-                    max-height: 26px;
+                    min-height: 28px;
+                    max-height: 28px;
+                    height: 28px;
                 }
             """)
         else:
             self.setStyleSheet("""
                 QPushButton {
-                    background-color: rgba(255, 255, 255, 0.08);
+                    background-color: rgba(255, 255, 255, 0.1);
                     color: #FFFFFF;
                     border: none;
-                    border-radius: 8px;
-                    padding: 0px 10px;
+                    border-radius: 6px;
+                    padding: 0px 8px;
                     font-family: 'Orbitron', sans-serif;
                     font-size: 10px;
                     font-weight: bold;
-                    min-height: 26px;
-                    max-height: 26px;
+                    min-height: 28px;
+                    max-height: 28px;
+                    height: 28px;
                 }
                 QPushButton:hover {
-                    background-color: rgba(255, 255, 255, 0.16);
+                    background-color: rgba(255, 255, 255, 0.2);
                     color: #FFFFFF;
                 }
             """)
 
     def _start_recording(self):
         self._recording = True
-        self.setText("Press key...")
+        self._active_mods = set()
+        self._modifier_tapped_vk = None
+        self._anim_index = 0
+        self.setText(self._anim_frames[0])
         self._update_style()
         self.setFocus()
+        self.grabKeyboard()
+        self._install_hook()
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
         self.recordingStarted.emit()
+
+    def _finish_capture(self, full_key: str):
+        self._remove_hook()
+        try:
+            self.releaseKeyboard()
+        except Exception:
+            pass
+
+        if full_key and full_key != self._hotkey and full_key != "Escape":
+            is_valid, conflict_owner = validate_shortcut_conflict(full_key, owner_id=self._owner_id)
+            if not is_valid:
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(
+                    target_w,
+                    "Shortcut Conflict",
+                    f"'{full_key}' is already assigned to {conflict_owner}. Please choose another hotkey."
+                )
+                full_key = self._hotkey
+
+        self._hotkey = full_key
+        self.setText(full_key.upper())
+        self._recording = False
+        if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self._update_style()
+        self.recordingStopped.emit()
+        self.hotkeyChanged.emit(full_key)
 
     def keyPressEvent(self, event):
         if self._recording:
@@ -7369,30 +8432,23 @@ class CursorClampHotkeyButton(QPushButton):
 
             # Cancel recording on Escape
             if key == Qt.Key_Escape:
-                self._recording = False
-                self.setText(self._hotkey.upper())
-                self._update_style()
-                self.recordingStopped.emit()
+                self._finish_capture(self._hotkey)
                 event.accept()
                 return
 
-            # Wait for modifier-only keys
             if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
+                mods = []
+                if event.modifiers() & Qt.ControlModifier:
+                    mods.append("Ctrl")
+                if event.modifiers() & Qt.AltModifier:
+                    mods.append("Alt")
+                if event.modifiers() & Qt.ShiftModifier:
+                    mods.append("Shift")
+                if mods:
+                    self._on_preview_modifier(" + ".join(mods) + " + ...")
                 event.accept()
                 return
 
-            # Restrict Windows Key
-            if (event.modifiers() & Qt.MetaModifier) or key in (Qt.Key_Meta, 0x5B, 0x5C):
-                target_w = self.window() if self.window() else self
-                FloatingToast.show_toast(target_w, "Restricted Key", "Windows Key is reserved by the OS")
-                self._recording = False
-                self.setText(self._hotkey.upper())
-                self._update_style()
-                self.recordingStopped.emit()
-                event.accept()
-                return
-
-            # Build modifiers
             modifiers = []
             if event.modifiers() & Qt.ControlModifier:
                 modifiers.append("Ctrl")
@@ -7401,62 +8457,48 @@ class CursorClampHotkeyButton(QPushButton):
             if event.modifiers() & Qt.ShiftModifier:
                 modifiers.append("Shift")
 
-            # Determine key name
-            key_name = ""
-            if Qt.Key_F1 <= key <= Qt.Key_F12:
-                key_name = f"F{key - Qt.Key_F1 + 1}"
-            elif key == Qt.Key_Space:
-                key_name = "Space"
-            elif key == Qt.Key_Tab:
-                key_name = "Tab"
-            elif key == Qt.Key_CapsLock:
-                key_name = "Caps Lock"
-            elif key in (Qt.Key_Return, Qt.Key_Enter):
-                key_name = "Enter"
-            elif key == Qt.Key_Backspace:
-                key_name = "Backspace"
-            elif key == Qt.Key_Delete:
-                key_name = "Delete"
-            else:
-                txt = event.text().strip().upper()
-                if txt and len(txt) == 1 and txt.isprintable():
-                    key_name = txt
-                else:
-                    seq = QKeySequence(key).toString().strip()
-                    if seq.startswith("Key "):
-                        seq = seq[4:].strip()
-                    key_name = seq or "C"
+            # Option B (Smart Filter): Letters A-Z and digits require at least 1 modifier
+            is_letter_or_digit = (Qt.Key_A <= key <= Qt.Key_Z) or (Qt.Key_0 <= key <= Qt.Key_9)
+            if is_letter_or_digit and not modifiers:
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(
+                    target_w,
+                    "Modifier Required",
+                    "Please combine Letter & Number keys with Ctrl, Alt, or Shift!"
+                )
+                event.accept()
+                return
 
-            full_key = "+".join(modifiers + [key_name]) if modifiers else key_name
-
-            self._hotkey = full_key
-            self.setText(full_key.upper())
-            self._recording = False
-            self._update_style()
-            self.recordingStopped.emit()
-            self.hotkeyChanged.emit(full_key)
+            base_key = format_tactical_key_event(event, default_fallback="C")
+            full_key = "+".join(modifiers + [base_key]) if (modifiers and base_key not in modifiers) else base_key
+            self._finish_capture(full_key)
             event.accept()
         else:
             super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
-        if self._recording:
+        if not self._recording:
+            self._start_recording()
+            event.accept()
+        else:
             btn = event.button()
-            if btn == Qt.LeftButton:
-                # Left click while recording commits nothing, ignores or cancels
-                super().mousePressEvent(event)
-                return
-
             modifiers = []
-            if event.modifiers() & Qt.ControlModifier:
-                modifiers.append("Ctrl")
-            if event.modifiers() & Qt.AltModifier:
-                modifiers.append("Alt")
-            if event.modifiers() & Qt.ShiftModifier:
-                modifiers.append("Shift")
+            try:
+                if (ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000) or (event.modifiers() & Qt.ControlModifier):
+                    modifiers.append("Ctrl")
+                if (ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000) or (event.modifiers() & Qt.AltModifier):
+                    modifiers.append("Alt")
+                if (ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000) or (event.modifiers() & Qt.ShiftModifier):
+                    modifiers.append("Shift")
+            except Exception:
+                pass
 
-            btn_name = "Right Click"
-            if btn == Qt.RightButton:
+            if btn == Qt.LeftButton:
+                if not modifiers:
+                    event.accept()
+                    return
+                btn_name = "Left Click"
+            elif btn == Qt.RightButton:
                 btn_name = "Right Click"
             elif btn == Qt.MiddleButton:
                 btn_name = "Middle Click"
@@ -7464,22 +8506,23 @@ class CursorClampHotkeyButton(QPushButton):
                 btn_name = "Mouse 4"
             elif btn in (Qt.ForwardButton, Qt.XButton2):
                 btn_name = "Mouse 5"
+            else:
+                btn_name = "Right Click"
 
             full_key = "+".join(modifiers + [btn_name]) if modifiers else btn_name
-
-            self._hotkey = full_key
-            self.setText(full_key.upper())
-            self._recording = False
-            self._update_style()
-            self.recordingStopped.emit()
-            self.hotkeyChanged.emit(full_key)
+            self._finish_capture(full_key)
             event.accept()
-        else:
-            super().mousePressEvent(event)
 
     def focusOutEvent(self, event):
         if self._recording:
+            self._remove_hook()
+            try:
+                self.releaseKeyboard()
+            except Exception:
+                pass
             self._recording = False
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
             self.setText(self._hotkey.upper())
             self._update_style()
             self.recordingStopped.emit()
@@ -7772,36 +8815,7 @@ class CursorClampController(QObject):
         return 0
 
     def _is_hotkey_down(self) -> bool:
-        if not self.trigger_key:
-            return False
-        parts = [p.strip().lower() for p in self.trigger_key.split('+') if p.strip()]
-        if not parts:
-            return False
-
-        for part in parts:
-            if part in ("ctrl", "control", "left ctrl", "right ctrl"):
-                ctrl_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or
-                                 (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or
-                                 (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000))
-                if not ctrl_down:
-                    return False
-            elif part in ("alt", "left alt", "right alt", "menu"):
-                alt_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or
-                                (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or
-                                (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000))
-                if not alt_down:
-                    return False
-            elif part in ("shift", "left shift", "right shift"):
-                shift_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or
-                                  (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or
-                                  (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000))
-                if not shift_down:
-                    return False
-            else:
-                vk = self._get_vk_code(part)
-                if vk <= 0 or not (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000):
-                    return False
-        return True
+        return is_tactical_hotkey_physically_down(self.trigger_key)
 
     def _on_watchdog_tick(self):
         # 1. Continuous Global Hotkey Watcher
@@ -8285,6 +9299,7 @@ class CursorClampPanel(QWidget):
         self.controller = CursorClampController(self)
         self._guide_panel = None
         self._setup_ui()
+        self._load_settings()
         self.controller.enabled_state_changed.connect(self._sync_active_ui)
         self._sync_active_ui(False)
 
@@ -8351,7 +9366,7 @@ class CursorClampPanel(QWidget):
         h_layout.addWidget(self.unlock_lbl)
 
         # Customizable Hotkey Button (HELRCUS Style pill box)
-        self.unlock_btn = CursorClampHotkeyButton(default_key="Ctrl+Alt+C")
+        self.unlock_btn = CursorClampHotkeyButton(default_key="Ctrl+Alt+C", owner_id="cursor_clamp")
         self.unlock_btn.setObjectName("CursorClampUnlockBtn")
         self.unlock_btn.setFixedWidth(140)
         self.unlock_btn.hotkeyChanged.connect(self._on_hotkey_changed)
@@ -8433,7 +9448,7 @@ class CursorClampPanel(QWidget):
 
         self.mode_switcher = SlidingSegmentedPill()
         self.mode_switcher.setObjectName("CursorClampModeTabFrame")
-        self.mode_switcher.modeChanged.connect(self.controller.set_clamp_mode)
+        self.mode_switcher.modeChanged.connect(self._on_mode_changed)
         mc_layout.addWidget(self.mode_switcher)
 
         mc_layout.addSpacing(2)
@@ -8471,7 +9486,7 @@ class CursorClampPanel(QWidget):
         hc_row.setSpacing(8)
 
         # Synchronized Custom Key Input in Card 2
-        self.custom_key_input = CursorClampHotkeyButton(default_key="Ctrl+Alt+C")
+        self.custom_key_input = CursorClampHotkeyButton(default_key="Ctrl+Alt+C", owner_id="cursor_clamp")
         self.custom_key_input.setObjectName("CursorClampCustomKeyInput")
         self.custom_key_input.setFixedHeight(28)
         self.custom_key_input.hotkeyChanged.connect(self._on_hotkey_changed)
@@ -8481,7 +9496,7 @@ class CursorClampPanel(QWidget):
         self.cb_sound.setObjectName("CursorClampSoundCb")
         self.cb_sound.setChecked(True)
         self.cb_sound.setToolTip("Plays notification chime upon cursor lock/unlock")
-        self.cb_sound.toggled.connect(self.controller.set_sound_enabled)
+        self.cb_sound.toggled.connect(self._on_sound_toggled)
         hc_row.addWidget(self.cb_sound)
 
         hc_layout.addLayout(hc_row)
@@ -8501,9 +9516,76 @@ class CursorClampPanel(QWidget):
         self.controller.cursor_pos_updated.connect(self.clamp_canvas.set_cursor_pos)
         main_layout.addWidget(self.clamp_canvas, 1)
 
+    def _get_settings_path(self) -> str:
+        appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+        base_dir = os.path.join(appdata, 'HELXAID')
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, 'helxairo_cursor_clamp.json')
+
+    def _load_settings(self):
+        path = self._get_settings_path()
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            if not isinstance(data, dict):
+                return
+
+            # 1. Target Lock Boundary Clamp Mode
+            if "clamp_mode" in data and data["clamp_mode"] in ("primary_monitor", "game_window"):
+                self.mode_switcher.set_mode(data["clamp_mode"])
+                self.controller.set_clamp_mode(data["clamp_mode"])
+
+            # 2. Auto-Release on Alt+Tab / Lost Focus
+            if "auto_release" in data:
+                autorel = bool(data["auto_release"])
+                self.cb_autorel.setChecked(autorel)
+                self.controller.set_auto_release(autorel)
+
+            # 3. Activation & Emergency Unlock Hotkey
+            hotkey = data.get("activation_hotkey") or data.get("trigger_key")
+            if hotkey:
+                hotkey = str(hotkey)
+                self.custom_key_input.set_hotkey(hotkey)
+                if hasattr(self, 'unlock_btn'):
+                    self.unlock_btn.set_hotkey(hotkey)
+                self.controller.set_trigger_key(hotkey)
+
+            # 4. Audible Tone Feedback
+            if "sound_enabled" in data:
+                snd = bool(data["sound_enabled"])
+                self.cb_sound.setChecked(snd)
+                self.controller.set_sound_enabled(snd)
+
+            print(f"[CursorClamp] Settings successfully loaded from {path}")
+        except Exception as e:
+            print(f"[CursorClamp] Error loading settings: {e}")
+
+    def _save_settings(self):
+        path = self._get_settings_path()
+        try:
+            settings = {
+                "clamp_mode": self.mode_switcher.get_mode(),
+                "auto_release": self.controller.auto_release_on_unfocus,
+                "activation_hotkey": self.controller.trigger_key,
+                "trigger_key": self.controller.trigger_key,
+                "sound_enabled": self.controller.sound_enabled
+            }
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2)
+        except Exception as e:
+            print(f"[CursorClamp] Error saving settings: {e}")
+
+    def _on_mode_changed(self, mode: str):
+        self.controller.set_clamp_mode(mode)
+        self._save_settings()
+
     def _on_autorel_toggled(self, checked: bool):
         self.controller.set_auto_release(checked)
         print(f"[CursorClamp] Auto-Release on Alt+Tab set to: {checked}")
+        self._save_settings()
 
     def _on_hotkey_changed(self, key_name: str):
         self.controller.set_trigger_key(key_name)
@@ -8512,6 +9594,11 @@ class CursorClampPanel(QWidget):
         if hasattr(self, 'custom_key_input') and self.custom_key_input.get_hotkey() != key_name:
             self.custom_key_input.set_hotkey(key_name)
         print(f"[CursorClamp] Activation Hotkey set to: {key_name}")
+        self._save_settings()
+
+    def _on_sound_toggled(self, checked: bool):
+        self.controller.set_sound_enabled(checked)
+        self._save_settings()
 
     def _toggle_enable(self):
         self.controller.toggle_enable()
@@ -8967,16 +10054,25 @@ class SlidingSegmentedPillSpeedPresets(QWidget):
 class RapidFireHotkeyButton(QPushButton):
     """
     Interactive Hotkey Binding Button for Rapid Fire Arming / Toggle.
+    Equipped with Win32 WH_KEYBOARD_LL hook for Exclusive Input Capture.
     Component Name: RapidFireHotkeyBtn
     """
     hotkeyChanged = Signal(str)
     recordingStarted = Signal()
     recordingStopped = Signal()
+    _raw_key_captured = Signal(str)
+    _preview_modifier_changed = Signal(str)
+    _modifier_required_prompt = Signal()
+    _win_key_swallowed = Signal()
 
-    def __init__(self, default_key="F8", parent=None):
+    def __init__(self, default_key="F8", owner_id="rapid_arm", parent=None):
         super().__init__(parent)
         self._hotkey = default_key
+        self._owner_id = owner_id
         self._recording = False
+        self._modifier_tapped_vk = None
+        self._hook = None
+        self._hook_proc_ref = None
         self._anim_timer = QTimer(self)
         self._anim_timer.setInterval(300)
         self._anim_timer.timeout.connect(self._on_anim_tick)
@@ -8987,6 +10083,10 @@ class RapidFireHotkeyButton(QPushButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(28)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._win_key_swallowed.connect(self._on_win_key_swallowed, Qt.QueuedConnection)
+        self._modifier_required_prompt.connect(self._on_modifier_required, Qt.QueuedConnection)
+        self._raw_key_captured.connect(self._finish_capture, Qt.QueuedConnection)
+        self._preview_modifier_changed.connect(self._on_preview_modifier, Qt.QueuedConnection)
         self._update_style()
         self.clicked.connect(self._toggle_recording)
 
@@ -8994,6 +10094,146 @@ class RapidFireHotkeyButton(QPushButton):
         if self._recording:
             self._anim_index = (self._anim_index + 1) % len(self._anim_frames)
             self.setText(self._anim_frames[self._anim_index])
+
+    @Slot(str)
+    def _on_preview_modifier(self, preview_text: str):
+        if self._recording:
+            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                self._anim_timer.stop()
+            self.setText(preview_text.upper())
+
+    @Slot()
+    def _on_modifier_required(self):
+        target_w = self.window() if self.window() else self
+        FloatingToast.show_toast(
+            target_w,
+            "Modifier Required",
+            "Please combine Letter & Number keys with Ctrl, Alt, or Shift!"
+        )
+
+    def _install_hook(self):
+        if self._hook is not None:
+            return
+        try:
+            from ctypes import wintypes
+            self._user32_dll = ctypes.WinDLL("user32", use_last_error=True)
+            
+            class KBDLLHOOKSTRUCT(ctypes.Structure):
+                _fields_ = [
+                    ("vkCode", wintypes.DWORD),
+                    ("scanCode", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.c_ulonglong)
+                ]
+            HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_longlong, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT))
+            
+            self._user32_dll.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+            self._user32_dll.SetWindowsHookExW.restype = wintypes.HHOOK
+            self._user32_dll.UnhookWindowsHookEx.argtypes = [wintypes.HHOOK]
+            self._user32_dll.UnhookWindowsHookEx.restype = wintypes.BOOL
+            self._user32_dll.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT)]
+            self._user32_dll.CallNextHookEx.restype = ctypes.c_longlong
+
+            def _low_level_kb_proc(nCode, wParam, lParam):
+                if nCode >= 0 and self._recording:
+                    vk = lParam.contents.vkCode
+                    scan = lParam.contents.scanCode
+                    flags = lParam.contents.flags
+
+                    # 1. Windows Key Restricted
+                    if vk in (0x5B, 0x5C):
+                        if wParam in (0x0100, 0x0104):
+                            try:
+                                self._user32_dll.keybd_event(0xE8, 0, 0, 0)
+                                self._user32_dll.keybd_event(0xE8, 0, 2, 0)
+                            except Exception:
+                                pass
+                            self._win_key_swallowed.emit()
+                        return 1
+
+                    # 2. Escape cancels capture
+                    if vk == 0x1B:
+                        if wParam in (0x0100, 0x0104):
+                            self._raw_key_captured.emit(self._hotkey)
+                        return 1
+
+                    # 3. Check modifier keys
+                    is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
+
+                    if not hasattr(self, '_active_mods'):
+                        self._active_mods = set()
+
+                    if is_modifier:
+                        if wParam in (0x0100, 0x0104):
+                            if vk in (0x11, 0xA2, 0xA3):
+                                self._active_mods.add("Ctrl")
+                            elif vk in (0x12, 0xA4, 0xA5):
+                                self._active_mods.add("Alt")
+                            elif vk in (0x10, 0xA0, 0xA1):
+                                self._active_mods.add("Shift")
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
+                            if mods:
+                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
+                        elif wParam in (0x0101, 0x0105):
+                            if vk in (0x11, 0xA2, 0xA3):
+                                self._active_mods.discard("Ctrl")
+                            elif vk in (0x12, 0xA4, 0xA5):
+                                self._active_mods.discard("Alt")
+                            elif vk in (0x10, 0xA0, 0xA1):
+                                self._active_mods.discard("Shift")
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
+                            if mods:
+                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
+                        return 1
+                    else:
+                        if wParam in (0x0100, 0x0104):
+                            mods_set = set(self._active_mods)
+                            if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
+                                mods_set.add("Ctrl")
+                            if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
+                                mods_set.add("Alt")
+                            if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
+                                mods_set.add("Shift")
+
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in mods_set]
+
+                            # Option B (Smart Filter): Letters A-Z and top-row digits require at least 1 modifier
+                            is_letter_or_digit = (0x41 <= vk <= 0x5A) or (0x30 <= vk <= 0x39)
+                            if is_letter_or_digit and not mods:
+                                self._modifier_required_prompt.emit()
+                                return 1
+
+                            base_key = format_tactical_vk(vk, scan, flags, fallback=self._hotkey or "F8")
+                            full_key = "+".join(mods + [base_key]) if (mods and base_key not in mods) else base_key
+                            self._raw_key_captured.emit(full_key)
+                            return 1
+                        return 1
+                return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
+
+            self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
+            self._hook = self._user32_dll.SetWindowsHookExW(13, self._hook_proc_ref, None, 0)
+        except Exception as e:
+            print(f"[RapidFireHotkeyButton] Hook install error: {e}")
+            self._hook = None
+
+    def _remove_hook(self):
+        if self._hook is not None:
+            try:
+                if hasattr(self, '_user32_dll') and self._user32_dll:
+                    self._user32_dll.UnhookWindowsHookEx(self._hook)
+                else:
+                    ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
+            except Exception:
+                pass
+            self._hook = None
+            self._hook_proc_ref = None
+
+    @Slot()
+    def _on_win_key_swallowed(self):
+        target_w = self.window() if self.window() else self
+        FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Windows Key is reserved by the OS (Please choose another key)")
+        QTimer.singleShot(150, lambda: self._finish_capture(self._hotkey))
 
     def set_hotkey(self, key_str: str):
         self._hotkey = key_str
@@ -9013,19 +10253,19 @@ class RapidFireHotkeyButton(QPushButton):
     def _toggle_recording(self):
         self._recording = not self._recording
         if self._recording:
+            self._active_mods = set()
+            self._modifier_tapped_vk = None
             self._anim_index = 0
             self.setText(self._anim_frames[0])
             self._update_style()
             self.setFocus()
+            self.grabKeyboard()
+            self._install_hook()
             if not self._anim_timer.isActive():
                 self._anim_timer.start()
             self.recordingStarted.emit()
         else:
-            if self._anim_timer.isActive():
-                self._anim_timer.stop()
-            self.setText(self._hotkey.upper())
-            self._update_style()
-            self.recordingStopped.emit()
+            self._finish_capture(self._hotkey)
 
     def _update_style(self):
         if self._recording:
@@ -9065,10 +10305,52 @@ class RapidFireHotkeyButton(QPushButton):
                 }
             """)
 
+    def _finish_capture(self, full_key: str):
+        self._remove_hook()
+        try:
+            self.releaseKeyboard()
+        except Exception:
+            pass
+
+        if full_key and full_key != self._hotkey and full_key != "Escape":
+            is_valid, conflict_owner = validate_shortcut_conflict(full_key, owner_id=self._owner_id)
+            if not is_valid:
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(
+                    target_w,
+                    "Shortcut Conflict",
+                    f"'{full_key}' is already assigned to {conflict_owner}. Please choose another hotkey."
+                )
+                full_key = self._hotkey
+
+        self._hotkey = full_key
+        self.setText(full_key.upper())
+        self._recording = False
+        if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self._update_style()
+        self.recordingStopped.emit()
+        self.hotkeyChanged.emit(full_key)
+
     def keyPressEvent(self, event):
         if self._recording:
             key = event.key()
+            if key == Qt.Key_Escape:
+                self._finish_capture(self._hotkey)
+                event.accept()
+                return
+
             if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
+                mods = []
+                if event.modifiers() & Qt.ControlModifier:
+                    mods.append("Ctrl")
+                if event.modifiers() & Qt.AltModifier:
+                    mods.append("Alt")
+                if event.modifiers() & Qt.ShiftModifier:
+                    mods.append("Shift")
+                if mods:
+                    self._on_preview_modifier(" + ".join(mods) + " + ...")
+                event.accept()
                 return
 
             modifiers = []
@@ -9079,53 +10361,33 @@ class RapidFireHotkeyButton(QPushButton):
             if event.modifiers() & Qt.ShiftModifier:
                 modifiers.append("Shift")
 
-            if key == Qt.Key_Escape:
-                self._recording = False
-                if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
-                    self._anim_timer.stop()
-                self.setText(self._hotkey.upper())
-                self._update_style()
-                self.recordingStopped.emit()
+            # Option B (Smart Filter): Letters A-Z and digits require at least 1 modifier
+            is_letter_or_digit = (Qt.Key_A <= key <= Qt.Key_Z) or (Qt.Key_0 <= key <= Qt.Key_9)
+            if is_letter_or_digit and not modifiers:
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(
+                    target_w,
+                    "Modifier Required",
+                    "Please combine Letter & Number keys with Ctrl, Alt, or Shift!"
+                )
                 event.accept()
                 return
 
-            if Qt.Key_F1 <= key <= Qt.Key_F12:
-                key_name = f"F{key - Qt.Key_F1 + 1}"
-            elif key == Qt.Key_Space:
-                key_name = "Space"
-            elif key == Qt.Key_Tab:
-                key_name = "Tab"
-            elif key == Qt.Key_CapsLock:
-                key_name = "CapsLock"
-            elif key == Qt.Key_Return or key == Qt.Key_Enter:
-                key_name = "Enter"
-            elif key == Qt.Key_Backspace:
-                key_name = "Backspace"
-            else:
-                txt = event.text().strip().upper()
-                if txt and len(txt) == 1 and txt.isprintable():
-                    key_name = txt
-                else:
-                    seq = QKeySequence(key).toString().strip()
-                    if seq.startswith("Key "):
-                        seq = seq[4:].strip()
-                    key_name = seq or "F8"
-
-            full_key = "+".join(modifiers + [key_name]) if modifiers else key_name
-            self._hotkey = full_key
-            self.setText(full_key.upper())
-            self._recording = False
-            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
-                self._anim_timer.stop()
-            self._update_style()
-            self.recordingStopped.emit()
-            self.hotkeyChanged.emit(full_key)
+            base_key = format_tactical_key_event(event, default_fallback="F8")
+            full_key = "+".join(modifiers + [base_key]) if (modifiers and base_key not in modifiers) else base_key
+            self._finish_capture(full_key)
             event.accept()
         else:
             super().keyPressEvent(event)
 
     def focusOutEvent(self, event):
         if self._recording:
+            self._remove_hook()
+            try:
+                self.releaseKeyboard()
+                self.releaseMouse()
+            except Exception:
+                pass
             self._recording = False
             if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
                 self._anim_timer.stop()
@@ -9517,64 +10779,10 @@ class RapidFireController(QObject):
                 pass
 
     def _get_vk_code(self, key_name: str) -> int:
-        raw = key_name.strip().lower()
-        mapping = {
-            "left click": 0x01, "mouse 1": 0x01, "mouse 1 (m1)": 0x01,
-            "right click": 0x02, "rclick": 0x02, "mouse 2": 0x02, "mouse 2 (m2)": 0x02,
-            "middle click": 0x04, "wheel": 0x04, "mouse 3": 0x04,
-            "mouse 4": 0x05, "mouse button 4": 0x05, "xbutton1": 0x05,
-            "mouse 5": 0x06, "mouse button 5": 0x06, "xbutton2": 0x06,
-            "left alt": 0xA4, "right alt": 0xA5, "alt": 0x12,
-            "left ctrl": 0xA2, "right ctrl": 0xA3, "ctrl": 0x11, "control": 0x11,
-            "left shift": 0xA0, "right shift": 0xA1, "shift": 0x10,
-            "space": 0x20, "spacebar": 0x20, "tab": 0x09, "caps lock": 0x14,
-            "capslock": 0x14, "enter": 0x0D, "return": 0x0D, "backspace": 0x08,
-            "delete": 0x2E, "insert": 0x2D,
-        }
-        for i in range(1, 13):
-            mapping[f"f{i}"] = 0x70 + (i - 1)
-
-        if raw in mapping:
-            return mapping[raw]
-        if len(raw) == 1:
-            return ord(raw.upper())
-        if raw.startswith("key ") or raw.startswith("key_"):
-            char = raw.split()[-1]
-            if len(char) == 1:
-                return ord(char.upper())
-        return 0
+        return resolve_tactical_vk_code(key_name, fallback=0)
 
     def _is_hotkey_down(self, hotkey_str: str) -> bool:
-        if not hotkey_str:
-            return False
-        parts = [p.strip().lower() for p in hotkey_str.split('+') if p.strip()]
-        if not parts:
-            return False
-
-        for part in parts:
-            if part in ("ctrl", "control", "left ctrl", "right ctrl"):
-                if not ((ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or
-                        (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or
-                        (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000)):
-                    return False
-            elif part in ("alt", "left alt", "right alt", "menu"):
-                if not ((ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or
-                        (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or
-                        (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000)):
-                    return False
-            elif part in ("shift", "left shift", "right shift"):
-                if not ((ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or
-                        (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or
-                        (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000)):
-                    return False
-            else:
-                vk = self._get_vk_code(part)
-                if vk > 0:
-                    if not (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000):
-                        return False
-                else:
-                    return False
-        return True
+        return is_tactical_hotkey_physically_down(hotkey_str)
 
     def _on_watchdog_tick(self):
         if self._suppress_ticks > 0:
@@ -10431,13 +11639,13 @@ class RapidFirePanel(QWidget):
         c3_row = QHBoxLayout()
         c3_row.setSpacing(6)
 
-        self.trigger_input = TacticalInputCatcherButton(default_key="Left Click")
+        self.trigger_input = TacticalInputCatcherButton(default_key="Left Click", owner_id="rapid_trigger")
         self.trigger_input.setObjectName("RapidFireTriggerInput")
         self.trigger_input.setFixedHeight(28)
         self.trigger_input.input_captured.connect(self._on_trigger_captured)
         c3_row.addWidget(self.trigger_input, 1)
 
-        self.arm_hotkey_btn = RapidFireHotkeyButton(default_key="F8")
+        self.arm_hotkey_btn = RapidFireHotkeyButton(default_key="F8", owner_id="rapid_arm")
         self.arm_hotkey_btn.setObjectName("RapidFireArmHotkeyBtn")
         self.arm_hotkey_btn.setFixedHeight(28)
         self.arm_hotkey_btn.hotkeyChanged.connect(self._on_arm_hotkey_changed)
@@ -10547,6 +11755,13 @@ class RapidFirePanel(QWidget):
                 self.cb_sound.setChecked(snd)
                 self.controller.set_sound_enabled(snd)
 
+            # 10. Sibling Sanitization on startup
+            if normalize_shortcut_key(self.trigger_input.get_captured_key()) == normalize_shortcut_key(self.arm_hotkey_btn.get_hotkey()):
+                print("[RapidFire] Sibling conflict detected in saved settings, resetting Arm Hotkey to default 'F8'")
+                self.arm_hotkey_btn.set_hotkey("F8")
+                self.controller.set_toggle_hotkey("F8")
+                self._save_settings()
+
             self._update_burst_delay_visibility(animated=False)
             print(f"[RapidFire] Settings successfully loaded from {path}")
         except Exception as e:
@@ -10561,7 +11776,7 @@ class RapidFirePanel(QWidget):
                 "trigger_type": self.trigger_type_switcher.get_trigger_type(),
                 "target_button": self.target_switcher.get_target(),
                 "cadence_speed": self.speed_slider.value(),
-                "humanize_jitter": self.cb_jitter.isChecked(),
+                "humanize_jitter": self.controller.humanize_jitter,
                 "fire_trigger": self.controller.trigger_key,
                 "arm_hotkey": self.controller.toggle_hotkey,
                 "sound_enabled": self.controller.sound_enabled
@@ -10684,12 +11899,62 @@ class RapidFirePanel(QWidget):
         self.speed_slider.setValue(cps)
 
     def _on_trigger_captured(self, key_name: str):
+        norm_proposed = normalize_shortcut_key(key_name)
+        norm_arm = normalize_shortcut_key(self.arm_hotkey_btn.get_hotkey())
+        if norm_proposed and norm_proposed == norm_arm:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to Rapid-Fire (Master Arm). Please choose another hotkey."
+            )
+            self.trigger_input.set_captured_key(self.controller.trigger_key)
+            return
+
+        is_valid, conflict_owner = validate_shortcut_conflict(key_name, owner_id="rapid_trigger")
+        if not is_valid:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to {conflict_owner}. Please choose another hotkey."
+            )
+            self.trigger_input.set_captured_key(self.controller.trigger_key)
+            return
+
         self.controller.set_trigger_key(key_name)
+        if hasattr(self, 'trigger_input') and self.trigger_input.get_captured_key() != key_name:
+            self.trigger_input.set_captured_key(key_name)
         print(f"[RapidFire] Trigger Key bound to: {key_name}")
         self._save_settings()
 
     def _on_arm_hotkey_changed(self, key_name: str):
+        norm_proposed = normalize_shortcut_key(key_name)
+        norm_trig = normalize_shortcut_key(self.trigger_input.get_captured_key())
+        if norm_proposed and norm_proposed == norm_trig:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to Rapid-Fire (Fire Trigger). Please choose another hotkey."
+            )
+            self.arm_hotkey_btn.set_hotkey(self.controller.toggle_hotkey)
+            return
+
+        is_valid, conflict_owner = validate_shortcut_conflict(key_name, owner_id="rapid_arm")
+        if not is_valid:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to {conflict_owner}. Please choose another hotkey."
+            )
+            self.arm_hotkey_btn.set_hotkey(self.controller.toggle_hotkey)
+            return
+
         self.controller.set_toggle_hotkey(key_name)
+        if hasattr(self, 'arm_hotkey_btn') and self.arm_hotkey_btn.get_hotkey() != key_name:
+            self.arm_hotkey_btn.set_hotkey(key_name)
         print(f"[RapidFire] Armed Toggle Hotkey bound to: {key_name}")
         self._save_settings()
 
@@ -14183,6 +15448,10 @@ class MacroSettingsPanel(QWidget):
             
         # Defer macro system bridge init & data loading by 1s for zero-latency page switch
         def _deferred_macro_init():
+            if not hasattr(self, 'active_list') or not self.active_list:
+                # Retry when remaining tabs are built
+                QTimer.singleShot(200, _deferred_macro_init)
+                return
             if not self._bridge:
                 self._init_bridge()
                 
@@ -14209,23 +15478,30 @@ class MacroSettingsPanel(QWidget):
     
     def _refresh_macro_status(self):
         """Refresh macro list status without full reload (preserves selection)."""
-        if not self._bridge or not self._bridge.profile_manager:
+        if not hasattr(self, 'active_list') or not self.active_list:
+            return
+        if not self._bridge or not getattr(self._bridge, 'profile_manager', None):
             return
         
         # Update each item's status in place
-        for i in range(self.active_list.count()):
-            item = self.active_list.item(i)
-            widget = self.active_list.itemWidget(item)
-            macro = item.data(Qt.UserRole + 1)
-            if macro and isinstance(widget, HelxairoMacroItemWidget):
-                prof = self._bridge.profile_manager.get_profile_for_macro(macro.id)
-                prof_name = prof.name if prof else None
-                widget.macro = macro
-                widget.profile_name = prof_name
-                is_enabled = getattr(macro, 'enabled', True)
-                widget.status_icon.set_enabled_state(is_enabled)
-                if hasattr(widget, 'sub_lbl') and prof_name:
-                    widget.sub_lbl.setText(f"Profile: {prof_name}")
+        try:
+            for i in range(self.active_list.count()):
+                item = self.active_list.item(i)
+                if not item:
+                    continue
+                widget = self.active_list.itemWidget(item)
+                macro = item.data(Qt.UserRole + 1)
+                if macro and isinstance(widget, HelxairoMacroItemWidget):
+                    prof = self._bridge.profile_manager.get_profile_for_macro(macro.id)
+                    prof_name = prof.name if prof else None
+                    widget.macro = macro
+                    widget.profile_name = prof_name
+                    is_enabled = getattr(macro, 'enabled', True)
+                    widget.status_icon.set_enabled_state(is_enabled)
+                    if hasattr(widget, 'sub_lbl') and prof_name:
+                        widget.sub_lbl.setText(f"Profile: {prof_name}")
+        except Exception:
+            pass
         
         # Also update system status
         self._update_status()
@@ -14233,8 +15509,10 @@ class MacroSettingsPanel(QWidget):
     def _load_data(self):
         """Load data from macro bridge."""
         self._update_status()
-        self._load_macros()
-        self._load_profiles()
+        if hasattr(self, 'active_list') and self.active_list:
+            self._load_macros()
+        if hasattr(self, 'profile_list') and self.profile_list:
+            self._load_profiles()
         
     def _update_status(self):
         """Update system status display."""
@@ -14368,6 +15646,8 @@ class MacroSettingsPanel(QWidget):
 
     def _load_macros(self):
         """Load macros belonging to the active profile into the macro lists."""
+        if not hasattr(self, 'active_list') or not self.active_list:
+            return
         print("[MacroPanel] Loading macros for active profile into list...")
         self.active_list.clear()
         
@@ -14726,6 +16006,8 @@ class MacroSettingsPanel(QWidget):
                 
     def _load_profiles(self):
         """Load profiles into list with SVG star icon for active profile."""
+        if not hasattr(self, 'profile_list') or not self.profile_list:
+            return
         import os
         script_dir = os.path.dirname(os.path.abspath(__file__))
         star_icon_path = os.path.join(script_dir, "UI Icons", "star-filled.svg").replace("\\", "/")
