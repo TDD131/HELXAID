@@ -8849,7 +8849,7 @@ class SlidingSegmentedPillSpeedPresets(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("RapidFireSpeedPresetTabFrame")
-        self.setFixedHeight(24)
+        self.setFixedHeight(28)
         self.setCursor(Qt.PointingHandCursor)
         self._presets = [10, 18, 25, 35]
         self._labels = ["10 TAP", "18 MED", "25 FAST", "35 MAX"]
@@ -8911,10 +8911,10 @@ class SlidingSegmentedPillSpeedPresets(QWidget):
         w = self.width()
         h = self.height()
 
-        # 1. Background Track
+        # 1. Background Track (matching SlidingSegmentedPill3)
         p.setPen(Qt.NoPen)
-        p.setBrush(QBrush(QColor(255, 255, 255, 10)))
-        p.drawRoundedRect(QRectF(0, 0, w, h), 5, 5)
+        p.setBrush(QBrush(QColor(255, 255, 255, 12)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 6, 6)
 
         # 2. Sliding Gradient Pill
         pad = 2.0
@@ -8930,15 +8930,15 @@ class SlidingSegmentedPillSpeedPresets(QWidget):
             p.setBrush(QBrush(gradient))
             p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 4, 4)
 
-        # 3. Text Labels
-        p.setFont(QFont("Orbitron", 7, QFont.Bold))
+        # 3. Text Labels (matching Orbitron 8px Bold)
+        p.setFont(QFont("Orbitron", 8, QFont.Bold))
         for i, text in enumerate(self._labels):
             target_p = i / 3.0
             dist = min(1.0, abs(self._slide_progress - target_p) * 3.0)
             if self._current_index == i:
-                c = int(0 + (140 - 0) * dist)
+                c = int(0 + (136 - 0) * dist)
             else:
-                c = 140
+                c = 136
             p.setPen(QColor(c, c, c))
             rx = pad + i * (pill_w + pad)
             p.drawText(QRectF(rx, 0, pill_w, h), Qt.AlignCenter, text)
@@ -10104,7 +10104,7 @@ class RapidFirePanel(QWidget):
         # CARD 1: FIRING MODE & TARGET DISPATCH
         self.card1 = QFrame()
         self.card1.setObjectName("RapidFireModeCard")
-        self.card1.setFixedHeight(132)
+        self.card1.setFixedHeight(176)
         self.card1.setStyleSheet("""
             QFrame#RapidFireModeCard {
                 background-color: rgba(255, 255, 255, 0.03);
@@ -10200,7 +10200,7 @@ class RapidFirePanel(QWidget):
         # CARD 2: CADENCE SPEED & HUMANIZATION
         self.card2 = QFrame()
         self.card2.setObjectName("RapidFireSpeedCard")
-        self.card2.setFixedHeight(132)
+        self.card2.setFixedHeight(176)
         self.card2.setStyleSheet("""
             QFrame#RapidFireSpeedCard {
                 background-color: rgba(255, 255, 255, 0.03);
@@ -10212,26 +10212,43 @@ class RapidFirePanel(QWidget):
         c2_layout.setContentsMargins(12, 8, 12, 8)
         c2_layout.setSpacing(4)
 
-        c2_head = QHBoxLayout()
-        c2_title = QLabel("CADENCE SPEED")
+        c2_title = QLabel("CADENCE SPEED & HUMANIZATION")
         c2_title.setObjectName("RapidFireSpeedTitle")
         c2_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
-        c2_head.addWidget(c2_title)
-        c2_head.addStretch()
+        c2_layout.addWidget(c2_title)
 
-        self.speed_val_lbl = QLabel("18 CPS (Fast Auto)")
-        self.speed_val_lbl.setObjectName("RapidFireSpeedValLabel")
-        self.speed_val_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
-        c2_head.addWidget(self.speed_val_lbl)
-        c2_layout.addLayout(c2_head)
-
-        # Quick Preset Segmented Pill
+        # Quick Preset Segmented Pill (Exact match with RapidFireModeTabFrame: height 28px)
         self.speed_preset_switcher = SlidingSegmentedPillSpeedPresets()
         self.speed_preset_switcher.setObjectName("RapidFireSpeedPresetTabFrame")
         self.speed_preset_switcher.presetSelected.connect(self._on_speed_preset_selected)
         c2_layout.addWidget(self.speed_preset_switcher)
 
-        # Speed Slider
+        # CADENCE SPEED SLIDER SUB-FRAME (Exact layout match with RapidFireBurstDelayFrame)
+        self.speed_slider_frame = QFrame()
+        self.speed_slider_frame.setObjectName("RapidFireSpeedSliderFrame")
+        self.speed_slider_frame.setStyleSheet("""
+            QFrame#RapidFireSpeedSliderFrame {
+                background: transparent;
+                border: none;
+            }
+        """)
+        ssf_layout = QVBoxLayout(self.speed_slider_frame)
+        ssf_layout.setContentsMargins(0, 2, 0, 2)
+        ssf_layout.setSpacing(2)
+
+        ssf_head = QHBoxLayout()
+        ssf_title = QLabel("FINE CADENCE SPEED")
+        ssf_title.setObjectName("RapidFireSpeedSliderTitle")
+        ssf_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold;")
+        ssf_head.addWidget(ssf_title)
+        ssf_head.addStretch()
+
+        self.speed_val_lbl = QLabel("18 CPS (Fast Auto)")
+        self.speed_val_lbl.setObjectName("RapidFireSpeedValLabel")
+        self.speed_val_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold;")
+        ssf_head.addWidget(self.speed_val_lbl)
+        ssf_layout.addLayout(ssf_head)
+
         self.speed_slider = QSlider(Qt.Horizontal)
         self.speed_slider.setObjectName("RapidFireSpeedSlider")
         self.speed_slider.setRange(5, 35)
@@ -10257,16 +10274,31 @@ class RapidFirePanel(QWidget):
             }
         """)
         self.speed_slider.valueChanged.connect(self._on_speed_slider_changed)
-        c2_layout.addWidget(self.speed_slider)
+        ssf_layout.addWidget(self.speed_slider)
+        c2_layout.addWidget(self.speed_slider_frame)
 
-        # Live Physical Cadence Timing Stats Row
+        # Live Physical Cadence Timing Stats Frame (Exact match with RapidFireTriggerTypeFrame: height 26px)
+        self.speed_timing_frame = QFrame()
+        self.speed_timing_frame.setObjectName("RapidFireSpeedTimingFrame")
+        self.speed_timing_frame.setFixedHeight(26)
+        self.speed_timing_frame.setStyleSheet("""
+            QFrame#RapidFireSpeedTimingFrame {
+                background-color: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 4px;
+            }
+        """)
+        stf_layout = QHBoxLayout(self.speed_timing_frame)
+        stf_layout.setContentsMargins(6, 0, 6, 0)
         self.speed_timing_lbl = QLabel("PERIOD: ~55ms | HOLD: ~14ms | CADENCE: 18.0 Hz")
         self.speed_timing_lbl.setObjectName("RapidFireSpeedTimingLabel")
-        self.speed_timing_lbl.setStyleSheet("color: #777777; font-family: 'Orbitron', sans-serif; font-size: 8px; font-weight: bold;")
-        c2_layout.addWidget(self.speed_timing_lbl)
+        self.speed_timing_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 8px; font-weight: bold;")
+        stf_layout.addWidget(self.speed_timing_lbl, 0, Qt.AlignCenter)
+        c2_layout.addWidget(self.speed_timing_frame)
 
         self.cb_jitter = AnimatedCheckBox("Gaussian Humanization Jitter")
         self.cb_jitter.setObjectName("RapidFireJitterCb")
+        self.cb_jitter.setFixedHeight(26)
         self.cb_jitter.setChecked(True)
         self.cb_jitter.setToolTip("Injects microsecond Gaussian organic timing variation to prevent anti-cheat pattern detection.")
         self.cb_jitter.toggled.connect(self.controller.set_humanize_jitter)
@@ -10278,7 +10310,7 @@ class RapidFirePanel(QWidget):
         # CARD 3: TRIGGER & ARMING HOTKEYS
         self.card3 = QFrame()
         self.card3.setObjectName("RapidFireHotkeyCard")
-        self.card3.setFixedHeight(132)
+        self.card3.setFixedHeight(176)
         self.card3.setStyleSheet("""
             QFrame#RapidFireHotkeyCard {
                 background-color: rgba(255, 255, 255, 0.03);
@@ -10339,9 +10371,9 @@ class RapidFirePanel(QWidget):
         cfg_layout.addWidget(self.card3, 1)
         main_layout.addLayout(cfg_layout)
 
-        # Dynamic Smooth Card Height Animator (240ms OutCubic)
+        # Dynamic Smooth Morph Animator (220ms OutCubic)
         self._card_anim = QVariantAnimation(self)
-        self._card_anim.setDuration(240)
+        self._card_anim.setDuration(220)
         self._card_anim.setEasingCurve(QEasingCurve.OutCubic)
         self._card_anim.valueChanged.connect(self._on_card_anim_tick)
         self._card_anim.finished.connect(self._on_card_anim_finished)
@@ -10363,17 +10395,17 @@ class RapidFirePanel(QWidget):
         is_hold = self.controller.trigger_type == "hold"
         show_burst_delay = is_burst and is_hold
 
-        target_h = 176 if show_burst_delay else 132
-        start_h = self.card1.height()
+        target_pill_h = 28 if show_burst_delay else 38
+        cur_pill_h = self.mode_switcher.height()
 
-        if not animated or start_h == target_h:
+        if not animated or cur_pill_h == target_pill_h:
             self._card_anim.stop()
             self.burst_delay_frame.setVisible(show_burst_delay)
             self._burst_opacity_effect.setOpacity(1.0 if show_burst_delay else 0.0)
-            self.burst_delay_frame.setMaximumHeight(48 if show_burst_delay else 0)
-            self.card1.setFixedHeight(target_h)
-            self.card2.setFixedHeight(target_h)
-            self.card3.setFixedHeight(target_h)
+            self.burst_delay_frame.setMaximumHeight(44 if show_burst_delay else 0)
+            self.mode_switcher.setFixedHeight(target_pill_h)
+            self.trigger_type_switcher.setFixedHeight(target_pill_h)
+            self.target_switcher.setFixedHeight(target_pill_h)
             return
 
         if show_burst_delay:
@@ -10382,20 +10414,20 @@ class RapidFirePanel(QWidget):
         if self._card_anim.state() == QVariantAnimation.Running:
             self._card_anim.stop()
 
-        self._card_anim.setStartValue(start_h)
-        self._card_anim.setEndValue(target_h)
+        self._card_anim.setStartValue(cur_pill_h)
+        self._card_anim.setEndValue(target_pill_h)
         self._card_anim.start()
 
     def _on_card_anim_tick(self, val):
-        h = int(val)
-        self.card1.setFixedHeight(h)
-        self.card2.setFixedHeight(h)
-        self.card3.setFixedHeight(h)
+        pill_h = int(val)
+        self.mode_switcher.setFixedHeight(pill_h)
+        self.trigger_type_switcher.setFixedHeight(pill_h)
+        self.target_switcher.setFixedHeight(pill_h)
 
-        # Smooth slide & opacity progress (132 -> 0.0, 176 -> 1.0)
-        progress = max(0.0, min(1.0, (h - 132.0) / 44.0))
+        # Morph progress: 38 (Full-Auto) -> 0.0, 28 (Burst+Hold) -> 1.0
+        progress = max(0.0, min(1.0, (38.0 - pill_h) / 10.0))
         self._burst_opacity_effect.setOpacity(progress)
-        self.burst_delay_frame.setMaximumHeight(int(48 * progress))
+        self.burst_delay_frame.setMaximumHeight(int(44 * progress))
 
     def _on_card_anim_finished(self):
         is_burst = self.controller.mode in ("burst_3", "burst_5")
@@ -10405,9 +10437,15 @@ class RapidFirePanel(QWidget):
             self.burst_delay_frame.setVisible(False)
             self._burst_opacity_effect.setOpacity(0.0)
             self.burst_delay_frame.setMaximumHeight(0)
+            self.mode_switcher.setFixedHeight(38)
+            self.trigger_type_switcher.setFixedHeight(38)
+            self.target_switcher.setFixedHeight(38)
         else:
             self._burst_opacity_effect.setOpacity(1.0)
-            self.burst_delay_frame.setMaximumHeight(48)
+            self.burst_delay_frame.setMaximumHeight(44)
+            self.mode_switcher.setFixedHeight(28)
+            self.trigger_type_switcher.setFixedHeight(28)
+            self.target_switcher.setFixedHeight(28)
 
     def _on_mode_changed(self, mode_str: str):
         self.controller.set_mode(mode_str)
