@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 from smooth_scroll import SmoothScrollArea
 import math, random
-from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen, QTextDocument, QTextCursor, QRadialGradient
+from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen, QTextDocument, QTextCursor, QRadialGradient, QLinearGradient
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QPointF, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize, QVariantAnimation, QAbstractAnimation
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton
 
@@ -6235,6 +6235,8 @@ class SniperClutchController(QObject):
 
     def set_trigger_key(self, key_name: str):
         self.trigger_key = key_name
+        self._hotkey_last_state = True
+        self._suppress_hotkey_ticks = 20  # Debounce suppression for ~500ms after recording
 
     def reset_to_standard_baseline(self):
         """Emergency reset Windows speed back to 10."""
@@ -7266,6 +7268,302 @@ class Win32Rect(ctypes.Structure):
     ]
 
 
+class CursorClampHotkeyButton(QPushButton):
+    """
+    Interactive Hotkey Record Button (HELRCUS Style).
+    Records modifier combinations (Ctrl+Alt+C, Alt+X, Ctrl+Shift+L) & mouse buttons.
+    
+    Component Name: CursorClampHotkeyButton
+    """
+    hotkeyChanged = Signal(str)
+    recordingStarted = Signal()
+    recordingStopped = Signal()
+
+    def __init__(self, default_key: str = "Ctrl+Alt+C", parent=None):
+        super().__init__(parent)
+        self.setObjectName("CursorClampUnlockBtn")
+        self._recording = False
+        self._hotkey = default_key
+        self.setText(default_key.upper())
+        self.setFixedHeight(26)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to record a new emergency unlock / toggle hotkey")
+        self.clicked.connect(self._start_recording)
+        self._update_style()
+
+    def set_hotkey(self, key_str: str):
+        self._hotkey = key_str
+        self.setText(key_str.upper())
+        self._recording = False
+        self._update_style()
+
+    def get_hotkey(self) -> str:
+        return self._hotkey
+
+    def _update_style(self):
+        if self._recording:
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: #FF5B06;
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 0px 10px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(255, 255, 255, 0.08);
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 8px;
+                    padding: 0px 10px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(255, 255, 255, 0.16);
+                    color: #FFFFFF;
+                }
+            """)
+
+    def _start_recording(self):
+        self._recording = True
+        self.setText("Press key...")
+        self._update_style()
+        self.setFocus()
+        self.recordingStarted.emit()
+
+    def keyPressEvent(self, event):
+        if self._recording:
+            key = event.key()
+
+            # Cancel recording on Escape
+            if key == Qt.Key_Escape:
+                self._recording = False
+                self.setText(self._hotkey.upper())
+                self._update_style()
+                self.recordingStopped.emit()
+                event.accept()
+                return
+
+            # Wait for modifier-only keys
+            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
+                event.accept()
+                return
+
+            # Restrict Windows Key
+            if (event.modifiers() & Qt.MetaModifier) or key in (Qt.Key_Meta, 0x5B, 0x5C):
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(target_w, "Restricted Key", "Windows Key is reserved by the OS")
+                self._recording = False
+                self.setText(self._hotkey.upper())
+                self._update_style()
+                self.recordingStopped.emit()
+                event.accept()
+                return
+
+            # Build modifiers
+            modifiers = []
+            if event.modifiers() & Qt.ControlModifier:
+                modifiers.append("Ctrl")
+            if event.modifiers() & Qt.AltModifier:
+                modifiers.append("Alt")
+            if event.modifiers() & Qt.ShiftModifier:
+                modifiers.append("Shift")
+
+            # Determine key name
+            key_name = ""
+            if Qt.Key_F1 <= key <= Qt.Key_F12:
+                key_name = f"F{key - Qt.Key_F1 + 1}"
+            elif key == Qt.Key_Space:
+                key_name = "Space"
+            elif key == Qt.Key_Tab:
+                key_name = "Tab"
+            elif key == Qt.Key_CapsLock:
+                key_name = "Caps Lock"
+            elif key in (Qt.Key_Return, Qt.Key_Enter):
+                key_name = "Enter"
+            elif key == Qt.Key_Backspace:
+                key_name = "Backspace"
+            elif key == Qt.Key_Delete:
+                key_name = "Delete"
+            else:
+                txt = event.text().strip().upper()
+                if txt and len(txt) == 1 and txt.isprintable():
+                    key_name = txt
+                else:
+                    seq = QKeySequence(key).toString().strip()
+                    if seq.startswith("Key "):
+                        seq = seq[4:].strip()
+                    key_name = seq or "C"
+
+            full_key = "+".join(modifiers + [key_name]) if modifiers else key_name
+
+            self._hotkey = full_key
+            self.setText(full_key.upper())
+            self._recording = False
+            self._update_style()
+            self.recordingStopped.emit()
+            self.hotkeyChanged.emit(full_key)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        if self._recording:
+            btn = event.button()
+            if btn == Qt.LeftButton:
+                # Left click while recording commits nothing, ignores or cancels
+                super().mousePressEvent(event)
+                return
+
+            modifiers = []
+            if event.modifiers() & Qt.ControlModifier:
+                modifiers.append("Ctrl")
+            if event.modifiers() & Qt.AltModifier:
+                modifiers.append("Alt")
+            if event.modifiers() & Qt.ShiftModifier:
+                modifiers.append("Shift")
+
+            btn_name = "Right Click"
+            if btn == Qt.RightButton:
+                btn_name = "Right Click"
+            elif btn == Qt.MiddleButton:
+                btn_name = "Middle Click"
+            elif btn in (Qt.BackButton, Qt.XButton1):
+                btn_name = "Mouse 4"
+            elif btn in (Qt.ForwardButton, Qt.XButton2):
+                btn_name = "Mouse 5"
+
+            full_key = "+".join(modifiers + [btn_name]) if modifiers else btn_name
+
+            self._hotkey = full_key
+            self.setText(full_key.upper())
+            self._recording = False
+            self._update_style()
+            self.recordingStopped.emit()
+            self.hotkeyChanged.emit(full_key)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def focusOutEvent(self, event):
+        if self._recording:
+            self._recording = False
+            self.setText(self._hotkey.upper())
+            self._update_style()
+            self.recordingStopped.emit()
+        super().focusOutEvent(event)
+
+
+class SlidingSegmentedPill(QWidget):
+    """
+    Smooth animated sliding pill segmented switcher (HELXAID signature style).
+    Component Name: CursorClampModeTabFrame
+    """
+    modeChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CursorClampModeTabFrame")
+        self.setFixedHeight(28)
+        self.setCursor(Qt.PointingHandCursor)
+        self._current_mode = "primary_monitor"  # "primary_monitor" | "game_window"
+        self._slide_progress = 0.0              # 0.0 = primary, 1.0 = game_window
+        
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_mode(self, mode: str):
+        if mode == self._current_mode:
+            return
+        self._current_mode = mode
+        target = 1.0 if mode == "game_window" else 0.0
+        
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+        self.modeChanged.emit(self._current_mode)
+
+    def get_mode(self) -> str:
+        return self._current_mode
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            if click_x < (w / 2.0):
+                self.set_mode("primary_monitor")
+            else:
+                self.set_mode("game_window")
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Dark container track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 12)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 6, 6)
+
+        # 2. Calculate sliding pill geometry
+        pad = 2.0
+        pill_w = (w - (pad * 3.0)) / 2.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * (pill_w + pad)
+        pill_y = pad
+
+        # 3. Draw sliding orange gradient pill
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 4, 4)
+
+        # 4. Draw Tab Texts with smooth color interpolation
+        p.setFont(QFont("Orbitron", 9, QFont.Bold))
+
+        # Primary Display text color (Black when active, #888888 when unselected)
+        r0 = int(0 + (136 - 0) * self._slide_progress)
+        g0 = int(0 + (136 - 0) * self._slide_progress)
+        b0 = int(0 + (136 - 0) * self._slide_progress)
+        p.setPen(QColor(r0, g0, b0))
+        left_rect = QRectF(pad, 0, pill_w, h)
+        p.drawText(left_rect, Qt.AlignCenter, "PRIMARY DISPLAY")
+
+        # Active Game Window text color (#888888 when unselected, Black when active)
+        r1 = int(136 + (0 - 136) * self._slide_progress)
+        g1 = int(136 + (0 - 136) * self._slide_progress)
+        b1 = int(136 + (0 - 136) * self._slide_progress)
+        p.setPen(QColor(r1, g1, b1))
+        right_rect = QRectF(pad + pill_w + pad, 0, pill_w, h)
+        p.drawText(right_rect, Qt.AlignCenter, "ACTIVE GAME WINDOW")
+
+
 class CursorClampController(QObject):
     """
     Multi-Monitor Hardware-Enforced Cursor Clamping Engine.
@@ -7275,17 +7573,24 @@ class CursorClampController(QObject):
     """
     clamp_state_changed = Signal(bool, str)   # (is_clamped, status_desc)
     cursor_pos_updated = Signal(int, int)     # (global_x, global_y)
+    enabled_state_changed = Signal(bool)      # (is_enabled) for UI state synchronization
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("CursorClampController")
         self.is_enabled = False
         self.is_clamped = False
         self.clamp_mode = "primary_monitor"   # "primary_monitor" | "game_window"
         self.auto_release_on_unfocus = True
         self.sound_enabled = True
         self.manual_override = False          # Temporary hotkey release
+        self.trigger_key = "Ctrl+Alt+C"
         self._last_rect = None
         self._active_target_name = "Primary Screen"
+        self._hotkey_last_state = False
+        self._active_locked_hwnd = None
+        self._active_locked_pid = None
+        self._alt_tab_active = False
         
         # High-DPI Win32 Per-Monitor Awareness V2
         try:
@@ -7293,29 +7598,64 @@ class CursorClampController(QObject):
         except Exception:
             pass
 
-        # High-frequency, ultra-lightweight focus & position polling timer (40ms = 25 FPS)
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(40)
-        self._poll_timer.timeout.connect(self._on_poll_tick)
+        # High-frequency watchdog timer (25ms = 40 Hz) - Always active for hotkey & radar updates
+        self._watchdog = QTimer(self)
+        self._watchdog.setInterval(25)
+        self._watchdog.timeout.connect(self._on_watchdog_tick)
+        self._watchdog.start()
 
         # Emergency cleanup hook
         atexit.register(self.release_clamp)
         if QApplication.instance():
             QApplication.instance().aboutToQuit.connect(self.release_clamp)
 
+    def set_trigger_key(self, key_name: str):
+        self.trigger_key = key_name
+        self._hotkey_last_state = True
+        self._suppress_hotkey_ticks = 20  # Debounce suppression for ~500ms after recording
+
     def set_enabled(self, enabled: bool):
-        self.is_enabled = enabled
-        if enabled:
-            self.manual_override = False
-            self._poll_timer.start()
+        self.is_enabled = bool(enabled)
+        self.manual_override = False
+        self._alt_tab_active = False
+        if self.is_enabled:
+            fg = ctypes.windll.user32.GetForegroundWindow()
+            helxaid_pid = os.getpid()
+            if fg:
+                fg_root = ctypes.windll.user32.GetAncestor(fg, 2) or fg
+                pid = wintypes.DWORD()
+                ctypes.windll.user32.GetWindowThreadProcessId(fg_root, ctypes.byref(pid))
+                if pid.value and pid.value != helxaid_pid:
+                    self._active_locked_pid = pid.value
+                    self._active_locked_hwnd = fg_root
+                else:
+                    self._active_locked_pid = None
+                    self._active_locked_hwnd = None
+            else:
+                self._active_locked_pid = None
+                self._active_locked_hwnd = None
             self._check_and_apply_clamp()
             if self.sound_enabled:
                 self._play_sound(True)
         else:
-            self._poll_timer.stop()
             self.release_clamp()
             if self.sound_enabled:
                 self._play_sound(False)
+        self.enabled_state_changed.emit(self.is_enabled)
+
+    def toggle_enable(self):
+        """Toggle master clamp state."""
+        self.set_enabled(not self.is_enabled)
+
+    def emergency_unlock(self):
+        """Instant full liberation: Disables clamp, resets state, and frees cursor across all monitors."""
+        self.is_enabled = False
+        self.manual_override = False
+        self.release_clamp()
+        self.enabled_state_changed.emit(False)
+        self.clamp_state_changed.emit(False, "EMERGENCY UNLOCKED (FREE)")
+        if self.sound_enabled:
+            self._play_sound(False)
 
     def set_clamp_mode(self, mode: str):
         self.clamp_mode = mode
@@ -7348,75 +7688,265 @@ class CursorClampController(QObject):
 
     def _play_sound(self, locked: bool):
         try:
+            import winsound
             if locked:
-                ctypes.windll.user32.MessageBeep(0x00000040)  # MB_ICONASTERISK
+                winsound.Beep(1200, 80)
             else:
-                ctypes.windll.user32.MessageBeep(0x00000000)  # MB_OK
+                winsound.Beep(600, 100)
         except Exception:
-            pass
+            try:
+                if locked:
+                    ctypes.windll.user32.MessageBeep(0x00000040)  # MB_ICONASTERISK
+                else:
+                    ctypes.windll.user32.MessageBeep(0x00000000)  # MB_OK
+            except Exception:
+                pass
 
-    def _on_poll_tick(self):
-        # 1. Hotkey check for emergency override: Ctrl + Alt + C
-        self._check_global_hotkey()
+    def _get_vk_code(self, key_name: str) -> int:
+        raw = key_name.strip().lower()
+        mapping = {
+            "left click": 0x01,
+            "mouse 1": 0x01,
+            "right click": 0x02,
+            "rclick": 0x02,
+            "mouse 2": 0x02,
+            "middle click": 0x04,
+            "wheel": 0x04,
+            "mouse 3": 0x04,
+            "mouse 4": 0x05,
+            "mouse button 4": 0x05,
+            "mouse 5": 0x06,
+            "mouse button 5": 0x06,
+            "left alt": 0xA4,
+            "right alt": 0xA5,
+            "alt": 0x12,
+            "left ctrl": 0xA2,
+            "right ctrl": 0xA3,
+            "ctrl": 0x11,
+            "control": 0x11,
+            "left shift": 0xA0,
+            "right shift": 0xA1,
+            "shift": 0x10,
+            "space": 0x20,
+            "spacebar": 0x20,
+            "tab": 0x09,
+            "caps lock": 0x14,
+            "capslock": 0x14,
+            "enter": 0x0D,
+            "return": 0x0D,
+            "backspace": 0x08,
+            "delete": 0x2E,
+            "insert": 0x2D,
+        }
+        for i in range(1, 13):
+            mapping[f"f{i}"] = 0x70 + (i - 1)
 
-        # 2. Track global cursor position
+        if raw in mapping:
+            return mapping[raw]
+        if len(raw) == 1:
+            return ord(raw.upper())
+        if raw.startswith("key ") or raw.startswith("key_"):
+            char = raw.split()[-1]
+            if len(char) == 1:
+                return ord(char.upper())
+        return 0
+
+    def _is_hotkey_down(self) -> bool:
+        if not self.trigger_key:
+            return False
+        parts = [p.strip().lower() for p in self.trigger_key.split('+') if p.strip()]
+        if not parts:
+            return False
+
+        for part in parts:
+            if part in ("ctrl", "control", "left ctrl", "right ctrl"):
+                ctrl_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or
+                                 (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or
+                                 (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000))
+                if not ctrl_down:
+                    return False
+            elif part in ("alt", "left alt", "right alt", "menu"):
+                alt_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or
+                                (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or
+                                (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000))
+                if not alt_down:
+                    return False
+            elif part in ("shift", "left shift", "right shift"):
+                shift_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or
+                                  (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or
+                                  (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000))
+                if not shift_down:
+                    return False
+            else:
+                vk = self._get_vk_code(part)
+                if vk <= 0 or not (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000):
+                    return False
+        return True
+
+    def _on_watchdog_tick(self):
+        # 1. Continuous Global Hotkey Watcher
+        self._check_global_hotkeys()
+
+        # 2. Track global cursor position for Multi-Monitor HUD Radar
         pt = wintypes.POINT()
-        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
-        self.cursor_pos_updated.emit(pt.x, pt.y)
+        if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
+            self.cursor_pos_updated.emit(pt.x, pt.y)
 
         # 3. Focus and boundary clamp check
         if self.is_enabled and not self.manual_override:
             self._check_and_apply_clamp()
+        elif not self.is_enabled and self.is_clamped:
+            self.release_clamp()
 
-    def _check_global_hotkey(self):
+    def _check_global_hotkeys(self):
         try:
-            ctrl_down = (ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) != 0
-            alt_down = (ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) != 0
-            c_down = (ctypes.windll.user32.GetAsyncKeyState(0x43) & 0x8000) != 0
-            
-            if ctrl_down and alt_down and c_down:
-                time.sleep(0.18)
-                self.toggle_manual_override()
+            if hasattr(self, '_suppress_hotkey_ticks') and self._suppress_hotkey_ticks > 0:
+                self._suppress_hotkey_ticks -= 1
+                self._hotkey_last_state = True
+                return
+
+            # Check user customized trigger chord
+            trigger_down = self._is_hotkey_down()
+
+            # Universal failsafe combo: Ctrl + Alt + C (Always active in background)
+            failsafe_down = bool(
+                ((ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000)) and
+                ((ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000)) and
+                (ctypes.windll.user32.GetAsyncKeyState(0x43) & 0x8000)
+            )
+
+            combo_down = trigger_down or failsafe_down
+
+            if combo_down:
+                if not self._hotkey_last_state:
+                    self._hotkey_last_state = True
+                    self.toggle_enable()
+            else:
+                self._hotkey_last_state = False
         except Exception:
             pass
 
     def _check_and_apply_clamp(self):
         if not self.is_enabled or self.manual_override:
             if self.is_clamped:
-                self.release_clamp()
+                self.release_clamp(reason="Disabled / Manual Override")
             return
 
-        hwnd_fg = ctypes.windll.user32.GetForegroundWindow()
+        # 1. Resolve Foreground Root Window and Process ID (PID)
+        raw_fg = ctypes.windll.user32.GetForegroundWindow()
+        hwnd_fg = ctypes.windll.user32.GetAncestor(raw_fg, 2) if raw_fg else 0  # GA_ROOT = 2
+        if not hwnd_fg:
+            hwnd_fg = raw_fg
 
-        # Check if foreground window is desktop / alt-tab / taskbar
-        if self.auto_release_on_unfocus and hwnd_fg:
+        fg_pid = wintypes.DWORD(0)
+        if hwnd_fg:
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd_fg, ctypes.byref(fg_pid))
+        pid_fg_val = fg_pid.value
+        helxaid_pid = os.getpid()
+
+        # 2. Check for Windows Shell / Start Menu / Taskbar / Task Switcher
+        is_shell = False
+        if hwnd_fg:
             class_name = ctypes.create_unicode_buffer(256)
             ctypes.windll.user32.GetClassNameW(hwnd_fg, class_name, 256)
             c_name = class_name.value.lower()
-            if c_name in ("shell_traywnd", "progman", "workerw", "multitaskingviewframe", "taskswitcherwnd", "cortana"):
+            SHELL_CLASSES = (
+                "shell_traywnd", "progman", "workerw", "multitaskingviewframe",
+                "taskswitcherwnd", "cortana", "windows.ui.core.corewindow",
+                "xaml_windowed_popup_host", "launcherwindow", "immersivelauncher",
+                "searchpanewindow", "shellexperiencehost", "startmenu", "applicationframewindow"
+            )
+            if c_name in SHELL_CLASSES or not c_name:
+                is_shell = True
+
+        # 3. Direct Physical Alt+Tab Chord Monitoring
+        alt_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or
+                        (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or
+                        (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000))
+        tab_down = bool(ctypes.windll.user32.GetAsyncKeyState(0x09) & 0x8000)
+
+        if self.auto_release_on_unfocus:
+            if alt_down and tab_down:
+                self._alt_tab_active = True
                 if self.is_clamped:
-                    self.release_clamp()
-                    self.clamp_state_changed.emit(False, "PAUSED (OS FOCUS)")
+                    self.release_clamp(reason="Alt+Tab Chord Pressed")
+                    self.clamp_state_changed.emit(False, "PAUSED (ALT+TAB ACTIVE)")
                 return
 
+            if getattr(self, '_alt_tab_active', False):
+                if alt_down or is_shell:
+                    if self.is_clamped:
+                        self.release_clamp(reason="Alt+Tab Menu Open")
+                    return
+                else:
+                    self._alt_tab_active = False
+
+        # 4. Release on OS Shell / Taskbar Focus
+        if self.auto_release_on_unfocus and is_shell:
+            if self.is_clamped:
+                self.release_clamp(reason=f"OS Shell Window in Focus ({c_name})")
+                self.clamp_state_changed.emit(False, "PAUSED (OS FOCUS)")
+            return
+
+        # 5. Adopt Target Game / Application Process when user switches away from HELXAID
+        if pid_fg_val and pid_fg_val != helxaid_pid and not is_shell:
+            if not self._active_locked_pid or self._active_locked_pid != pid_fg_val:
+                title_buf = ctypes.create_unicode_buffer(256)
+                ctypes.windll.user32.GetWindowTextW(hwnd_fg, title_buf, 256)
+                self._active_locked_pid = pid_fg_val
+                self._active_locked_hwnd = hwnd_fg
+                self._active_target_name = title_buf.value or f"App PID {pid_fg_val}"
+                print(f"[CursorClamp-DEBUG] TARGET ADOPTED: {self._active_target_name} (PID: {pid_fg_val}, HWND: {hex(hwnd_fg)})")
+
+        # 6. Lost Focus Check against the Target Process (PID Based)
+        if self.auto_release_on_unfocus and self._active_locked_pid:
+            if pid_fg_val == helxaid_pid:
+                if self.is_clamped:
+                    self.release_clamp(reason="HELXAID App in Focus")
+                    self.clamp_state_changed.emit(False, "PAUSED (HELXAID CONFIG)")
+                return
+
+            if pid_fg_val and pid_fg_val != self._active_locked_pid:
+                # User has switched focus to a different process (e.g. Chrome, Discord)
+                if self.is_clamped:
+                    title_buf = ctypes.create_unicode_buffer(256)
+                    ctypes.windll.user32.GetWindowTextW(hwnd_fg, title_buf, 256)
+                    switched_title = title_buf.value or "Other Process"
+                    self.release_clamp(reason=f"Focus switched to {switched_title} (PID: {pid_fg_val})")
+                    self.clamp_state_changed.emit(False, f"PAUSED (LOST FOCUS: {switched_title[:18]})")
+                return
+
+        # 7. Mode Boundary Calculation
         target_rect = None
 
         if self.clamp_mode == "primary_monitor":
+            # Multi-Monitor Monitor Switch Check
+            if self.auto_release_on_unfocus and hwnd_fg:
+                hMon_fg = ctypes.windll.user32.MonitorFromWindow(hwnd_fg, 2)
+                hMon_primary = ctypes.windll.user32.MonitorFromWindow(0, 1)
+                if hMon_fg and hMon_primary and (hMon_fg != hMon_primary):
+                    if self.is_clamped:
+                        self.release_clamp(reason="Focus moved to Secondary Monitor")
+                        self.clamp_state_changed.emit(False, "PAUSED (SECONDARY MONITOR FOCUS)")
+                    return
+
             w = ctypes.windll.user32.GetSystemMetrics(0)   # SM_CXSCREEN
             h = ctypes.windll.user32.GetSystemMetrics(1)   # SM_CYSCREEN
             target_rect = Win32Rect(0, 0, w, h)
             self._active_target_name = f"Primary Monitor ({w}x{h})"
+
         elif self.clamp_mode == "game_window":
-            if hwnd_fg:
+            target_hwnd = self._active_locked_hwnd or hwnd_fg
+            if target_hwnd and pid_fg_val != helxaid_pid:
                 r = Win32Rect()
-                ctypes.windll.user32.GetWindowRect(hwnd_fg, ctypes.byref(r))
+                ctypes.windll.user32.GetWindowRect(target_hwnd, ctypes.byref(r))
                 w = r.right - r.left
                 h = r.bottom - r.top
                 if w > 100 and h > 100:
                     target_rect = r
                     title_buf = ctypes.create_unicode_buffer(256)
-                    ctypes.windll.user32.GetWindowTextW(hwnd_fg, title_buf, 256)
-                    self._active_target_name = title_buf.value or "Active Window"
+                    ctypes.windll.user32.GetWindowTextW(target_hwnd, title_buf, 256)
+                    self._active_target_name = title_buf.value or "Target Window"
                 else:
                     target_rect = None
 
@@ -7426,7 +7956,7 @@ class CursorClampController(QObject):
                 self._apply_rect(target_rect)
         else:
             if self.is_clamped:
-                self.release_clamp()
+                self.release_clamp(reason="No valid target window in focus")
                 self.clamp_state_changed.emit(False, "SEARCHING FOR TARGET")
 
     def _apply_rect(self, rect: Win32Rect):
@@ -7434,19 +7964,20 @@ class CursorClampController(QObject):
         self._last_rect = (rect.left, rect.top, rect.right, rect.bottom)
         self.is_clamped = True
         desc = f"LOCKED TO {self._active_target_name.upper()}"
+        print(f"[CursorClamp-DEBUG] CLAMP APPLIED: {desc} -> Bounds=({rect.left}, {rect.top}, {rect.right}, {rect.bottom})")
         self.clamp_state_changed.emit(True, desc)
 
-    def release_clamp(self):
+    def release_clamp(self, reason="Manual"):
         ctypes.windll.user32.ClipCursor(None)
         self._last_rect = None
         if self.is_clamped:
             self.is_clamped = False
+            print(f"[CursorClamp-DEBUG] CLAMP RELEASED: Reason={reason}")
             self.clamp_state_changed.emit(False, "UNLOCKED (FREE)")
 
     def force_restore(self):
-        """Force cursor liberation and stop timers."""
-        self.set_enabled(False)
-        self.release_clamp()
+        """Force cursor liberation and reset state."""
+        self.emergency_unlock()
 
     def __del__(self):
         self.release_clamp()
@@ -7469,11 +8000,84 @@ class CursorClampCanvas(QWidget):
         self.cursor_y = 0
         self._pulse_alpha = 200
         self._pulse_dir = -3
+        self._hz_cache = {}
         
         self._anim_timer = QTimer(self)
         self._anim_timer.setInterval(30)
         self._anim_timer.timeout.connect(self._step_pulse)
         self._anim_timer.start()
+
+    def _get_screen_max_hz(self, screen) -> int:
+        s_name = screen.name() if screen else ""
+        s_geom = screen.geometry() if screen else None
+        key = (s_name, s_geom.width() if s_geom else 0, s_geom.height() if s_geom else 0)
+        if key in self._hz_cache:
+            return self._hz_cache[key]
+
+        max_hz = 0
+        try:
+            class DEVMODEW(ctypes.Structure):
+                _fields_ = [
+                    ('dmDeviceName', wintypes.WCHAR * 32),
+                    ('dmSpecVersion', wintypes.WORD),
+                    ('dmDriverVersion', wintypes.WORD),
+                    ('dmSize', wintypes.WORD),
+                    ('dmDriverExtra', wintypes.WORD),
+                    ('dmFields', wintypes.DWORD),
+                    ('dmOrientation', ctypes.c_short),
+                    ('dmPaperSize', ctypes.c_short),
+                    ('dmPaperLength', ctypes.c_short),
+                    ('dmPaperWidth', ctypes.c_short),
+                    ('dmScale', ctypes.c_short),
+                    ('dmCopies', ctypes.c_short),
+                    ('dmDefaultSource', ctypes.c_short),
+                    ('dmPrintQuality', ctypes.c_short),
+                    ('dmColor', ctypes.c_short),
+                    ('dmDuplex', ctypes.c_short),
+                    ('dmYResolution', ctypes.c_short),
+                    ('dmTTOption', ctypes.c_short),
+                    ('dmCollate', ctypes.c_short),
+                    ('dmFormName', wintypes.WCHAR * 32),
+                    ('dmLogPixels', wintypes.WORD),
+                    ('dmBitsPerPel', wintypes.DWORD),
+                    ('dmPelsWidth', wintypes.DWORD),
+                    ('dmPelsHeight', wintypes.DWORD),
+                    ('dmDisplayFlags', wintypes.DWORD),
+                    ('dmDisplayFrequency', wintypes.DWORD),
+                    ('dmICMMethod', wintypes.DWORD),
+                    ('dmICMIntent', wintypes.DWORD),
+                    ('dmMediaType', wintypes.DWORD),
+                    ('dmDitherType', wintypes.DWORD),
+                    ('dmReserved1', wintypes.DWORD),
+                    ('dmReserved2', wintypes.DWORD),
+                    ('dmPanningWidth', wintypes.DWORD),
+                    ('dmPanningHeight', wintypes.DWORD),
+                ]
+            dm = DEVMODEW()
+            dm.dmSize = ctypes.sizeof(DEVMODEW)
+            target_w = s_geom.width() if s_geom else 0
+            target_h = s_geom.height() if s_geom else 0
+            i = 0
+            while ctypes.windll.user32.EnumDisplaySettingsW(s_name if s_name else None, i, ctypes.byref(dm)):
+                if target_w and target_h:
+                    if dm.dmPelsWidth == target_w and dm.dmPelsHeight == target_h:
+                        if dm.dmDisplayFrequency > max_hz:
+                            max_hz = dm.dmDisplayFrequency
+                else:
+                    if dm.dmDisplayFrequency > max_hz:
+                        max_hz = dm.dmDisplayFrequency
+                i += 1
+        except Exception:
+            max_hz = 0
+
+        if max_hz <= 0 and screen:
+            try:
+                max_hz = int(round(screen.refreshRate()))
+            except Exception:
+                max_hz = 60
+
+        self._hz_cache[key] = max_hz
+        return max_hz
 
     def _step_pulse(self):
         if self.is_clamped:
@@ -7601,9 +8205,11 @@ class CursorClampCanvas(QWidget):
             tag_text = f"DISPLAY {idx+1} (PRIMARY)" if is_primary else f"DISPLAY {idx+1}"
             painter.drawText(QRectF(sx, sy + 10, sw, 20), Qt.AlignCenter, tag_text)
 
+            # Maximum Supported Hardware Refresh Rate from Win32
+            hz = self._get_screen_max_hz(screen)
             painter.setFont(QFont("Orbitron", 8))
             painter.setPen(QPen(QColor("#AAAAAA")))
-            res_text = f"{s_geom.width()}x{s_geom.height()} @ {screen.refreshRate():.0f}Hz"
+            res_text = f"{s_geom.width()}x{s_geom.height()} @ {hz}Hz"
             painter.drawText(QRectF(sx, sy + 30, sw, 20), Qt.AlignCenter, res_text)
 
             # Lock badge inside primary display
@@ -7657,8 +8263,11 @@ class CursorClampPanel(QWidget):
         super().__init__(parent)
         self.setObjectName("CursorClampPanel")
         self.controller = CursorClampController(self)
+        self._guide_panel = None
         self._setup_ui()
-        self._set_active_state(False)
+        self.controller.enabled_state_changed.connect(self._sync_active_ui)
+        self._sync_active_ui(False)
+
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -7678,7 +8287,7 @@ class CursorClampPanel(QWidget):
         """)
         h_layout = QHBoxLayout(header_frame)
         h_layout.setContentsMargins(8, 0, 10, 0)
-        h_layout.setSpacing(10)
+        h_layout.setSpacing(8)
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
@@ -7715,13 +8324,27 @@ class CursorClampPanel(QWidget):
         h_layout.addWidget(title_lbl)
         h_layout.addStretch()
 
-        self.unlock_btn = QPushButton("EMERGENCY UNLOCK (Ctrl+Alt+C)")
+        # Standalone "Emergency Unlock:" text label (HELRCUS Style)
+        self.unlock_lbl = QLabel("Emergency Unlock:")
+        self.unlock_lbl.setObjectName("CursorClampUnlockLabel")
+        self.unlock_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        h_layout.addWidget(self.unlock_lbl)
+
+        # Customizable Hotkey Button (HELRCUS Style pill box)
+        self.unlock_btn = CursorClampHotkeyButton(default_key="Ctrl+Alt+C")
         self.unlock_btn.setObjectName("CursorClampUnlockBtn")
-        self.unlock_btn.setFixedSize(220, 26)
-        self.unlock_btn.setCursor(Qt.PointingHandCursor)
-        self.unlock_btn.setToolTip("Immediately liberates cursor confinement across all monitors")
-        self.unlock_btn.setStyleSheet("""
-            QPushButton#CursorClampUnlockBtn {
+        self.unlock_btn.setFixedWidth(140)
+        self.unlock_btn.hotkeyChanged.connect(self._on_hotkey_changed)
+        h_layout.addWidget(self.unlock_btn)
+
+        # Disarm Button (Instant Liberation)
+        self.disarm_btn = QPushButton("DISARM")
+        self.disarm_btn.setObjectName("CursorClampDisarmBtn")
+        self.disarm_btn.setFixedSize(70, 26)
+        self.disarm_btn.setCursor(Qt.PointingHandCursor)
+        self.disarm_btn.setToolTip("Immediately disarms and liberates cursor confinement across all monitors")
+        self.disarm_btn.setStyleSheet("""
+            QPushButton#CursorClampDisarmBtn {
                 background-color: rgba(255, 255, 255, 0.08);
                 color: #e0e0e0;
                 font-family: 'Orbitron', sans-serif;
@@ -7729,17 +8352,17 @@ class CursorClampPanel(QWidget):
                 font-weight: bold;
                 border: none;
                 border-radius: 6px;
-                padding: 0px 8px;
+                padding: 0px 6px;
                 min-height: 26px;
                 max-height: 26px;
             }
-            QPushButton#CursorClampUnlockBtn:hover {
+            QPushButton#CursorClampDisarmBtn:hover {
                 background-color: rgba(255, 91, 6, 0.35);
                 color: #FFFFFF;
             }
         """)
-        self.unlock_btn.clicked.connect(self.controller.release_clamp)
-        h_layout.addWidget(self.unlock_btn)
+        self.disarm_btn.clicked.connect(self.controller.emergency_unlock)
+        h_layout.addWidget(self.disarm_btn)
 
         self.enable_btn = QPushButton("DISABLED")
         self.enable_btn.setObjectName("CursorClampEnableBtn")
@@ -7771,7 +8394,7 @@ class CursorClampPanel(QWidget):
         # Card 1: Target Clamp Region Selection
         mode_card = QFrame()
         mode_card.setObjectName("CursorClampModeCard")
-        mode_card.setFixedHeight(84)
+        mode_card.setFixedHeight(96)
         mode_card.setStyleSheet("""
             QFrame#CursorClampModeCard {
                 background-color: rgba(255, 255, 255, 0.03);
@@ -7780,59 +8403,26 @@ class CursorClampPanel(QWidget):
             }
         """)
         mc_layout = QVBoxLayout(mode_card)
-        mc_layout.setContentsMargins(12, 8, 12, 8)
-        mc_layout.setSpacing(4)
+        mc_layout.setContentsMargins(12, 12, 12, 12)
+        mc_layout.setSpacing(6)
 
         mc_title = QLabel("TARGET LOCK BOUNDARY")
         mc_title.setObjectName("CursorClampModeTitle")
         mc_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
         mc_layout.addWidget(mc_title)
 
-        mc_row = QHBoxLayout()
-        mc_row.setSpacing(8)
+        self.mode_switcher = SlidingSegmentedPill()
+        self.mode_switcher.setObjectName("CursorClampModeTabFrame")
+        self.mode_switcher.modeChanged.connect(self.controller.set_clamp_mode)
+        mc_layout.addWidget(self.mode_switcher)
 
-        self.rb_primary = QRadioButton("Primary Display")
-        self.rb_primary.setObjectName("CursorClampRbPrimary")
-        self.rb_primary.setChecked(True)
-        self.rb_primary.setStyleSheet("""
-            QRadioButton#CursorClampRbPrimary {
-                color: #e0e0e0;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
-                background: transparent;
-            }
-            QRadioButton#CursorClampRbPrimary::indicator:checked {
-                background-color: #FF5B06;
-                border: 2px solid #FFFFFF;
-                border-radius: 6px;
-            }
-        """)
-        self.rb_primary.toggled.connect(lambda c: self.controller.set_clamp_mode("primary_monitor") if c else None)
-        mc_row.addWidget(self.rb_primary)
-
-        self.rb_game = QRadioButton("Active Game Window")
-        self.rb_game.setObjectName("CursorClampRbGame")
-        self.rb_game.setStyleSheet("""
-            QRadioButton#CursorClampRbGame {
-                color: #e0e0e0;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
-                background: transparent;
-            }
-            QRadioButton#CursorClampRbGame::indicator:checked {
-                background-color: #FF5B06;
-                border: 2px solid #FFFFFF;
-                border-radius: 6px;
-            }
-        """)
-        self.rb_game.toggled.connect(lambda c: self.controller.set_clamp_mode("game_window") if c else None)
-        mc_row.addWidget(self.rb_game)
-        mc_layout.addLayout(mc_row)
+        mc_layout.addSpacing(2)
 
         self.cb_autorel = AnimatedCheckBox("Auto-Release on Alt+Tab / Lost Focus")
         self.cb_autorel.setObjectName("CursorClampAutoReleaseCb")
         self.cb_autorel.setChecked(True)
-        self.cb_autorel.toggled.connect(self.controller.set_auto_release)
+        self.cb_autorel.toggled.connect(self._on_autorel_toggled)
+        self.cb_autorel.clicked.connect(lambda: self._on_autorel_toggled(self.cb_autorel.isChecked()))
         mc_layout.addWidget(self.cb_autorel)
 
         cfg_layout.addWidget(mode_card, 1)
@@ -7840,7 +8430,7 @@ class CursorClampPanel(QWidget):
         # Card 2: Hotkey & Audio Feedback
         hotkey_card = QFrame()
         hotkey_card.setObjectName("CursorClampHotkeyCard")
-        hotkey_card.setFixedHeight(84)
+        hotkey_card.setFixedHeight(96)
         hotkey_card.setStyleSheet("""
             QFrame#CursorClampHotkeyCard {
                 background-color: rgba(255, 255, 255, 0.03);
@@ -7849,40 +8439,37 @@ class CursorClampPanel(QWidget):
             }
         """)
         hc_layout = QVBoxLayout(hotkey_card)
-        hc_layout.setContentsMargins(12, 8, 12, 8)
-        hc_layout.setSpacing(4)
+        hc_layout.setContentsMargins(12, 10, 12, 10)
+        hc_layout.setSpacing(6)
 
-        hc_title_row = QHBoxLayout()
-        hc_title = QLabel("GLOBAL QUICK TOGGLE HOTKEY")
+        hc_title = QLabel("ACTIVATION & EMERGENCY UNLOCK HOTKEY")
         hc_title.setObjectName("CursorClampHotkeyTitle")
         hc_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
-        hc_title_row.addWidget(hc_title)
-        hc_title_row.addStretch()
+        hc_layout.addWidget(hc_title)
 
-        hotkey_badge = QLabel("Ctrl + Alt + C")
-        hotkey_badge.setObjectName("CursorClampHotkeyBadge")
-        hotkey_badge.setStyleSheet("""
-            background-color: rgba(255, 91, 6, 0.2);
-            color: #FF5B06;
-            font-family: 'Orbitron', sans-serif;
-            font-size: 10px;
-            font-weight: bold;
-            border-radius: 4px;
-            padding: 2px 8px;
-        """)
-        hc_title_row.addWidget(hotkey_badge)
-        hc_layout.addLayout(hc_title_row)
+        hc_row = QHBoxLayout()
+        hc_row.setSpacing(8)
 
-        hc_desc = QLabel("Press Ctrl+Alt+C in any game to instantly lock/unlock border confinement.")
-        hc_desc.setObjectName("CursorClampHotkeyDesc")
-        hc_desc.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 10px;")
-        hc_layout.addWidget(hc_desc)
+        # Synchronized Custom Key Input in Card 2
+        self.custom_key_input = CursorClampHotkeyButton(default_key="Ctrl+Alt+C")
+        self.custom_key_input.setObjectName("CursorClampCustomKeyInput")
+        self.custom_key_input.setFixedHeight(28)
+        self.custom_key_input.hotkeyChanged.connect(self._on_hotkey_changed)
+        hc_row.addWidget(self.custom_key_input, 1)
 
-        self.cb_sound = AnimatedCheckBox("Audible Lock / Unlock Notification Tone")
+        self.cb_sound = AnimatedCheckBox("Audible Tone")
         self.cb_sound.setObjectName("CursorClampSoundCb")
         self.cb_sound.setChecked(True)
+        self.cb_sound.setToolTip("Plays notification chime upon cursor lock/unlock")
         self.cb_sound.toggled.connect(self.controller.set_sound_enabled)
-        hc_layout.addWidget(self.cb_sound)
+        hc_row.addWidget(self.cb_sound)
+
+        hc_layout.addLayout(hc_row)
+
+        hc_desc = QLabel("Press your custom hotkey or Ctrl+Alt+C in-game to instantly toggle cursor lock.")
+        hc_desc.setObjectName("CursorClampHotkeyDesc")
+        hc_desc.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 9px;")
+        hc_layout.addWidget(hc_desc)
 
         cfg_layout.addWidget(hotkey_card, 1)
         main_layout.addLayout(cfg_layout)
@@ -7894,12 +8481,22 @@ class CursorClampPanel(QWidget):
         self.controller.cursor_pos_updated.connect(self.clamp_canvas.set_cursor_pos)
         main_layout.addWidget(self.clamp_canvas, 1)
 
-    def _toggle_enable(self):
-        new_state = not self.controller.is_enabled
-        self._set_active_state(new_state)
+    def _on_autorel_toggled(self, checked: bool):
+        self.controller.set_auto_release(checked)
+        print(f"[CursorClamp] Auto-Release on Alt+Tab set to: {checked}")
 
-    def _set_active_state(self, active: bool):
-        self.controller.set_enabled(active)
+    def _on_hotkey_changed(self, key_name: str):
+        self.controller.set_trigger_key(key_name)
+        if hasattr(self, 'unlock_btn') and self.unlock_btn.get_hotkey() != key_name:
+            self.unlock_btn.set_hotkey(key_name)
+        if hasattr(self, 'custom_key_input') and self.custom_key_input.get_hotkey() != key_name:
+            self.custom_key_input.set_hotkey(key_name)
+        print(f"[CursorClamp] Activation Hotkey set to: {key_name}")
+
+    def _toggle_enable(self):
+        self.controller.toggle_enable()
+
+    def _sync_active_ui(self, active: bool):
         if active:
             self.enable_btn.setText("ACTIVE")
             self.enable_btn.setStyleSheet("""
