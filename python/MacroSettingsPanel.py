@@ -8535,6 +8535,1964 @@ class CursorClampPanel(QWidget):
         self.back_clicked.emit()
 
 
+# =====================================================================
+# ── TACTICAL TOOLS SUITE: FEATURE 3 — UNIVERSAL RAPID-FIRE & BURST ───
+# =====================================================================
+
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+
+
+class SlidingSegmentedPill3(QWidget):
+    """
+    Smooth 3-segment animated sliding pill switcher.
+    Component Name: RapidFireModeTabFrame
+    """
+    modeChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RapidFireModeTabFrame")
+        self.setFixedHeight(28)
+        self.setCursor(Qt.PointingHandCursor)
+        self._current_mode = "continuous"  # "continuous" | "burst_3" | "burst_5"
+        self._slide_progress = 0.0          # 0.0 = continuous, 0.5 = burst_3, 1.0 = burst_5
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_mode(self, mode: str):
+        if mode == self._current_mode:
+            return
+        self._current_mode = mode
+        if mode == "burst_3":
+            target = 0.5
+        elif mode == "burst_5":
+            target = 1.0
+        else:
+            target = 0.0
+
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+        self.modeChanged.emit(self._current_mode)
+
+    def get_mode(self) -> str:
+        return self._current_mode
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            if click_x < (w / 3.0):
+                self.set_mode("continuous")
+            elif click_x < (2.0 * w / 3.0):
+                self.set_mode("burst_3")
+            else:
+                self.set_mode("burst_5")
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Container track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 12)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 6, 6)
+
+        # 2. Sliding pill geometry (3 segments)
+        pad = 2.0
+        pill_w = (w - (pad * 4.0)) / 3.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * 2.0 * (pill_w + pad)
+        pill_y = pad
+
+        # 3. Sliding gradient pill
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 4, 4)
+
+        # 4. Text labels with smooth color transition
+        p.setFont(QFont("Orbitron", 8, QFont.Bold))
+
+        # Zone 0: FULL-AUTO (Active at progress 0.0)
+        dist0 = min(1.0, abs(self._slide_progress - 0.0) * 2.0)
+        c0 = int(0 + (136 - 0) * dist0)
+        p.setPen(QColor(c0, c0, c0))
+        r0 = QRectF(pad, 0, pill_w, h)
+        p.drawText(r0, Qt.AlignCenter, "FULL-AUTO")
+
+        # Zone 1: 3-BURST (Active at progress 0.5)
+        dist1 = min(1.0, abs(self._slide_progress - 0.5) * 2.0)
+        c1 = int(0 + (136 - 0) * dist1)
+        p.setPen(QColor(c1, c1, c1))
+        r1 = QRectF(pad + (pill_w + pad), 0, pill_w, h)
+        p.drawText(r1, Qt.AlignCenter, "3-BURST")
+
+        # Zone 2: 5-BURST (Active at progress 1.0)
+        dist2 = min(1.0, abs(self._slide_progress - 1.0) * 2.0)
+        c2 = int(0 + (136 - 0) * dist2)
+        p.setPen(QColor(c2, c2, c2))
+        r2 = QRectF(pad + (pill_w + pad) * 2.0, 0, pill_w, h)
+        p.drawText(r2, Qt.AlignCenter, "5-BURST")
+
+
+class SlidingSegmentedPillTriggerType(QWidget):
+    """
+    Smooth 2-segment animated sliding pill switcher for Trigger Activation Type (Hold vs Single Click).
+    Component Name: RapidFireTriggerTypeFrame
+    """
+    triggerTypeChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RapidFireTriggerTypeFrame")
+        self.setFixedHeight(26)
+        self.setCursor(Qt.PointingHandCursor)
+        self._current_type = "hold"  # "hold" | "single_click"
+        self._slide_progress = 0.0   # 0.0 = hold, 1.0 = single_click
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_trigger_type(self, t_type: str):
+        if t_type == self._current_type:
+            return
+        self._current_type = t_type
+        target_val = 1.0 if t_type == "single_click" else 0.0
+
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target_val)
+        self._anim.start()
+        self.triggerTypeChanged.emit(self._current_type)
+
+    def get_trigger_type(self) -> str:
+        return self._current_type
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            if click_x < (w / 2.0):
+                self.set_trigger_type("hold")
+            else:
+                self.set_trigger_type("single_click")
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Container track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 12)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 5, 5)
+
+        # 2. Sliding pill geometry
+        pad = 2.0
+        pill_w = (w - (pad * 3.0)) / 2.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * (pill_w + pad)
+        pill_y = pad
+
+        # 3. Sliding gradient pill
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 4, 4)
+
+        # 4. Text labels
+        p.setFont(QFont("Orbitron", 8, QFont.Bold))
+
+        r0 = int(0 + (136 - 0) * self._slide_progress)
+        p.setPen(QColor(r0, r0, r0))
+        left_rect = QRectF(pad, 0, pill_w, h)
+        p.drawText(left_rect, Qt.AlignCenter, "HOLD (PRESS)")
+
+        r1 = int(136 + (0 - 136) * self._slide_progress)
+        p.setPen(QColor(r1, r1, r1))
+        right_rect = QRectF(pad + pill_w + pad, 0, pill_w, h)
+        p.drawText(right_rect, Qt.AlignCenter, "SINGLE CLICK (TOGGLE)")
+
+
+class SlidingSegmentedPillTarget(QWidget):
+    """
+    Smooth 2-segment animated sliding pill switcher for Target Button.
+    Component Name: RapidFireTargetTabFrame
+    """
+    targetChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RapidFireTargetTabFrame")
+        self.setFixedHeight(26)
+        self.setCursor(Qt.PointingHandCursor)
+        self._current_target = "left"  # "left" | "right"
+        self._slide_progress = 0.0     # 0.0 = left, 1.0 = right
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_target(self, target_btn: str):
+        if target_btn == self._current_target:
+            return
+        self._current_target = target_btn
+        target_val = 1.0 if target_btn == "right" else 0.0
+
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target_val)
+        self._anim.start()
+        self.targetChanged.emit(self._current_target)
+
+    def get_target(self) -> str:
+        return self._current_target
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            if click_x < (w / 2.0):
+                self.set_target("left")
+            else:
+                self.set_target("right")
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Container track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 12)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 6, 6)
+
+        # 2. Sliding pill geometry
+        pad = 2.0
+        pill_w = (w - (pad * 3.0)) / 2.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * (pill_w + pad)
+        pill_y = pad
+
+        # 3. Sliding gradient pill
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 4, 4)
+
+        # 4. Text labels
+        p.setFont(QFont("Orbitron", 8, QFont.Bold))
+
+        r0 = int(0 + (136 - 0) * self._slide_progress)
+        p.setPen(QColor(r0, r0, r0))
+        left_rect = QRectF(pad, 0, pill_w, h)
+        p.drawText(left_rect, Qt.AlignCenter, "LEFT CLICK (M1)")
+
+        r1 = int(136 + (0 - 136) * self._slide_progress)
+        p.setPen(QColor(r1, r1, r1))
+        right_rect = QRectF(pad + pill_w + pad, 0, pill_w, h)
+        p.drawText(right_rect, Qt.AlignCenter, "RIGHT CLICK (M2)")
+
+
+class SlidingSegmentedPillSpeedPresets(QWidget):
+    """
+    Cadence Speed Quick-Preset Pill Switcher (10, 18, 25, 35 CPS).
+    Component Name: RapidFireSpeedPresetTabFrame
+    """
+    presetSelected = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RapidFireSpeedPresetTabFrame")
+        self.setFixedHeight(24)
+        self.setCursor(Qt.PointingHandCursor)
+        self._presets = [10, 18, 25, 35]
+        self._labels = ["10 TAP", "18 MED", "25 FAST", "35 MAX"]
+        self._current_index = 1  # 18 CPS default
+        self._slide_progress = 1.0 / 3.0
+        self._pill_alpha = 1.0
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(200)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_preset_from_val(self, val: int):
+        if val in self._presets:
+            idx = self._presets.index(val)
+            self._current_index = idx
+            target = idx / 3.0
+            self._pill_alpha = 1.0
+            if self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._anim.setStartValue(self._slide_progress)
+            self._anim.setEndValue(target)
+            self._anim.start()
+        else:
+            self._current_index = -1
+            self._pill_alpha = 0.35
+            self.update()
+
+    def set_index(self, idx: int):
+        if 0 <= idx < len(self._presets):
+            self._current_index = idx
+            target = idx / 3.0
+            self._pill_alpha = 1.0
+            if self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._anim.setStartValue(self._slide_progress)
+            self._anim.setEndValue(target)
+            self._anim.start()
+            self.presetSelected.emit(self._presets[idx])
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            idx = int(click_x / (w / 4.0))
+            idx = max(0, min(3, idx))
+            self.set_index(idx)
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Background Track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 10)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 5, 5)
+
+        # 2. Sliding Gradient Pill
+        pad = 2.0
+        pill_w = (w - (pad * 5.0)) / 4.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * 3.0 * (pill_w + pad)
+        pill_y = pad
+
+        if self._pill_alpha > 0.05:
+            gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+            gradient.setColorAt(0.0, QColor(255, 91, 6, int(255 * self._pill_alpha)))
+            gradient.setColorAt(1.0, QColor(253, 169, 3, int(255 * self._pill_alpha)))
+            p.setBrush(QBrush(gradient))
+            p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 4, 4)
+
+        # 3. Text Labels
+        p.setFont(QFont("Orbitron", 7, QFont.Bold))
+        for i, text in enumerate(self._labels):
+            target_p = i / 3.0
+            dist = min(1.0, abs(self._slide_progress - target_p) * 3.0)
+            if self._current_index == i:
+                c = int(0 + (140 - 0) * dist)
+            else:
+                c = 140
+            p.setPen(QColor(c, c, c))
+            rx = pad + i * (pill_w + pad)
+            p.drawText(QRectF(rx, 0, pill_w, h), Qt.AlignCenter, text)
+
+
+class RapidFireHotkeyButton(QPushButton):
+    """
+    Interactive Hotkey Binding Button for Rapid Fire Arming / Toggle.
+    Component Name: RapidFireHotkeyBtn
+    """
+    hotkeyChanged = Signal(str)
+    recordingStarted = Signal()
+    recordingStopped = Signal()
+
+    def __init__(self, default_key="F8", parent=None):
+        super().__init__(parent)
+        self.setObjectName("RapidFireHotkeyBtn")
+        self._hotkey = default_key
+        self._recording = False
+        self.setText(self._hotkey.upper())
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedHeight(28)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._update_style()
+        self.clicked.connect(self._toggle_recording)
+
+    def set_hotkey(self, key_str: str):
+        self._hotkey = key_str
+        self.setText(key_str.upper())
+        self._recording = False
+        self._update_style()
+
+    def get_hotkey(self) -> str:
+        return self._hotkey
+
+    def _toggle_recording(self):
+        self._recording = not self._recording
+        if self._recording:
+            self.setText("[ PRESS ANY KEY... ]")
+            self._update_style()
+            self.setFocus()
+            self.recordingStarted.emit()
+        else:
+            self.setText(self._hotkey.upper())
+            self._update_style()
+            self.recordingStopped.emit()
+
+    def _update_style(self):
+        if self._recording:
+            self.setStyleSheet("""
+                QPushButton#RapidFireHotkeyBtn {
+                    background-color: #1e2128;
+                    color: #FF5B06;
+                    border: 1px solid #FF5B06;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    text-align: center;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QPushButton#RapidFireHotkeyBtn {
+                    background-color: #1e2128;
+                    color: #FFFFFF;
+                    border: 1px solid rgba(255, 255, 255, 0.12);
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    text-align: center;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+                QPushButton#RapidFireHotkeyBtn:hover {
+                    background-color: #1e2128;
+                    border: 1px solid #FF5B06;
+                    color: #FF5B06;
+                }
+            """)
+
+    def keyPressEvent(self, event):
+        if self._recording:
+            key = event.key()
+            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
+                return
+
+            modifiers = []
+            if event.modifiers() & Qt.ControlModifier:
+                modifiers.append("Ctrl")
+            if event.modifiers() & Qt.AltModifier:
+                modifiers.append("Alt")
+            if event.modifiers() & Qt.ShiftModifier:
+                modifiers.append("Shift")
+
+            if key == Qt.Key_Escape:
+                self._recording = False
+                self.setText(self._hotkey.upper())
+                self._update_style()
+                self.recordingStopped.emit()
+                event.accept()
+                return
+
+            if Qt.Key_F1 <= key <= Qt.Key_F12:
+                key_name = f"F{key - Qt.Key_F1 + 1}"
+            elif key == Qt.Key_Space:
+                key_name = "Space"
+            elif key == Qt.Key_Tab:
+                key_name = "Tab"
+            elif key == Qt.Key_CapsLock:
+                key_name = "CapsLock"
+            elif key == Qt.Key_Return or key == Qt.Key_Enter:
+                key_name = "Enter"
+            elif key == Qt.Key_Backspace:
+                key_name = "Backspace"
+            else:
+                txt = event.text().strip().upper()
+                if txt and len(txt) == 1 and txt.isprintable():
+                    key_name = txt
+                else:
+                    seq = QKeySequence(key).toString().strip()
+                    if seq.startswith("Key "):
+                        seq = seq[4:].strip()
+                    key_name = seq or "F8"
+
+            full_key = "+".join(modifiers + [key_name]) if modifiers else key_name
+            self._hotkey = full_key
+            self.setText(full_key.upper())
+            self._recording = False
+            self._update_style()
+            self.recordingStopped.emit()
+            self.hotkeyChanged.emit(full_key)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        if self._recording:
+            self._recording = False
+            self.setText(self._hotkey.upper())
+            self._update_style()
+            self.recordingStopped.emit()
+        super().focusOutEvent(event)
+
+
+RAPID_FIRE_EXTRA_INFO = 0x48454C58  # 'HELX'
+
+
+class LowLevelRapidFireHook(QThread):
+    """
+    Dedicated Win32 Low-Level Mouse Hook Thread with Message Pump.
+    Filters synthetic RapidFire clicks and dispatches physical mouse events globally across PC/Games.
+    Component Name: LowLevelRapidFireHook
+    """
+    button_event_signal = Signal(str, bool)  # (button_name, is_pressed)
+
+    def __init__(self):
+        super().__init__()
+        self.setObjectName("LowLevelRapidFireHook")
+        self._hook_id = None
+        self._user32 = ctypes.windll.user32
+        self._pointer = CMPFUNC(self._hook_callback)
+        self._thread_id = None
+        self.is_running = True
+
+    def _hook_callback(self, nCode, wParam, lParam):
+        if nCode >= 0 and lParam:
+            try:
+                struct = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
+                extra = int(struct.dwExtraInfo or 0)
+                is_synthetic = (extra == RAPID_FIRE_EXTRA_INFO) or bool(struct.flags & 1)
+
+                if not is_synthetic:
+                    btn_name = None
+                    is_pressed = None
+
+                    if wParam == WM_LBUTTONDOWN:
+                        btn_name, is_pressed = "left click", True
+                    elif wParam == WM_LBUTTONUP:
+                        btn_name, is_pressed = "left click", False
+                    elif wParam == WM_RBUTTONDOWN:
+                        btn_name, is_pressed = "right click", True
+                    elif wParam == WM_RBUTTONUP:
+                        btn_name, is_pressed = "right click", False
+                    elif wParam == WM_MBUTTONDOWN:
+                        btn_name, is_pressed = "middle click", True
+                    elif wParam == WM_MBUTTONUP:
+                        btn_name, is_pressed = "middle click", False
+                    elif wParam in (WM_XBUTTONDOWN, WM_XBUTTONUP):
+                        high_word = (struct.mouseData >> 16) & 0xFFFF
+                        btn_name = "mouse 4" if high_word == 1 else "mouse 5"
+                        is_pressed = (wParam == WM_XBUTTONDOWN)
+
+                    if btn_name is not None:
+                        self.button_event_signal.emit(btn_name, is_pressed)
+            except Exception:
+                pass
+
+        return self._user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
+
+    def run(self):
+        self._thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+        self._hook_id = self._user32.SetWindowsHookExW(14, self._pointer, None, 0)
+        if not self._hook_id:
+            print("[RapidFireHook] Failed to install WH_MOUSE_LL hook")
+            return
+
+        print("[RapidFireHook] WH_MOUSE_LL hook installed and pumping messages globally")
+        msg = wintypes.MSG()
+        while self.is_running:
+            bRet = self._user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+            if bRet <= 0:
+                break
+            self._user32.TranslateMessage(ctypes.byref(msg))
+            self._user32.DispatchMessageW(ctypes.byref(msg))
+
+        if self._hook_id:
+            self._user32.UnhookWindowsHookEx(self._hook_id)
+            self._hook_id = None
+        print("[RapidFireHook] WH_MOUSE_LL hook uninstalled cleanly")
+
+    def stop(self):
+        self.is_running = False
+        if self._thread_id is not None:
+            self._user32.PostThreadMessageW(self._thread_id, 0x0012, 0, 0)
+        self.wait(200)
+
+
+class RapidFireWorker(QThread):
+    """
+    Sub-millisecond High-Precision Click Dispatch Engine with Auto-Chained Burst Fire.
+    Component Name: RapidFireWorker
+    """
+    shotFired = Signal(int, float)      # (shot_index, instantaneous_cps)
+    firingStateChanged = Signal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RapidFireWorker")
+        self.is_firing = False
+        self.target_cps = 18.0
+        self.mode = "continuous"  # "continuous" | "burst_3" | "burst_5"
+        self.trigger_type = "hold"  # "hold" | "single_click"
+        self.burst_delay_ms = 200
+        self.humanize_jitter = True
+        self.target_button = "left"  # "left" | "right"
+        self._stop_requested = False
+        self._total_shots_fired = 0
+
+    def configure(self, target_cps: float, mode: str, humanize: bool, target_button: str, burst_delay_ms: int = 200, trigger_type: str = "hold"):
+        self.target_cps = max(5.0, min(35.0, float(target_cps)))
+        self.mode = mode
+        self.humanize_jitter = bool(humanize)
+        self.target_button = target_button
+        self.burst_delay_ms = max(50, min(1000, int(burst_delay_ms)))
+        self.trigger_type = trigger_type
+
+    def stop_firing(self):
+        self._stop_requested = True
+
+    def run(self):
+        self.is_firing = True
+        self._stop_requested = False
+        self.firingStateChanged.emit(True)
+
+        try:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+        except Exception:
+            pass
+
+        down_flag = MOUSEEVENTF_LEFTDOWN if self.target_button == "left" else MOUSEEVENTF_RIGHTDOWN
+        up_flag = MOUSEEVENTF_LEFTUP if self.target_button == "left" else MOUSEEVENTF_RIGHTUP
+
+        is_burst = self.mode in ("burst_3", "burst_5")
+        burst_size = 3 if self.mode == "burst_3" else (5 if self.mode == "burst_5" else 99999999)
+        total_shot_count = 0
+        last_shot_time = time.perf_counter()
+
+        try:
+            while not self._stop_requested:
+                # ── 1. FIRE ONE BURST (OR CONTINUOUS CYCLE) ──
+                current_burst_shots = 0
+                while not self._stop_requested and current_burst_shots < burst_size:
+                    base_period = 1.0 / max(5.0, min(35.0, self.target_cps))
+
+                    # Humanized Hold Duration
+                    base_hold = min(0.014, base_period * 0.4)
+                    hold_time = base_hold
+                    if self.humanize_jitter:
+                        jitter = random.gauss(0, base_hold * 0.15)
+                        hold_time = max(0.006, min(base_period * 0.6, base_hold + jitter))
+
+                    # Atomic DOWN with RAPID_FIRE_EXTRA_INFO signature
+                    ctypes.windll.user32.mouse_event(down_flag, 0, 0, 0, RAPID_FIRE_EXTRA_INFO)
+
+                    t_end = time.perf_counter() + hold_time
+                    while time.perf_counter() < t_end:
+                        time.sleep(0.0005)
+
+                    # Atomic UP with RAPID_FIRE_EXTRA_INFO signature (guaranteed release)
+                    ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, RAPID_FIRE_EXTRA_INFO)
+                    current_burst_shots += 1
+                    total_shot_count += 1
+                    self._total_shots_fired += 1
+
+                    now = time.perf_counter()
+                    interval = now - last_shot_time
+                    instant_cps = (1.0 / interval) if (interval > 0.001 and total_shot_count > 1) else self.target_cps
+                    last_shot_time = now
+                    self.shotFired.emit(total_shot_count, instant_cps)
+
+                    if self._stop_requested or current_burst_shots >= burst_size:
+                        break
+
+                    # Release interval between bullets inside the same burst
+                    base_rest = max(0.008, base_period - hold_time)
+                    rest_time = base_rest
+                    if self.humanize_jitter:
+                        jitter = random.gauss(0, base_rest * 0.15)
+                        rest_time = max(0.006, base_rest + jitter)
+
+                    t_rest_end = time.perf_counter() + rest_time
+                    while time.perf_counter() < t_rest_end:
+                        if self._stop_requested:
+                            break
+                        time.sleep(0.0005)
+
+                # ── 2. POST-BURST HANDLING ──
+                if self._stop_requested:
+                    break
+
+                if is_burst:
+                    if self.trigger_type == "single_click":
+                        # Single tap fires only 1 burst cycle then stops
+                        break
+                    else:
+                        # Hold mode: Pause for Burst Repeat Delay then fire next burst!
+                        base_delay = self.burst_delay_ms / 1000.0
+                        actual_delay = base_delay
+                        if self.humanize_jitter:
+                            delay_jitter = random.gauss(0, base_delay * 0.10)
+                            actual_delay = max(0.020, base_delay + delay_jitter)
+
+                        t_delay_end = time.perf_counter() + actual_delay
+                        while time.perf_counter() < t_delay_end:
+                            if self._stop_requested:
+                                break
+                            time.sleep(0.0005)
+
+        finally:
+            try:
+                ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, RAPID_FIRE_EXTRA_INFO)
+            except Exception:
+                pass
+            try:
+                ctypes.windll.winmm.timeEndPeriod(1)
+            except Exception:
+                pass
+            self.is_firing = False
+            self.firingStateChanged.emit(False)
+
+
+class RapidFireController(QObject):
+    """
+    Rapid-Fire Master Engine & Global Physical Mouse Hook Coordinator.
+    Component Name: RapidFireController
+    """
+    state_changed = Signal(bool, str)       # (is_active, status_desc)
+    shot_dispatched = Signal(int, float)    # (shot_count, instant_cps)
+    enabled_state_changed = Signal(bool)    # (is_enabled)
+    stats_reset = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RapidFireController")
+        self.is_enabled = False
+        self.target_cps = 18.0
+        self.mode = "continuous"            # "continuous" | "burst_3" | "burst_5"
+        self.trigger_type = "hold"          # "hold" | "single_click"
+        self.burst_delay_ms = 200
+        self.humanize_jitter = True
+        self.target_button = "left"        # "left" | "right"
+        self.trigger_key = "Left Click"
+        self.toggle_hotkey = "F8"
+        self.sound_enabled = True
+
+        self._last_kb_trigger_state = False
+        self._last_toggle_state = False
+        self._suppress_ticks = 0
+        self._burst_fired_for_press = False
+
+        self._worker = RapidFireWorker(self)
+        self._worker.shotFired.connect(self._on_worker_shot)
+        self._worker.firingStateChanged.connect(self._on_firing_state_changed)
+
+        # Start Dedicated Low-Level Mouse Hook Thread (WH_MOUSE_LL with Message Loop)
+        self._mouse_hook = LowLevelRapidFireHook()
+        self._mouse_hook.button_event_signal.connect(self._on_physical_button_event)
+        self._mouse_hook.start()
+
+        # Watchdog for toggle hotkey and keyboard trigger keys (15ms ~ 66Hz)
+        self._watchdog = QTimer(self)
+        self._watchdog.setInterval(15)
+        self._watchdog.timeout.connect(self._on_watchdog_tick)
+        self._watchdog.start()
+
+        atexit.register(self.force_restore)
+        if QApplication.instance():
+            QApplication.instance().aboutToQuit.connect(self.force_restore)
+
+    def _on_physical_button_event(self, btn: str, is_down: bool):
+        if not self.is_enabled:
+            return
+
+        cur_trigger = self.trigger_key.strip().lower()
+        match = (cur_trigger == btn) or (cur_trigger.replace("click", "").strip() == btn.replace("click", "").strip())
+        if match:
+            if self.trigger_type == "hold":
+                # Standard Hold Mode (fires continuously or auto-repeats bursts)
+                if is_down:
+                    if not self._worker.isRunning():
+                        self._worker.configure(self.target_cps, self.mode, self.humanize_jitter, self.target_button, self.burst_delay_ms, self.trigger_type)
+                        self._worker.start()
+                else:
+                    if self._worker.isRunning():
+                        self._worker.stop_firing()
+            else:
+                # Single Click / Tap-to-Toggle Mode
+                if is_down:
+                    if self.mode in ("burst_3", "burst_5"):
+                        if self._worker.isRunning():
+                            self._worker.stop_firing()
+                            self._worker.wait(50)
+                        self._worker.configure(self.target_cps, self.mode, self.humanize_jitter, self.target_button, self.burst_delay_ms, self.trigger_type)
+                        self._worker.start()
+                    else:
+                        if self._worker.isRunning():
+                            self._worker.stop_firing()
+                        else:
+                            self._worker.configure(self.target_cps, self.mode, self.humanize_jitter, self.target_button, self.burst_delay_ms, self.trigger_type)
+                            self._worker.start()
+
+    def _on_worker_shot(self, count, cps):
+        self.shot_dispatched.emit(count, cps)
+
+    def _on_firing_state_changed(self, active):
+        if active:
+            self.state_changed.emit(True, "RAPID FIRING ENGAGED")
+        else:
+            status = "ARMED (STANDBY)" if self.is_enabled else "DISARMED (DISABLED)"
+            self.state_changed.emit(self.is_enabled, status)
+
+    def set_enabled(self, enabled: bool):
+        self.is_enabled = bool(enabled)
+        if not self.is_enabled and self._worker.isRunning():
+            self._worker.stop_firing()
+        if self.sound_enabled:
+            self._play_sound(self.is_enabled)
+        self.enabled_state_changed.emit(self.is_enabled)
+        status = "ARMED (STANDBY)" if self.is_enabled else "DISARMED (DISABLED)"
+        self.state_changed.emit(self.is_enabled, status)
+
+    def toggle_enable(self):
+        self.set_enabled(not self.is_enabled)
+
+    def set_target_cps(self, cps: float):
+        self.target_cps = max(5.0, min(35.0, float(cps)))
+
+    def set_mode(self, mode: str):
+        self.mode = mode
+
+    def set_trigger_type(self, trigger_type: str):
+        self.trigger_type = trigger_type
+        if self._worker.isRunning():
+            self._worker.stop_firing()
+
+    def set_burst_delay_ms(self, delay_ms: int):
+        self.burst_delay_ms = max(50, min(1000, int(delay_ms)))
+
+    def set_humanize_jitter(self, enable: bool):
+        self.humanize_jitter = bool(enable)
+
+    def set_target_button(self, btn: str):
+        self.target_button = btn
+
+    def set_trigger_key(self, key_name: str):
+        self.trigger_key = key_name
+        self._last_kb_trigger_state = True
+        self._suppress_ticks = 15
+
+    def set_toggle_hotkey(self, key_name: str):
+        self.toggle_hotkey = key_name
+        self._last_toggle_state = True
+        self._suppress_ticks = 15
+
+    def set_sound_enabled(self, enabled: bool):
+        self.sound_enabled = bool(enabled)
+
+    def force_restore(self):
+        if hasattr(self, '_mouse_hook') and self._mouse_hook:
+            self._mouse_hook.stop()
+        if self._worker.isRunning():
+            self._worker.stop_firing()
+            self._worker.wait(150)
+        try:
+            up_flag = MOUSEEVENTF_LEFTUP if self.target_button == "left" else MOUSEEVENTF_RIGHTUP
+            ctypes.windll.user32.mouse_event(up_flag, 0, 0, 0, RAPID_FIRE_EXTRA_INFO)
+        except Exception:
+            pass
+
+    def _play_sound(self, armed: bool):
+        try:
+            import winsound
+            if armed:
+                winsound.Beep(1100, 70)
+            else:
+                winsound.Beep(450, 90)
+        except Exception:
+            try:
+                if armed:
+                    ctypes.windll.user32.MessageBeep(0x00000040)
+                else:
+                    ctypes.windll.user32.MessageBeep(0x00000000)
+            except Exception:
+                pass
+
+    def _get_vk_code(self, key_name: str) -> int:
+        raw = key_name.strip().lower()
+        mapping = {
+            "left click": 0x01, "mouse 1": 0x01, "mouse 1 (m1)": 0x01,
+            "right click": 0x02, "rclick": 0x02, "mouse 2": 0x02, "mouse 2 (m2)": 0x02,
+            "middle click": 0x04, "wheel": 0x04, "mouse 3": 0x04,
+            "mouse 4": 0x05, "mouse button 4": 0x05, "xbutton1": 0x05,
+            "mouse 5": 0x06, "mouse button 5": 0x06, "xbutton2": 0x06,
+            "left alt": 0xA4, "right alt": 0xA5, "alt": 0x12,
+            "left ctrl": 0xA2, "right ctrl": 0xA3, "ctrl": 0x11, "control": 0x11,
+            "left shift": 0xA0, "right shift": 0xA1, "shift": 0x10,
+            "space": 0x20, "spacebar": 0x20, "tab": 0x09, "caps lock": 0x14,
+            "capslock": 0x14, "enter": 0x0D, "return": 0x0D, "backspace": 0x08,
+            "delete": 0x2E, "insert": 0x2D,
+        }
+        for i in range(1, 13):
+            mapping[f"f{i}"] = 0x70 + (i - 1)
+
+        if raw in mapping:
+            return mapping[raw]
+        if len(raw) == 1:
+            return ord(raw.upper())
+        if raw.startswith("key ") or raw.startswith("key_"):
+            char = raw.split()[-1]
+            if len(char) == 1:
+                return ord(char.upper())
+        return 0
+
+    def _is_hotkey_down(self, hotkey_str: str) -> bool:
+        if not hotkey_str:
+            return False
+        parts = [p.strip().lower() for p in hotkey_str.split('+') if p.strip()]
+        if not parts:
+            return False
+
+        for part in parts:
+            if part in ("ctrl", "control", "left ctrl", "right ctrl"):
+                if not ((ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or
+                        (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or
+                        (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000)):
+                    return False
+            elif part in ("alt", "left alt", "right alt", "menu"):
+                if not ((ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or
+                        (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or
+                        (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000)):
+                    return False
+            elif part in ("shift", "left shift", "right shift"):
+                if not ((ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or
+                        (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or
+                        (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000)):
+                    return False
+            else:
+                vk = self._get_vk_code(part)
+                if vk > 0:
+                    if not (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000):
+                        return False
+                else:
+                    return False
+        return True
+
+    def _on_watchdog_tick(self):
+        if self._suppress_ticks > 0:
+            self._suppress_ticks -= 1
+            return
+
+        # 1. Check Toggle Arming Hotkey
+        toggle_down = self._is_hotkey_down(self.toggle_hotkey)
+        if toggle_down and not self._last_toggle_state:
+            self.toggle_enable()
+        self._last_toggle_state = toggle_down
+
+        # 2. Check Keyboard Trigger Keys (only if trigger is NOT a mouse button)
+        if not self.is_enabled:
+            return
+
+        raw_trig = self.trigger_key.strip().lower()
+        is_mouse_trig = any(m in raw_trig for m in ("left click", "right click", "middle click", "mouse 4", "mouse 5", "mouse 1", "mouse 2", "mouse 3"))
+
+        if not is_mouse_trig:
+            kb_down = self._is_hotkey_down(self.trigger_key)
+            if kb_down and not self._last_kb_trigger_state:
+                if self.trigger_type == "hold":
+                    if not self._worker.isRunning():
+                        self._worker.configure(self.target_cps, self.mode, self.humanize_jitter, self.target_button, self.burst_delay_ms, self.trigger_type)
+                        self._worker.start()
+                else:
+                    if self.mode in ("burst_3", "burst_5"):
+                        if self._worker.isRunning():
+                            self._worker.stop_firing()
+                            self._worker.wait(50)
+                        self._worker.configure(self.target_cps, self.mode, self.humanize_jitter, self.target_button, self.burst_delay_ms, self.trigger_type)
+                        self._worker.start()
+                    else:
+                        if self._worker.isRunning():
+                            self._worker.stop_firing()
+                        else:
+                            self._worker.configure(self.target_cps, self.mode, self.humanize_jitter, self.target_button, self.burst_delay_ms, self.trigger_type)
+                            self._worker.start()
+
+            elif not kb_down and self._last_kb_trigger_state:
+                if self.trigger_type == "hold":
+                    if self._worker.isRunning():
+                        self._worker.stop_firing()
+
+            self._last_kb_trigger_state = kb_down
+
+
+class RapidFireTargetCanvas(QWidget):
+    """
+    Interactive Live Target Practice Range, Cadence Radar & Dynamic Burst Rhythm Visualizer.
+    Component Name: RapidFireTargetCanvas
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("RapidFireTargetCanvas")
+        self.setMinimumHeight(240)
+        self.setCursor(Qt.CrossCursor)
+
+        self._engine_enabled = False
+        self._is_firing_active = False
+        self._status_text = "DISARMED (DISABLED)"
+        self._current_instant_cps = 0.0
+        self._target_cps = 18.0
+        self._mode = "continuous"
+        self._humanize_jitter = True
+        self._total_shots = 0
+        self._hits_in_bullseye = 0
+        self._decals = []
+        self._jitter_history = collections.deque(maxlen=35)
+        self._muzzle_flash_alpha = 0.0
+        self._recoil_offset_y = 0.0
+        self._flash_center_x = None
+        self._flash_center_y = None
+
+        # Burst Rhythm Animation States
+        self._burst_shot_in_cycle = 0
+        self._burst_cooldown_progress = 0.0
+        self._burst_cooldown_start = 0.0
+
+        # Animation timer (40 FPS = 25ms)
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(25)
+        self._anim_timer.timeout.connect(self._on_anim_tick)
+        self._anim_timer.start()
+
+    def set_engine_enabled(self, enabled: bool):
+        self._engine_enabled = bool(enabled)
+        if not self._engine_enabled:
+            self._is_firing_active = False
+            self._status_text = "DISARMED (DISABLED)"
+        else:
+            self._status_text = "ARMED (STANDBY)"
+        self.update()
+
+    def set_mode(self, mode: str):
+        self._mode = mode
+        self._burst_shot_in_cycle = 0
+        self._burst_cooldown_progress = 0.0
+        self._burst_cooldown_start = 0.0
+        self.update()
+
+    def set_humanize_jitter(self, enable: bool):
+        self._humanize_jitter = bool(enable)
+
+    def set_target_cps(self, cps: float):
+        self._target_cps = max(5.0, min(35.0, float(cps)))
+
+    def set_firing_state(self, is_active: bool, desc: str):
+        self._is_firing_active = is_active
+        self._status_text = desc
+        if not is_active:
+            self._burst_shot_in_cycle = 0
+        self.update()
+
+    def record_shot(self, count: int, cps: float):
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        self.record_shot_at(cx, cy, count, cps)
+
+    def record_shot_at(self, x: float, y: float, count: int, cps: float):
+        self._total_shots += 1
+        self._current_instant_cps = cps
+        self._muzzle_flash_alpha = 1.0
+        self._flash_center_x = x
+        self._flash_center_y = y
+        self._recoil_offset_y = max(-14.0, self._recoil_offset_y - 4.0)
+
+        # Dynamic Burst Pip & Cooldown Tracking
+        burst_size = 3 if self._mode == "burst_3" else (5 if self._mode == "burst_5" else 0)
+        if burst_size > 0:
+            self._burst_shot_in_cycle = (self._burst_shot_in_cycle % burst_size) + 1
+            if self._burst_shot_in_cycle == burst_size:
+                self._burst_cooldown_start = time.perf_counter()
+                self._burst_cooldown_progress = 1.0
+
+        expected_interval_ms = (1000.0 / max(1.0, self._target_cps))
+        actual_interval_ms = (1000.0 / max(1.0, cps)) if cps > 0 else expected_interval_ms
+        delta_ms = actual_interval_ms - expected_interval_ms
+        self._jitter_history.append(delta_ms)
+
+        spread = max(5.0, min(30.0, (self._target_cps / 35.0) * 25.0))
+        gx = random.gauss(0, spread)
+        gy = random.gauss(0, spread) + self._recoil_offset_y * 0.4
+        hit_x = x + gx
+        hit_y = y + gy
+
+        cx = self.width() / 2.0
+        cy = self.height() / 2.0
+        dist_to_center = math.hypot(hit_x - cx, hit_y - cy)
+        score = 10 if dist_to_center < 18 else (9 if dist_to_center < 42 else (8 if dist_to_center < 70 else 7))
+        if score == 10:
+            self._hits_in_bullseye += 1
+
+        self._decals.append({
+            'x': hit_x,
+            'y': hit_y,
+            'time': time.perf_counter(),
+            'score': score,
+            'alpha': 1.0
+        })
+
+        if len(self._decals) > 120:
+            self._decals.pop(0)
+
+        self.update()
+
+    def clear_target(self):
+        self._decals.clear()
+        self._total_shots = 0
+        self._hits_in_bullseye = 0
+        self._jitter_history.clear()
+        self._current_instant_cps = 0.0
+        self._burst_shot_in_cycle = 0
+        self._burst_cooldown_progress = 0.0
+        self._burst_cooldown_start = 0.0
+        self.update()
+
+    def _on_anim_tick(self):
+        now = time.perf_counter()
+        if self._muzzle_flash_alpha > 0.01:
+            self._muzzle_flash_alpha *= 0.72
+        else:
+            self._muzzle_flash_alpha = 0.0
+
+        if abs(self._recoil_offset_y) > 0.1:
+            self._recoil_offset_y *= 0.82
+        else:
+            self._recoil_offset_y = 0.0
+
+        # Burst Cooldown Dynamic Progress Decay
+        if self._burst_cooldown_start > 0.0:
+            elapsed = now - self._burst_cooldown_start
+            if elapsed < 0.28:
+                self._burst_cooldown_progress = max(0.0, 1.0 - (elapsed / 0.28))
+            else:
+                self._burst_cooldown_start = 0.0
+                self._burst_cooldown_progress = 0.0
+
+        alive_decals = []
+        for d in self._decals:
+            age = now - d['time']
+            if age < 15.0:
+                d['alpha'] = max(0.2, 1.0 - (age / 15.0))
+                alive_decals.append(d)
+        self._decals = alive_decals
+
+        if not self._is_firing_active and self._current_instant_cps > 0.1:
+            self._current_instant_cps *= 0.90
+            if self._current_instant_cps < 0.1:
+                self._current_instant_cps = 0.0
+
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            pos = event.position() if hasattr(event, 'position') else event.pos()
+            if pos.x() > (w - 120) and pos.y() < 45:
+                self.clear_target()
+                return
+
+            if not self._engine_enabled:
+                self._status_text = "DISARMED (ENABLE FIRST)"
+                self.update()
+                return
+
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+        cx = w / 2.0
+        cy = h / 2.0
+
+        # 1. Tactical dark background
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor("#0d1015")))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 10, 10)
+
+        # 2. Tactical Grid Lines
+        p.setPen(QPen(QColor(255, 255, 255, 8), 1, Qt.DotLine))
+        grid_step = 30
+        x = cx % grid_step
+        while x < w:
+            p.drawLine(QPointF(x, 0), QPointF(x, h))
+            x += grid_step
+        y = cy % grid_step
+        while y < h:
+            p.drawLine(QPointF(0, y), QPointF(w, y))
+            y += grid_step
+
+        # 3. Concentric Target Rings
+        rings = [
+            (140, QColor(255, 255, 255, 14), 1, "7"),
+            (100, QColor(255, 255, 255, 22), 1, "8"),
+            (65,  QColor(255, 255, 255, 35), 1, "9"),
+            (32,  QColor(255, 91, 6, 80),   2, "10"),
+            (12,  QColor(255, 91, 6, 180),  2, "X"),
+        ]
+
+        for radius, color, pen_w, label in rings:
+            p.setPen(QPen(color, pen_w))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(QPointF(cx, cy), radius, radius)
+            if radius > 15:
+                p.setFont(QFont("Orbitron", 7))
+                p.setPen(QPen(QColor(255, 255, 255, 40)))
+                p.drawText(QRectF(cx - 15, cy - radius - 10, 30, 10), Qt.AlignCenter, label)
+
+        # 4. Crosshair Reticle Lines with Recoil Offset
+        recoil_cy = cy + self._recoil_offset_y
+        p.setPen(QPen(QColor(255, 91, 6, 140), 1))
+        p.drawLine(QPointF(cx - 160, recoil_cy), QPointF(cx - 18, recoil_cy))
+        p.drawLine(QPointF(cx + 18, recoil_cy), QPointF(cx + 160, recoil_cy))
+        p.drawLine(QPointF(cx, recoil_cy - 120), QPointF(cx, recoil_cy - 18))
+        p.drawLine(QPointF(cx, recoil_cy + 18), QPointF(cx, recoil_cy + 120))
+
+        # Center bullseye glow
+        bullseye_grad = QRadialGradient(cx, recoil_cy, 14)
+        bullseye_grad.setColorAt(0.0, QColor(255, 91, 6, 180))
+        bullseye_grad.setColorAt(1.0, QColor(255, 91, 6, 0))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(bullseye_grad))
+        p.drawEllipse(QPointF(cx, recoil_cy), 14, 14)
+
+        # 5. Muzzle Flash Pulse (at shot position or center)
+        if self._muzzle_flash_alpha > 0.02:
+            fx = self._flash_center_x if self._flash_center_x is not None else cx
+            fy = (self._flash_center_y if self._flash_center_y is not None else cy) + self._recoil_offset_y
+            flash_rad = 36 * (1.0 + (1.0 - self._muzzle_flash_alpha))
+            flash_grad = QRadialGradient(fx, fy, flash_rad)
+            alpha_int = int(255 * self._muzzle_flash_alpha)
+            flash_grad.setColorAt(0.0, QColor(255, 230, 120, alpha_int))
+            flash_grad.setColorAt(0.5, QColor(255, 91, 6, int(alpha_int * 0.7)))
+            flash_grad.setColorAt(1.0, QColor(255, 91, 6, 0))
+            p.setBrush(QBrush(flash_grad))
+            p.drawEllipse(QPointF(fx, fy), flash_rad, flash_rad)
+
+        # 6. Bullet Decals
+        for d in self._decals:
+            alpha = d['alpha']
+            dx = d['x']
+            dy = d['y']
+            score = d['score']
+            r = 4.5 if score == 10 else 3.5
+
+            glow = QRadialGradient(dx, dy, r * 2.2)
+            glow.setColorAt(0.0, QColor(255, 200, 60, int(220 * alpha)))
+            glow.setColorAt(0.4, QColor(255, 91, 6, int(160 * alpha)))
+            glow.setColorAt(1.0, QColor(0, 0, 0, 0))
+            p.setBrush(QBrush(glow))
+            p.drawEllipse(QPointF(dx, dy), r * 2.2, r * 2.2)
+
+            p.setBrush(QBrush(QColor(20, 20, 20, int(240 * alpha))))
+            p.setPen(QPen(QColor(255, 91, 6, int(180 * alpha)), 1))
+            p.drawEllipse(QPointF(dx, dy), r, r)
+
+        # 7. TOP-LEFT HUD: CPS SPEEDOMETER GAUGE
+        gauge_x = 20
+        gauge_y = 20
+        gauge_w = 110
+        gauge_h = 75
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(0, 0, 0, 100)))
+        p.drawRoundedRect(QRectF(gauge_x, gauge_y, gauge_w, gauge_h), 6, 6)
+
+        arc_rect = QRectF(gauge_x + 15, gauge_y + 8, 80, 80)
+        p.setPen(QPen(QColor(255, 255, 255, 20), 4, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(arc_rect, 30 * 16, 210 * 16)
+
+        pct = min(1.0, self._current_instant_cps / 40.0)
+        p.setPen(QPen(QColor("#FF5B06"), 4, Qt.SolidLine, Qt.RoundCap))
+        p.drawArc(arc_rect, 240 * 16, int(-210 * 16 * pct))
+
+        p.setFont(QFont("Orbitron", 11, QFont.Bold))
+        p.setPen(QColor("#FF5B06") if self._current_instant_cps > 0 else QColor("#888888"))
+        cps_str = f"{self._current_instant_cps:.1f}" if self._current_instant_cps > 0 else f"{self._target_cps:.0f}"
+        p.drawText(QRectF(gauge_x, gauge_y + 36, gauge_w, 16), Qt.AlignCenter, f"{cps_str} CPS")
+
+        p.setFont(QFont("Orbitron", 7))
+        p.setPen(QColor("#888888"))
+        p.drawText(QRectF(gauge_x, gauge_y + 54, gauge_w, 12), Qt.AlignCenter, "REAL-TIME SPEED")
+
+        # 8. TOP-CENTER HUD: BURST CYCLE CADENCE & PIPS (Dynamic Animation)
+        if self._mode in ("burst_3", "burst_5"):
+            burst_cap = 3 if self._mode == "burst_3" else 5
+            mode_title = "3-BURST CYCLE" if self._mode == "burst_3" else "5-BURST CYCLE"
+            hud_w = 136
+            hud_h = 36
+            hud_x = cx - (hud_w / 2.0)
+            hud_y = 16
+
+            # Container Background & Subtle Border
+            p.setPen(QPen(QColor(255, 255, 255, 15), 1))
+            p.setBrush(QBrush(QColor(0, 0, 0, 140)))
+            p.drawRoundedRect(QRectF(hud_x, hud_y, hud_w, hud_h), 6, 6)
+
+            # Title Label with balanced top padding
+            p.setFont(QFont("Orbitron", 7, QFont.Bold))
+            p.setPen(QColor("#E0E0E0"))
+            p.drawText(QRectF(hud_x, hud_y + 5, hud_w, 11), Qt.AlignCenter, mode_title)
+
+            # Draw Bullet Pips (centered vertically with balanced bottom padding)
+            pip_spacing = 15
+            start_px = hud_x + (hud_w / 2.0) - ((burst_cap - 1) * pip_spacing / 2.0)
+            pip_y = hud_y + 23.5
+
+            for i in range(burst_cap):
+                px = start_px + (i * pip_spacing)
+                is_fired = (i < self._burst_shot_in_cycle)
+                
+                if is_fired:
+                    pip_grad = QRadialGradient(px, pip_y, 5)
+                    pip_grad.setColorAt(0.0, QColor("#FF5B06"))
+                    pip_grad.setColorAt(1.0, QColor(255, 91, 6, 90))
+                    p.setBrush(QBrush(pip_grad))
+                    p.setPen(QPen(QColor("#FFFFFF"), 1))
+                else:
+                    p.setBrush(QBrush(QColor(255, 255, 255, 18)))
+                    p.setPen(QPen(QColor(255, 255, 255, 35), 1))
+                p.drawEllipse(QPointF(px, pip_y), 3.5, 3.5)
+
+            # Draw Cooldown Progress Line during inter-burst delay
+            if self._burst_cooldown_progress > 0.01:
+                bar_w = hud_w - 20
+                bar_x = hud_x + 10
+                bar_y = hud_y + hud_h - 3.5
+                p.setPen(Qt.NoPen)
+                p.setBrush(QBrush(QColor(255, 255, 255, 20)))
+                p.drawRoundedRect(QRectF(bar_x, bar_y, bar_w, 2), 1, 1)
+
+                fill_w = bar_w * (1.0 - self._burst_cooldown_progress)
+                p.setBrush(QBrush(QColor("#FF5B06")))
+                p.drawRoundedRect(QRectF(bar_x, bar_y, fill_w, 2), 1, 1)
+
+        # 9. BOTTOM-LEFT HUD: HUMANIZATION JITTER OSCILLOSCOPE
+        if len(self._jitter_history) > 1:
+            scope_x = 20
+            scope_y = h - 65
+            scope_w = 140
+            scope_h = 45
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor(0, 0, 0, 100)))
+            p.drawRoundedRect(QRectF(scope_x, scope_y, scope_w, scope_h), 6, 6)
+
+            p.setFont(QFont("Orbitron", 7, QFont.Bold))
+            p.setPen(QColor("#00FF88"))
+            p.drawText(QRectF(scope_x + 8, scope_y + 4, scope_w, 10), Qt.AlignLeft, "JITTER OSCILLOSCOPE")
+
+            mid_y = scope_y + 28
+            p.setPen(QPen(QColor(255, 255, 255, 30), 1, Qt.DashLine))
+            p.drawLine(QPointF(scope_x + 8, mid_y), QPointF(scope_x + scope_w - 8, mid_y))
+
+            p.setPen(QPen(QColor("#00FF88"), 1.5))
+            pts = list(self._jitter_history)
+            step = (scope_w - 16) / max(1, len(pts) - 1)
+            for i in range(len(pts) - 1):
+                y1 = mid_y - max(-14.0, min(14.0, pts[i] * 1.5))
+                y2 = mid_y - max(-14.0, min(14.0, pts[i+1] * 1.5))
+                p.drawLine(QPointF(scope_x + 8 + i * step, y1), QPointF(scope_x + 8 + (i + 1) * step, y2))
+
+        # 10. TOP-RIGHT HUD: ACCURACY & SHOTS STATS + CLEAR BUTTON
+        stat_w = 120
+        stat_h = 60
+        stat_x = w - stat_w - 15
+        stat_y = 15
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(0, 0, 0, 100)))
+        p.drawRoundedRect(QRectF(stat_x, stat_y, stat_w, stat_h), 6, 6)
+
+        p.setFont(QFont("Orbitron", 8, QFont.Bold))
+        p.setPen(QColor("#FFFFFF"))
+        p.drawText(QRectF(stat_x + 8, stat_y + 6, stat_w - 16, 14), Qt.AlignLeft, f"SHOTS: {self._total_shots}")
+
+        acc = int((self._hits_in_bullseye / max(1, self._total_shots)) * 100)
+        p.setPen(QColor("#FF5B06"))
+        p.drawText(QRectF(stat_x + 8, stat_y + 22, stat_w - 16, 14), Qt.AlignLeft, f"BULLSEYE: {acc}%")
+
+        btn_rect = QRectF(stat_x + 8, stat_y + 38, stat_w - 16, 16)
+        p.setBrush(QBrush(QColor(255, 91, 6, 40)))
+        p.setPen(QPen(QColor(255, 91, 6, 120), 1))
+        p.drawRoundedRect(btn_rect, 3, 3)
+        p.setFont(QFont("Orbitron", 7, QFont.Bold))
+        p.setPen(QColor("#FFFFFF"))
+        p.drawText(btn_rect, Qt.AlignCenter, "CLEAR TARGET")
+
+        # 11. BOTTOM-RIGHT HUD: STATUS BADGE
+        badge_w = 200
+        badge_h = 24
+        badge_x = w - badge_w - 15
+        badge_y = h - badge_h - 15
+        p.setPen(Qt.NoPen)
+        if self._is_firing_active:
+            bg_col = QColor(0, 255, 136, 35)
+            txt_col = QColor("#00FF88")
+        elif self._engine_enabled:
+            bg_col = QColor(255, 91, 6, 30)
+            txt_col = QColor("#FF5B06")
+        else:
+            bg_col = QColor(255, 255, 255, 10)
+            txt_col = QColor("#777777")
+
+        p.setBrush(QBrush(bg_col))
+        p.drawRoundedRect(QRectF(badge_x, badge_y, badge_w, badge_h), 5, 5)
+
+        p.setFont(QFont("Orbitron", 8, QFont.Bold))
+        p.setPen(txt_col)
+        p.drawText(QRectF(badge_x, badge_y, badge_w, badge_h), Qt.AlignCenter, self._status_text)
+
+
+class RapidFirePanel(QWidget):
+    """
+    Universal Rapid-Fire & Dynamic Burst Engine Sub-Panel (Tactical Hub Sub-Page 3).
+    Component Name: TacticalRapidFirePanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("TacticalRapidFirePanel")
+        self.controller = RapidFireController(self)
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 16, 20, 16)
+        main_layout.setSpacing(14)
+
+        # ── 1. HEADER BAR ──────────────────────────────────────
+        header_frame = QWidget()
+        header_frame.setObjectName("RapidFireHeaderFrame")
+        header_frame.setFixedHeight(40)
+        header_frame.setStyleSheet("""
+            QWidget#RapidFireHeaderFrame {
+                background-color: rgba(26, 26, 26, 0.95);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(8)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("RapidFireBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        if os.path.exists(back_icon_path):
+            self.back_btn.setIcon(QIcon(back_icon_path))
+            self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Tactical Hub")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#RapidFireBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#RapidFireBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self.back_clicked)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("UNIVERSAL RAPID-FIRE & DYNAMIC BURST")
+        title_lbl.setObjectName("RapidFireHeaderTitle")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+
+        h_layout.addStretch()
+
+        self.enable_btn = QPushButton("DISABLED")
+        self.enable_btn.setObjectName("RapidFireEnableBtn")
+        self.enable_btn.setFixedSize(90, 26)
+        self.enable_btn.setCursor(Qt.PointingHandCursor)
+        self.enable_btn.setStyleSheet("""
+            QPushButton#RapidFireEnableBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                color: #888888;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 0px 8px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+        """)
+        self.enable_btn.clicked.connect(self.controller.toggle_enable)
+        self.controller.enabled_state_changed.connect(self._sync_enable_ui)
+        h_layout.addWidget(self.enable_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. CONFIGURATION CARDS ROW (3 CARDS) ───────────────
+        cfg_layout = QHBoxLayout()
+        cfg_layout.setSpacing(12)
+
+        # CARD 1: FIRING MODE & TARGET DISPATCH
+        self.card1 = QFrame()
+        self.card1.setObjectName("RapidFireModeCard")
+        self.card1.setFixedHeight(132)
+        self.card1.setStyleSheet("""
+            QFrame#RapidFireModeCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        c1_layout = QVBoxLayout(self.card1)
+        c1_layout.setContentsMargins(12, 8, 12, 8)
+        c1_layout.setSpacing(4)
+
+        c1_title = QLabel("FIRING MODE & TARGET DISPATCH")
+        c1_title.setObjectName("RapidFireModeCardTitle")
+        c1_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
+        c1_layout.addWidget(c1_title)
+
+        self.mode_switcher = SlidingSegmentedPill3()
+        self.mode_switcher.setObjectName("RapidFireModeTabFrame")
+        self.mode_switcher.modeChanged.connect(self._on_mode_changed)
+        c1_layout.addWidget(self.mode_switcher)
+
+        # BURST REPEAT DELAY SUB-FRAME (Dynamic visibility: appears above trigger_type_switcher when Burst + Hold)
+        self.burst_delay_frame = QFrame()
+        self.burst_delay_frame.setObjectName("RapidFireBurstDelayFrame")
+        self.burst_delay_frame.setStyleSheet("""
+            QFrame#RapidFireBurstDelayFrame {
+                background: transparent;
+                border: none;
+            }
+        """)
+        bdf_layout = QVBoxLayout(self.burst_delay_frame)
+        bdf_layout.setContentsMargins(0, 2, 0, 2)
+        bdf_layout.setSpacing(2)
+
+        bdf_head = QHBoxLayout()
+        bdf_title = QLabel("BURST REPEAT DELAY")
+        bdf_title.setObjectName("RapidFireBurstDelayTitle")
+        bdf_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold;")
+        bdf_head.addWidget(bdf_title)
+        bdf_head.addStretch()
+
+        self.burst_delay_val_lbl = QLabel("200 ms")
+        self.burst_delay_val_lbl.setObjectName("RapidFireBurstDelayValLabel")
+        self.burst_delay_val_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold;")
+        bdf_head.addWidget(self.burst_delay_val_lbl)
+        bdf_layout.addLayout(bdf_head)
+
+        self.burst_delay_slider = QSlider(Qt.Horizontal)
+        self.burst_delay_slider.setObjectName("RapidFireBurstDelaySlider")
+        self.burst_delay_slider.setRange(50, 1000)
+        self.burst_delay_slider.setValue(200)
+        self.burst_delay_slider.setStyleSheet("""
+            QSlider#RapidFireBurstDelaySlider::groove:horizontal {
+                border: none;
+                height: 4px;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 2px;
+            }
+            QSlider#RapidFireBurstDelaySlider::sub-page:horizontal {
+                background: #FF5B06;
+                border-radius: 2px;
+            }
+            QSlider#RapidFireBurstDelaySlider::handle:horizontal {
+                background: #FFFFFF;
+                border: 2px solid #FF5B06;
+                width: 12px;
+                margin-top: -4px;
+                margin-bottom: -4px;
+                border-radius: 6px;
+            }
+        """)
+        self.burst_delay_slider.valueChanged.connect(self._on_burst_delay_changed)
+        bdf_layout.addWidget(self.burst_delay_slider)
+        c1_layout.addWidget(self.burst_delay_frame)
+
+        # Dynamic Opacity Effect for Burst Delay Frame
+        self._burst_opacity_effect = QGraphicsOpacityEffect(self.burst_delay_frame)
+        self.burst_delay_frame.setGraphicsEffect(self._burst_opacity_effect)
+        self._burst_opacity_effect.setOpacity(0.0)
+
+        self.trigger_type_switcher = SlidingSegmentedPillTriggerType()
+        self.trigger_type_switcher.setObjectName("RapidFireTriggerTypeFrame")
+        self.trigger_type_switcher.triggerTypeChanged.connect(self._on_trigger_type_changed)
+        c1_layout.addWidget(self.trigger_type_switcher)
+
+        self.target_switcher = SlidingSegmentedPillTarget()
+        self.target_switcher.setObjectName("RapidFireTargetTabFrame")
+        self.target_switcher.targetChanged.connect(self.controller.set_target_button)
+        c1_layout.addWidget(self.target_switcher)
+
+        cfg_layout.addWidget(self.card1, 1)
+
+        # CARD 2: CADENCE SPEED & HUMANIZATION
+        self.card2 = QFrame()
+        self.card2.setObjectName("RapidFireSpeedCard")
+        self.card2.setFixedHeight(132)
+        self.card2.setStyleSheet("""
+            QFrame#RapidFireSpeedCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        c2_layout = QVBoxLayout(self.card2)
+        c2_layout.setContentsMargins(12, 8, 12, 8)
+        c2_layout.setSpacing(4)
+
+        c2_head = QHBoxLayout()
+        c2_title = QLabel("CADENCE SPEED")
+        c2_title.setObjectName("RapidFireSpeedTitle")
+        c2_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
+        c2_head.addWidget(c2_title)
+        c2_head.addStretch()
+
+        self.speed_val_lbl = QLabel("18 CPS (Fast Auto)")
+        self.speed_val_lbl.setObjectName("RapidFireSpeedValLabel")
+        self.speed_val_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
+        c2_head.addWidget(self.speed_val_lbl)
+        c2_layout.addLayout(c2_head)
+
+        # Quick Preset Segmented Pill
+        self.speed_preset_switcher = SlidingSegmentedPillSpeedPresets()
+        self.speed_preset_switcher.setObjectName("RapidFireSpeedPresetTabFrame")
+        self.speed_preset_switcher.presetSelected.connect(self._on_speed_preset_selected)
+        c2_layout.addWidget(self.speed_preset_switcher)
+
+        # Speed Slider
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setObjectName("RapidFireSpeedSlider")
+        self.speed_slider.setRange(5, 35)
+        self.speed_slider.setValue(18)
+        self.speed_slider.setStyleSheet("""
+            QSlider#RapidFireSpeedSlider::groove:horizontal {
+                border: none;
+                height: 4px;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 2px;
+            }
+            QSlider#RapidFireSpeedSlider::sub-page:horizontal {
+                background: #FF5B06;
+                border-radius: 2px;
+            }
+            QSlider#RapidFireSpeedSlider::handle:horizontal {
+                background: #FFFFFF;
+                border: 2px solid #FF5B06;
+                width: 12px;
+                margin-top: -4px;
+                margin-bottom: -4px;
+                border-radius: 6px;
+            }
+        """)
+        self.speed_slider.valueChanged.connect(self._on_speed_slider_changed)
+        c2_layout.addWidget(self.speed_slider)
+
+        # Live Physical Cadence Timing Stats Row
+        self.speed_timing_lbl = QLabel("PERIOD: ~55ms | HOLD: ~14ms | CADENCE: 18.0 Hz")
+        self.speed_timing_lbl.setObjectName("RapidFireSpeedTimingLabel")
+        self.speed_timing_lbl.setStyleSheet("color: #777777; font-family: 'Orbitron', sans-serif; font-size: 8px; font-weight: bold;")
+        c2_layout.addWidget(self.speed_timing_lbl)
+
+        self.cb_jitter = AnimatedCheckBox("Gaussian Humanization Jitter")
+        self.cb_jitter.setObjectName("RapidFireJitterCb")
+        self.cb_jitter.setChecked(True)
+        self.cb_jitter.setToolTip("Injects microsecond Gaussian organic timing variation to prevent anti-cheat pattern detection.")
+        self.cb_jitter.toggled.connect(self.controller.set_humanize_jitter)
+        self.cb_jitter.toggled.connect(self._on_jitter_toggled)
+        c2_layout.addWidget(self.cb_jitter)
+
+        cfg_layout.addWidget(self.card2, 1)
+
+        # CARD 3: TRIGGER & ARMING HOTKEYS
+        self.card3 = QFrame()
+        self.card3.setObjectName("RapidFireHotkeyCard")
+        self.card3.setFixedHeight(132)
+        self.card3.setStyleSheet("""
+            QFrame#RapidFireHotkeyCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+        """)
+        c3_layout = QVBoxLayout(self.card3)
+        c3_layout.setContentsMargins(12, 8, 12, 8)
+        c3_layout.setSpacing(4)
+
+        c3_title = QLabel("TRIGGER & ARMING HOTKEYS")
+        c3_title.setObjectName("RapidFireHotkeyTitle")
+        c3_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
+        c3_layout.addWidget(c3_title)
+
+        c3_sub_row = QHBoxLayout()
+        lbl_trig = QLabel("FIRE TRIGGER")
+        lbl_trig.setObjectName("RapidFireSubTrigLabel")
+        lbl_trig.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 8px; font-weight: bold;")
+        c3_sub_row.addWidget(lbl_trig, 1)
+
+        lbl_arm = QLabel("ARM TOGGLE")
+        lbl_arm.setObjectName("RapidFireSubArmLabel")
+        lbl_arm.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 8px; font-weight: bold;")
+        c3_sub_row.addWidget(lbl_arm, 1)
+        c3_layout.addLayout(c3_sub_row)
+
+        c3_row = QHBoxLayout()
+        c3_row.setSpacing(6)
+
+        self.trigger_input = TacticalInputCatcherButton(default_key="Left Click")
+        self.trigger_input.setObjectName("RapidFireTriggerInput")
+        self.trigger_input.setFixedHeight(26)
+        self.trigger_input.input_captured.connect(self._on_trigger_captured)
+        c3_row.addWidget(self.trigger_input, 1)
+
+        self.arm_hotkey_btn = RapidFireHotkeyButton(default_key="F8")
+        self.arm_hotkey_btn.setObjectName("RapidFireArmHotkeyBtn")
+        self.arm_hotkey_btn.setFixedHeight(26)
+        self.arm_hotkey_btn.hotkeyChanged.connect(self._on_arm_hotkey_changed)
+        c3_row.addWidget(self.arm_hotkey_btn, 1)
+
+        c3_layout.addLayout(c3_row)
+
+        self.engine_mode_desc_lbl = QLabel("WIN32 POLLING WATCHDOG: 66 HZ")
+        self.engine_mode_desc_lbl.setObjectName("RapidFireEngineModeDescLabel")
+        self.engine_mode_desc_lbl.setStyleSheet("color: #777777; font-family: 'Orbitron', sans-serif; font-size: 8px; font-weight: bold;")
+        c3_layout.addWidget(self.engine_mode_desc_lbl)
+
+        self.cb_sound = AnimatedCheckBox("Audible Tone Feedback")
+        self.cb_sound.setObjectName("RapidFireSoundCb")
+        self.cb_sound.setChecked(True)
+        self.cb_sound.setToolTip("Plays tone chime on engine arm/disarm.")
+        self.cb_sound.toggled.connect(self.controller.set_sound_enabled)
+        c3_layout.addWidget(self.cb_sound)
+
+        cfg_layout.addWidget(self.card3, 1)
+        main_layout.addLayout(cfg_layout)
+
+        # Dynamic Smooth Card Height Animator (240ms OutCubic)
+        self._card_anim = QVariantAnimation(self)
+        self._card_anim.setDuration(240)
+        self._card_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._card_anim.valueChanged.connect(self._on_card_anim_tick)
+        self._card_anim.finished.connect(self._on_card_anim_finished)
+
+        # ── 3. INTERACTIVE TARGET CANVAS ───────────────────────
+        self.target_canvas = RapidFireTargetCanvas()
+        self.target_canvas.setObjectName("RapidFireTargetCanvas")
+        self.controller.state_changed.connect(self.target_canvas.set_firing_state)
+        self.controller.shot_dispatched.connect(self.target_canvas.record_shot)
+        self.controller.enabled_state_changed.connect(self.target_canvas.set_engine_enabled)
+        self.target_canvas.set_engine_enabled(self.controller.is_enabled)
+        main_layout.addWidget(self.target_canvas, 1)
+
+        # Initialize burst delay slider visibility without animation on boot
+        self._update_burst_delay_visibility(animated=False)
+
+    def _update_burst_delay_visibility(self, animated=True):
+        is_burst = self.controller.mode in ("burst_3", "burst_5")
+        is_hold = self.controller.trigger_type == "hold"
+        show_burst_delay = is_burst and is_hold
+
+        target_h = 176 if show_burst_delay else 132
+        start_h = self.card1.height()
+
+        if not animated or start_h == target_h:
+            self._card_anim.stop()
+            self.burst_delay_frame.setVisible(show_burst_delay)
+            self._burst_opacity_effect.setOpacity(1.0 if show_burst_delay else 0.0)
+            self.burst_delay_frame.setMaximumHeight(48 if show_burst_delay else 0)
+            self.card1.setFixedHeight(target_h)
+            self.card2.setFixedHeight(target_h)
+            self.card3.setFixedHeight(target_h)
+            return
+
+        if show_burst_delay:
+            self.burst_delay_frame.setVisible(True)
+
+        if self._card_anim.state() == QVariantAnimation.Running:
+            self._card_anim.stop()
+
+        self._card_anim.setStartValue(start_h)
+        self._card_anim.setEndValue(target_h)
+        self._card_anim.start()
+
+    def _on_card_anim_tick(self, val):
+        h = int(val)
+        self.card1.setFixedHeight(h)
+        self.card2.setFixedHeight(h)
+        self.card3.setFixedHeight(h)
+
+        # Smooth slide & opacity progress (132 -> 0.0, 176 -> 1.0)
+        progress = max(0.0, min(1.0, (h - 132.0) / 44.0))
+        self._burst_opacity_effect.setOpacity(progress)
+        self.burst_delay_frame.setMaximumHeight(int(48 * progress))
+
+    def _on_card_anim_finished(self):
+        is_burst = self.controller.mode in ("burst_3", "burst_5")
+        is_hold = self.controller.trigger_type == "hold"
+        show_burst_delay = is_burst and is_hold
+        if not show_burst_delay:
+            self.burst_delay_frame.setVisible(False)
+            self._burst_opacity_effect.setOpacity(0.0)
+            self.burst_delay_frame.setMaximumHeight(0)
+        else:
+            self._burst_opacity_effect.setOpacity(1.0)
+            self.burst_delay_frame.setMaximumHeight(48)
+
+    def _on_mode_changed(self, mode_str: str):
+        self.controller.set_mode(mode_str)
+        self.target_canvas.set_mode(mode_str)
+        self._update_burst_delay_visibility(animated=True)
+
+    def _on_trigger_type_changed(self, trigger_type: str):
+        self.controller.set_trigger_type(trigger_type)
+        self._update_burst_delay_visibility(animated=True)
+
+    def _on_burst_delay_changed(self, val: int):
+        self.controller.set_burst_delay_ms(val)
+        if val >= 1000:
+            txt = f"{val/1000.0:.2f} s"
+        else:
+            txt = f"{val} ms"
+        self.burst_delay_val_lbl.setText(txt)
+
+    def _on_jitter_toggled(self, enabled: bool):
+        self.target_canvas.set_humanize_jitter(enabled)
+
+    def _on_speed_slider_changed(self, val: int):
+        self.controller.set_target_cps(val)
+        self.target_canvas.set_target_cps(val)
+        self.speed_preset_switcher.set_preset_from_val(val)
+        tier = "Slow Tap" if val <= 10 else ("Medium Burst" if val <= 18 else ("Fast Auto" if val <= 26 else "Extreme Rampage"))
+        self.speed_val_lbl.setText(f"{val} CPS ({tier})")
+
+        period_ms = int(1000.0 / max(1, val))
+        hold_ms = min(14, int(period_ms * 0.4))
+        self.speed_timing_lbl.setText(f"PERIOD: ~{period_ms}ms | HOLD: ~{hold_ms}ms | CADENCE: {val:.1f} Hz")
+
+    def _on_speed_preset_selected(self, cps: int):
+        self.speed_slider.setValue(cps)
+
+    def _on_trigger_captured(self, key_name: str):
+        self.controller.set_trigger_key(key_name)
+        print(f"[RapidFire] Trigger Key bound to: {key_name}")
+
+    def _on_arm_hotkey_changed(self, key_name: str):
+        self.controller.set_toggle_hotkey(key_name)
+        print(f"[RapidFire] Armed Toggle Hotkey bound to: {key_name}")
+
+    def _on_reset_stats(self):
+        self.target_canvas.clear_target()
+
+    def _sync_enable_ui(self, active: bool):
+        if active:
+            self.enable_btn.setText("ACTIVE")
+            self.enable_btn.setStyleSheet("""
+                QPushButton#RapidFireEnableBtn {
+                    background-color: #00FF88;
+                    color: #000000;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+        else:
+            self.enable_btn.setText("DISABLED")
+            self.enable_btn.setStyleSheet("""
+                QPushButton#RapidFireEnableBtn {
+                    background-color: rgba(255, 255, 255, 0.08);
+                    color: #888888;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+
+    def _on_back(self):
+        self.controller.force_restore()
+        self.back_clicked.emit()
+
+
 class TacticalToolsHubPanel(QWidget):
     """
     Tactical Utilities Hub with 6 Tool Cards.
@@ -11392,6 +13350,12 @@ class MacroSettingsPanel(QWidget):
         self.cursor_clamp_panel.back_clicked.connect(lambda: self._tactical_stack.setCurrentIndex(0))
         self._tactical_stack.addWidget(self.cursor_clamp_panel)  # Index 2: Cursor Clamp
 
+        # ── SUB-PAGE 3: UNIVERSAL RAPID-FIRE ──
+        self.rapid_fire_panel = RapidFirePanel()
+        self.rapid_fire_panel.setObjectName("TacticalRapidFirePanel")
+        self.rapid_fire_panel.back_clicked.connect(lambda: self._tactical_stack.setCurrentIndex(0))
+        self._tactical_stack.addWidget(self.rapid_fire_panel)  # Index 3: Rapid-Fire
+
         tactical_layout.addWidget(self._tactical_stack)
         self._page_stack.addWidget(tactical_tab)
         
@@ -11670,6 +13634,20 @@ class MacroSettingsPanel(QWidget):
             'button_mappings': getattr(self, '_button_mappings', self._get_default_button_mappings()),
             'bypass_anti_cheat': self._anticheat_toggle.isChecked() if hasattr(self, '_anticheat_toggle') else False,
         }
+
+        # Persist Rapid Fire Settings
+        if hasattr(self, 'rapid_fire_panel'):
+            rf_ctrl = self.rapid_fire_panel.controller
+            settings['rapid_fire'] = {
+                'cps': rf_ctrl.target_cps,
+                'mode': rf_ctrl.mode,
+                'humanize': rf_ctrl.humanize_jitter,
+                'target_button': rf_ctrl.target_button,
+                'trigger_key': rf_ctrl.trigger_key,
+                'toggle_hotkey': rf_ctrl.toggle_hotkey,
+                'sound_enabled': rf_ctrl.sound_enabled,
+            }
+
         try:
             with open(self._get_helxairo_settings_path(), 'w') as f:
                 json.dump(settings, f, indent=2)
@@ -11878,6 +13856,37 @@ class MacroSettingsPanel(QWidget):
                 for i, mapping in enumerate(self._button_mappings):
                     if i < len(self._button_mapping_btns):
                         self._button_mapping_btns[i].setText(f"   {mapping}")
+
+            # Apply saved Rapid Fire settings
+            try:
+                with open(self._get_helxairo_settings_path(), 'r') as f:
+                    _saved_data = json.load(f)
+                if hasattr(self, 'rapid_fire_panel') and 'rapid_fire' in _saved_data:
+                    rf = _saved_data['rapid_fire']
+                    rf_p = self.rapid_fire_panel
+                    rf_ctrl = rf_p.controller
+                    if 'cps' in rf:
+                        rf_p.speed_slider.setValue(int(rf['cps']))
+                    if 'mode' in rf:
+                        rf_p.mode_switcher.set_mode(rf['mode'])
+                        rf_ctrl.set_mode(rf['mode'])
+                    if 'target_button' in rf:
+                        rf_p.target_switcher.set_target(rf['target_button'])
+                        rf_ctrl.set_target_button(rf['target_button'])
+                    if 'humanize' in rf:
+                        rf_p.cb_jitter.setChecked(bool(rf['humanize']))
+                        rf_ctrl.set_humanize_jitter(bool(rf['humanize']))
+                    if 'trigger_key' in rf:
+                        rf_p.trigger_input.set_captured_key(rf['trigger_key'])
+                        rf_ctrl.set_trigger_key(rf['trigger_key'])
+                    if 'toggle_hotkey' in rf:
+                        rf_p.arm_hotkey_btn.set_hotkey(rf['toggle_hotkey'])
+                        rf_ctrl.set_toggle_hotkey(rf['toggle_hotkey'])
+                    if 'sound_enabled' in rf:
+                        rf_p.cb_sound.setChecked(bool(rf['sound_enabled']))
+                        rf_ctrl.set_sound_enabled(bool(rf['sound_enabled']))
+            except Exception as e:
+                print(f"[HELXAIRO] Note restoring Rapid Fire: {e}")
                         
             # Deferred sync to Universal OS Hook to ensure socket is initialized and Hook process is listening
             from PySide6.QtCore import QTimer
