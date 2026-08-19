@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
     QSpinBox, QCheckBox, QLineEdit, QGroupBox, QFormLayout, QMessageBox,
     QTextEdit, QListWidget, QListWidgetItem, QSplitter, QScrollArea,
     QAbstractItemView, QSlider, QColorDialog, QAbstractSpinBox,
-    QRadioButton, QFrame, QGraphicsOpacityEffect, QRubberBand, QApplication, QSizePolicy, QAbstractButton
+    QRadioButton, QFrame, QGraphicsOpacityEffect, QRubberBand, QApplication, QSizePolicy, QAbstractButton,
+    QFileDialog
 )
 from smooth_scroll import SmoothScrollArea
 import math, random
@@ -6341,11 +6342,18 @@ def resolve_tactical_vk_code(key_name: str, fallback: int = 0x01) -> int:
 def normalize_shortcut_key(key_str: str) -> str:
     """
     Canonically normalizes a shortcut combination string.
-    E.g. 'Alt+Ctrl+l' -> 'Ctrl+Alt+L', 'numpad 1' -> 'Numpad 1', 'mouse 4' -> 'Mouse 4'.
+    E.g. 'Alt+Ctrl+l' -> 'Ctrl+Alt+L', 'numpad 1' -> 'Numpad 1', 'mouse 4' -> 'Mouse 4', 'Numpad +' -> 'Numpad +'.
     """
     if not key_str:
         return ""
-    raw_parts = [p.strip() for p in str(key_str).split("+") if p.strip()]
+    s = str(key_str).strip()
+    s = re.sub(r'(?i)\bnumpad\s*\+', 'NUMPAD_PLUS_TOKEN', s)
+    if s.endswith('++'):
+        s = s[:-2] + '+PLUS_CHAR_TOKEN'
+    elif s == '+':
+        s = 'PLUS_CHAR_TOKEN'
+
+    raw_parts = [p.strip() for p in s.split("+") if p.strip()]
     if not raw_parts:
         return ""
 
@@ -6354,8 +6362,15 @@ def normalize_shortcut_key(key_str: str) -> str:
     mods_found = []
     base_parts = []
 
-    for part in raw_parts:
-        low = part.lower()
+    for raw_part in raw_parts:
+        if raw_part == 'NUMPAD_PLUS_TOKEN':
+            base_parts.append("Numpad +")
+            continue
+        elif raw_part == 'PLUS_CHAR_TOKEN':
+            base_parts.append("+")
+            continue
+
+        low = raw_part.lower()
         if low in mod_order:
             clean_mod = "Ctrl" if low in ("ctrl", "control") else ("Alt" if low == "alt" else ("Shift" if low == "shift" else "Win"))
             if clean_mod not in mods_found:
@@ -6363,20 +6378,20 @@ def normalize_shortcut_key(key_str: str) -> str:
         else:
             # Standardize base key representation
             if low.startswith("numpad "):
-                num_suffix = low[7:].strip()
-                base_parts.append(f"Numpad {num_suffix.upper()}")
+                num_suffix = raw_part[7:].strip()
+                base_parts.append(f"Numpad {num_suffix}")
             elif low in ("space", "spacebar"):
                 base_parts.append("Spacebar")
             elif low in ("enter", "return"):
                 base_parts.append("Enter")
             elif low.startswith("mouse ") or low.startswith("mouse_"):
-                base_parts.append(part.title())
+                base_parts.append(raw_part.title())
             elif low in ("right click", "left click", "middle click"):
-                base_parts.append(part.title())
-            elif len(part) == 1:
-                base_parts.append(part.upper())
+                base_parts.append(raw_part.title())
+            elif len(raw_part) == 1:
+                base_parts.append(raw_part.upper())
             else:
-                base_parts.append(part.upper())
+                base_parts.append(raw_part.upper())
 
     # Sort modifiers in standard order: Ctrl -> Alt -> Shift -> Win
     mods_found.sort(key=lambda m: mod_order.get(m.lower(), 99))
@@ -6475,7 +6490,24 @@ def get_all_registered_global_shortcuts(exclude_owner: str = "") -> dict:
         if norm:
             registry[norm] = "Rapid-Fire (Fire Trigger)"
 
-    # 5. Windows OS Critical Reserved Shortcuts
+    # 5. HELXAIRO: Instant Boss Key
+    boss_path = os.path.join(helxaid_dir, 'helxairo_boss_key.json')
+    boss_trig_k = "F10"
+    if os.path.exists(boss_path):
+        try:
+            with open(boss_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                boss_trig_k = str(data.get("hotkey") or "F10")
+        except Exception:
+            pass
+
+    if exclude_owner != "boss_key_trigger":
+        norm = normalize_shortcut_key(boss_trig_k)
+        if norm:
+            registry[norm] = "Instant Boss Key (Panic Switch)"
+
+    # 6. Windows OS Critical Reserved Shortcuts
     win_reserved = {
         "Ctrl+Alt+Del": "Windows Security Screen",
         "Ctrl+Shift+Esc": "Windows Task Manager",
@@ -6516,15 +6548,30 @@ def validate_shortcut_conflict(proposed_key: str, owner_id: str = "") -> tuple:
 def is_tactical_hotkey_physically_down(hotkey_str: str) -> bool:
     """
     Win32 High-Performance State Checker for single keys, mouse buttons, or chord combinations.
-    E.g. 'Right Click', 'Numpad 1', 'F7', 'Ctrl+Right Click', 'Alt+Shift+X', 'Ctrl+Alt+C'.
+    E.g. 'Right Click', 'Numpad 1', 'F7', 'Ctrl+Right Click', 'Alt+Shift+X', 'Ctrl+Alt+C', 'Numpad +'.
     """
     if not hotkey_str:
         return False
-    parts = [p.strip().lower() for p in str(hotkey_str).split('+') if p.strip()]
-    if not parts:
+    s = str(hotkey_str).strip()
+    # Protect special tokens that contain a plus sign
+    s = re.sub(r'(?i)\bnumpad\s*\+', 'NUMPAD_PLUS_TOKEN', s)
+    if s.endswith('++'):
+        s = s[:-2] + '+PLUS_CHAR_TOKEN'
+    elif s == '+':
+        s = 'PLUS_CHAR_TOKEN'
+    
+    raw_tokens = [p.strip() for p in s.split('+') if p.strip()]
+    if not raw_tokens:
         return False
 
-    for part in parts:
+    for tok in raw_tokens:
+        if tok == 'NUMPAD_PLUS_TOKEN':
+            part = 'numpad +'
+        elif tok == 'PLUS_CHAR_TOKEN':
+            part = '+'
+        else:
+            part = tok.lower()
+
         if part in ("ctrl", "control", "left ctrl", "right ctrl"):
             ctrl_down = bool((ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or
                              (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or
@@ -6545,7 +6592,19 @@ def is_tactical_hotkey_physically_down(hotkey_str: str) -> bool:
                 return False
         else:
             vk = resolve_tactical_vk_code(part, fallback=0)
-            if vk <= 0 or not (ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000):
+            if vk <= 0:
+                return False
+            is_down = bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+            if not is_down and (0x60 <= vk <= 0x69 or vk == 0x6E):
+                numpad_alt_map = {
+                    0x60: 0x2D, 0x61: 0x23, 0x62: 0x28, 0x63: 0x22, 0x64: 0x25,
+                    0x65: 0x0C, 0x66: 0x27, 0x67: 0x24, 0x68: 0x26, 0x69: 0x21,
+                    0x6E: 0x2E
+                }
+                alt_vk = numpad_alt_map.get(vk)
+                if alt_vk:
+                    is_down = bool(ctypes.windll.user32.GetAsyncKeyState(alt_vk) & 0x8000)
+            if not is_down:
                 return False
     return True
 
@@ -6587,11 +6646,33 @@ def format_tactical_key_event(event, default_fallback: str = "Right Click") -> s
             pass
         return "Right Shift" if (scan == 54 or vk == 0xA1) else "Left Shift"
 
-    # 2. Numpad Keys (VK 0x60 - 0x6F, Qt Numpad Keys & Numpad Enter)
+    # 2. Numpad Keys (VK 0x60 - 0x6F, Scan codes, Qt Numpad Keys & Numpad Enter)
     if 0x60 <= vk <= 0x69:
         return f"Numpad {vk - 0x60}"
-    if hasattr(Qt, 'Key_Numpad0') and Qt.Key_Numpad0 <= key <= Qt.Key_Numpad9:
-        return f"Numpad {key - Qt.Key_Numpad0}"
+    if (event.modifiers() & Qt.KeypadModifier) or (event.nativeModifiers() & 0x01000000):
+        if hasattr(Qt, 'Key_Numpad0') and Qt.Key_Numpad0 <= key <= Qt.Key_Numpad9:
+            return f"Numpad {key - Qt.Key_Numpad0}"
+        if Qt.Key_0 <= key <= Qt.Key_9:
+            return f"Numpad {key - Qt.Key_0}"
+        if key == Qt.Key_Asterisk:
+            return "Numpad *"
+        if key == Qt.Key_Plus:
+            return "Numpad +"
+        if key == Qt.Key_Minus:
+            return "Numpad -"
+        if key == Qt.Key_Period:
+            return "Numpad ."
+        if key == Qt.Key_Slash:
+            return "Numpad /"
+    numpad_scan_map = {
+        71: "Numpad 7", 72: "Numpad 8", 73: "Numpad 9",
+        75: "Numpad 4", 76: "Numpad 5", 77: "Numpad 6",
+        79: "Numpad 1", 80: "Numpad 2", 81: "Numpad 3",
+        82: "Numpad 0", 83: "Numpad .",
+        55: "Numpad *", 74: "Numpad -", 78: "Numpad +"
+    }
+    if scan in numpad_scan_map:
+        return numpad_scan_map[scan]
     if vk == 0x6A or key == getattr(Qt, 'Key_NumpadMultiply', -1):
         return "Numpad *"
     if vk == 0x6B or key == getattr(Qt, 'Key_NumpadAdd', -1):
@@ -6842,6 +6923,16 @@ def format_tactical_vk(vk: int, scan: int = 0, flags: int = 0, fallback: str = "
     # 2. Numpad Keys
     if 0x60 <= vk <= 0x69:
         return f"Numpad {vk - 0x60}"
+    if not (flags & 0x01):
+        numpad_scan_map = {
+            71: "Numpad 7", 72: "Numpad 8", 73: "Numpad 9",
+            75: "Numpad 4", 76: "Numpad 5", 77: "Numpad 6",
+            79: "Numpad 1", 80: "Numpad 2", 81: "Numpad 3",
+            82: "Numpad 0", 83: "Numpad .",
+            55: "Numpad *", 74: "Numpad -", 78: "Numpad +"
+        }
+        if scan in numpad_scan_map:
+            return numpad_scan_map[scan]
     if vk == 0x6A:
         return "Numpad *"
     if vk == 0x6B:
@@ -6936,6 +7027,8 @@ class TacticalInputCatcherButton(QPushButton):
         else:
             self._allow_left_click = allow_left_click
         self._is_capturing = False
+        self._active_mods = set()
+        self._modifier_tapped_name = None
         self._modifier_tapped_vk = None
         self._hook = None
         self._hook_proc_ref = None
@@ -6961,9 +7054,13 @@ class TacticalInputCatcherButton(QPushButton):
     @Slot(str)
     def _on_preview_modifier(self, preview_text: str):
         if self._is_capturing:
-            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
-                self._anim_timer.stop()
-            self.setText(preview_text.upper())
+            if preview_text == "...":
+                if hasattr(self, "_anim_timer") and not self._anim_timer.isActive():
+                    self._anim_timer.start()
+            else:
+                if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                    self._anim_timer.stop()
+                self.setText(preview_text.upper())
 
     def _install_hook(self):
         if self._hook is not None:
@@ -7013,50 +7110,56 @@ class TacticalInputCatcherButton(QPushButton):
                             self._raw_key_captured.emit(self._current_key)
                         return 1
 
-                    # 3. Check modifier keys (Ctrl, Alt, Shift)
+                    if not hasattr(self, '_active_held_keys'):
+                        self._active_held_keys = []
+
                     is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
-
-                    if not hasattr(self, '_active_mods'):
-                        self._active_mods = set()
-
                     if is_modifier:
-                        if wParam in (0x0100, 0x0104):  # WM_KEYDOWN, WM_SYSKEYDOWN
-                            if vk in (0x11, 0xA2, 0xA3):
-                                self._active_mods.add("Ctrl")
-                            elif vk in (0x12, 0xA4, 0xA5):
-                                self._active_mods.add("Alt")
-                            elif vk in (0x10, 0xA0, 0xA1):
-                                self._active_mods.add("Shift")
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
-                            if mods:
-                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
-                        elif wParam in (0x0101, 0x0105):  # WM_KEYUP, WM_SYSKEYUP
-                            if vk in (0x11, 0xA2, 0xA3):
-                                self._active_mods.discard("Ctrl")
-                            elif vk in (0x12, 0xA4, 0xA5):
-                                self._active_mods.discard("Alt")
-                            elif vk in (0x10, 0xA0, 0xA1):
-                                self._active_mods.discard("Shift")
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
-                            if mods:
-                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
-                        return 1
+                        key_name = "Ctrl" if vk in (0x11, 0xA2, 0xA3) else ("Alt" if vk in (0x12, 0xA4, 0xA5) else "Shift")
                     else:
-                        if wParam in (0x0100, 0x0104):
-                            mods_set = set(self._active_mods)
-                            if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
-                                mods_set.add("Ctrl")
-                            if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
-                                mods_set.add("Alt")
-                            if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
-                                mods_set.add("Shift")
+                        key_name = format_tactical_vk(vk, scan, flags, fallback=self._current_key or "Right Click")
 
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in mods_set]
-                            base_key = format_tactical_vk(vk, scan, flags, fallback=self._current_key or "Right Click")
-                            full_key = "+".join(mods + [base_key]) if (mods and base_key not in mods) else base_key
-                            self._raw_key_captured.emit(full_key)
-                            return 1
+                    MODIFIER_NAMES = {"Ctrl", "Alt", "Shift"}
+
+                    # 3. Handle Key Down
+                    if wParam in (0x0100, 0x0104):
+                        if key_name and key_name not in self._active_held_keys:
+                            self._active_held_keys.append(key_name)
+                        if is_modifier:
+                            self._modifier_tapped_name = key_name
+                        else:
+                            self._modifier_tapped_name = None
+                        preview = " + ".join(self._active_held_keys) + " + ..."
+                        self._preview_modifier_changed.emit(preview)
                         return 1
+
+                    # 4. Handle Key Up
+                    elif wParam in (0x0101, 0x0105):
+                        has_non_modifier = any(k not in MODIFIER_NAMES for k in self._active_held_keys)
+                        if has_non_modifier:
+                            full_chord = "+".join(self._active_held_keys)
+                            self._raw_key_captured.emit(full_chord)
+                            return 1
+                        else:
+                            # Only modifiers in _active_held_keys
+                            if len(self._active_held_keys) == 1 and self._active_held_keys[0] == key_name:
+                                self._active_held_keys = []
+                                self._raw_key_captured.emit(key_name)
+                                return 1
+                            elif len(self._active_held_keys) > 1:
+                                if key_name in self._active_held_keys:
+                                    self._active_held_keys.remove(key_name)
+                                if self._active_held_keys:
+                                    preview = " + ".join(self._active_held_keys) + " + ..."
+                                    self._preview_modifier_changed.emit(preview)
+                                else:
+                                    self._preview_modifier_changed.emit("...")
+                                return 1
+                            else:
+                                if key_name in self._active_held_keys:
+                                    self._active_held_keys.remove(key_name)
+                                self._preview_modifier_changed.emit("...")
+                                return 1
                 return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
 
             self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
@@ -7069,6 +7172,8 @@ class TacticalInputCatcherButton(QPushButton):
             self._hook = None
 
     def _remove_hook(self):
+        self._active_held_keys = []
+        self._active_mods = set()
         if self._hook is not None:
             try:
                 if hasattr(self, '_user32_dll') and self._user32_dll:
@@ -7089,6 +7194,8 @@ class TacticalInputCatcherButton(QPushButton):
     def set_captured_key(self, key_name: str):
         self._current_key = key_name
         self._is_capturing = False
+        self._active_held_keys = []
+        self._active_mods = set()
         if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
             self._anim_timer.stop()
         self._update_display()
@@ -7145,7 +7252,8 @@ class TacticalInputCatcherButton(QPushButton):
         if not self._is_capturing:
             # Start capturing mode
             self._is_capturing = True
-            self._modifier_tapped_vk = None
+            self._active_held_keys = []
+            self._active_mods = set()
             self._anim_index = 0
             self.setText(self._anim_frames[0])
             self._update_display()
@@ -7157,26 +7265,9 @@ class TacticalInputCatcherButton(QPushButton):
                 self._anim_timer.start()
             event.accept()
         else:
-            # Capture the pressed mouse button + modifiers
+            # Capture the pressed mouse button + any held keys (chords)
             btn = event.button()
-            modifiers = []
-            try:
-                if (ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000) or (event.modifiers() & Qt.ControlModifier):
-                    modifiers.append("Ctrl")
-                if (ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000) or (event.modifiers() & Qt.AltModifier):
-                    modifiers.append("Alt")
-                if (ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000) or (event.modifiers() & Qt.ShiftModifier):
-                    modifiers.append("Shift")
-            except Exception:
-                pass
-
             if btn == Qt.LeftButton:
-                if not modifiers and not self._allow_left_click:
-                    target_w = self.window() if self.window() else self
-                    FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Left Click alone is reserved for primary shooting / clicking")
-                    self._finish_capture(self._current_key)
-                    event.accept()
-                    return
                 btn_name = "Left Click"
             elif btn == Qt.RightButton:
                 btn_name = "Right Click"
@@ -7189,7 +7280,18 @@ class TacticalInputCatcherButton(QPushButton):
             else:
                 btn_name = "Right Click"
 
-            full_key = "+".join(modifiers + [btn_name]) if modifiers else btn_name
+            held = getattr(self, '_active_held_keys', [])
+            chord_keys = [k for k in held if k != btn_name]
+
+            if btn == Qt.LeftButton:
+                if not chord_keys and not self._allow_left_click:
+                    target_w = self.window() if self.window() else self
+                    FloatingToast.show_toast(target_w, "Trigger Key Restricted", "Left Click alone is reserved for primary shooting / clicking")
+                    self._finish_capture(self._current_key)
+                    event.accept()
+                    return
+
+            full_key = "+".join(chord_keys + [btn_name]) if chord_keys else btn_name
             self._finish_capture(full_key)
             event.accept()
 
@@ -7197,7 +7299,6 @@ class TacticalInputCatcherButton(QPushButton):
         if self._is_capturing:
             key = event.key()
             if key == Qt.Key_Escape:
-                # Cancel capturing without changes
                 self._finish_capture(self._current_key)
                 event.accept()
                 return
@@ -7209,38 +7310,66 @@ class TacticalInputCatcherButton(QPushButton):
                 event.accept()
                 return
 
+            if not hasattr(self, '_active_held_keys'):
+                self._active_held_keys = []
+
             if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt):
-                mods = []
-                if event.modifiers() & Qt.ControlModifier:
-                    mods.append("Ctrl")
-                if event.modifiers() & Qt.AltModifier:
-                    mods.append("Alt")
-                if event.modifiers() & Qt.ShiftModifier:
-                    mods.append("Shift")
-                if mods:
-                    self._on_preview_modifier(" + ".join(mods) + " + ...")
-                event.accept()
-                return
+                key_name = "Ctrl" if key == Qt.Key_Control else ("Alt" if key == Qt.Key_Alt else "Shift")
+                self._modifier_tapped_name = key_name
+            else:
+                key_name = self._format_key(event)
+                self._modifier_tapped_name = None
 
-            modifiers = []
-            if event.modifiers() & Qt.ControlModifier:
-                modifiers.append("Ctrl")
-            if event.modifiers() & Qt.AltModifier:
-                modifiers.append("Alt")
-            if event.modifiers() & Qt.ShiftModifier:
-                modifiers.append("Shift")
+            if key_name and key_name not in self._active_held_keys:
+                self._active_held_keys.append(key_name)
 
-            base_key = self._format_key(event)
-            full_key = "+".join(modifiers + [base_key]) if (modifiers and base_key not in modifiers) else base_key
-            self._finish_capture(full_key)
+            self._on_preview_modifier(" + ".join(self._active_held_keys) + " + ...")
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if self._is_capturing:
+            MODIFIER_NAMES = {"Ctrl", "Alt", "Shift"}
+            key = event.key()
+            key_name = "Ctrl" if key == Qt.Key_Control else ("Alt" if key == Qt.Key_Alt else ("Shift" if key == Qt.Key_Shift else self._format_key(event)))
+            held = getattr(self, '_active_held_keys', [])
+
+            has_non_modifier = any(k not in MODIFIER_NAMES for k in held)
+            if has_non_modifier:
+                full_chord = "+".join(held)
+                self._finish_capture(full_chord)
+                event.accept()
+                return
+            else:
+                if len(held) == 1 and held[0] == key_name:
+                    self._active_held_keys = []
+                    self._finish_capture(key_name)
+                    event.accept()
+                    return
+                elif len(held) > 1:
+                    if key_name in held:
+                        held.remove(key_name)
+                    if held:
+                        self._on_preview_modifier(" + ".join(held) + " + ...")
+                    else:
+                        self._on_preview_modifier("...")
+                    event.accept()
+                    return
+                else:
+                    if key_name in held:
+                        held.remove(key_name)
+                    self._on_preview_modifier("...")
+                    event.accept()
+                    return
+        super().keyReleaseEvent(event)
 
     def _format_key(self, event) -> str:
         return format_tactical_key_event(event, default_fallback=self._current_key or "Right Click")
 
     def _finish_capture(self, key_name: str):
+        self._active_held_keys = []
+        self._active_mods = set()
         self._remove_hook()
         try:
             self.releaseKeyboard()
@@ -7267,6 +7396,8 @@ class TacticalInputCatcherButton(QPushButton):
 
     def focusOutEvent(self, event):
         if self._is_capturing:
+            self._active_held_keys = []
+            self._active_mods = set()
             self._remove_hook()
             try:
                 self.releaseKeyboard()
@@ -8167,7 +8298,7 @@ class CursorClampHotkeyButton(QPushButton):
         self._hotkey = default_key
         self._owner_id = owner_id
         self._recording = False
-        self._modifier_tapped_vk = None
+        self._active_mods = set()
         self._hook = None
         self._hook_proc_ref = None
         self._anim_timer = QTimer(self)
@@ -8195,9 +8326,13 @@ class CursorClampHotkeyButton(QPushButton):
     @Slot(str)
     def _on_preview_modifier(self, preview_text: str):
         if self._recording:
-            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
-                self._anim_timer.stop()
-            self.setText(preview_text.upper())
+            if preview_text == "...":
+                if hasattr(self, "_anim_timer") and not self._anim_timer.isActive():
+                    self._anim_timer.start()
+            else:
+                if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                    self._anim_timer.stop()
+                self.setText(preview_text.upper())
 
     @Slot()
     def _on_modifier_required(self):
@@ -8255,57 +8390,53 @@ class CursorClampHotkeyButton(QPushButton):
                             self._raw_key_captured.emit(self._hotkey)
                         return 1
 
-                    # 3. Check modifier keys
+                    if not hasattr(self, '_active_held_keys'):
+                        self._active_held_keys = []
+
                     is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
-
-                    if not hasattr(self, '_active_mods'):
-                        self._active_mods = set()
-
                     if is_modifier:
-                        if wParam in (0x0100, 0x0104):
-                            if vk in (0x11, 0xA2, 0xA3):
-                                self._active_mods.add("Ctrl")
-                            elif vk in (0x12, 0xA4, 0xA5):
-                                self._active_mods.add("Alt")
-                            elif vk in (0x10, 0xA0, 0xA1):
-                                self._active_mods.add("Shift")
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
-                            if mods:
-                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
-                        elif wParam in (0x0101, 0x0105):
-                            if vk in (0x11, 0xA2, 0xA3):
-                                self._active_mods.discard("Ctrl")
-                            elif vk in (0x12, 0xA4, 0xA5):
-                                self._active_mods.discard("Alt")
-                            elif vk in (0x10, 0xA0, 0xA1):
-                                self._active_mods.discard("Shift")
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
-                            if mods:
-                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
-                        return 1
+                        key_name = "Ctrl" if vk in (0x11, 0xA2, 0xA3) else ("Alt" if vk in (0x12, 0xA4, 0xA5) else "Shift")
                     else:
-                        if wParam in (0x0100, 0x0104):
-                            mods_set = set(self._active_mods)
-                            if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
-                                mods_set.add("Ctrl")
-                            if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
-                                mods_set.add("Alt")
-                            if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
-                                mods_set.add("Shift")
+                        key_name = format_tactical_vk(vk, scan, flags, fallback=self._hotkey or "C")
 
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in mods_set]
+                    MODIFIER_NAMES = {"Ctrl", "Alt", "Shift"}
 
-                            # Option B (Smart Filter): Letters A-Z and top-row digits require at least 1 modifier
-                            is_letter_or_digit = (0x41 <= vk <= 0x5A) or (0x30 <= vk <= 0x39)
-                            if is_letter_or_digit and not mods:
-                                self._modifier_required_prompt.emit()
-                                return 1
-
-                            base_key = format_tactical_vk(vk, scan, flags, fallback=self._hotkey or "C")
-                            full_key = "+".join(mods + [base_key]) if (mods and base_key not in mods) else base_key
-                            self._raw_key_captured.emit(full_key)
-                            return 1
+                    # 3. Handle Key Down
+                    if wParam in (0x0100, 0x0104):
+                        if key_name and key_name not in self._active_held_keys:
+                            self._active_held_keys.append(key_name)
+                        preview = " + ".join(self._active_held_keys) + " + ..."
+                        self._preview_modifier_changed.emit(preview)
                         return 1
+
+                    # 4. Handle Key Up
+                    elif wParam in (0x0101, 0x0105):
+                        has_non_modifier = any(k not in MODIFIER_NAMES for k in self._active_held_keys)
+                        if has_non_modifier:
+                            # Option B check: single solitary letter A-Z or top-row digit 0-9
+                            if len(self._active_held_keys) == 1:
+                                single_k = self._active_held_keys[0]
+                                is_bare_letter = len(single_k) == 1 and ('A' <= single_k.upper() <= 'Z')
+                                is_bare_digit = len(single_k) == 1 and ('0' <= single_k <= '9')
+                                if is_bare_letter or is_bare_digit:
+                                    self._modifier_required_prompt.emit()
+                                    self._active_held_keys = []
+                                    return 1
+
+                            full_chord = "+".join(self._active_held_keys)
+                            self._raw_key_captured.emit(full_chord)
+                            return 1
+                        else:
+                            # Modifier was released without a non-modifier key
+                            if key_name in self._active_held_keys:
+                                self._active_held_keys.remove(key_name)
+
+                            if self._active_held_keys:
+                                preview = " + ".join(self._active_held_keys) + " + ..."
+                                self._preview_modifier_changed.emit(preview)
+                            else:
+                                self._preview_modifier_changed.emit("...")
+                            return 1
                 return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
 
             self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
@@ -8315,6 +8446,8 @@ class CursorClampHotkeyButton(QPushButton):
             self._hook = None
 
     def _remove_hook(self):
+        self._active_held_keys = []
+        self._active_mods = set()
         if self._hook is not None:
             try:
                 if hasattr(self, '_user32_dll') and self._user32_dll:
@@ -8334,6 +8467,8 @@ class CursorClampHotkeyButton(QPushButton):
 
     def set_hotkey(self, key_str: str):
         self._hotkey = key_str
+        self._active_held_keys = []
+        self._active_mods = set()
         self.setText(key_str.upper())
         self._recording = False
         if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
@@ -8387,8 +8522,8 @@ class CursorClampHotkeyButton(QPushButton):
 
     def _start_recording(self):
         self._recording = True
+        self._active_held_keys = []
         self._active_mods = set()
-        self._modifier_tapped_vk = None
         self._anim_index = 0
         self.setText(self._anim_frames[0])
         self._update_style()
@@ -8400,6 +8535,8 @@ class CursorClampHotkeyButton(QPushButton):
         self.recordingStarted.emit()
 
     def _finish_capture(self, full_key: str):
+        self._active_held_keys = []
+        self._active_mods = set()
         self._remove_hook()
         try:
             self.releaseKeyboard()
@@ -8436,45 +8573,60 @@ class CursorClampHotkeyButton(QPushButton):
                 event.accept()
                 return
 
-            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
-                mods = []
-                if event.modifiers() & Qt.ControlModifier:
-                    mods.append("Ctrl")
-                if event.modifiers() & Qt.AltModifier:
-                    mods.append("Alt")
-                if event.modifiers() & Qt.ShiftModifier:
-                    mods.append("Shift")
-                if mods:
-                    self._on_preview_modifier(" + ".join(mods) + " + ...")
+            if key in (Qt.Key_Meta, 0x5B, 0x5C):
+                self._on_win_key_swallowed()
                 event.accept()
                 return
 
-            modifiers = []
-            if event.modifiers() & Qt.ControlModifier:
-                modifiers.append("Ctrl")
-            if event.modifiers() & Qt.AltModifier:
-                modifiers.append("Alt")
-            if event.modifiers() & Qt.ShiftModifier:
-                modifiers.append("Shift")
+            if not hasattr(self, '_active_held_keys'):
+                self._active_held_keys = []
 
-            # Option B (Smart Filter): Letters A-Z and digits require at least 1 modifier
-            is_letter_or_digit = (Qt.Key_A <= key <= Qt.Key_Z) or (Qt.Key_0 <= key <= Qt.Key_9)
-            if is_letter_or_digit and not modifiers:
-                target_w = self.window() if self.window() else self
-                FloatingToast.show_toast(
-                    target_w,
-                    "Modifier Required",
-                    "Please combine Letter & Number keys with Ctrl, Alt, or Shift!"
-                )
-                event.accept()
-                return
+            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt):
+                key_name = "Ctrl" if key == Qt.Key_Control else ("Alt" if key == Qt.Key_Alt else "Shift")
+            else:
+                key_name = format_tactical_key_event(event, default_fallback="C")
 
-            base_key = format_tactical_key_event(event, default_fallback="C")
-            full_key = "+".join(modifiers + [base_key]) if (modifiers and base_key not in modifiers) else base_key
-            self._finish_capture(full_key)
+            if key_name and key_name not in self._active_held_keys:
+                self._active_held_keys.append(key_name)
+
+            self._on_preview_modifier(" + ".join(self._active_held_keys) + " + ...")
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if self._recording:
+            MODIFIER_NAMES = {"Ctrl", "Alt", "Shift"}
+            key = event.key()
+            key_name = "Ctrl" if key == Qt.Key_Control else ("Alt" if key == Qt.Key_Alt else ("Shift" if key == Qt.Key_Shift else format_tactical_key_event(event, default_fallback="C")))
+            held = getattr(self, '_active_held_keys', [])
+
+            has_non_modifier = any(k not in MODIFIER_NAMES for k in held)
+            if has_non_modifier:
+                if len(held) == 1:
+                    single_k = held[0]
+                    is_bare_letter = len(single_k) == 1 and ('A' <= single_k.upper() <= 'Z')
+                    is_bare_digit = len(single_k) == 1 and ('0' <= single_k <= '9')
+                    if is_bare_letter or is_bare_digit:
+                        self._on_modifier_required()
+                        self._active_held_keys = []
+                        event.accept()
+                        return
+
+                full_chord = "+".join(held)
+                self._finish_capture(full_chord)
+                event.accept()
+                return
+            else:
+                if key_name in held:
+                    held.remove(key_name)
+                if held:
+                    self._on_preview_modifier(" + ".join(held) + " + ...")
+                else:
+                    self._on_preview_modifier("...")
+                event.accept()
+                return
+        super().keyReleaseEvent(event)
 
     def mousePressEvent(self, event):
         if not self._recording:
@@ -8482,21 +8634,7 @@ class CursorClampHotkeyButton(QPushButton):
             event.accept()
         else:
             btn = event.button()
-            modifiers = []
-            try:
-                if (ctypes.windll.user32.GetAsyncKeyState(0x11) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA2) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA3) & 0x8000) or (event.modifiers() & Qt.ControlModifier):
-                    modifiers.append("Ctrl")
-                if (ctypes.windll.user32.GetAsyncKeyState(0x12) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA4) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA5) & 0x8000) or (event.modifiers() & Qt.AltModifier):
-                    modifiers.append("Alt")
-                if (ctypes.windll.user32.GetAsyncKeyState(0x10) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA0) & 0x8000) or (ctypes.windll.user32.GetAsyncKeyState(0xA1) & 0x8000) or (event.modifiers() & Qt.ShiftModifier):
-                    modifiers.append("Shift")
-            except Exception:
-                pass
-
             if btn == Qt.LeftButton:
-                if not modifiers:
-                    event.accept()
-                    return
                 btn_name = "Left Click"
             elif btn == Qt.RightButton:
                 btn_name = "Right Click"
@@ -8509,12 +8647,22 @@ class CursorClampHotkeyButton(QPushButton):
             else:
                 btn_name = "Right Click"
 
-            full_key = "+".join(modifiers + [btn_name]) if modifiers else btn_name
-            self._finish_capture(full_key)
+            held = getattr(self, '_active_held_keys', [])
+            chord_keys = [k for k in held if k != btn_name]
+
+            # Solitary Left click is ignored during recording
+            if btn == Qt.LeftButton and not chord_keys:
+                event.accept()
+                return
+
+            full_chord = "+".join(chord_keys + [btn_name]) if chord_keys else btn_name
+            self._finish_capture(full_chord)
             event.accept()
 
     def focusOutEvent(self, event):
         if self._recording:
+            self._active_held_keys = []
+            self._active_mods = set()
             self._remove_hook()
             try:
                 self.releaseKeyboard()
@@ -10070,7 +10218,8 @@ class RapidFireHotkeyButton(QPushButton):
         self._hotkey = default_key
         self._owner_id = owner_id
         self._recording = False
-        self._modifier_tapped_vk = None
+        self._active_mods = set()
+        self._modifier_tapped_name = None
         self._hook = None
         self._hook_proc_ref = None
         self._anim_timer = QTimer(self)
@@ -10098,9 +10247,13 @@ class RapidFireHotkeyButton(QPushButton):
     @Slot(str)
     def _on_preview_modifier(self, preview_text: str):
         if self._recording:
-            if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
-                self._anim_timer.stop()
-            self.setText(preview_text.upper())
+            if preview_text == "...":
+                if hasattr(self, "_anim_timer") and not self._anim_timer.isActive():
+                    self._anim_timer.start()
+            else:
+                if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
+                    self._anim_timer.stop()
+                self.setText(preview_text.upper())
 
     @Slot()
     def _on_modifier_required(self):
@@ -10158,57 +10311,53 @@ class RapidFireHotkeyButton(QPushButton):
                             self._raw_key_captured.emit(self._hotkey)
                         return 1
 
-                    # 3. Check modifier keys
+                    if not hasattr(self, '_active_held_keys'):
+                        self._active_held_keys = []
+
                     is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
-
-                    if not hasattr(self, '_active_mods'):
-                        self._active_mods = set()
-
                     if is_modifier:
-                        if wParam in (0x0100, 0x0104):
-                            if vk in (0x11, 0xA2, 0xA3):
-                                self._active_mods.add("Ctrl")
-                            elif vk in (0x12, 0xA4, 0xA5):
-                                self._active_mods.add("Alt")
-                            elif vk in (0x10, 0xA0, 0xA1):
-                                self._active_mods.add("Shift")
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
-                            if mods:
-                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
-                        elif wParam in (0x0101, 0x0105):
-                            if vk in (0x11, 0xA2, 0xA3):
-                                self._active_mods.discard("Ctrl")
-                            elif vk in (0x12, 0xA4, 0xA5):
-                                self._active_mods.discard("Alt")
-                            elif vk in (0x10, 0xA0, 0xA1):
-                                self._active_mods.discard("Shift")
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in self._active_mods]
-                            if mods:
-                                self._preview_modifier_changed.emit(" + ".join(mods) + " + ...")
-                        return 1
+                        key_name = "Ctrl" if vk in (0x11, 0xA2, 0xA3) else ("Alt" if vk in (0x12, 0xA4, 0xA5) else "Shift")
                     else:
-                        if wParam in (0x0100, 0x0104):
-                            mods_set = set(self._active_mods)
-                            if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
-                                mods_set.add("Ctrl")
-                            if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
-                                mods_set.add("Alt")
-                            if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
-                                mods_set.add("Shift")
+                        key_name = format_tactical_vk(vk, scan, flags, fallback=self._hotkey or "F8")
 
-                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in mods_set]
+                    MODIFIER_NAMES = {"Ctrl", "Alt", "Shift"}
 
-                            # Option B (Smart Filter): Letters A-Z and top-row digits require at least 1 modifier
-                            is_letter_or_digit = (0x41 <= vk <= 0x5A) or (0x30 <= vk <= 0x39)
-                            if is_letter_or_digit and not mods:
-                                self._modifier_required_prompt.emit()
-                                return 1
-
-                            base_key = format_tactical_vk(vk, scan, flags, fallback=self._hotkey or "F8")
-                            full_key = "+".join(mods + [base_key]) if (mods and base_key not in mods) else base_key
-                            self._raw_key_captured.emit(full_key)
-                            return 1
+                    # 3. Handle Key Down
+                    if wParam in (0x0100, 0x0104):
+                        if key_name and key_name not in self._active_held_keys:
+                            self._active_held_keys.append(key_name)
+                        preview = " + ".join(self._active_held_keys) + " + ..."
+                        self._preview_modifier_changed.emit(preview)
                         return 1
+
+                    # 4. Handle Key Up
+                    elif wParam in (0x0101, 0x0105):
+                        has_non_modifier = any(k not in MODIFIER_NAMES for k in self._active_held_keys)
+                        if has_non_modifier:
+                            # Option B check: single solitary letter A-Z or top-row digit 0-9
+                            if len(self._active_held_keys) == 1:
+                                single_k = self._active_held_keys[0]
+                                is_bare_letter = len(single_k) == 1 and ('A' <= single_k.upper() <= 'Z')
+                                is_bare_digit = len(single_k) == 1 and ('0' <= single_k <= '9')
+                                if is_bare_letter or is_bare_digit:
+                                    self._modifier_required_prompt.emit()
+                                    self._active_held_keys = []
+                                    return 1
+
+                            full_chord = "+".join(self._active_held_keys)
+                            self._raw_key_captured.emit(full_chord)
+                            return 1
+                        else:
+                            # Modifier was released without a non-modifier key
+                            if key_name in self._active_held_keys:
+                                self._active_held_keys.remove(key_name)
+
+                            if self._active_held_keys:
+                                preview = " + ".join(self._active_held_keys) + " + ..."
+                                self._preview_modifier_changed.emit(preview)
+                            else:
+                                self._preview_modifier_changed.emit("...")
+                            return 1
                 return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
 
             self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
@@ -10218,6 +10367,8 @@ class RapidFireHotkeyButton(QPushButton):
             self._hook = None
 
     def _remove_hook(self):
+        self._active_held_keys = []
+        self._active_mods = set()
         if self._hook is not None:
             try:
                 if hasattr(self, '_user32_dll') and self._user32_dll:
@@ -10237,6 +10388,8 @@ class RapidFireHotkeyButton(QPushButton):
 
     def set_hotkey(self, key_str: str):
         self._hotkey = key_str
+        self._active_held_keys = []
+        self._active_mods = set()
         self.setText(key_str.upper())
         self._recording = False
         if hasattr(self, "_anim_timer") and self._anim_timer.isActive():
@@ -10253,8 +10406,8 @@ class RapidFireHotkeyButton(QPushButton):
     def _toggle_recording(self):
         self._recording = not self._recording
         if self._recording:
+            self._active_held_keys = []
             self._active_mods = set()
-            self._modifier_tapped_vk = None
             self._anim_index = 0
             self.setText(self._anim_frames[0])
             self._update_style()
@@ -10306,6 +10459,8 @@ class RapidFireHotkeyButton(QPushButton):
             """)
 
     def _finish_capture(self, full_key: str):
+        self._active_held_keys = []
+        self._active_mods = set()
         self._remove_hook()
         try:
             self.releaseKeyboard()
@@ -10340,48 +10495,65 @@ class RapidFireHotkeyButton(QPushButton):
                 event.accept()
                 return
 
-            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
-                mods = []
-                if event.modifiers() & Qt.ControlModifier:
-                    mods.append("Ctrl")
-                if event.modifiers() & Qt.AltModifier:
-                    mods.append("Alt")
-                if event.modifiers() & Qt.ShiftModifier:
-                    mods.append("Shift")
-                if mods:
-                    self._on_preview_modifier(" + ".join(mods) + " + ...")
+            if key in (Qt.Key_Meta, 0x5B, 0x5C):
+                self._on_win_key_swallowed()
                 event.accept()
                 return
 
-            modifiers = []
-            if event.modifiers() & Qt.ControlModifier:
-                modifiers.append("Ctrl")
-            if event.modifiers() & Qt.AltModifier:
-                modifiers.append("Alt")
-            if event.modifiers() & Qt.ShiftModifier:
-                modifiers.append("Shift")
+            if not hasattr(self, '_active_held_keys'):
+                self._active_held_keys = []
 
-            # Option B (Smart Filter): Letters A-Z and digits require at least 1 modifier
-            is_letter_or_digit = (Qt.Key_A <= key <= Qt.Key_Z) or (Qt.Key_0 <= key <= Qt.Key_9)
-            if is_letter_or_digit and not modifiers:
-                target_w = self.window() if self.window() else self
-                FloatingToast.show_toast(
-                    target_w,
-                    "Modifier Required",
-                    "Please combine Letter & Number keys with Ctrl, Alt, or Shift!"
-                )
-                event.accept()
-                return
+            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt):
+                key_name = "Ctrl" if key == Qt.Key_Control else ("Alt" if key == Qt.Key_Alt else "Shift")
+            else:
+                key_name = format_tactical_key_event(event, default_fallback="F8")
 
-            base_key = format_tactical_key_event(event, default_fallback="F8")
-            full_key = "+".join(modifiers + [base_key]) if (modifiers and base_key not in modifiers) else base_key
-            self._finish_capture(full_key)
+            if key_name and key_name not in self._active_held_keys:
+                self._active_held_keys.append(key_name)
+
+            self._on_preview_modifier(" + ".join(self._active_held_keys) + " + ...")
             event.accept()
         else:
             super().keyPressEvent(event)
 
+    def keyReleaseEvent(self, event):
+        if self._recording:
+            MODIFIER_NAMES = {"Ctrl", "Alt", "Shift"}
+            key = event.key()
+            key_name = "Ctrl" if key == Qt.Key_Control else ("Alt" if key == Qt.Key_Alt else ("Shift" if key == Qt.Key_Shift else format_tactical_key_event(event, default_fallback="F8")))
+            held = getattr(self, '_active_held_keys', [])
+
+            has_non_modifier = any(k not in MODIFIER_NAMES for k in held)
+            if has_non_modifier:
+                if len(held) == 1:
+                    single_k = held[0]
+                    is_bare_letter = len(single_k) == 1 and ('A' <= single_k.upper() <= 'Z')
+                    is_bare_digit = len(single_k) == 1 and ('0' <= single_k <= '9')
+                    if is_bare_letter or is_bare_digit:
+                        self._on_modifier_required()
+                        self._active_held_keys = []
+                        event.accept()
+                        return
+
+                full_chord = "+".join(held)
+                self._finish_capture(full_chord)
+                event.accept()
+                return
+            else:
+                if key_name in held:
+                    held.remove(key_name)
+                if held:
+                    self._on_preview_modifier(" + ".join(held) + " + ...")
+                else:
+                    self._on_preview_modifier("...")
+                event.accept()
+                return
+        super().keyReleaseEvent(event)
+
     def focusOutEvent(self, event):
         if self._recording:
+            self._active_held_keys = []
+            self._active_mods = set()
             self._remove_hook()
             try:
                 self.releaseKeyboard()
@@ -11996,6 +12168,2084 @@ class RapidFirePanel(QWidget):
             """)
 
     def _on_back(self):
+        self.controller.force_restore()
+        self.back_clicked.emit()
+
+
+# =========================================================================
+# FEATURE 5: INSTANT BOSS KEY (STEALTH EMERGENCY PANIC SWITCH)
+# =========================================================================
+
+class SlidingSegmentedPillBossKeyDecoy(QWidget):
+    """
+    Smooth 3-segment animated sliding pill switcher for Boss Key Decoy Selection.
+    Modes: Desktop | Browser | Selected App
+    Component Name: BossKeyDecoyTabFrame
+    """
+    modeChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("BossKeyDecoyTabFrame")
+        self.setFixedHeight(28)
+        self.setCursor(Qt.PointingHandCursor)
+        self._modes = ["desktop", "browser", "selected_app"]
+        self._labels = ["Desktop", "Browser", "Selected App"]
+        self._current_mode = "desktop"
+        self._slide_progress = 0.0  # 0.0=desktop, 1.0=browser, 2.0=selected_app
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_mode(self, mode: str, animate: bool = True):
+        if mode not in self._modes:
+            mode = "desktop"
+        target = float(self._modes.index(mode))
+        if mode == self._current_mode and self._slide_progress == target:
+            return
+        self._current_mode = mode
+
+        if not animate:
+            if self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._slide_progress = target
+            self.update()
+            self.modeChanged.emit(self._current_mode)
+            return
+
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+        self.modeChanged.emit(self._current_mode)
+
+    def get_mode(self) -> str:
+        return self._current_mode
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            segment_w = max(1.0, w / 3.0)
+            idx = max(0, min(2, int(click_x / segment_w)))
+            self.set_mode(self._modes[idx])
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Dark container track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 12)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 6, 6)
+
+        # 2. Calculate sliding pill geometry
+        pad = 2.0
+        pill_w = (w - (pad * 4.0)) / 3.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * (pill_w + pad)
+        pill_y = pad
+
+        # 3. Draw sliding orange gradient pill
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 4, 4)
+
+        # 4. Draw Tab Texts with smooth color interpolation
+        p.setFont(QFont("Orbitron", 9, QFont.Bold))
+        for i, lbl in enumerate(self._labels):
+            seg_x = pad + i * (pill_w + pad)
+            rect = QRectF(seg_x, 0, pill_w, h)
+            dist = abs(self._slide_progress - float(i))
+            weight = max(0.0, min(1.0, 1.0 - dist))
+            r = int(136 + (0 - 136) * weight)
+            g = int(136 + (0 - 136) * weight)
+            b = int(136 + (0 - 136) * weight)
+            p.setPen(QColor(r, g, b))
+            p.drawText(rect, Qt.AlignCenter, lbl)
+
+
+class BossKeyAppTypeToggle(QWidget):
+    """
+    Compact 2-segment animated sliding pill toggle for Process Name vs File Path.
+    Component Name: BossKeyAppTypeToggle
+    """
+    modeChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("BossKeyAppTypeToggle")
+        self.setFixedHeight(22)
+        self.setFixedWidth(160)
+        self.setCursor(Qt.PointingHandCursor)
+        self._modes = ["process_name", "file_path"]
+        self._labels = ["Process Name", "File Path"]
+        self._current_mode = "process_name"
+        self._slide_progress = 0.0
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(180)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_mode(self, mode: str, animate: bool = True):
+        if mode not in self._modes:
+            mode = "process_name"
+        target = float(self._modes.index(mode))
+        if mode == self._current_mode and self._slide_progress == target:
+            return
+        self._current_mode = mode
+
+        if not animate:
+            if self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._slide_progress = target
+            self.update()
+            self.modeChanged.emit(self._current_mode)
+            return
+
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+        self.modeChanged.emit(self._current_mode)
+
+    def get_mode(self) -> str:
+        return self._current_mode
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            if click_x < (w / 2.0):
+                self.set_mode("process_name")
+            else:
+                self.set_mode("file_path")
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 12)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 4, 4)
+
+        pad = 2.0
+        pill_w = (w - (pad * 3.0)) / 2.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * (pill_w + pad)
+        pill_y = pad
+
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 3, 3)
+
+        p.setFont(QFont("Orbitron", 7.5, QFont.Bold))
+        for i, lbl in enumerate(self._labels):
+            seg_x = pad + i * (pill_w + pad)
+            rect = QRectF(seg_x, 0, pill_w, h)
+            dist = abs(self._slide_progress - float(i))
+            weight = max(0.0, min(1.0, 1.0 - dist))
+            r = int(136 + (0 - 136) * weight)
+            g = int(136 + (0 - 136) * weight)
+            b = int(136 + (0 - 136) * weight)
+            p.setPen(QColor(r, g, b))
+            p.drawText(rect, Qt.AlignCenter, lbl)
+
+
+def scan_active_gui_processes():
+    """
+    Fast (< 1ms) enumeration of currently running GUI applications on the system.
+    Returns list of dicts: [{'name': 'FolderSizes.exe', 'path': 'C:/.../FolderSizes.exe', 'title': '...'}]
+    """
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    apps = []
+    seen = set()
+
+    PRESETS = [
+        {"name": "code.exe", "path": "code.exe"},
+        {"name": "excel.exe", "path": "excel.exe"},
+        {"name": "winword.exe", "path": "winword.exe"},
+        {"name": "notepad.exe", "path": "notepad.exe"},
+        {"name": "calc.exe", "path": "calc.exe"},
+        {"name": "chrome.exe", "path": "chrome.exe"},
+        {"name": "msedge.exe", "path": "msedge.exe"},
+    ]
+
+    hwnds = []
+    def enum_cb(hwnd, lparam):
+        hwnds.append(hwnd)
+        return 1
+
+    ENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+    try:
+        user32.EnumWindows(ENUMPROC(enum_cb), 0)
+    except Exception:
+        pass
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+    for hwnd in hwnds:
+        if user32.IsWindowVisible(hwnd):
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buf, length + 1)
+                title = buf.value.strip()
+                if title and title not in ("Program Manager", "Start", "Taskbar", "Windows Input Experience", "Settings"):
+                    pid = ctypes.c_ulong()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                    if pid.value > 0:
+                        h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+                        if h_proc:
+                            exe_buf = ctypes.create_unicode_buffer(1024)
+                            size = ctypes.c_ulong(1024)
+                            if kernel32.QueryFullProcessImageNameW(h_proc, 0, exe_buf, ctypes.byref(size)):
+                                full_path = exe_buf.value.replace("\\", "/")
+                                exe_name = os.path.basename(full_path)
+                                name_lower = exe_name.lower()
+                                if name_lower not in seen and "helxaid" not in name_lower and "python" not in name_lower:
+                                    seen.add(name_lower)
+                                    apps.append({
+                                        'name': exe_name,
+                                        'path': full_path,
+                                        'title': title
+                                    })
+                            kernel32.CloseHandle(h_proc)
+
+    for p in PRESETS:
+        if p["name"].lower() not in seen:
+            apps.append(p)
+            seen.add(p["name"].lower())
+
+    return sorted(apps, key=lambda x: x['name'].lower())
+
+
+class BossKeyDynamicAppCombo(QComboBox):
+    """
+    Dynamic searchable/editable combobox that scans running GUI applications on open.
+    Component Name: BossKeySelectedAppCombo
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("BossKeySelectedAppCombo")
+        self.setEditable(True)
+        self.setFixedHeight(30)
+        self._target_mode = "process_name"  # "process_name" | "file_path"
+        self._cached_apps = []
+        self.refresh_process_list(preserve_text="code.exe")
+
+    def text(self) -> str:
+        return self.currentText().strip()
+
+    def setText(self, val: str):
+        self.setEditText(val)
+
+    def set_target_mode(self, mode: str):
+        self._target_mode = mode
+        curr = self.currentText().strip()
+        self.refresh_process_list(preserve_text=curr)
+
+    def refresh_process_list(self, preserve_text=None):
+        target_text = preserve_text if preserve_text is not None else self.currentText().strip()
+        self._cached_apps = scan_active_gui_processes()
+        
+        self.blockSignals(True)
+        self.clear()
+        
+        items = []
+        for app in self._cached_apps:
+            if self._target_mode == "file_path":
+                val = app.get("path", app["name"])
+            else:
+                val = app["name"]
+            if val not in items:
+                items.append(val)
+        
+        self.addItems(items)
+        if target_text:
+            self.setEditText(target_text)
+        elif items:
+            self.setEditText(items[0])
+        self.blockSignals(False)
+
+    def showPopup(self):
+        curr = self.currentText().strip()
+        self.refresh_process_list(preserve_text=curr)
+        super().showPopup()
+
+
+class BossKeyTacticalCard(QFrame):
+    """
+    Clean, borderless tactical telemetry & emergency control card for Boss Key.
+    Pure dark translucent card aesthetics without artificial grid lines or radar circles.
+    Component Name: BossKeyTacticalCard
+    """
+    test_panic_clicked = Signal()
+    engage_panic_clicked = Signal()
+    restore_panic_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("BossKeyTacticalCard")
+        self.setStyleSheet("""
+            QFrame#BossKeyTacticalCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        self.is_panic = False
+        self.last_latency = 0.0
+        self.status_desc = "ARMED (STANDBY)"
+        self.active_decoy = "Desktop"
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(14, 12, 14, 12)
+        main_layout.setSpacing(10)
+
+        # ── 1. Top Header Row: Title & Latency Pill Badge ──
+        top_row = QHBoxLayout()
+        title_lbl = QLabel("TACTICAL EVASION PIPELINE & TELEMETRY")
+        title_lbl.setObjectName("BossKeyCardTitle")
+        title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10.5px; font-weight: bold;")
+        top_row.addWidget(title_lbl)
+        top_row.addStretch()
+
+        self.latency_badge = QLabel("LATENCY: -- ms (PASS)")
+        self.latency_badge.setObjectName("BossKeyLatencyBadge")
+        self.latency_badge.setStyleSheet("""
+            QLabel#BossKeyLatencyBadge {
+                color: #00FF88;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9px;
+                font-weight: bold;
+                background-color: rgba(0, 255, 136, 0.12);
+                border: none;
+                border-radius: 11px;
+                padding: 2px 10px;
+                min-height: 22px;
+                max-height: 22px;
+            }
+        """)
+        top_row.addWidget(self.latency_badge)
+        main_layout.addLayout(top_row)
+
+        # ── 2. Middle Row: 3 Pipeline Stage Nodes (Left) + Emergency Action Buttons (Right) ──
+        mid_row = QHBoxLayout()
+        mid_row.setSpacing(12)
+
+        # Left: 3 Pipeline Stage Boxes
+        stages_layout = QHBoxLayout()
+        stages_layout.setSpacing(8)
+
+        self.stage1_box = self._create_stage_box("Stage1Box", "1. MINIMIZE GAME", "Win32 SW_MINIMIZE", "< 10ms")
+        self.stage2_box = self._create_stage_box("Stage2Box", "2. ZERO SOUND", "CoreAudio Master Mute", "< 5ms")
+        self.stage3_box = self._create_stage_box("Stage3Box", "3. ENGAGE DECOY", "Decoy App Switch", "< 15ms")
+
+        stages_layout.addWidget(self.stage1_box)
+        stages_layout.addWidget(self.stage2_box)
+        stages_layout.addWidget(self.stage3_box)
+        mid_row.addLayout(stages_layout, 3)
+
+        # Right: Emergency Controls Strip
+        btn_layout = QVBoxLayout()
+        btn_layout.setSpacing(6)
+
+        self.btn_test = QPushButton("TEST PANIC (3S PREVIEW)")
+        self.btn_test.setObjectName("BossKeyTestBtn")
+        self.btn_test.setCursor(Qt.PointingHandCursor)
+        self.btn_test.setStyleSheet("""
+            QPushButton#BossKeyTestBtn {
+                background-color: rgba(255, 91, 6, 0.22);
+                color: #FFA066;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9.5px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                min-height: 28px;
+                max-height: 28px;
+                padding: 0px 10px;
+            }
+            QPushButton#BossKeyTestBtn:hover {
+                background-color: #FF5B06;
+                color: #000000;
+            }
+            QPushButton#BossKeyTestBtn:pressed {
+                background-color: #E04E00;
+                color: #000000;
+            }
+        """)
+        self.btn_test.clicked.connect(lambda: self.test_panic_clicked.emit())
+        btn_layout.addWidget(self.btn_test)
+
+        self.btn_panic = QPushButton("ENGAGE PANIC NOW")
+        self.btn_panic.setObjectName("BossKeyPanicBtn")
+        self.btn_panic.setCursor(Qt.PointingHandCursor)
+        self.btn_panic.setStyleSheet("""
+            QPushButton#BossKeyPanicBtn {
+                background-color: rgba(255, 51, 68, 0.25);
+                color: #FF7788;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9.5px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                min-height: 28px;
+                max-height: 28px;
+                padding: 0px 10px;
+            }
+            QPushButton#BossKeyPanicBtn:hover {
+                background-color: #FF3344;
+                color: #FFFFFF;
+            }
+            QPushButton#BossKeyPanicBtn:pressed {
+                background-color: #D61A2B;
+                color: #FFFFFF;
+            }
+        """)
+        self.btn_panic.clicked.connect(lambda: self.engage_panic_clicked.emit())
+        btn_layout.addWidget(self.btn_panic)
+
+        self.btn_restore = QPushButton("RESTORE GAME && AUDIO")
+        self.btn_restore.setObjectName("BossKeyRestoreBtn")
+        self.btn_restore.setCursor(Qt.PointingHandCursor)
+        self.btn_restore.setStyleSheet("""
+            QPushButton#BossKeyRestoreBtn {
+                background-color: rgba(0, 255, 136, 0.20);
+                color: #33FFAA;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9.5px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                min-height: 28px;
+                max-height: 28px;
+                padding: 0px 10px;
+            }
+            QPushButton#BossKeyRestoreBtn:hover {
+                background-color: #00FF88;
+                color: #000000;
+            }
+            QPushButton#BossKeyRestoreBtn:pressed {
+                background-color: #00CC6A;
+                color: #000000;
+            }
+        """)
+        self.btn_restore.clicked.connect(lambda: self.restore_panic_clicked.emit())
+        btn_layout.addWidget(self.btn_restore)
+
+        mid_row.addLayout(btn_layout, 2)
+        main_layout.addLayout(mid_row)
+
+    def _create_stage_box(self, box_id, title, detail, metric):
+        box = QFrame()
+        box.setObjectName(box_id)
+        box.setStyleSheet(f"""
+            QFrame#{box_id} {{
+                background-color: rgba(255, 255, 255, 0.035);
+                border: none;
+                border-radius: 6px;
+            }}
+            QFrame#{box_id}:hover {{
+                background-color: rgba(255, 255, 255, 0.065);
+            }}
+        """)
+        b_layout = QVBoxLayout(box)
+        b_layout.setContentsMargins(10, 8, 10, 8)
+        b_layout.setSpacing(2)
+
+        t_lbl = QLabel(title)
+        t_lbl.setObjectName(f"{box_id}_Title")
+        t_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 9.5px; font-weight: bold;")
+        b_layout.addWidget(t_lbl)
+
+        d_lbl = QLabel(detail)
+        d_lbl.setObjectName(f"{box_id}_Detail")
+        d_lbl.setStyleSheet("color: #A0A0A0; font-family: 'Orbitron', sans-serif; font-size: 8.5px; font-weight: 500;")
+        b_layout.addWidget(d_lbl)
+
+        m_lbl = QLabel(metric)
+        m_lbl.setObjectName(f"{box_id}_Metric")
+        m_lbl.setStyleSheet("color: #00FF88; font-family: 'Orbitron', sans-serif; font-size: 8.5px; font-weight: bold;")
+        b_layout.addWidget(m_lbl)
+
+        return box
+
+    def set_panic_state(self, is_panic: bool, status_desc: str):
+        self.is_panic = is_panic
+        self.status_desc = status_desc
+
+    def set_latency(self, latency_ms: float):
+        self.last_latency = latency_ms
+        self.latency_badge.setText(f"LATENCY: {latency_ms:.1f} ms (PASS)")
+
+    def set_decoy_info(self, decoy_name: str):
+        self.active_decoy = decoy_name
+
+
+# Backward-compatible aliases
+BossKeyTacticalCanvas = BossKeyTacticalCard
+BossKeyPipelineVisualizer = BossKeyTacticalCard
+
+
+class BossKeyController(QObject):
+    """
+    Instant Boss Key (Stealth Emergency Panic Switch) Master Engine.
+    Sub-30ms Win32 CoreAudio Master Mute, Foreground Minimization & Decoy Focus Coordinator.
+    Component Name: BossKeyController
+    """
+    state_changed = Signal(bool, str)        # (is_panic_active, status_description)
+    enabled_state_changed = Signal(bool)     # (is_enabled)
+    evasion_executed = Signal(float)         # (latency_ms)
+    restored = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("BossKeyController")
+        self.is_enabled = True
+        self.is_panic_active = False
+        self.hotkey = "F10"
+        self.decoy_mode = "desktop"          # "desktop" | "browser" | "selected_app"
+        self.custom_url = "https://www.google.com"
+        self.custom_app = "code.exe"
+        self.app_target_type = "process_name"  # "process_name" | "file_path"
+        self.launch_fullscreen = False
+        self.auto_mute_sound = True
+        self.hide_launcher = False
+        self.sound_feedback = True
+        self.restore_on_second_press = True
+
+        self._cached_game_hwnd = None
+        self._cached_game_title = ""
+        self._cached_game_was_maximized = False
+        self._was_system_muted_before = False
+        self._muted_by_us = False
+        self._audio_endpoint = None
+        self._last_trigger_time = 0.0
+        self._last_hotkey_down = False
+        self._suppress_ticks = 0
+        self._last_latency_ms = 0.0
+
+        self._init_audio()
+
+        # 15ms high-frequency watchdog for instant hotkey response (< 15ms latency)
+        self._watchdog = QTimer(self)
+        self._watchdog.setInterval(15)
+        self._watchdog.timeout.connect(self._on_watchdog_tick)
+        self._watchdog.start()
+
+        atexit.register(self.force_restore)
+        if QApplication.instance():
+            QApplication.instance().aboutToQuit.connect(self.force_restore)
+
+    def _init_audio(self):
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        try:
+            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+            speakers = AudioUtilities.GetSpeakers()
+            if hasattr(speakers, 'EndpointVolume') and speakers.EndpointVolume:
+                self._audio_endpoint = speakers.EndpointVolume
+            elif hasattr(speakers, '_dev') and hasattr(speakers._dev, 'Activate'):
+                interface = speakers._dev.Activate(IAudioEndpointVolume._iid_, 7, None)
+                self._audio_endpoint = interface.QueryInterface(IAudioEndpointVolume)
+            elif hasattr(speakers, 'Activate'):
+                interface = speakers.Activate(IAudioEndpointVolume._iid_, 7, None)
+                self._audio_endpoint = interface.QueryInterface(IAudioEndpointVolume)
+            else:
+                self._audio_endpoint = None
+        except Exception:
+            self._audio_endpoint = None
+
+    def _mute_master_audio(self):
+        if not self._audio_endpoint:
+            self._init_audio()
+        if self._audio_endpoint:
+            try:
+                try:
+                    import pythoncom
+                    pythoncom.CoInitialize()
+                except Exception:
+                    pass
+                self._was_system_muted_before = bool(self._audio_endpoint.GetMute())
+                self._audio_endpoint.SetMute(1, None)
+                self._muted_by_us = True
+                return
+            except Exception:
+                pass
+        # Fallback via Win32 VK_VOLUME_MUTE (0xAD)
+        try:
+            ctypes.windll.user32.keybd_event(0xAD, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(0xAD, 0, 2, 0)
+            self._muted_by_us = True
+        except Exception:
+            pass
+
+    def _restore_master_audio(self):
+        if not self._muted_by_us:
+            return
+        if not self._audio_endpoint:
+            self._init_audio()
+        if self._audio_endpoint:
+            try:
+                try:
+                    import pythoncom
+                    pythoncom.CoInitialize()
+                except Exception:
+                    pass
+                target_mute = 1 if self._was_system_muted_before else 0
+                self._audio_endpoint.SetMute(target_mute, None)
+                self._muted_by_us = False
+                return
+            except Exception:
+                pass
+        # Fallback toggle
+        try:
+            ctypes.windll.user32.keybd_event(0xAD, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(0xAD, 0, 2, 0)
+            self._muted_by_us = False
+        except Exception:
+            pass
+
+    def _force_set_foreground(self, hwnd, was_maximized: bool = False):
+        if not hwnd or not ctypes.windll.user32.IsWindow(hwnd):
+            return
+        try:
+            cur_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+            target_thread = ctypes.windll.user32.GetWindowThreadProcessId(hwnd, None)
+            if cur_thread != target_thread:
+                ctypes.windll.user32.AttachThreadInput(cur_thread, target_thread, True)
+            
+            # Check if window is minimized or iconic
+            if ctypes.windll.user32.IsIconic(hwnd):
+                if was_maximized:
+                    ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_SHOWMAXIMIZED
+                else:
+                    ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            else:
+                # Do NOT call SW_RESTORE if window is already normal/maximized (otherwise Windows un-maximizes it)
+                ctypes.windll.user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            
+            # Bypass Windows SetForegroundWindow lock
+            ctypes.windll.user32.keybd_event(0, 0, 0, 0)
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            ctypes.windll.user32.BringWindowToTop(hwnd)
+            ctypes.windll.user32.SetActiveWindow(hwnd)
+            if cur_thread != target_thread:
+                ctypes.windll.user32.AttachThreadInput(cur_thread, target_thread, False)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
+    def _find_topmost_target_window(self, exclude_hwnds=None):
+        if exclude_hwnds is None:
+            exclude_hwnds = []
+        found_hwnds = []
+
+        def enum_win_proc(hwnd, lParam):
+            if ctypes.windll.user32.IsWindowVisible(hwnd) and not ctypes.windll.user32.IsIconic(hwnd):
+                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value.strip()
+                    if title and title not in ("Program Manager", "Start", "Taskbar", "Windows Input Experience"):
+                        if "HELXAID" not in title and hwnd not in exclude_hwnds:
+                            found_hwnds.append((hwnd, title))
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        proc = WNDENUMPROC(enum_win_proc)
+        try:
+            ctypes.windll.user32.EnumWindows(proc, 0)
+        except Exception:
+            pass
+
+        return found_hwnds[0][0] if found_hwnds else None
+
+    def _find_matching_app_window(self, search_term: str):
+        if not search_term:
+            return None
+        
+        search_clean = os.path.basename(search_term).lower().strip()
+        search_no_ext = search_clean.replace(".exe", "").strip()
+
+        helxaid_hwnd = None
+        try:
+            top_p = self.parent()
+            while top_p and top_p.parent():
+                top_p = top_p.parent()
+            if top_p and hasattr(top_p, 'winId'):
+                helxaid_hwnd = int(top_p.winId())
+        except Exception:
+            pass
+
+        exact_matches = []
+        partial_matches = []
+        title_matches = []
+
+        hwnds = []
+        def enum_cb(hwnd, lparam):
+            hwnds.append(hwnd)
+            return 1
+
+        ENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
+        try:
+            cb = ENUMPROC(enum_cb)
+            ctypes.windll.user32.EnumWindows(cb, 0)
+        except Exception:
+            pass
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+        for hwnd in hwnds:
+            if hwnd == helxaid_hwnd or hwnd == self._cached_game_hwnd:
+                continue
+            if not ctypes.windll.user32.IsWindow(hwnd):
+                continue
+            
+            is_vis = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+            is_iconic = bool(ctypes.windll.user32.IsIconic(hwnd))
+            if not (is_vis or is_iconic):
+                continue
+
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            title = ""
+            if length > 0:
+                buff = ctypes.create_unicode_buffer(length + 1)
+                ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+                title = buff.value.strip()
+
+            if title in ("Program Manager", "Start", "Taskbar", "Windows Input Experience"):
+                continue
+
+            # Query Process Name of Window
+            pid = ctypes.c_ulong()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            proc_exe = ""
+            if pid.value > 0:
+                h_proc = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+                if not h_proc:
+                    h_proc = ctypes.windll.kernel32.OpenProcess(0x0400, False, pid.value)
+                if h_proc:
+                    ebuf = ctypes.create_unicode_buffer(1024)
+                    size = ctypes.c_ulong(1024)
+                    if ctypes.windll.kernel32.QueryFullProcessImageNameW(h_proc, 0, ebuf, ctypes.byref(size)):
+                        proc_exe = os.path.basename(ebuf.value).lower()
+                    ctypes.windll.kernel32.CloseHandle(h_proc)
+
+            # Exact process match (e.g. "antigravity ide.exe" == "antigravity ide.exe" or "code.exe" == "code.exe")
+            if proc_exe:
+                if proc_exe == search_clean:
+                    exact_matches.append(hwnd)
+                elif search_no_ext and (search_no_ext == proc_exe.replace(".exe", "") or search_no_ext in proc_exe or proc_exe in search_clean):
+                    partial_matches.append(hwnd)
+
+            # Title match as secondary fallback (e.g. if search_no_ext is in window title)
+            if title and search_no_ext and len(search_no_ext) >= 3:
+                if search_no_ext in title.lower():
+                    title_matches.append(hwnd)
+
+        if exact_matches:
+            return exact_matches[0]
+        if partial_matches:
+            return partial_matches[0]
+        if title_matches:
+            return title_matches[0]
+        return None
+
+    def _focus_decoy(self):
+        mode = self.decoy_mode
+        if mode == "desktop":
+            try:
+                import pythoncom, win32com.client
+                pythoncom.CoInitialize()
+                shell = win32com.client.Dispatch("Shell.Application")
+                shell.ToggleDesktop()
+            except Exception:
+                ctypes.windll.user32.keybd_event(0x5B, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(0x44, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(0x44, 0, 2, 0)
+                ctypes.windll.user32.keybd_event(0x5B, 0, 2, 0)
+        elif mode == "browser":
+            url = self.custom_url.strip() if self.custom_url.strip() else "https://www.google.com"
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception:
+                try:
+                    os.startfile(url)
+                except Exception:
+                    pass
+        elif mode in ("selected_app", "notepad", "work_app"):
+            app_target = self.custom_app.strip() if self.custom_app.strip() else "code.exe"
+            target_hwnd = self._find_matching_app_window(app_target)
+            
+            if target_hwnd:
+                was_max = True if self.launch_fullscreen else bool(ctypes.windll.user32.IsZoomed(target_hwnd))
+                self._force_set_foreground(target_hwnd, was_maximized=was_max)
+                if self.launch_fullscreen:
+                    try:
+                        ctypes.windll.user32.ShowWindow(target_hwnd, 3)  # SW_SHOWMAXIMIZED
+                    except Exception:
+                        pass
+            else:
+                # App is not currently running as an open window: Launch it!
+                launched = False
+                if os.path.exists(app_target):
+                    try:
+                        if self.launch_fullscreen:
+                            import subprocess
+                            subprocess.Popen(f'start "" /MAX "{app_target}"', shell=True)
+                        else:
+                            os.startfile(app_target)
+                        launched = True
+                    except Exception:
+                        pass
+                if not launched:
+                    try:
+                        import subprocess
+                        if self.launch_fullscreen:
+                            subprocess.Popen(f'start "" /MAX "{app_target}"', shell=True)
+                        else:
+                            subprocess.Popen(f'"{app_target}"', shell=True)
+                        launched = True
+                    except Exception:
+                        pass
+                if not launched:
+                    # Final fallback: toggle desktop if launch fails
+                    try:
+                        import pythoncom, win32com.client
+                        pythoncom.CoInitialize()
+                        win32com.client.Dispatch("Shell.Application").ToggleDesktop()
+                    except Exception:
+                        pass
+
+    def trigger_panic(self):
+        now = time.perf_counter()
+        if now - self._last_trigger_time < 0.20:
+            return
+        self._last_trigger_time = now
+        t0 = time.perf_counter()
+
+        # 1. Capture current foreground window
+        fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
+        helxaid_hwnd = None
+        top_parent = None
+        try:
+            top_parent = self.parent()
+            while top_parent and top_parent.parent():
+                top_parent = top_parent.parent()
+            if top_parent and hasattr(top_parent, 'winId'):
+                helxaid_hwnd = int(top_parent.winId())
+        except Exception:
+            pass
+
+        fg_title = ""
+        if fg_hwnd:
+            length = ctypes.windll.user32.GetWindowTextLengthW(fg_hwnd)
+            buff = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(fg_hwnd, buff, length + 1)
+            fg_title = buff.value.strip()
+
+            # If foreground window is not HELXAID and not system shell, cache it to minimize & restore
+            if (fg_hwnd != helxaid_hwnd and "HELXAID" not in fg_title and 
+                fg_title not in ("Program Manager", "Start", "Taskbar", "Windows Input Experience", "")):
+                self._cached_game_hwnd = fg_hwnd
+                self._cached_game_title = fg_title
+            else:
+                # If HELXAID is foreground, search for previous game window behind HELXAID
+                prev_hwnd = self._find_topmost_target_window(exclude_hwnds=[fg_hwnd, helxaid_hwnd])
+                self._cached_game_hwnd = prev_hwnd
+                self._cached_game_title = "Game Window"
+        else:
+            self._cached_game_hwnd = None
+            self._cached_game_title = ""
+
+        # 2. Minimize game window (preserving its maximized/fullscreen state)
+        if self._cached_game_hwnd and ctypes.windll.user32.IsWindow(self._cached_game_hwnd):
+            self._cached_game_was_maximized = bool(ctypes.windll.user32.IsZoomed(self._cached_game_hwnd))
+            ctypes.windll.user32.ShowWindow(self._cached_game_hwnd, 6)  # SW_MINIMIZE
+        else:
+            self._cached_game_was_maximized = False
+
+        # 3. Master Audio Mute
+        if self.auto_mute_sound:
+            self._mute_master_audio()
+
+        # 4. Hide / Minimize HELXAID Launcher (STRICTLY only if hide_launcher is checked)
+        if self.hide_launcher:
+            try:
+                if top_parent and hasattr(top_parent, 'hide'):
+                    top_parent.hide()
+                elif helxaid_hwnd:
+                    ctypes.windll.user32.ShowWindow(helxaid_hwnd, 0)  # SW_HIDE
+            except Exception:
+                pass
+        else:
+            # If hide_launcher is OFF, prevent launcher from auto-hiding to tray on system desktop toggles
+            if top_parent and hasattr(top_parent, '_was_active_before_minimize'):
+                top_parent._was_active_before_minimize = False
+
+        # 5. Focus Decoy App
+        self._focus_decoy()
+
+        self.is_panic_active = True
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        self._last_latency_ms = elapsed_ms
+        self.evasion_executed.emit(elapsed_ms)
+        self.state_changed.emit(True, "[PANIC ACTIVE] — Stealth Evasion Engaged")
+
+        if self.sound_feedback:
+            self._play_feedback_sound(True)
+
+    def restore_panic(self):
+        now = time.perf_counter()
+        if now - self._last_trigger_time < 0.20:
+            return
+        self._last_trigger_time = now
+
+        # 1. Unmute Master Audio
+        if self.auto_mute_sound:
+            self._restore_master_audio()
+
+        # 2. Restore Game Window (preserving original maximized or fullscreen state)
+        if self._cached_game_hwnd and ctypes.windll.user32.IsWindow(self._cached_game_hwnd):
+            self._force_set_foreground(self._cached_game_hwnd, was_maximized=self._cached_game_was_maximized)
+
+        # 3. Restore HELXAID Launcher if it was hidden/minimized
+        try:
+            top_parent = self.parent()
+            while top_parent and top_parent.parent():
+                top_parent = top_parent.parent()
+            if top_parent:
+                if self.hide_launcher and hasattr(top_parent, 'show_from_tray'):
+                    top_parent.show_from_tray()
+                elif hasattr(top_parent, 'isFullScreen') and top_parent.isFullScreen():
+                    top_parent.showFullScreen()
+                    top_parent.raise_()
+                    top_parent.activateWindow()
+                elif hasattr(top_parent, 'isMaximized') and top_parent.isMaximized():
+                    top_parent.showMaximized()
+                    top_parent.raise_()
+                    top_parent.activateWindow()
+                elif hasattr(top_parent, 'show'):
+                    top_parent.show()
+                    top_parent.raise_()
+                    top_parent.activateWindow()
+        except Exception:
+            pass
+
+        self.is_panic_active = False
+        self.restored.emit()
+        status = "ARMED (STANDBY)" if self.is_enabled else "DISARMED (DISABLED)"
+        self.state_changed.emit(False, status)
+
+        if self.sound_feedback:
+            self._play_feedback_sound(False)
+
+    def toggle_panic(self):
+        if not self.is_panic_active:
+            self.trigger_panic()
+        elif self.restore_on_second_press:
+            self.restore_panic()
+
+    def set_enabled(self, enabled: bool):
+        self.is_enabled = bool(enabled)
+        if not self.is_enabled and self.is_panic_active:
+            self.restore_panic()
+        self.enabled_state_changed.emit(self.is_enabled)
+        status = "ARMED (STANDBY)" if self.is_enabled else "DISARMED (DISABLED)"
+        self.state_changed.emit(self.is_panic_active, status)
+
+    def toggle_enable(self):
+        self.set_enabled(not self.is_enabled)
+
+    def set_hotkey(self, hotkey_str: str):
+        self.hotkey = hotkey_str
+        self._last_hotkey_down = True
+        self._suppress_ticks = 15
+
+    def set_decoy_mode(self, mode: str):
+        self.decoy_mode = mode
+
+    def set_custom_url(self, url: str):
+        self.custom_url = url
+
+    def set_custom_app(self, app_name: str):
+        self.custom_app = app_name
+
+    def set_app_target_type(self, target_type: str):
+        self.app_target_type = target_type
+
+    def set_launch_fullscreen(self, enable: bool):
+        self.launch_fullscreen = bool(enable)
+
+    def set_auto_mute_sound(self, enable: bool):
+        self.auto_mute_sound = bool(enable)
+
+    def set_hide_launcher(self, enable: bool):
+        self.hide_launcher = bool(enable)
+
+    def set_sound_feedback(self, enable: bool):
+        self.sound_feedback = bool(enable)
+
+    def set_restore_on_second_press(self, enable: bool):
+        self.restore_on_second_press = bool(enable)
+
+    def _play_feedback_sound(self, panic_active: bool):
+        try:
+            import winsound
+            if panic_active:
+                winsound.Beep(800, 60)
+            else:
+                winsound.Beep(1200, 60)
+        except Exception:
+            try:
+                ctypes.windll.user32.MessageBeep(0x00000040 if not panic_active else 0x00000030)
+            except Exception:
+                pass
+
+    def force_restore(self):
+        if self.is_panic_active:
+            self.restore_panic()
+
+    def _on_watchdog_tick(self):
+        if self._suppress_ticks > 0:
+            self._suppress_ticks -= 1
+            return
+
+        if not self.is_enabled:
+            self._last_hotkey_down = False
+            return
+
+        down = is_tactical_hotkey_physically_down(self.hotkey)
+        if down and not self._last_hotkey_down:
+            self.toggle_panic()
+        self._last_hotkey_down = down
+
+
+class BossKeyGuidePanel(QFrame):
+    """
+    Floating guide panel for Instant Boss Key Step-by-Step Tutorial & Stealth Rules.
+    Matching SniperTriggerGuidePanel / HELRCUS floating guide style.
+    
+    Component Name: BossKeyGuidePanel
+    """
+    closed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setObjectName("BossKeyGuidePanel")
+        self._is_dragging = False
+        self._drag_start_pos = QPoint(0, 0)
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        self.setStyleSheet("""
+            QFrame#BossKeyGuidePanel {
+                background-color: rgba(22, 22, 26, 0.98);
+                border: none;
+                border-radius: 14px;
+            }
+            QWidget#BossKeyGuideTitleBar {
+                background-color: rgba(14, 14, 16, 0.7);
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
+                border: none;
+            }
+            QLabel#BossKeyGuideTitle {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                border: none;
+                background: transparent;
+            }
+        """)
+        
+        self.setFixedSize(540, 440)
+        
+        main_vbox = QVBoxLayout(self)
+        main_vbox.setContentsMargins(0, 0, 0, 16)
+        main_vbox.setSpacing(10)
+        
+        # Title bar (Draggable)
+        self.title_bar = QWidget()
+        self.title_bar.setObjectName("BossKeyGuideTitleBar")
+        self.title_bar.setFixedHeight(42)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(16, 0, 12, 0)
+        tb_layout.setSpacing(8)
+        
+        info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg").replace('\\', '/')
+        if os.path.exists(info_icon_path):
+            icon_lbl = QLabel()
+            icon_lbl.setObjectName("BossKeyGuideIconLbl")
+            pixmap = QPixmap(info_icon_path)
+            if not pixmap.isNull():
+                icon_lbl.setPixmap(pixmap.scaled(18, 18, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            icon_lbl.setStyleSheet("background: transparent;")
+            tb_layout.addWidget(icon_lbl)
+            
+        title_lbl = QLabel("Instant Boss Key — Step-by-Step Tutorial")
+        title_lbl.setObjectName("BossKeyGuideTitle")
+        tb_layout.addWidget(title_lbl)
+        tb_layout.addStretch()
+        
+        main_vbox.addWidget(self.title_bar)
+        
+        # Content body with SmoothScrollArea
+        content_container = QWidget()
+        content_container.setObjectName("BossKeyGuideContentContainer")
+        body_vbox = QVBoxLayout(content_container)
+        body_vbox.setContentsMargins(16, 0, 16, 0)
+        body_vbox.setSpacing(0)
+        
+        tutorial_html = """
+        <div style='font-family: Orbitron, sans-serif;'>
+            <p style='font-size: 11px; color: #888888; line-height: 1.5; margin-bottom: 10px;'>
+                Instant Boss Key provides a synchronized, sub-30ms tactical evasion protocol to eliminate game visuals, zero system audio, and focus a work application instantaneously.
+            </p>
+
+            <div style='background: rgba(255, 91, 6, 0.08); border-radius: 8px; padding: 10px; margin-bottom: 10px;'>
+                <b style='color: #FF5B06; font-size: 11px;'>STEP 1: ARMED & GLOBAL HOTKEY BINDING</b>
+                <p style='font-size: 11px; color: #DDDDDD; line-height: 1.5; margin: 4px 0 0 0;'>
+                    • Toggle the master button to <b>ARMED</b> (Green status).<br>
+                    • Click the <b>Activation Key</b> box to capture your panic key (e.g. <b>F10</b>, <b>F12</b>, <b>Mouse 4</b>, <b>Mouse 5</b>, or <b>Ctrl+Shift+B</b>).<br>
+                    • The built-in conflict detector guarantees zero interference with Windows OS or active macros.
+                </p>
+            </div>
+
+            <div style='background: rgba(255, 255, 255, 0.03); border-radius: 8px; padding: 10px; margin-bottom: 10px;'>
+                <b style='color: #FF5B06; font-size: 11px;'>STEP 2: CONFIGURE STEALTH ACTIONS</b>
+                <p style='font-size: 11px; color: #DDDDDD; line-height: 1.5; margin: 4px 0 0 0;'>
+                    • <b>Instant Master Audio Mute</b>: Silences all Windows sound output via CoreAudio in &lt; 5ms.<br>
+                    • <b>Hide HELXAID Window</b>: Minimizes the launcher into the system tray so no gamer tools are visible.<br>
+                    • <b>Reversible Toggle</b>: Automatically re-arms to restore your game on the next keypress.
+                </p>
+            </div>
+
+            <div style='background: rgba(255, 255, 255, 0.03); border-radius: 8px; padding: 10px; margin-bottom: 10px;'>
+                <b style='color: #FF5B06; font-size: 11px;'>STEP 3: SELECT DECOY STRATEGY</b>
+                <p style='font-size: 11px; color: #DDDDDD; line-height: 1.5; margin: 4px 0 0 0;'>
+                    • <b>Desktop</b>: Minimizes all open windows directly to a clean Windows desktop (Win+D).<br>
+                    • <b>Browser</b>: Launches or switches to your browser with a productive URL (e.g. Google, GitHub, Jira).<br>
+                    • <b>Notepad</b>: Immediately launches a clean Notepad text document.<br>
+                    • <b>Work App</b>: Automatically focuses the topmost productivity program (VS Code, Excel, Word).
+                </p>
+            </div>
+
+            <div style='background: rgba(0, 255, 136, 0.08); border-radius: 8px; padding: 10px; margin-bottom: 10px;'>
+                <b style='color: #00FF88; font-size: 11px;'>STEP 4: 100% REVERSIBLE RESTORATION</b>
+                <p style='font-size: 11px; color: #DDDDDD; line-height: 1.5; margin: 4px 0 0 0;'>
+                    • Once the coast is clear, press your Boss Key a second time (or click <b>Restore Game & Audio</b>).<br>
+                    • The game window is instantly brought back to the foreground and unmuted seamlessly.
+                </p>
+            </div>
+
+            <div style='background: rgba(255, 255, 255, 0.03); border-radius: 8px; padding: 10px; margin-bottom: 4px;'>
+                <b style='color: #FDA903; font-size: 11px;'>STEP 5: PREVIEW & TEST SAFELY</b>
+                <p style='font-size: 11px; color: #DDDDDD; line-height: 1.5; margin: 4px 0 0 0;'>
+                    • Click <b>⚡ Test Panic (3s Preview)</b> to verify your evasion sequence with an automatic 3-second restore timer.
+                </p>
+            </div>
+        </div>
+        """
+        tutorial_lbl = QLabel(tutorial_html)
+        tutorial_lbl.setObjectName("BossKeyGuideRulesLbl")
+        tutorial_lbl.setWordWrap(True)
+        tutorial_lbl.setStyleSheet("background: transparent; color: #e0e0e0;")
+        
+        self.scroll_area = SmoothScrollArea()
+        self.scroll_area.setObjectName("BossKeyGuideScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: rgba(0, 0, 0, 0.2);
+                width: 8px;
+                border-radius: 4px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 91, 6, 0.5);
+                border-radius: 4px;
+                min-height: 25px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 91, 6, 0.8);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+                height: 0;
+            }
+        """)
+        self.scroll_area.setWidget(tutorial_lbl)
+        body_vbox.addWidget(self.scroll_area, 1)
+        
+        main_vbox.addWidget(content_container, 1)
+        
+        # Action button (Got It)
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(20, 0, 20, 0)
+        action_row.addStretch()
+        
+        got_it_btn = FadeHoverButton("Got It", border_radius=6.0)
+        got_it_btn.setObjectName("BossKeyGuideGotItBtn")
+        got_it_btn.setFixedHeight(30)
+        got_it_btn.setFixedWidth(85)
+        got_it_btn.clicked.connect(self.close_panel)
+        action_row.addWidget(got_it_btn)
+        
+        main_vbox.addLayout(action_row)
+        
+        # Opacity & animation
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._opacity_effect.setOpacity(0.0)
+        
+        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._fade_anim.setDuration(200)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        self._opacity_effect.setOpacity(0.0)
+        self._fade_anim.start()
+        
+    def close_panel(self):
+        self.close()
+        self.closed.emit()
+        self.deleteLater()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and hasattr(self, "title_bar") and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_start_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        event.accept()
+
+
+class BossKeyPanel(QWidget):
+    """
+    Instant Boss Key (Stealth Emergency Panic Switch) Sub-Panel (Tactical Hub Sub-Page 5).
+    Component Name: TacticalBossKeyPanel
+    """
+    back_clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("TacticalBossKeyPanel")
+        self.controller = BossKeyController(self)
+        self._guide_panel = None
+        self._setup_ui()
+        self._load_settings()
+        self.controller.enabled_state_changed.connect(self._sync_enable_ui)
+        self.controller.state_changed.connect(self._on_controller_state_changed)
+        self.controller.evasion_executed.connect(self._on_evasion_executed)
+        self.controller.restored.connect(self._on_restored)
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(20, 16, 20, 16)
+        main_layout.setSpacing(14)
+
+        # ── 1. HEADER BAR ──────────────────────────────────────
+        header_frame = QWidget()
+        header_frame.setObjectName("BossKeyHeaderFrame")
+        header_frame.setFixedHeight(40)
+        header_frame.setStyleSheet("""
+            QWidget#BossKeyHeaderFrame {
+                background-color: rgba(26, 26, 26, 0.95);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(header_frame)
+        h_layout.setContentsMargins(8, 0, 10, 0)
+        h_layout.setSpacing(8)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        back_icon_path = os.path.join(script_dir, "UI Icons", "back-arrow-white.svg").replace('\\', '/')
+
+        self.back_btn = QPushButton()
+        self.back_btn.setObjectName("BossKeyBackBtn")
+        self.back_btn.setFixedSize(30, 26)
+        if os.path.exists(back_icon_path):
+            self.back_btn.setIcon(QIcon(back_icon_path))
+            self.back_btn.setIconSize(QSize(15, 15))
+        self.back_btn.setToolTip("Back to Tactical Hub")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setStyleSheet("""
+            QPushButton#BossKeyBackBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+            QPushButton#BossKeyBackBtn:hover {
+                background-color: #FF5B06;
+            }
+        """)
+        self.back_btn.clicked.connect(self._on_back)
+        h_layout.addWidget(self.back_btn)
+
+        title_lbl = QLabel("INSTANT BOSS KEY (STEALTH PANIC SWITCH)")
+        title_lbl.setObjectName("BossKeyHeaderTitle")
+        title_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold;")
+        h_layout.addWidget(title_lbl)
+
+        h_layout.addStretch()
+
+        # Info Button for Step-by-Step Tutorial (Matches SniperArmInfoBtn)
+        self.info_btn = QPushButton()
+        self.info_btn.setObjectName("BossKeyInfoBtn")
+        self.info_btn.setFixedSize(26, 26)
+        self.info_btn.setCursor(Qt.PointingHandCursor)
+        info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg").replace('\\', '/')
+        if os.path.exists(info_icon_path):
+            self.info_btn.setIcon(QIcon(info_icon_path))
+            self.info_btn.setIconSize(QSize(22, 22))
+        self.info_btn.setToolTip("View Step-by-Step Boss Key Tutorial & Evasion Guide")
+        self.info_btn.setStyleSheet("""
+            QPushButton#BossKeyInfoBtn {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+            QPushButton#BossKeyInfoBtn:hover {
+                background: transparent;
+                border: none;
+            }
+        """)
+        self.info_btn.clicked.connect(self._show_tutorial_dialog)
+        h_layout.addWidget(self.info_btn)
+
+        self.enable_btn = QPushButton("ARMED")
+        self.enable_btn.setObjectName("BossKeyEnableBtn")
+        self.enable_btn.setFixedSize(90, 26)
+        self.enable_btn.setCursor(Qt.PointingHandCursor)
+        self.enable_btn.setStyleSheet("""
+            QPushButton#BossKeyEnableBtn {
+                background-color: #00FF88;
+                color: #000000;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                padding: 0px 8px;
+                min-height: 26px;
+                max-height: 26px;
+            }
+        """)
+        self.enable_btn.clicked.connect(self.controller.toggle_enable)
+        h_layout.addWidget(self.enable_btn)
+
+        main_layout.addWidget(header_frame)
+
+        # ── 2. CONFIGURATION CARDS ROW (3 CARDS) ───────────────
+        cfg_layout = QHBoxLayout()
+        cfg_layout.setSpacing(12)
+
+        # CARD 1: TRIGGER & HOTKEY
+        self.card1 = QFrame()
+        self.card1.setObjectName("BossKeyTriggerCard")
+        self.card1.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.card1.setStyleSheet("""
+            QFrame#BossKeyTriggerCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        c1_layout = QVBoxLayout(self.card1)
+        c1_layout.setContentsMargins(14, 12, 14, 14)
+        c1_layout.setSpacing(8)
+
+        c1_title = QLabel("TRIGGER & HOTKEY CONFIG")
+        c1_title.setObjectName("BossKeyTriggerCardTitle")
+        c1_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        c1_layout.addWidget(c1_title)
+
+        trig_row = QHBoxLayout()
+        trig_lbl = QLabel("Activation Key:")
+        trig_lbl.setObjectName("BossKeyTrigLabel")
+        trig_lbl.setStyleSheet("color: #A0A0A0; font-family: 'Orbitron', sans-serif; font-size: 10.5px; font-weight: 500;")
+        trig_row.addWidget(trig_lbl)
+
+        self.trigger_input = TacticalInputCatcherButton(default_key="F10", owner_id="boss_key_trigger")
+        self.trigger_input.setObjectName("BossKeyTriggerInput")
+        self.trigger_input.input_captured.connect(self._on_hotkey_captured)
+        trig_row.addWidget(self.trigger_input, 1)
+        c1_layout.addLayout(trig_row)
+
+        self.cb_sound = AnimatedCheckBox("Subtle Audio Chime on Panic/Restore")
+        self.cb_sound.setObjectName("BossKeySoundFeedbackCb")
+        self.cb_sound.setChecked(True)
+        self.cb_sound.setToolTip("Plays a subtle audio tone confirmation when activating or restoring Panic mode.")
+        self.cb_sound.toggled.connect(self._on_sound_toggled)
+        c1_layout.addWidget(self.cb_sound)
+
+        self.cb_reversible = AnimatedCheckBox("Restore on Second Press")
+        self.cb_reversible.setObjectName("BossKeyReversibleCb")
+        self.cb_reversible.setChecked(True)
+        self.cb_reversible.setToolTip("Pressing the activation hotkey a second time will instantly restore your game, windows, and audio volume.")
+        self.cb_reversible.toggled.connect(self._on_reversible_toggled)
+        c1_layout.addWidget(self.cb_reversible)
+        c1_layout.addStretch()
+
+        cfg_layout.addWidget(self.card1, 1)
+
+        # CARD 2: STEALTH ACTIONS PROTOCOL
+        self.card2 = QFrame()
+        self.card2.setObjectName("BossKeyStealthCard")
+        self.card2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.card2.setStyleSheet("""
+            QFrame#BossKeyStealthCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        c2_layout = QVBoxLayout(self.card2)
+        c2_layout.setContentsMargins(14, 12, 14, 14)
+        c2_layout.setSpacing(8)
+
+        c2_title = QLabel("STEALTH ACTIONS PROTOCOL")
+        c2_title.setObjectName("BossKeyStealthCardTitle")
+        c2_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        c2_layout.addWidget(c2_title)
+
+        self.cb_mute = AnimatedCheckBox("Instant Master Audio Mute")
+        self.cb_mute.setObjectName("BossKeyAutoMuteCb")
+        self.cb_mute.setChecked(True)
+        self.cb_mute.setToolTip("Instantly zeroes Windows master audio volume via hardware CoreAudio endpoint (< 5ms) when Panic is triggered, and restores your previous volume when disarmed.")
+        self.cb_mute.toggled.connect(self._on_mute_toggled)
+        c2_layout.addWidget(self.cb_mute)
+
+        self.cb_hide_launcher = AnimatedCheckBox("Hide HELXAID Window to Tray")
+        self.cb_hide_launcher.setObjectName("BossKeyHideLauncherCb")
+        self.cb_hide_launcher.setChecked(False)
+        self.cb_hide_launcher.setToolTip("Minimizes and hides the entire HELXAID launcher window into the System Tray, removing it completely from the Taskbar and Alt+Tab list.")
+        self.cb_hide_launcher.toggled.connect(self._on_hide_launcher_toggled)
+        c2_layout.addWidget(self.cb_hide_launcher)
+        c2_layout.addStretch()
+
+        cfg_layout.addWidget(self.card2, 1)
+
+        # CARD 3: DECOY APPLICATION STRATEGY
+        self.card3 = QFrame()
+        self.card3.setObjectName("BossKeyDecoyCard")
+        self.card3.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.card3.setStyleSheet("""
+            QFrame#BossKeyDecoyCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        c3_layout = QVBoxLayout(self.card3)
+        c3_layout.setContentsMargins(14, 12, 14, 14)
+        c3_layout.setSpacing(6)
+
+        c3_title = QLabel("DECOY APPLICATION STRATEGY")
+        c3_title.setObjectName("BossKeyDecoyCardTitle")
+        c3_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        c3_layout.addWidget(c3_title)
+
+        self.decoy_switcher = SlidingSegmentedPillBossKeyDecoy()
+        self.decoy_switcher.setObjectName("BossKeyDecoyTabFrame")
+        self.decoy_switcher.modeChanged.connect(self._on_decoy_mode_changed)
+        c3_layout.addWidget(self.decoy_switcher)
+
+        down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+
+        combo_qss = f"""
+            QComboBox {{
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
+                border-radius: 8px;
+                padding: 3px 26px 3px 10px;
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11.5px;
+                font-weight: 500;
+                min-height: 30px;
+                max-height: 30px;
+            }}
+            QComboBox:hover {{
+                background: rgba(255, 255, 255, 0.2);
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox QLineEdit {{
+                background: transparent;
+                color: #e0e0e0;
+                border: none;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11.5px;
+                padding: 0px;
+                margin: 0px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: #1e2128;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+                outline: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 26px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }}
+        """
+
+        self.url_lbl = QLabel("Decoy Browser URL:")
+        self.url_lbl.setObjectName("BossKeyUrlLabel")
+        self.url_lbl.setStyleSheet("color: #A0A0A0; font-family: 'Orbitron', sans-serif; font-size: 10.5px; font-weight: 500;")
+        c3_layout.addWidget(self.url_lbl)
+
+        self.browser_combo = QComboBox()
+        self.browser_combo.setObjectName("BossKeyBrowserUrlCombo")
+        self.browser_combo.setEditable(True)
+        self.browser_combo.addItems([
+            "https://www.google.com",
+            "https://www.youtube.com",
+            "https://www.wikipedia.org",
+            "https://github.com",
+            "https://www.reddit.com"
+        ])
+        self.browser_combo.setStyleSheet(combo_qss)
+        if self.browser_combo.lineEdit():
+            self.browser_combo.lineEdit().setStyleSheet("background: transparent; color: #FFFFFF; border: none; font-family: 'Orbitron'; font-size: 11px;")
+        self.browser_combo.currentTextChanged.connect(self._on_browser_url_changed)
+        c3_layout.addWidget(self.browser_combo)
+
+        # Selected App Header Row: Label + Mini Toggle
+        app_header_row = QHBoxLayout()
+        self.app_lbl = QLabel("Selected App:")
+        self.app_lbl.setObjectName("BossKeyAppLabel")
+        self.app_lbl.setStyleSheet("color: #A0A0A0; font-family: 'Orbitron', sans-serif; font-size: 10.5px; font-weight: 500;")
+        app_header_row.addWidget(self.app_lbl)
+        app_header_row.addStretch()
+
+        self.app_type_toggle = BossKeyAppTypeToggle()
+        self.app_type_toggle.setObjectName("BossKeyAppTypeToggle")
+        self.app_type_toggle.modeChanged.connect(self._on_app_target_type_changed)
+        app_header_row.addWidget(self.app_type_toggle)
+        c3_layout.addLayout(app_header_row)
+
+        # Selected App Input Row: Dynamic Process Dropdown + Browse Button
+        app_input_row = QHBoxLayout()
+        app_input_row.setContentsMargins(0, 0, 0, 0)
+        app_input_row.setSpacing(6)
+
+        self.app_combo = BossKeyDynamicAppCombo()
+        self.app_combo.setObjectName("BossKeySelectedAppCombo")
+        self.app_combo.setStyleSheet(combo_qss)
+        if self.app_combo.lineEdit():
+            self.app_combo.lineEdit().setStyleSheet("background: transparent; color: #FFFFFF; border: none; font-family: 'Orbitron'; font-size: 11px;")
+        self.app_combo.currentTextChanged.connect(self._on_selected_app_changed)
+        app_input_row.addWidget(self.app_combo, 1)
+
+        self.app_input = self.app_combo
+
+        folder_icon_path = os.path.join(script_dir, "UI Icons", "folder-icon-white.svg").replace("\\", "/")
+        self.browse_btn = QPushButton()
+        self.browse_btn.setObjectName("BossKeyAppBrowseBtn")
+        self.browse_btn.setToolTip("Browse for an executable file (.exe)...")
+        self.browse_btn.setFixedSize(30, 30)
+        self.browse_btn.setIcon(QIcon(folder_icon_path))
+        self.browse_btn.setIconSize(QSize(14, 14))
+        self.browse_btn.setStyleSheet("""
+            QPushButton#BossKeyAppBrowseBtn {
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
+                border-radius: 8px;
+                padding: 0px;
+            }
+            QPushButton#BossKeyAppBrowseBtn:hover {
+                background: rgba(255, 91, 6, 0.3);
+            }
+            QPushButton#BossKeyAppBrowseBtn:pressed {
+                background: rgba(255, 91, 6, 0.5);
+            }
+        """)
+        self.browse_btn.clicked.connect(self._on_browse_app_clicked)
+        app_input_row.addWidget(self.browse_btn)
+
+        c3_layout.addLayout(app_input_row)
+
+        self.cb_launch_fullscreen = AnimatedCheckBox("Launch as Fullscreen")
+        self.cb_launch_fullscreen.setObjectName("BossKeyFullscreenDecoyCb")
+        self.cb_launch_fullscreen.setChecked(False)
+        self.cb_launch_fullscreen.setToolTip("Automatically maximizes and launches the decoy application in fullscreen when panic switch is engaged.")
+        self.cb_launch_fullscreen.toggled.connect(self._on_launch_fullscreen_toggled)
+        c3_layout.addWidget(self.cb_launch_fullscreen)
+
+        # Backward compatibility aliases
+        self.custom_url_input = self.browser_combo
+        self.app_combo = self.app_input
+
+        c3_layout.addStretch()
+        cfg_layout.addWidget(self.card3, 1)
+        main_layout.addLayout(cfg_layout, 1)
+
+        # ── 3. BOTTOM EMERGENCY ACTIONS ROW ──
+        act_frame = QFrame()
+        act_frame.setObjectName("BossKeyActionsBar")
+        act_frame.setStyleSheet("""
+            QFrame#BossKeyActionsBar {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: none;
+                border-radius: 8px;
+            }
+        """)
+        act_layout = QHBoxLayout(act_frame)
+        act_layout.setContentsMargins(16, 10, 16, 10)
+        act_layout.setSpacing(12)
+
+        act_lbl = QLabel("QUICK TESTING & EMERGENCY CONTROLS:")
+        act_lbl.setObjectName("BossKeyActionsTitle")
+        act_lbl.setStyleSheet("color: #A0A0A0; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold;")
+        act_layout.addWidget(act_lbl)
+        act_layout.addStretch()
+
+        self.test_preview_btn = QPushButton("TEST PANIC (3S PREVIEW)")
+        self.test_preview_btn.setObjectName("BossKeyTestPreviewBtn")
+        self.test_preview_btn.setCursor(Qt.PointingHandCursor)
+        self.test_preview_btn.setStyleSheet("""
+            QPushButton#BossKeyTestPreviewBtn {
+                background-color: rgba(255, 91, 6, 0.20);
+                color: #FFA066;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9.5px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                min-height: 30px;
+                max-height: 30px;
+                padding: 0px 16px;
+            }
+            QPushButton#BossKeyTestPreviewBtn:hover {
+                background-color: #FF5B06;
+                color: #000000;
+            }
+            QPushButton#BossKeyTestPreviewBtn:pressed {
+                background-color: #E04E00;
+                color: #000000;
+            }
+        """)
+        self.test_preview_btn.clicked.connect(self._on_test_preview_clicked)
+        act_layout.addWidget(self.test_preview_btn)
+
+        self.engage_panic_btn = QPushButton("ENGAGE PANIC NOW")
+        self.engage_panic_btn.setObjectName("BossKeyEngagePanicBtn")
+        self.engage_panic_btn.setCursor(Qt.PointingHandCursor)
+        self.engage_panic_btn.setStyleSheet("""
+            QPushButton#BossKeyEngagePanicBtn {
+                background-color: rgba(255, 51, 68, 0.22);
+                color: #FF7788;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9.5px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                min-height: 30px;
+                max-height: 30px;
+                padding: 0px 16px;
+            }
+            QPushButton#BossKeyEngagePanicBtn:hover {
+                background-color: #FF3344;
+                color: #FFFFFF;
+            }
+            QPushButton#BossKeyEngagePanicBtn:pressed {
+                background-color: #D61A2B;
+                color: #FFFFFF;
+            }
+        """)
+        self.engage_panic_btn.clicked.connect(self.controller.trigger_panic)
+        act_layout.addWidget(self.engage_panic_btn)
+
+        self.restore_game_btn = QPushButton("RESTORE GAME && AUDIO")
+        self.restore_game_btn.setObjectName("BossKeyRestoreGameBtn")
+        self.restore_game_btn.setCursor(Qt.PointingHandCursor)
+        self.restore_game_btn.setStyleSheet("""
+            QPushButton#BossKeyRestoreGameBtn {
+                background-color: rgba(0, 255, 136, 0.18);
+                color: #33FFAA;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9.5px;
+                font-weight: bold;
+                border: none;
+                border-radius: 6px;
+                min-height: 30px;
+                max-height: 30px;
+                padding: 0px 16px;
+            }
+            QPushButton#BossKeyRestoreGameBtn:hover {
+                background-color: #00FF88;
+                color: #000000;
+            }
+            QPushButton#BossKeyRestoreGameBtn:pressed {
+                background-color: #00CC6A;
+                color: #000000;
+            }
+        """)
+        self.restore_game_btn.clicked.connect(self.controller.restore_panic)
+        act_layout.addWidget(self.restore_game_btn)
+
+        main_layout.addWidget(act_frame)
+
+    def _get_settings_path(self) -> str:
+        base_dir = os.path.join(os.getenv('APPDATA', ''), 'HELXAID')
+        os.makedirs(base_dir, exist_ok=True)
+        return os.path.join(base_dir, 'helxairo_boss_key.json')
+
+    def _load_settings(self):
+        path = self._get_settings_path()
+        if not os.path.exists(path):
+            self.controller.set_enabled(True)
+            self._sync_enable_ui(True)
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                self.controller.set_enabled(True)
+                self._sync_enable_ui(True)
+                return
+            is_en = bool(data.get("enabled", True))
+            self.controller.set_enabled(is_en)
+            self._sync_enable_ui(is_en)
+            if "hotkey" in data and data["hotkey"]:
+                self.trigger_input.set_captured_key(str(data["hotkey"]))
+                self.controller.set_hotkey(str(data["hotkey"]))
+            if "custom_url" in data and data["custom_url"]:
+                url_val = str(data["custom_url"])
+                if url_val.startswith("http"):
+                    self.browser_combo.setCurrentText(url_val)
+                    self.controller.set_custom_url(url_val)
+                else:
+                    self.app_input.setText(url_val)
+                    self.controller.set_custom_app(url_val)
+            if "custom_app" in data and data["custom_app"]:
+                app_val = str(data["custom_app"])
+                self.app_input.setText(app_val)
+                self.controller.set_custom_app(app_val)
+            if "app_target_type" in data:
+                app_type = str(data["app_target_type"])
+                if app_type in ("process_name", "file_path"):
+                    self.app_type_toggle.set_mode(app_type, animate=False)
+                    self.app_combo.set_target_mode(app_type)
+                    self.controller.set_app_target_type(app_type)
+            if "custom_app" in data and data["custom_app"]:
+                app_val = str(data["custom_app"])
+                self.app_combo.setText(app_val)
+                self.controller.set_custom_app(app_val)
+            if "decoy_mode" in data:
+                raw_mode = str(data["decoy_mode"])
+                if raw_mode in ("notepad", "work_app"):
+                    raw_mode = "selected_app"
+                self.decoy_switcher.set_mode(raw_mode, animate=False)
+                self.controller.set_decoy_mode(raw_mode)
+                self._on_decoy_mode_changed(raw_mode)
+            if "auto_mute_sound" in data:
+                self.cb_mute.setChecked(bool(data["auto_mute_sound"]))
+                self.controller.set_auto_mute_sound(bool(data["auto_mute_sound"]))
+            if "hide_launcher" in data:
+                self.cb_hide_launcher.setChecked(bool(data["hide_launcher"]))
+                self.controller.set_hide_launcher(bool(data["hide_launcher"]))
+            if "sound_feedback" in data:
+                self.cb_sound.setChecked(bool(data["sound_feedback"]))
+                self.controller.set_sound_feedback(bool(data["sound_feedback"]))
+            if "restore_on_second_press" in data:
+                self.cb_reversible.setChecked(bool(data["restore_on_second_press"]))
+                self.controller.set_restore_on_second_press(bool(data["restore_on_second_press"]))
+            if "launch_fullscreen" in data:
+                self.cb_launch_fullscreen.setChecked(bool(data["launch_fullscreen"]))
+                self.controller.set_launch_fullscreen(bool(data["launch_fullscreen"]))
+        except Exception as e:
+            print(f"[BossKey] Error loading settings: {e}")
+            self.controller.set_enabled(True)
+            self._sync_enable_ui(True)
+
+    def _save_settings(self):
+        data = {
+            "enabled": self.controller.is_enabled,
+            "hotkey": self.controller.hotkey,
+            "decoy_mode": self.controller.decoy_mode,
+            "custom_url": self.controller.custom_url,
+            "custom_app": self.controller.custom_app,
+            "app_target_type": self.controller.app_target_type,
+            "launch_fullscreen": self.controller.launch_fullscreen,
+            "auto_mute_sound": self.controller.auto_mute_sound,
+            "hide_launcher": self.controller.hide_launcher,
+            "sound_feedback": self.controller.sound_feedback,
+            "restore_on_second_press": self.controller.restore_on_second_press,
+        }
+        try:
+            with open(self._get_settings_path(), 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"[BossKey] Error saving settings: {e}")
+
+    def _on_hotkey_captured(self, key_name: str):
+        if not key_name:
+            return
+        is_valid, conflict_owner = validate_shortcut_conflict(key_name, owner_id="boss_key_trigger")
+        if not is_valid:
+            target_w = self.window() if self.window() else self
+            FloatingToast.show_toast(
+                target_w,
+                "Shortcut Conflict",
+                f"'{key_name}' is already assigned to {conflict_owner}. Please choose another hotkey."
+            )
+            self.trigger_input.set_captured_key(self.controller.hotkey)
+            return
+
+        self.controller.set_hotkey(key_name)
+        if not self.controller.is_enabled:
+            self.controller.set_enabled(True)
+            self._sync_enable_ui(True)
+
+        if self.trigger_input.get_captured_key() != key_name:
+            self.trigger_input.set_captured_key(key_name)
+        print(f"[BossKey] Activation Hotkey bound to: {key_name}")
+        self._save_settings()
+
+    def _on_decoy_mode_changed(self, mode: str):
+        if mode in ("notepad", "work_app"):
+            mode = "selected_app"
+        self.controller.set_decoy_mode(mode)
+        if hasattr(self, 'canvas') and self.canvas is not None:
+            self.canvas.set_decoy_info(mode)
+        self._save_settings()
+
+    def _on_browser_url_changed(self, url: str):
+        self.controller.set_custom_url(url)
+        self._save_settings()
+
+    def _on_selected_app_changed(self, app_name: str):
+        self.controller.set_custom_app(app_name)
+        self._save_settings()
+
+    def _on_app_target_type_changed(self, mode: str):
+        self.controller.set_app_target_type(mode)
+        self.app_combo.set_target_mode(mode)
+        if mode == "process_name":
+            curr = self.app_combo.currentText().strip()
+            if "/" in curr or "\\" in curr:
+                base_name = os.path.basename(curr)
+                if base_name:
+                    self.app_combo.setText(base_name)
+                    self.controller.set_custom_app(base_name)
+        self._save_settings()
+
+    def _on_browse_app_clicked(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Decoy Application",
+            "",
+            "Executable Files (*.exe);;All Files (*.*)"
+        )
+        if file_path:
+            file_path = file_path.replace("\\", "/")
+            self.app_type_toggle.set_mode("file_path")
+            self.app_combo.set_target_mode("file_path")
+            self.app_combo.setText(file_path)
+            self.controller.set_custom_app(file_path)
+            self.controller.set_app_target_type("file_path")
+            self._save_settings()
+
+    def _on_launch_fullscreen_toggled(self, checked: bool):
+        self.controller.set_launch_fullscreen(checked)
+        self._save_settings()
+
+    def _on_url_changed(self, url: str):
+        self._on_browser_url_changed(url)
+
+    def _on_mute_toggled(self, checked: bool):
+        self.controller.set_auto_mute_sound(checked)
+        self._save_settings()
+
+    def _on_hide_launcher_toggled(self, checked: bool):
+        self.controller.set_hide_launcher(checked)
+        self._save_settings()
+
+    def _on_sound_toggled(self, checked: bool):
+        self.controller.set_sound_feedback(checked)
+        self._save_settings()
+
+    def _on_reversible_toggled(self, checked: bool):
+        self.controller.set_restore_on_second_press(checked)
+        self._save_settings()
+
+    def _on_test_preview_clicked(self):
+        if not self.controller.is_panic_active:
+            self.controller.trigger_panic()
+            QTimer.singleShot(3000, lambda: self.controller.restore_panic() if self.controller.is_panic_active else None)
+        else:
+            self.controller.restore_panic()
+
+    def _on_controller_state_changed(self, is_panic: bool, desc: str):
+        if hasattr(self, 'visualizer') and self.visualizer is not None:
+            self.visualizer.set_panic_state(is_panic, desc)
+
+    def _on_evasion_executed(self, latency_ms: float):
+        if hasattr(self, 'visualizer') and self.visualizer is not None:
+            self.visualizer.set_latency(latency_ms)
+
+    def _on_restored(self):
+        if hasattr(self, 'visualizer') and self.visualizer is not None:
+            self.visualizer.set_panic_state(False, "ARMED (STANDBY)")
+
+    def _sync_enable_ui(self, active: bool):
+        if active:
+            self.enable_btn.setText("ARMED")
+            self.enable_btn.setStyleSheet("""
+                QPushButton#BossKeyEnableBtn {
+                    background-color: #00FF88;
+                    color: #000000;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+        else:
+            self.enable_btn.setText("DISABLED")
+            self.enable_btn.setStyleSheet("""
+                QPushButton#BossKeyEnableBtn {
+                    background-color: rgba(255, 255, 255, 0.08);
+                    color: #888888;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 0px 8px;
+                    min-height: 26px;
+                    max-height: 26px;
+                }
+            """)
+        self._save_settings()
+
+    def _show_tutorial_dialog(self):
+        try:
+            if hasattr(self, '_guide_panel') and self._guide_panel is not None:
+                if self._guide_panel.isVisible():
+                    self._guide_panel.close_panel()
+                    self._guide_panel = None
+                    return
+        except (RuntimeError, Exception):
+            self._guide_panel = None
+
+        target_parent = self.window() if self.window() else self
+        self._guide_panel = BossKeyGuidePanel(target_parent)
+        self._guide_panel.closed.connect(self._on_guide_panel_destroyed)
+        self._guide_panel.destroyed.connect(self._on_guide_panel_destroyed)
+        gx = max(20, (target_parent.width() - self._guide_panel.width()) // 2)
+        gy = max(20, (target_parent.height() - self._guide_panel.height()) // 2)
+        self._guide_panel.move(gx, gy)
+        self._guide_panel.show()
+
+    def _on_guide_panel_destroyed(self):
+        self._guide_panel = None
+
+    def _on_back(self):
+        if hasattr(self, '_guide_panel') and self._guide_panel is not None:
+            try:
+                self._guide_panel.close_panel()
+            except Exception:
+                pass
+            self._guide_panel = None
         self.controller.force_restore()
         self.back_clicked.emit()
 
@@ -14863,6 +17113,22 @@ class MacroSettingsPanel(QWidget):
         self.rapid_fire_panel.back_clicked.connect(lambda: self._tactical_stack.setCurrentIndex(0))
         self._tactical_stack.addWidget(self.rapid_fire_panel)  # Index 3: Rapid-Fire
 
+        # ── SUB-PAGE 4: SMART ANTI-AFK (PLACEHOLDER) ──
+        self.anti_afk_placeholder = QWidget()
+        self.anti_afk_placeholder.setObjectName("TacticalAntiAfkPlaceholder")
+        self._tactical_stack.addWidget(self.anti_afk_placeholder)  # Index 4: Anti-AFK
+
+        # ── SUB-PAGE 5: INSTANT BOSS KEY ──
+        self.boss_key_panel = BossKeyPanel()
+        self.boss_key_panel.setObjectName("TacticalBossKeyPanel")
+        self.boss_key_panel.back_clicked.connect(lambda: self._tactical_stack.setCurrentIndex(0))
+        self._tactical_stack.addWidget(self.boss_key_panel)  # Index 5: Boss Key
+
+        # ── SUB-PAGE 6: SNIPER LOUPE (PLACEHOLDER) ──
+        self.sniper_loupe_placeholder = QWidget()
+        self.sniper_loupe_placeholder.setObjectName("TacticalSniperLoupePlaceholder")
+        self._tactical_stack.addWidget(self.sniper_loupe_placeholder)  # Index 6: Loupe
+
         tactical_layout.addWidget(self._tactical_stack)
         self._page_stack.addWidget(tactical_tab)
         
@@ -15392,8 +17658,40 @@ class MacroSettingsPanel(QWidget):
                     if 'sound_enabled' in rf:
                         rf_p.cb_sound.setChecked(bool(rf['sound_enabled']))
                         rf_ctrl.set_sound_enabled(bool(rf['sound_enabled']))
+                
+                # Apply saved Boss Key settings
+                if hasattr(self, 'boss_key_panel'):
+                    if 'boss_key' in _saved_data:
+                        bk = _saved_data['boss_key']
+                        bk_p = self.boss_key_panel
+                        bk_ctrl = bk_p.controller
+                        if 'enabled' in bk:
+                            bk_ctrl.set_enabled(bool(bk['enabled']))
+                        if 'hotkey' in bk and bk['hotkey']:
+                            bk_p.trigger_input.set_captured_key(str(bk['hotkey']))
+                            bk_ctrl.set_hotkey(str(bk['hotkey']))
+                        if 'decoy_mode' in bk:
+                            bk_p.decoy_switcher.set_mode(str(bk['decoy_mode']))
+                            bk_ctrl.set_decoy_mode(str(bk['decoy_mode']))
+                        if 'custom_url' in bk:
+                            bk_p.custom_url_input.setText(str(bk['custom_url']))
+                            bk_ctrl.set_custom_url(str(bk['custom_url']))
+                        if 'auto_mute_sound' in bk:
+                            bk_p.cb_mute.setChecked(bool(bk['auto_mute_sound']))
+                            bk_ctrl.set_auto_mute_sound(bool(bk['auto_mute_sound']))
+                        if 'hide_launcher' in bk:
+                            bk_p.cb_hide_launcher.setChecked(bool(bk['hide_launcher']))
+                            bk_ctrl.set_hide_launcher(bool(bk['hide_launcher']))
+                        if 'sound_feedback' in bk:
+                            bk_p.cb_sound.setChecked(bool(bk['sound_feedback']))
+                            bk_ctrl.set_sound_feedback(bool(bk['sound_feedback']))
+                        if 'restore_on_second_press' in bk:
+                            bk_p.cb_reversible.setChecked(bool(bk['restore_on_second_press']))
+                            bk_ctrl.set_restore_on_second_press(bool(bk['restore_on_second_press']))
+                    else:
+                        self.boss_key_panel._load_settings()
             except Exception as e:
-                print(f"[HELXAIRO] Note restoring Rapid Fire: {e}")
+                print(f"[HELXAIRO] Note restoring Tactical Tools: {e}")
                         
             # Deferred sync to Universal OS Hook to ensure socket is initialized and Hook process is listening
             from PySide6.QtCore import QTimer

@@ -3192,7 +3192,12 @@ class AudioPlayerSidebar(QWidget):
         self.volume_label.returnPressed.connect(self._on_volume_input)
         self.volume_label.editingFinished.connect(self._on_volume_input)
 
-        self.open_btn = self._create_button("📁", "Load music folder", size=22)
+        self.open_btn = self._create_button("", "Load music folder", size=26)
+        self.open_btn.setObjectName("AudioOpenFolderButton")
+        _folder_icon = os.path.join(SCRIPT_DIR, "UI Icons", "folder-icon-white.svg")
+        if os.path.exists(_folder_icon):
+            self.open_btn.setIcon(QIcon(_folder_icon))
+            self.open_btn.setIconSize(QSize(16, 16))
         self.open_btn.clicked.connect(self.open_folder)
 
         # Add icon + slider group first, then folder button
@@ -4200,19 +4205,19 @@ class HelxailInfoWizard(QFrame):
                 color: #FFFFFF;
                 font-size: 14px;
                 font-weight: bold;
-                font-family: 'Orbitron';
+                font-family: 'Orbitron', sans-serif;
             }}
             QLabel#StepTitle {{
                 color: #FF5B06;
                 font-size: 16px;
                 font-weight: bold;
-                font-family: 'Orbitron';
+                font-family: 'Orbitron', sans-serif;
                 margin-top: 10px;
             }}
             QLabel#StepDesc {{
                 color: #E0E0E0;
                 font-size: 13px;
-                font-family: 'Orbitron';
+                font-family: 'Orbitron', sans-serif;
                 margin-top: 5px;
             }}
             QPushButton#CloseBtn {{
@@ -4228,7 +4233,7 @@ class HelxailInfoWizard(QFrame):
                 border: 1px solid #FF5B06;
                 border-radius: 6px;
                 color: white;
-                font-family: 'Orbitron';
+                font-family: 'Orbitron', sans-serif;
                 font-size: 13px;
                 padding: 6px 20px;
             }}
@@ -4908,6 +4913,14 @@ class GameLauncher(QWidget):
         else:
             self.switch_panel(index)
     
+    def _focus_search(self):
+        """Global shortcut handler to focus and select the game search input (Ctrl+F)."""
+        if hasattr(self, 'content_stack') and self.content_stack.currentIndex() != 0:
+            self.switch_panel(0)
+        if hasattr(self, 'search_input'):
+            self.search_input.setFocus()
+            self.search_input.selectAll()
+    
     @staticmethod
     def _sanitize_window_geometry(x, y, w, h, min_w=1380, min_h=790):
         """Sanitize window bounds to guarantee the window is placed on an active, visible screen."""
@@ -5041,6 +5054,10 @@ class GameLauncher(QWidget):
         # Component Inspector (Global Shortcut)
         self.f12_shortcut = QShortcut(QKeySequence(Qt.Key_F12), self)
         self.f12_shortcut.activated.connect(self._trigger_inspector)
+        
+        # Quick Search Global Shortcut (Ctrl+F)
+        self.search_shortcut = QShortcut(QKeySequence.Find, self)
+        self.search_shortcut.activated.connect(self._focus_search)
         
         # Numerical shortcuts for sidebar navigation (1-7)
         # Maps keys 1-7 to panels 0-6. Focus-aware to ignore while typing in inputs.
@@ -5239,7 +5256,7 @@ class GameLauncher(QWidget):
         self.home_btn = AnimatedButton()
         self.home_btn.setObjectName("NavHomeButton")
         self.home_btn.setFixedSize(60, 60)
-        self.home_btn.setToolTip("Home")
+        self.home_btn.setToolTip("HELXAID — Game Launcher (1)")
         self.home_btn.setCursor(Qt.PointingHandCursor)
         # Helper for sidebar icon path lookup
         def _get_sidebar_icon(filename):
@@ -5269,7 +5286,7 @@ class GameLauncher(QWidget):
         self.music_nav_btn = AnimatedButton()
         self.music_nav_btn.setObjectName("NavMusicButton")
         self.music_nav_btn.setFixedSize(64, 64)
-        self.music_nav_btn.setToolTip("HELXAIC - Music Player")
+        self.music_nav_btn.setToolTip("HELXAIC — Music Player (2)")
         self.music_nav_btn.setCursor(Qt.PointingHandCursor)
 
         music_icon_path = _get_sidebar_icon("helxaic-icon.png") or _get_sidebar_icon("player-icon.png")
@@ -5289,7 +5306,7 @@ class GameLauncher(QWidget):
         self.cpu_nav_btn = AnimatedButton()
         self.cpu_nav_btn.setObjectName("NavCPUButton")
         self.cpu_nav_btn.setFixedSize(64, 64)
-        self.cpu_nav_btn.setToolTip("HELXAIL - CPU Control")
+        self.cpu_nav_btn.setToolTip("HELXAIL — CPU Controller (3)")
         self.cpu_nav_btn.setCursor(Qt.PointingHandCursor)
         
         # Load CPU icon
@@ -5318,9 +5335,9 @@ class GameLauncher(QWidget):
         
         # CPU button always enabled - shows download prompt if UXTU not available
         if not self.uxtu_installed:
-            self.cpu_nav_btn.setToolTip("HELXAIL - CPU Control (Click to install UXTU)")
+            self.cpu_nav_btn.setToolTip("HELXAIL — CPU Controller (Click to install UXTU) (3)")
         else:
-            self.cpu_nav_btn.setToolTip("HELXAIL - CPU Control")
+            self.cpu_nav_btn.setToolTip("HELXAIL — CPU Controller (3)")
         
         self.cpu_nav_btn.clicked.connect(self._on_cpu_nav_clicked)
         self.cpu_nav_btn.setClickAnimation(False)
@@ -5331,7 +5348,7 @@ class GameLauncher(QWidget):
         self.crosshair_nav_btn = AnimatedButton()
         self.crosshair_nav_btn.setObjectName("NavCrosshairButton")
         self.crosshair_nav_btn.setFixedSize(64, 64)
-        self.crosshair_nav_btn.setToolTip("HELXAIR - Crosshair Overlay")
+        self.crosshair_nav_btn.setToolTip("HELXAIR — Crosshair Overlay (4)")
         self.crosshair_nav_btn.setCursor(Qt.PointingHandCursor)
         
         # Load crosshair icon
@@ -5360,7 +5377,7 @@ class GameLauncher(QWidget):
         self.macro_nav_btn = AnimatedButton()
         self.macro_nav_btn.setObjectName("NavMacroButton")
         self.macro_nav_btn.setFixedSize(64, 64)
-        self.macro_nav_btn.setToolTip("HELXAIRO")
+        self.macro_nav_btn.setToolTip("HELXAIRO — Macro Setting (5)")
         self.macro_nav_btn.setCursor(Qt.PointingHandCursor)
         
         # Load macro icon
@@ -5389,7 +5406,7 @@ class GameLauncher(QWidget):
         self.hardware_nav_btn = AnimatedButton()
         self.hardware_nav_btn.setObjectName("NavHardwareButton")
         self.hardware_nav_btn.setFixedSize(64, 64)
-        self.hardware_nav_btn.setToolTip("HELXTATS - Hardware Stats")
+        self.hardware_nav_btn.setToolTip("HELXTATS — Hardware Monitor & Booster (6)")
         self.hardware_nav_btn.setCursor(Qt.PointingHandCursor)
         
         # Load hardware icon
@@ -5418,7 +5435,7 @@ class GameLauncher(QWidget):
         self.wincustom_nav_btn = AnimatedButton()
         self.wincustom_nav_btn.setObjectName("NavWinCustomButton")
         self.wincustom_nav_btn.setFixedSize(64, 64)
-        self.wincustom_nav_btn.setToolTip("HELRCUS - Windows Customization")
+        self.wincustom_nav_btn.setToolTip("HELRCUS — Windows Customization (7)")
         self.wincustom_nav_btn.setCursor(Qt.PointingHandCursor)
         
         # Load windows custom icon or use fallback
@@ -5607,6 +5624,7 @@ class GameLauncher(QWidget):
             icon_label.setFixedSize(64, 64)  # Fixed size for the label
             icon_label.setAlignment(Qt.AlignCenter)
             icon_label.setCursor(Qt.PointingHandCursor)
+            icon_label.setToolTip("HELXAID — Visit Community (YouTube)")
             icon_label.mousePressEvent = lambda event: self.open_launcher_youtube()
         
         # Add the text label
@@ -5646,10 +5664,20 @@ class GameLauncher(QWidget):
         # Search box (to the left of the + button)
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchInput")
-        self.search_input.setPlaceholderText("Search Games...")
+        self.search_input.setPlaceholderText("Search Games... (Ctrl+F)")
         self.search_input.setFixedWidth(400)
         self.search_input.setFixedHeight(50)
         self.search_input.textChanged.connect(self.on_search_text_changed)
+        
+        # Enable Escape key to clear search and return focus to main window
+        _orig_search_key_press = self.search_input.keyPressEvent
+        def _search_key_handler(event):
+            if event.key() == Qt.Key_Escape:
+                self.search_input.clear()
+                self.setFocus()
+            else:
+                _orig_search_key_press(event)
+        self.search_input.keyPressEvent = _search_key_handler
 
         # Settings button (icon-based)
         self.settings_btn = AnimatedButton()
@@ -5771,7 +5799,7 @@ class GameLauncher(QWidget):
             self.refresh_btn.setIconSize(QSize(48, 48))
         else:
             refresh_scaled = None
-            self.refresh_btn.setText("⟳")
+            self.refresh_btn.setText("")
 
         self.refresh_btn.setStyleSheet("""
             QPushButton {
@@ -6969,7 +6997,7 @@ class GameLauncher(QWidget):
             if widget_type == "AnimatedGameButton":
                 for idx, (btn, game) in enumerate(self.game_buttons):
                     if btn == widget:
-                        component_name = f"🎮 Game Button: \"{game.get('name', 'Unknown')}\""
+                        component_name = f"Game Button: \"{game.get('name', 'Unknown')}\""
                         code_ref = f"self.game_buttons[{idx}]"
                         break
             elif widget_type == "QPushButton":
@@ -7212,7 +7240,7 @@ Stylesheet Selector:
             
             desc = QLabel("HELXAIC Music Player requires FFmpeg (FFprobe) to read audio track durations.\nClick below to download and install it automatically.")
             desc.setObjectName("musicMissingToolDesc")
-            desc.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #888888; font-size: 14px; background: transparent;")
+            desc.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #a0a5ad; font-size: 14px; background: transparent;")
             desc.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(desc)
             
@@ -7302,7 +7330,7 @@ Stylesheet Selector:
                 install_path = "%APPDATA%\\HELXAID\\tools\\ffmpeg"
             instructions = QLabel(f"Installs to\n{install_path}")
             instructions.setObjectName("musicMissingToolPath")
-            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #a0a5ad; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
             container_layout.addWidget(instructions)
@@ -7503,7 +7531,7 @@ Stylesheet Selector:
             
             desc = QLabel("HELXAIL CPU Controller requires RyzenAdj for AMD TDP & thermal limit tuning.\nClick below to download and install it to AppData automatically.")
             desc.setObjectName("cpuMissingToolDesc")
-            desc.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #888888; font-size: 14px; background: transparent;")
+            desc.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #a0a5ad; font-size: 14px; background: transparent;")
             desc.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(desc)
             
@@ -7589,7 +7617,7 @@ Stylesheet Selector:
             from integrations.tools_downloader import RYZENADJ_DIR
             instructions = QLabel(f"Installs to\n{RYZENADJ_DIR}")
             instructions.setObjectName("cpuMissingToolPath")
-            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #a0a5ad; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
             container_layout.addWidget(instructions)
@@ -7734,7 +7762,7 @@ Stylesheet Selector:
                 install_path = "C:\\Program Files\\JamesCJ60\\Universal x86 Tuning Utility\\"
             instructions = QLabel(f"Installs to\n{install_path}")
             instructions.setObjectName("cpuUxtuMissingToolPath")
-            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #a0a5ad; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
             container_layout.addWidget(instructions)
@@ -8932,7 +8960,7 @@ Stylesheet Selector:
                 install_path = "%APPDATA%\\HELXAID\\tools\\librehwmon"
             instructions = QLabel(f"Installs to\n{install_path}")
             instructions.setObjectName("hardwareMissingToolPath")
-            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #6c757d; margin-top: 10px; background: transparent;")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #a0a5ad; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
             instructions.setWordWrap(True)
             container_layout.addWidget(instructions)
@@ -12529,7 +12557,7 @@ Stylesheet Selector:
         """Show game statistics dashboard."""
         dialog = QDialog(parent_dialog or self)
         apply_custom_titlebar(dialog, "#000000")
-        dialog.setWindowTitle("📊 Game Statistics")
+        dialog.setWindowTitle("Game Statistics")
         dialog.setMinimumSize(500, 400)
         
         layout = QVBoxLayout(dialog)
@@ -12714,8 +12742,7 @@ First Played: {first_played_formatted}
                 name_text = game.get('name', 'Unknown')
                 if len(name_text) > 12:
                     name_text = name_text[:10] + ".."
-                playing_indicator = "🎮" if is_playing else ""
-                name_label = QLabel(f"{playing_indicator}{name_text}")
+                name_label = QLabel(name_text)
                 name_label.setAlignment(Qt.AlignCenter)
                 name_label.setFixedWidth(70)
                 name_label.setStyleSheet("font-size: 10px; font-weight: bold; color: #fff;")
@@ -14350,7 +14377,7 @@ First Played: {first_played_formatted}
                 # Show BOTH game and music
                 self.discord_rpc.update(
                     details=f"Playing {game_name}",
-                    state=f"🎵 {music_name}",
+                    state=f"Track: {music_name}",
                     large_image="launcher",
                     large_text="HELXAID",
                     small_image="music",
@@ -14406,7 +14433,7 @@ First Played: {first_played_formatted}
                     # Show BOTH game and music
                     self.discord_rpc.update(
                         details=f"Playing {game_name}",
-                        state=f"🎵 {clean_name}",
+                        state=f"Track: {clean_name}",
                         large_image="launcher",
                         large_text="HELXAID",
                         small_image="music",
@@ -14417,7 +14444,7 @@ First Played: {first_played_formatted}
                     # Just music
                     self.discord_rpc.update(
                         details="Listening to Music",
-                        state=f"🎵 {clean_name}",
+                        state=f"Track: {clean_name}",
                         large_image="launcher",
                         large_text="HELXAID - Music Player",
                         small_image="music",
@@ -15436,7 +15463,7 @@ First Played: {first_played_formatted}
         """Dialog to manage custom game folders to scan."""
         dialog = QDialog(self)
         apply_custom_titlebar(dialog, "#000000")
-        dialog.setWindowTitle("📁 Manage Local Game Folders")
+        dialog.setWindowTitle("Manage Local Game Folders")
         dialog.setMinimumWidth(500)
         dialog.setMinimumHeight(400)
         dialog.setStyleSheet("background-color: #1a1a1a; color: #e0e0e0;")
