@@ -1730,8 +1730,7 @@ class UniversalDownloaderPanel(QFrame):
 
 
 
-class DummyVideoWidget(QWidget):
-    def setAspectRatioMode(self, *args, **kwargs): pass
+
 
 
 
@@ -4078,7 +4077,6 @@ class PlayerBar(QFrame):
     loopClicked = Signal()
     seekChanged = Signal(float)
     volumeChanged = Signal(int)
-    videoToggled = Signal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -4587,37 +4585,7 @@ class PlayerBar(QFrame):
         self.time_current.clearFocus()
 
 
-class _PlayerBarOverlayWindow(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        from PySide6.QtWidgets import QVBoxLayout
-        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setObjectName("playerBarOverlayWindow")
 
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-        self._lay = lay
-
-    def set_bar(self, bar: QWidget):
-        try:
-            if bar is None:
-                return
-            try:
-                bar.setParent(self)
-            except Exception:
-                pass
-            try:
-                self._lay.addWidget(bar)
-            except Exception:
-                pass
-            try:
-                bar.show()
-            except Exception:
-                pass
-        except Exception:
-            pass
 
 
 class SplitResumeButton(QWidget):
@@ -4814,14 +4782,15 @@ class ResumeNotificationWidget(QFrame):
                 background: transparent;
                 border: none;
             }
-            QPushButton {
+            QPushButton#resumeDismissBtn {
                 color: #FFFFFF;
                 background-color: #333544;
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 6px;
-                padding: 0px 16px;
+                padding: 0px 14px;
                 min-height: 28px;
                 max-height: 28px;
+                min-width: 80px;
                 font-family: 'Orbitron', 'Rajdhani', sans-serif;
                 font-weight: bold;
                 font-size: 10px;
@@ -4860,27 +4829,7 @@ class ResumeNotificationWidget(QFrame):
         self.btn_dismiss.setObjectName("resumeDismissBtn")
         self.btn_dismiss.setCursor(Qt.PointingHandCursor)
         self.btn_dismiss.setFixedHeight(28)
-        self.btn_dismiss.setStyleSheet("""
-            QPushButton#resumeDismissBtn {
-                color: #FFFFFF;
-                background-color: #333544;
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 6px;
-                padding: 0px 16px;
-                min-height: 28px;
-                max-height: 28px;
-                font-family: 'Orbitron', 'Rajdhani', sans-serif;
-                font-weight: bold;
-                font-size: 10px;
-            }
-            QPushButton#resumeDismissBtn:hover {
-                background-color: #484b60;
-                border-color: rgba(255, 255, 255, 0.25);
-            }
-            QPushButton#resumeDismissBtn:pressed {
-                background-color: #242530;
-            }
-        """)
+        self.btn_dismiss.setMinimumWidth(80)
         
         layout.addWidget(self.btn_resume, alignment=Qt.AlignVCenter)
         layout.addWidget(self.btn_dismiss, alignment=Qt.AlignVCenter)
@@ -4967,14 +4916,14 @@ class ResumeNotificationWidget(QFrame):
         if not self.parent():
             return
         parent_w = self.parent().width()
-        max_allowed_w = max(280, parent_w - 40)
+        max_allowed_w = max(320, parent_w - 40)
         self.setMaximumWidth(max_allowed_w)
         
         if hasattr(self, '_full_title') and self._full_title:
             from PySide6.QtGui import QFontMetrics
             fm = QFontMetrics(self.lbl_msg.font())
             btns_w = self.btn_resume.sizeHint().width() + self.btn_dismiss.sizeHint().width()
-            avail_lbl_w = max(60, max_allowed_w - btns_w - 60)
+            avail_lbl_w = max(60, max_allowed_w - btns_w - 70)
             prefix = "Resume: "
             suffix = " ?"
             p_w = fm.horizontalAdvance(prefix)
@@ -5662,15 +5611,11 @@ class MusicPanelWidget(QWidget):
 
         self._helxaic_page_visible = False
         self._render_gate_reason = None
-        self._video_was_on_when_suspended = False
 
         self._is_maximized = False
-        self._subtitle_offset_ms = 0
 
-        # Internal statelse
+        # Internal state
         self._rtss_excluded_once = False
-        self._subtitle_appearance_applied_once = False
-        self._last_media_for_sub_auto_pick = None
         
         # Discord Rich Presence (deferred by 1s for zero-latency page switch)
         self._discord = None
@@ -5680,10 +5625,6 @@ class MusicPanelWidget(QWidget):
         appdata_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID")
         os.makedirs(appdata_dir, exist_ok=True)
         self._config_path = os.path.join(appdata_dir, "music_page.json")
-        
-        # Initialize subtitle preference defaults
-        self._subtitle_style_preset = 'outline'
-        self._subtitle_font_size = 16
         
         self._setup_ui()
         self._connect_signals()
@@ -6121,34 +6062,19 @@ class MusicPanelWidget(QWidget):
         # F: Toggle fullscreen
         if key == Qt.Key_F:
             try:
-                # In video view, use the VideoPlayerWidget fullscreen path so overlays
-                # (subtitles + PlayerBar overlay window) work correctly.
-                if getattr(self, '_video_mode', False) and hasattr(self, 'video_player') and self.video_player is not None:
-                    self.video_player._toggle_fullscreen()
-                else:
-                    self._toggle_fullscreen()
+                self._toggle_fullscreen()
             except Exception:
-                try:
-                    self._toggle_fullscreen()
-                except Exception:
-                    pass
+                pass
             event.accept()
             return
         
         # Escape: Exit fullscreen
         if key == Qt.Key_Escape:
-            try:
-                # Prefer exiting VideoPlayerWidget fullscreen when in video view.
-                if getattr(self, '_video_mode', False) and hasattr(self, 'video_player') and self.video_player is not None:
-                    if getattr(self.video_player, '_is_fullscreen', False):
-                        self.video_player._toggle_fullscreen()
-                        event.accept()
-                        return
-            except Exception:
-                pass
-
             if hasattr(self, '_is_fullscreen') and self._is_fullscreen:
-                self._toggle_fullscreen()
+                try:
+                    self._toggle_fullscreen()
+                except Exception:
+                    pass
                 event.accept()
                 return
         
@@ -6783,9 +6709,6 @@ class MusicPanelWidget(QWidget):
             QWidget#playlistPage {
                 background: transparent;
             }
-            QVideoWidget#videoWidget {
-                background: #000000;
-            }
         """)
 
     def resizeEvent(self, event):
@@ -7328,71 +7251,11 @@ class MusicPanelWidget(QWidget):
         self._menu_bar_widget = menu_bar  # Store reference for fullscreen toggle
         layout.addWidget(menu_bar)
 
-        try:
-            self._apply_saved_subtitle_style_preset()
-        except Exception:
-            pass
-
-        try:
-            self._apply_saved_subtitle_font_size()
-        except Exception:
-            pass
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    def _ensure_subtitle_state(self):
-        if not hasattr(self, '_current_media_path'):
-            self._current_media_path = None
-        if not hasattr(self, '_current_media_url'):
-            self._current_media_url = None
-        if not hasattr(self, '_subtitle_extract_cache'):
-            self._subtitle_extract_cache = {}
-        if not hasattr(self, '_subtitle_embedded_reverse'):
-            self._subtitle_embedded_reverse = {}
-        if not hasattr(self, '_subtitle_extract_last_error'):
-            self._subtitle_extract_last_error = {}
-        if not hasattr(self, '_subtitle_user_disabled'):
-            self._subtitle_user_disabled = False
-        if not hasattr(self, '_subtitle_prefer_embedded'):
-            self._subtitle_prefer_embedded = True
-        if not hasattr(self, '_subtitle_pref_loaded'):
-            self._subtitle_pref_loaded = False
-            
-    def _maybe_auto_load_sidecar_subtitles(self, media_path: str):
-        pass
-
-    def _auto_pick_embedded_subtitles_if_available(self):
-        pass
-        
-    def _apply_saved_subtitle_appearance(self):
-        pass
-        
-    def _apply_saved_subtitle_style_preset(self):
-        pass
-        
-    def _apply_saved_subtitle_font_size(self):
-        pass
-
     def _set_current_media_local_path(self, path: Optional[str]):
-        self._ensure_subtitle_state()
         self._current_media_path = path
         self._current_media_url = None
 
     def _set_current_media_url(self, url: Optional[str]):
-        self._ensure_subtitle_state()
         self._current_media_path = None
         self._current_media_url = url
 
@@ -7605,10 +7468,6 @@ class MusicPanelWidget(QWidget):
         self._player.playbackStateChanged.connect(self._on_state)
         self._player.errorOccurred.connect(self._on_player_error)
         self._player.mediaStatusChanged.connect(self._on_media_status)
-        
-        # Reconnect video output if in video mode
-        if getattr(self, '_video_mode', False) and hasattr(self, 'video_player'):
-            pass
         
         # Update current index
         self._current_index = self._crossfade_next_idx
@@ -8019,15 +7878,8 @@ class MusicPanelWidget(QWidget):
                 # Set flag to ignore StoppedState during track switch
                 self._switching_track = True
 
-                try:
-                    if hasattr(self, 'video_player'):
-                        self.video_player.clear_subtitles()
-                except Exception:
-                    pass
-
                 self._player.setSource(QUrl.fromLocalFile(path))
                 self._set_current_media_local_path(path)
-                self._maybe_auto_load_sidecar_subtitles(path)
                 self._player.play()
 
                 if hasattr(self, '_pending_seek_position') and self._pending_seek_position > 0:
@@ -8044,11 +7896,7 @@ class MusicPanelWidget(QWidget):
                     from PySide6.QtCore import QTimer
                     QTimer.singleShot(100, lambda: self._player.setPosition(target_seek))
 
-                try:
-                    from PySide6.QtCore import QTimer
-                    QTimer.singleShot(0, self._auto_pick_embedded_subtitles_if_available)
-                except Exception:
-                    pass
+                from PySide6.QtCore import QTimer
                 QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
                 
                 # Sync shuffle pointer if active
@@ -8528,125 +8376,6 @@ class MusicPanelWidget(QWidget):
         self._update_discord(title, artist, is_playing=True)
     
 
-    def _set_playerbar_overlay_enabled(self, enabled: bool):
-        try:
-            enabled = bool(enabled)
-        except Exception:
-            enabled = False
-
-        if enabled == getattr(self, '_playerbar_overlay_enabled', False):
-            return
-        self._playerbar_overlay_enabled = enabled
-
-        if enabled:
-            # Remove reserved layout space and move PlayerBar into a top-level overlay.
-            # QVideoWidget is a native surface and often cannot be reliably overlaid
-            # by normal child widgets.
-            try:
-                if hasattr(self, '_player_bar_container'):
-                    self._player_bar_container.hide()
-            except Exception:
-                pass
-
-            try:
-                if not hasattr(self, '_playerbar_overlay_window') or self._playerbar_overlay_window is None:
-                    self._playerbar_overlay_window = _PlayerBarOverlayWindow()
-                self._playerbar_overlay_window.set_bar(self.player_bar)
-                self._playerbar_overlay_window.show()
-                self._update_playerbar_overlay_geometry()
-            except Exception:
-                pass
-            return
-
-        # Restore to normal layout container.
-        try:
-            try:
-                if hasattr(self, '_playerbar_overlay_window') and self._playerbar_overlay_window is not None:
-                    self._playerbar_overlay_window.hide()
-            except Exception:
-                pass
-
-            self.player_bar.setParent(self._player_bar_container)
-            try:
-                lay = self._player_bar_container.layout()
-                if lay is not None:
-                    lay.addWidget(self.player_bar)
-            except Exception:
-                pass
-            self.player_bar.show()
-        except Exception:
-            pass
-
-        try:
-            if hasattr(self, '_player_bar_container'):
-                self._player_bar_container.show()
-        except Exception:
-            pass
-
-    def _update_playerbar_overlay_geometry(self):
-        try:
-            if not getattr(self, '_playerbar_overlay_enabled', False):
-                return
-            if not hasattr(self, 'video_player') or self.video_player is None:
-                return
-
-            if not hasattr(self, '_playerbar_overlay_window') or self._playerbar_overlay_window is None:
-                return
-
-            vw = None
-            try:
-                vw = getattr(self.video_player, 'video_widget', None)
-            except Exception:
-                vw = None
-            if vw is None:
-                return
-
-            # Position overlay window aligned to the video surface in global coords.
-            try:
-                from PySide6.QtCore import QPoint
-                gp = vw.mapToGlobal(QPoint(0, 0))
-                w = vw.width()
-                h = vw.height()
-            except Exception:
-                return
-
-            bar_h = self.player_bar.height() if self.player_bar.height() > 0 else 75
-            self._playerbar_overlay_window.setGeometry(int(gp.x()), int(gp.y() + max(0, h - bar_h)), int(max(1, w)), int(bar_h))
-            try:
-                self._playerbar_overlay_window.raise_()
-            except Exception:
-                pass
-        except Exception:
-            pass
-    
-
-
-    def _set_aspect_ratio(self, mode: str):
-        """Set video aspect ratio mode: fill, fit, or stretch."""
-        self._current_aspect_ratio = mode
-        
-        # Update checkmarks
-        self.action_aspect_fill.setChecked(mode == "fill")
-        self.action_aspect_fit.setChecked(mode == "fit")
-        self.action_aspect_stretch.setChecked(mode == "stretch")
-        
-        # Apply to video widget
-        if mode == "fill":
-            self.video_player.video_widget.setAspectRatioMode(Qt.KeepAspectRatioByExpanding)
-        elif mode == "fit":
-            self.video_player.video_widget.setAspectRatioMode(Qt.KeepAspectRatio)
-        elif mode == "stretch":
-            self.video_player.video_widget.setAspectRatioMode(Qt.IgnoreAspectRatio)
-        
-        # Save state when changed
-        if hasattr(self, '_config_path'):
-            # Use QTimer to avoid rapid multiple saves if called repeatedly
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(500, self._save_state)
-            
-        print(f"Aspect ratio set to: {mode}")
-
-    
     def eventFilter(self, obj, event):
         """Event filter for fullscreen key and mouse events."""
         from PySide6.QtCore import QEvent
@@ -8655,15 +8384,9 @@ class MusicPanelWidget(QWidget):
         if event.type() == QEvent.Type.MouseButtonDblClick:
             if event.button() == Qt.LeftButton:
                 try:
-                    if getattr(self, '_video_mode', False) and hasattr(self, 'video_player') and self.video_player is not None:
-                        self.video_player._toggle_fullscreen()
-                    else:
-                        self._toggle_fullscreen()
+                    self._toggle_fullscreen()
                 except Exception:
-                    try:
-                        self._toggle_fullscreen()
-                    except Exception:
-                        pass
+                    pass
                 return True
         
         if hasattr(self, '_is_fullscreen') and self._is_fullscreen:
@@ -8672,15 +8395,9 @@ class MusicPanelWidget(QWidget):
                 key = event.key()
                 if key == Qt.Key_F or key == Qt.Key_Escape:
                     try:
-                        if getattr(self, '_video_mode', False) and hasattr(self, 'video_player') and self.video_player is not None:
-                            self.video_player._toggle_fullscreen()
-                        else:
-                            self._toggle_fullscreen()
+                        self._toggle_fullscreen()
                     except Exception:
-                        try:
-                            self._toggle_fullscreen()
-                        except Exception:
-                            pass
+                        pass
                     return True
             
             # Handle mouse move events for player bar hover
@@ -9213,13 +8930,6 @@ class MusicPanelWidget(QWidget):
                     self._shuffled_sequence = []
                     self._shuffled_pointer = -1
                 
-                # Restore subtitle preferences
-                self._subtitle_style_preset = state.get('subtitle_style_preset', 'outline')
-                self._subtitle_font_size = state.get('subtitle_font_size', 16)
-                # Apply after video player is available
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, self._apply_saved_subtitle_appearance)
-                
                 print(f"Loaded state: {folder}")
         except Exception as e:
             print(f"Failed to load state: {e}")
@@ -9255,8 +8965,6 @@ class MusicPanelWidget(QWidget):
                 'loop_mode': getattr(self.player_bar, '_loop_mode', 'off'),
                 'shuffled_sequence': self._shuffled_sequence,
                 'shuffled_pointer': self._shuffled_pointer,
-                'subtitle_style_preset': getattr(self, '_subtitle_style_preset', 'outline'),
-                'subtitle_font_size': getattr(self, '_subtitle_font_size', 16),
                 'auto_audio_device': getattr(self, '_auto_audio_device', True),
                 'audio_device_id': getattr(self._audio_output.device(), 'id', lambda: b'')().data().decode('utf-8', 'ignore') if hasattr(self, '_audio_output') and hasattr(self._audio_output, 'device') else '',
                 'playback_speed': getattr(self._player, 'playbackRate', lambda: 1.0)() if hasattr(self, '_player') else 1.0,

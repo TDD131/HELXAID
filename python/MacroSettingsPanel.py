@@ -12635,10 +12635,9 @@ class BossKeyDynamicAppCombo(QComboBox):
     def setText(self, val: str):
         self.setEditText(val)
 
-    def set_target_mode(self, mode: str):
+    def set_target_mode(self, mode: str, target_text: str = None):
         self._target_mode = mode
-        curr = self.currentText().strip()
-        self.refresh_process_list(preserve_text=curr)
+        self.refresh_process_list(preserve_text=target_text)
 
     def refresh_process_list(self, preserve_text=None):
         target_text = preserve_text if preserve_text is not None else self.currentText().strip()
@@ -12653,11 +12652,11 @@ class BossKeyDynamicAppCombo(QComboBox):
                 val = app.get("path", app["name"])
             else:
                 val = app["name"]
-            if val not in items:
+            if val and val not in items:
                 items.append(val)
         
         self.addItems(items)
-        if target_text:
+        if target_text is not None:
             self.setEditText(target_text)
         elif items:
             self.setEditText(items[0])
@@ -13436,6 +13435,8 @@ class BossKeyController(QObject):
         self.hotkey = "F10"
         self.decoy_mode = "desktop"          # "desktop" | "browser" | "selected_app"
         self.custom_url = "https://www.google.com"
+        self.custom_process_name = "code.exe"
+        self.custom_file_path = ""
         self.custom_app = "code.exe"
         self.app_target_type = "process_name"  # "process_name" | "file_path"
         self.launch_fullscreen = False
@@ -13713,7 +13714,9 @@ class BossKeyController(QObject):
                 except Exception:
                     pass
         elif mode in ("selected_app", "notepad", "work_app"):
-            app_target = self.custom_app.strip() if self.custom_app.strip() else "code.exe"
+            app_target = self.get_active_custom_app()
+            if not app_target:
+                app_target = "code.exe"
             target_hwnd = self._find_matching_app_window(app_target)
             
             if target_hwnd:
@@ -13907,8 +13910,27 @@ class BossKeyController(QObject):
     def set_custom_url(self, url: str):
         self.custom_url = url
 
+    def get_active_custom_app(self) -> str:
+        if self.app_target_type == "file_path":
+            return self.custom_file_path.strip() if self.custom_file_path.strip() else self.custom_app.strip()
+        return self.custom_process_name.strip() if self.custom_process_name.strip() else self.custom_app.strip()
+
     def set_custom_app(self, app_name: str):
         self.custom_app = app_name
+        if self.app_target_type == "file_path":
+            self.custom_file_path = app_name
+        else:
+            self.custom_process_name = app_name
+
+    def set_custom_process_name(self, proc_name: str):
+        self.custom_process_name = proc_name
+        if self.app_target_type == "process_name":
+            self.custom_app = proc_name
+
+    def set_custom_file_path(self, file_path: str):
+        self.custom_file_path = file_path
+        if self.app_target_type == "file_path":
+            self.custom_app = file_path
 
     def set_app_target_type(self, target_type: str):
         self.app_target_type = target_type
@@ -14738,23 +14760,38 @@ class BossKeyPanel(QWidget):
                 if url_val.startswith("http"):
                     self.browser_combo.setCurrentText(url_val)
                     self.controller.set_custom_url(url_val)
-                else:
-                    self.app_input.setText(url_val)
-                    self.controller.set_custom_app(url_val)
-            if "custom_app" in data and data["custom_app"]:
-                app_val = str(data["custom_app"])
-                self.app_input.setText(app_val)
-                self.controller.set_custom_app(app_val)
+            
+            if "custom_process_name" in data and data["custom_process_name"]:
+                self.controller.custom_process_name = str(data["custom_process_name"])
+            elif "custom_app" in data and data["custom_app"] and not ("/" in str(data["custom_app"]) or "\\" in str(data["custom_app"])):
+                self.controller.custom_process_name = str(data["custom_app"])
+            else:
+                self.controller.custom_process_name = "code.exe"
+
+            if "custom_file_path" in data and data["custom_file_path"]:
+                self.controller.custom_file_path = str(data["custom_file_path"])
+            elif "custom_app" in data and data["custom_app"] and ("/" in str(data["custom_app"]) or "\\" in str(data["custom_app"])):
+                self.controller.custom_file_path = str(data["custom_app"])
+            else:
+                self.controller.custom_file_path = ""
+
+            app_type = "process_name"
             if "app_target_type" in data:
-                app_type = str(data["app_target_type"])
-                if app_type in ("process_name", "file_path"):
-                    self.app_type_toggle.set_mode(app_type, animate=False)
-                    self.app_combo.set_target_mode(app_type)
-                    self.controller.set_app_target_type(app_type)
-            if "custom_app" in data and data["custom_app"]:
-                app_val = str(data["custom_app"])
-                self.app_combo.setText(app_val)
-                self.controller.set_custom_app(app_val)
+                raw_type = str(data["app_target_type"])
+                if raw_type in ("process_name", "file_path"):
+                    app_type = raw_type
+
+            self.app_type_toggle.set_mode(app_type, animate=False)
+            self.controller.set_app_target_type(app_type)
+            
+            target_text = self.controller.custom_file_path if app_type == "file_path" else self.controller.custom_process_name
+            if not target_text and app_type == "file_path":
+                target_text = ""
+            elif not target_text:
+                target_text = "code.exe"
+
+            self.app_combo.set_target_mode(app_type, target_text=target_text)
+            self.controller.set_custom_app(target_text)
             if "decoy_mode" in data:
                 raw_mode = str(data["decoy_mode"])
                 if raw_mode in ("notepad", "work_app"):
@@ -14791,7 +14828,9 @@ class BossKeyPanel(QWidget):
             "hotkey": self.controller.hotkey,
             "decoy_mode": self.controller.decoy_mode,
             "custom_url": self.controller.custom_url,
-            "custom_app": self.controller.custom_app,
+            "custom_app": self.controller.get_active_custom_app(),
+            "custom_process_name": self.controller.custom_process_name,
+            "custom_file_path": self.controller.custom_file_path,
             "app_target_type": self.controller.app_target_type,
             "launch_fullscreen": self.controller.launch_fullscreen,
             "auto_mute_sound": self.controller.auto_mute_sound,
@@ -14843,19 +14882,35 @@ class BossKeyPanel(QWidget):
         self._save_settings()
 
     def _on_selected_app_changed(self, app_name: str):
+        if not app_name:
+            return
+        if self.controller.app_target_type == "file_path":
+            self.controller.custom_file_path = app_name
+        else:
+            self.controller.custom_process_name = app_name
         self.controller.set_custom_app(app_name)
         self._save_settings()
 
     def _on_app_target_type_changed(self, mode: str):
         self.controller.set_app_target_type(mode)
-        self.app_combo.set_target_mode(mode)
-        if mode == "process_name":
-            curr = self.app_combo.currentText().strip()
-            if "/" in curr or "\\" in curr:
-                base_name = os.path.basename(curr)
-                if base_name:
-                    self.app_combo.setText(base_name)
-                    self.controller.set_custom_app(base_name)
+        if mode == "file_path":
+            target_val = self.controller.custom_file_path
+            if not target_val and self.controller.custom_process_name:
+                for app in scan_active_gui_processes():
+                    if app.get("name", "").lower() == self.controller.custom_process_name.lower():
+                        found_path = app.get("path", "")
+                        if found_path:
+                            target_val = found_path
+                            self.controller.custom_file_path = found_path
+                            break
+        else:
+            target_val = self.controller.custom_process_name
+            if not target_val:
+                target_val = "code.exe"
+                self.controller.custom_process_name = target_val
+        
+        self.app_combo.set_target_mode(mode, target_text=target_val)
+        self.controller.set_custom_app(target_val)
         self._save_settings()
 
     def _on_browse_app_clicked(self):
@@ -14867,24 +14922,33 @@ class BossKeyPanel(QWidget):
         )
         if file_path:
             file_path = file_path.replace("\\", "/")
+            self.controller.custom_file_path = file_path
+            base_name = os.path.basename(file_path)
+            if base_name:
+                self.controller.custom_process_name = base_name
             self.app_type_toggle.set_mode("file_path")
-            self.app_combo.set_target_mode("file_path")
-            self.app_combo.setText(file_path)
-            self.controller.set_custom_app(file_path)
             self.controller.set_app_target_type("file_path")
+            self.app_combo.set_target_mode("file_path", target_text=file_path)
+            self.controller.set_custom_app(file_path)
             self._save_settings()
 
     def _on_window_picked(self, proc_name: str, full_path: str, win_title: str):
         if not proc_name and not full_path:
             return
-        if self.controller.app_target_type == "file_path" and full_path:
-            target_val = full_path
-        else:
-            target_val = proc_name if proc_name else os.path.basename(full_path)
+        if full_path:
+            clean_path = full_path.replace("\\", "/")
+            self.controller.custom_file_path = clean_path
+        if proc_name:
+            self.controller.custom_process_name = proc_name
+        elif full_path:
+            self.controller.custom_process_name = os.path.basename(full_path)
 
-        self.app_combo.blockSignals(True)
-        self.app_combo.setText(target_val)
-        self.app_combo.blockSignals(False)
+        if self.controller.app_target_type == "file_path" and full_path:
+            target_val = self.controller.custom_file_path
+        else:
+            target_val = self.controller.custom_process_name
+
+        self.app_combo.set_target_mode(self.controller.app_target_type, target_text=target_val)
         self.controller.set_custom_app(target_val)
         self._save_settings()
 
