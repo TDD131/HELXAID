@@ -158,6 +158,68 @@ except ImportError:
 
 from AnimatedButton import AnimatedCheckBox
 
+class MediaLibraryTree(QTreeWidget):
+    """Custom QTreeWidget subclass with native C++ virtual overrides for Drag & Drop and viewport events."""
+    def __init__(self, page_parent=None, parent=None):
+        super().__init__(parent)
+        self.page_parent = page_parent
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if obj == self.viewport():
+            if event.type() in (QEvent.DragEnter, QEvent.DragMove):
+                if event.source() == self:
+                    event.ignore()
+                    return True
+                if event.mimeData().hasUrls():
+                    event.acceptProposedAction()
+                    return True
+            elif event.type() == QEvent.Drop:
+                if event.source() == self:
+                    event.ignore()
+                    return True
+                if event.mimeData().hasUrls():
+                    urls = event.mimeData().urls()
+                    paths = [u.toLocalFile() for u in urls if u.isLocalFile()]
+                    if paths and self.page_parent:
+                        self.page_parent._process_dropped_paths(paths)
+                    event.acceptProposedAction()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def dragEnterEvent(self, event):
+        if event.source() == self:
+            event.ignore()
+            return
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.source() == self:
+            event.ignore()
+            return
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.source() == self:
+            event.ignore()
+            return
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            paths = [u.toLocalFile() for u in urls if u.isLocalFile()]
+            if paths and self.page_parent:
+                self.page_parent._process_dropped_paths(paths)
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
+
 class MediaLibraryPage(QWidget):
     """The Media Library tab using a Tree View for folders and tracks."""
     folderSelected = Signal(str)
@@ -284,7 +346,7 @@ class MediaLibraryPage(QWidget):
         top_layout.addWidget(self.search_bar)
         
         # --- Tree Widget ---
-        self.tree = QTreeWidget()
+        self.tree = MediaLibraryTree(page_parent=self)
         self.tree.setObjectName("mediaLibraryTree")
         self.tree.setColumnCount(5)
         self.tree.setHeaderLabels(["#", "Title", "Artist", "Album", "Duration"])
@@ -492,10 +554,6 @@ class MediaLibraryPage(QWidget):
         self.tree.mouseDoubleClickEvent = _tree_mouseDoubleClickEvent
         # ------------------------
         
-        self.tree.dragEnterEvent = self.dragEnterEvent
-        self.tree.dragMoveEvent = self.dragMoveEvent
-        self.tree.dropEvent = self.dropEvent
-        
         # Override mimeData to allow dragging items out (to OS or other widgets)
         orig_mimeData = self.tree.mimeData
         def _tree_mimeData(items):
@@ -688,6 +746,7 @@ class MediaLibraryPage(QWidget):
                 
     def _on_allow_same_toggled(self, checked):
         self._allow_same_folder = checked
+        self._save_library()
 
     # --- Context Menu ---
     def _show_context_menu(self, pos):
@@ -700,9 +759,10 @@ class MediaLibraryPage(QWidget):
         menu = QMenu(self)
         menu.setObjectName("mediaLibraryContextMenu")
         menu.setStyleSheet("""
-            QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; }
-            QMenu::item { padding: 6px 20px; border-radius: 4px; }
+            QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; font-family: 'Orbitron', sans-serif; }
+            QMenu::item { padding: 6px 20px; border-radius: 4px; font-size: 12px; }
             QMenu::item:selected { background-color: #FF5B06; }
+            QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 4px 6px; }
         """)
         
         target_item = item if item else (selected[0] if len(selected) == 1 else None)
@@ -724,10 +784,26 @@ class MediaLibraryPage(QWidget):
         menu.addAction(add_all_action)
         
         menu.addSeparator()
+
+        # Add Media Actions
+        add_file_action = QAction("Add File...\tCtrl+O", self)
+        add_file_action.triggered.connect(self._add_single_file)
+        menu.addAction(add_file_action)
+
+        add_multiple_action = QAction("Add Multiple Files...\tCtrl+K, Ctrl+O", self)
+        add_multiple_action.triggered.connect(self._add_multiple_files)
+        menu.addAction(add_multiple_action)
+
+        add_folder_action = QAction("Add Folder...\tCtrl+Shift+O", self)
+        add_folder_action.triggered.connect(self._add_single_folder)
+        menu.addAction(add_folder_action)
         
-        delete_selected_action = QAction("Delete Selected", self)
-        delete_selected_action.triggered.connect(self._on_delete_selected)
-        menu.addAction(delete_selected_action)
+        menu.addSeparator()
+        
+        if selected:
+            delete_selected_action = QAction("Delete Selected", self)
+            delete_selected_action.triggered.connect(self._on_delete_selected)
+            menu.addAction(delete_selected_action)
         
         delete_all_action = QAction("Delete All", self)
         delete_all_action.triggered.connect(self._on_delete_all)
@@ -914,10 +990,11 @@ class MediaLibraryPage(QWidget):
             self._refresh_tree()
 
     def _add_path_to_library(self, path, is_folder):
+        norm_target = os.path.normcase(os.path.normpath(path))
         if not self._allow_same_folder:
             # Check if path already exists
-            if any(item.get('path') == path for item in self._library_data):
-                return # Skip
+            if any(os.path.normcase(os.path.normpath(item.get('path', ''))) == norm_target for item in self._library_data):
+                return # Skip duplicate
         
         self._library_data.append({
             'path': path,
@@ -932,6 +1009,11 @@ class MediaLibraryPage(QWidget):
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
                     self._library_data = settings.get('media_library_items', [])
+                    self._allow_same_folder = settings.get('media_library_allow_same_folder', False)
+                    if hasattr(self, 'allow_same_btn') and self.allow_same_btn:
+                        self.allow_same_btn.blockSignals(True)
+                        self.allow_same_btn.setChecked(self._allow_same_folder)
+                        self.allow_same_btn.blockSignals(False)
         except Exception as e:
             print(f"[MediaLibrary] Error loading settings: {e}")
             
@@ -945,6 +1027,7 @@ class MediaLibraryPage(QWidget):
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
             settings['media_library_items'] = self._library_data
+            settings['media_library_allow_same_folder'] = getattr(self, '_allow_same_folder', False)
             with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
         except Exception as e:

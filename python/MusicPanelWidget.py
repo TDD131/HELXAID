@@ -3241,6 +3241,11 @@ class PlaylistTable(QWidget):
     deleteAll = Signal()
     flattenGroup = Signal(str)
     
+    # Context menu media addition signals
+    addFileRequested = Signal()
+    addMultipleFilesRequested = Signal()
+    addFolderRequested = Signal()
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("playlistTableContainer")
@@ -3494,12 +3499,28 @@ class PlaylistTable(QWidget):
                     if path and os.path.exists(path):
                         urls.append(QUrl.fromLocalFile(path))
                 elif role_data == "folder":
-                    group_name = item.text(1)
-                    for track in self._tracks:
-                        if track.get('playlist_group') == group_name:
-                            path = track.get('path')
-                            if path and os.path.exists(path):
-                                urls.append(QUrl.fromLocalFile(path))
+                    folder_path = item.data(1, Qt.UserRole)
+                    if folder_path and os.path.exists(folder_path):
+                        urls.append(QUrl.fromLocalFile(folder_path))
+                    else:
+                        group_name = item.text(1)
+                        found_folder = None
+                        for track in self._tracks:
+                            if track.get('playlist_group') == group_name:
+                                tpath = track.get('path')
+                                if tpath and os.path.exists(tpath):
+                                    parent_dir = os.path.dirname(tpath)
+                                    if os.path.isdir(parent_dir):
+                                        found_folder = parent_dir
+                                        break
+                        if found_folder and os.path.exists(found_folder):
+                            urls.append(QUrl.fromLocalFile(found_folder))
+                        else:
+                            for track in self._tracks:
+                                if track.get('playlist_group') == group_name:
+                                    path = track.get('path')
+                                    if path and os.path.exists(path):
+                                        urls.append(QUrl.fromLocalFile(path))
             if urls:
                 mime.setUrls(urls)
             return mime
@@ -3713,9 +3734,10 @@ class PlaylistTable(QWidget):
         
         menu = QMenu(self)
         menu.setStyleSheet("""
-            QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; }
-            QMenu::item { padding: 6px 20px; border-radius: 4px; }
+            QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; font-family: 'Orbitron', sans-serif; }
+            QMenu::item { padding: 6px 20px; border-radius: 4px; font-size: 12px; }
             QMenu::item:selected { background-color: #FF5B06; }
+            QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 4px 6px; }
         """)
         
         item = self.tree.itemAt(pos)
@@ -3744,13 +3766,29 @@ class PlaylistTable(QWidget):
             menu.addAction(extract_action)
             menu.addSeparator()
 
+        # Add Media Actions
+        add_file_action = QAction("Add File...\tCtrl+O", self)
+        add_file_action.triggered.connect(self.addFileRequested.emit)
+        menu.addAction(add_file_action)
+
+        add_multiple_action = QAction("Add Multiple Files...\tCtrl+K, Ctrl+O", self)
+        add_multiple_action.triggered.connect(self.addMultipleFilesRequested.emit)
+        menu.addAction(add_multiple_action)
+
+        add_folder_action = QAction("Add Folder...\tCtrl+Shift+O", self)
+        add_folder_action.triggered.connect(self.addFolderRequested.emit)
+        menu.addAction(add_folder_action)
+
+        menu.addSeparator()
+
         delete_selected_action = QAction("Delete Selected", self)
         delete_selected_action.triggered.connect(self._on_delete_selected)
         
         delete_all_action = QAction("Delete All", self)
         delete_all_action.triggered.connect(lambda: self.deleteAll.emit())
         
-        menu.addAction(delete_selected_action)
+        if selected:
+            menu.addAction(delete_selected_action)
         menu.addAction(delete_all_action)
         menu.exec_(self.tree.viewport().mapToGlobal(pos))
 
@@ -3944,6 +3982,20 @@ class PlaylistTable(QWidget):
             folder_item.setIcon(1, QIcon(icon_path))
             folder_item.setText(1, group)
             folder_item.setData(0, Qt.UserRole, "folder")
+            
+            # Store group folder path if available
+            group_folder_path = None
+            for _, trk in items:
+                t_p = trk.get('path')
+                if t_p and os.path.exists(t_p):
+                    p_dir = os.path.dirname(t_p)
+                    if os.path.isdir(p_dir) and (os.path.basename(p_dir) == group or not group_folder_path):
+                        group_folder_path = p_dir
+                        if os.path.basename(p_dir) == group:
+                            break
+            if group_folder_path:
+                folder_item.setData(1, Qt.UserRole, group_folder_path)
+                
             for c in range(4):
                 folder_item.setBackground(c, QColor(40, 40, 45, 180))
                 font = folder_item.font(c)
@@ -6141,8 +6193,17 @@ class MusicPanelWidget(QWidget):
             event.acceptProposedAction()
             
     def dropEvent(self, event):
-        # Only process drops if the Playlist tab is active
-        if hasattr(self, 'stack') and self.stack.currentIndex() != 0:
+        # If Media Library tab is active (index 1), delegate directly to media_lib_page
+        if hasattr(self, 'stack') and self.stack.currentIndex() == 1:
+            if hasattr(self, 'media_lib_page') and self.media_lib_page:
+                if hasattr(self.media_lib_page, 'tree') and event.source() == self.media_lib_page.tree:
+                    event.ignore()
+                    return
+                urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
+                paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
+                if paths:
+                    self.media_lib_page._process_dropped_paths(paths)
+                    event.acceptProposedAction()
             return
             
         # Ignore internal drops from the playlist itself to prevent accidental track duplication and playback
@@ -6878,6 +6939,13 @@ class MusicPanelWidget(QWidget):
                     
                 del self._playlist[idx]
                 
+        if len(self._playlist) == 0:
+            self._music_folder = ''
+            self._last_known_position = 0
+            self._pending_seek_position = 0
+            if hasattr(self, 'resume_banner') and self.resume_banner.isVisible():
+                self.resume_banner.hide()
+            
         self._save_state()
         if hasattr(self, 'table'):
             self.table.set_tracks(self._playlist)
@@ -6886,10 +6954,15 @@ class MusicPanelWidget(QWidget):
     def _clear_playlist(self):
         """Clear all tracks from the playlist."""
         self._playlist = []
+        self._music_folder = ''
+        self._last_known_position = 0
+        self._pending_seek_position = 0
         self._player.stop()
         self._current_index = -1
         self.player_bar.set_playing(False)
         self.player_bar.set_track_info("", "")
+        if hasattr(self, 'resume_banner') and self.resume_banner.isVisible():
+            self.resume_banner.hide()
         self._save_state()
         if hasattr(self, 'table'):
             self.table.set_tracks(self._playlist)
@@ -6953,6 +7026,9 @@ class MusicPanelWidget(QWidget):
         self.table.deleteSelected.connect(self._delete_playlist_tracks)
         self.table.deleteAll.connect(self._clear_playlist)
         self.table.flattenGroup.connect(self._flatten_playlist_group)
+        self.table.addFileRequested.connect(self._open_file_direct)
+        self.table.addMultipleFilesRequested.connect(self._open_multiple_files_direct)
+        self.table.addFolderRequested.connect(self._browse_folder_direct)
         
     def _ensure_player(self):
         """Ensure main QMediaPlayer is initialized lazily."""
@@ -7954,6 +8030,20 @@ class MusicPanelWidget(QWidget):
                 self._maybe_auto_load_sidecar_subtitles(path)
                 self._player.play()
 
+                if hasattr(self, '_pending_seek_position') and self._pending_seek_position > 0:
+                    target_seek = self._pending_seek_position
+                    self._pending_seek_position = 0
+                    def _do_resume_seek(status):
+                        if status == QMediaPlayer.LoadedMedia or self._player.playbackState() == QMediaPlayer.PlayingState:
+                            self._player.setPosition(target_seek)
+                            try:
+                                self._player.mediaStatusChanged.disconnect(_do_resume_seek)
+                            except Exception:
+                                pass
+                    self._player.mediaStatusChanged.connect(_do_resume_seek)
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(100, lambda: self._player.setPosition(target_seek))
+
                 try:
                     from PySide6.QtCore import QTimer
                     QTimer.singleShot(0, self._auto_pick_embedded_subtitles_if_available)
@@ -7980,6 +8070,10 @@ class MusicPanelWidget(QWidget):
     
     def _toggle_play(self):
         from PySide6.QtMultimedia import QMediaPlayer
+        
+        if hasattr(self, 'resume_banner') and self.resume_banner.isVisible():
+            self.resume_banner.hide()
+            self._pending_seek_position = 0
         
         # If no track is currently selected/playing, play the first or a random track
         if getattr(self, '_current_index', -1) < 0 and hasattr(self, '_playlist') and self._playlist:
@@ -8864,13 +8958,54 @@ class MusicPanelWidget(QWidget):
                 target_path = None
 
         if target_path and os.path.exists(target_path):
-            parent_folder = os.path.dirname(target_path)
+            matched_folder = None
+            norm_target_path = os.path.normcase(os.path.normpath(target_path))
+            
+            # Check settings.json media_library_items
+            settings_path = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json')
+            try:
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        s_data = json.load(f)
+                        for item in s_data.get('media_library_items', []):
+                            if item.get('is_folder'):
+                                f_path = os.path.normcase(os.path.normpath(item.get('path', '')))
+                                if norm_target_path.startswith(f_path + os.sep) or norm_target_path == f_path:
+                                    matched_folder = item.get('path')
+                                    break
+            except Exception:
+                pass
+            
+            parent_folder = matched_folder if matched_folder else os.path.dirname(target_path)
+            
+            # If parent_folder is a broad root directory containing other registered media library folders, do not swallow the entire root
+            is_root_container = False
+            if not matched_folder and parent_folder and os.path.isdir(parent_folder):
+                try:
+                    if os.path.exists(settings_path):
+                        with open(settings_path, 'r', encoding='utf-8') as f:
+                            s_data = json.load(f)
+                            norm_parent = os.path.normcase(os.path.normpath(parent_folder))
+                            for item in s_data.get('media_library_items', []):
+                                if item.get('is_folder'):
+                                    f_p = os.path.normcase(os.path.normpath(item.get('path', '')))
+                                    if f_p.startswith(norm_parent + os.sep) and f_p != norm_parent:
+                                        is_root_container = True
+                                        break
+                except Exception:
+                    pass
+
+            if is_root_container:
+                print(f"[Music DEBUG] Track is a standalone file in root directory '{parent_folder}'. Resuming as single track.")
+                self._finalize_resume()
+                return
+
             if parent_folder and os.path.isdir(parent_folder):
                 folder_name = os.path.basename(parent_folder) or "Folder"
                 print(f"[Music DEBUG] Expanding parent folder '{folder_name}' into Track Playlist: '{parent_folder}'")
                 self._load_tracks_from_folder(parent_folder)
                 
-                # Assign playlist_group so the folder remains EXPANDED as a group in PlaylistTable (not exported/flattened)
+                # Assign playlist_group so the folder remains EXPANDED as a group in PlaylistTable
                 for t in self._playlist:
                     t['playlist_group'] = folder_name
                     
@@ -8883,6 +9018,8 @@ class MusicPanelWidget(QWidget):
                 self._pending_single_track_resume = None
                 if seek_pos > 0:
                     self._pending_seek_position = seek_pos
+                elif hasattr(self, '_last_known_position') and self._last_known_position > 0:
+                    self._pending_seek_position = self._last_known_position
                     
                 if hasattr(self, 'stack'):
                     self.stack.setCurrentIndex(0)
@@ -8937,6 +9074,8 @@ class MusicPanelWidget(QWidget):
             self.table.set_tracks(self._playlist)
             if hasattr(self, 'stack'):
                 self.stack.setCurrentIndex(0)
+            if hasattr(self, '_last_known_position') and self._last_known_position > 0:
+                self._pending_seek_position = self._last_known_position
             self._play_track(self._current_index)
             return
             
@@ -8983,26 +9122,14 @@ class MusicPanelWidget(QWidget):
                                 except Exception:
                                     pass
                                 
-                                # Restore last position after media loads
+                                # Show resume banner if last position > 0, but DO NOT auto-seek
                                 last_pos = state.get('last_position', 0)
                                 if last_pos > 0:
                                     self._last_known_position = last_pos
+                                    self._pending_seek_position = last_pos
                                     self.resume_banner.set_track_title(track.get('title', 'Unknown'))
                                     self.resume_banner.show()
                                     self.resume_banner.raise_()
-                                    self._pending_seek_position = last_pos
-                                    # Connect once to restore position when media loads
-                                    def on_media_loaded(status):
-                                        if status == QMediaPlayer.LoadedMedia:
-                                            if hasattr(self, '_pending_seek_position') and self._pending_seek_position > 0:
-                                                self._player.setPosition(self._pending_seek_position)
-                                                print(f"Restored position: {self._pending_seek_position / 1000:.1f}s")
-                                                self._pending_seek_position = 0
-                                            try:
-                                                self._player.mediaStatusChanged.disconnect(on_media_loaded)
-                                            except:
-                                                pass
-                                    self._player.mediaStatusChanged.connect(on_media_loaded)
                             
                             print(f"Restored last track: {track.get('title')}")
                             track_found = True
@@ -9105,10 +9232,17 @@ class MusicPanelWidget(QWidget):
                 return
                 
             current_track_path = ''
-            if 0 <= self._current_index < len(self._playlist):
-                current_track_path = self._playlist[self._current_index].get('path', '')
-            # Use tracked position (player.position() returns 0 when stopped)
-            position = getattr(self, '_last_known_position', 0) or self._player.position()
+            position = 0
+            if hasattr(self, '_playlist') and self._playlist and len(self._playlist) > 0:
+                if 0 <= self._current_index < len(self._playlist):
+                    current_track_path = self._playlist[self._current_index].get('path', '')
+                # Use tracked position (player.position() returns 0 when stopped)
+                position = getattr(self, '_last_known_position', 0) or (self._player.position() if hasattr(self, '_player') and self._player else 0)
+            else:
+                self._music_folder = ''
+                self._last_known_position = 0
+                self._pending_seek_position = 0
+                
             print(f"[Music] Saving position: {position}ms (_last_known: {getattr(self, '_last_known_position', 'not set')})")
             
             state = {
@@ -9138,8 +9272,13 @@ class MusicPanelWidget(QWidget):
             print(f"Failed to save state: {e}")
     
     def _browse_folder_direct(self):
-        """Quick folder selection from player bar button."""
+        """Quick folder selection from player bar button or Menu Bar (Ctrl+Shift+O)."""
         from PySide6.QtWidgets import QFileDialog
+        
+        # Check if user is currently on Media Library tab (index 1)
+        if hasattr(self, 'stack') and self.stack.currentIndex() == 1 and hasattr(self, 'media_lib_page') and self.media_lib_page:
+            self.media_lib_page._add_single_folder()
+            return
         
         start = getattr(self, '_music_folder', None) or os.path.expanduser("~")
         folder = QFileDialog.getExistingDirectory(self, "Select Media Folder", start, QFileDialog.ShowDirsOnly)
@@ -9149,12 +9288,18 @@ class MusicPanelWidget(QWidget):
             self._load_tracks_from_folder(folder)
             # Save immediately so folder is remembered after restart
             QTimer.singleShot(500, self._save_state)
+
     def _open_multiple_files_direct(self):
-        """Pick multiple media files and append them to current playlist."""
+        """Pick multiple media files and append them to current playlist or add to Media Library."""
         from PySide6.QtWidgets import QFileDialog
         import datetime
         import os
         
+        # Check if user is currently on Media Library tab (index 1)
+        if hasattr(self, 'stack') and self.stack.currentIndex() == 1 and hasattr(self, 'media_lib_page') and self.media_lib_page:
+            self.media_lib_page._add_multiple_files()
+            return
+            
         audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
         filters = "Media Files (" + " ".join(["*" + e for e in audio_exts]) + ");;All Files (*.*)"
         start_dir = getattr(self, '_music_folder', None) or os.path.expanduser("~")
@@ -9240,15 +9385,36 @@ class MusicPanelWidget(QWidget):
             except Exception:
                 pass
             
+            ffmpeg_location = None
+            try:
+                appdata = os.environ.get('APPDATA', '')
+                helxaid_ffmpeg_bin = os.path.join(appdata, 'HELXAID', 'tools', 'ffmpeg', 'bin')
+                if os.path.isdir(helxaid_ffmpeg_bin):
+                    ffmpeg_location = helxaid_ffmpeg_bin
+            except Exception:
+                ffmpeg_location = None
+
             ydl_opts = {
                 'format': 'bestaudio[ext=m4a]/bestaudio/best',
                 'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+                'nocheckcertificate': True,
+                'noplaylist': True,
                 'quiet': False,
                 'no_warnings': False,
                 'extract_flat': False,
-                'noplaylist': True,
-                'default_search': 'ytsearch'
+                'retries': 10,
+                'fragment_retries': 10,
+                'default_search': 'ytsearch',
+                'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web', 'ios']}},
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                },
             }
+
+            if ffmpeg_location:
+                ydl_opts['ffmpeg_location'] = ffmpeg_location
             
             if hasattr(self, 'stream_loading'):
                 ydl_opts['logger'] = YtLogger(self.stream_loading)
@@ -9348,6 +9514,18 @@ class MusicPanelWidget(QWidget):
             print("[Clipboard] Invalid path or does not exist. Aborting.")
             return
             
+        # Check if user is currently on Media Library tab (index 1)
+        if hasattr(self, 'stack') and self.stack.currentIndex() == 1 and hasattr(self, 'media_lib_page') and self.media_lib_page:
+            if os.path.isdir(path):
+                self.media_lib_page.add_path_to_library(path, is_folder=True)
+                return
+            elif os.path.isfile(path):
+                ext = os.path.splitext(path)[1].lower()
+                audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
+                if ext in audio_exts:
+                    self.media_lib_page.add_path_to_library(path, is_folder=False)
+                return
+            
         if os.path.isdir(path):
             audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
             folder_name = os.path.basename(path)
@@ -9403,9 +9581,14 @@ class MusicPanelWidget(QWidget):
                 self._fetch_metadata_async(self._playlist, "Single File")
 
     def _open_file_direct(self):
-        """Pick a single media file and play it."""
+        """Pick a single media file and play it or add to Media Library."""
         from PySide6.QtWidgets import QFileDialog
         import datetime
+        
+        # Check if user is currently on Media Library tab (index 1)
+        if hasattr(self, 'stack') and self.stack.currentIndex() == 1 and hasattr(self, 'media_lib_page') and self.media_lib_page:
+            self.media_lib_page._add_single_file()
+            return
         
         audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
         dialog_filters = "Media Files (" + " ".join(["*" + e for e in (audio_exts)]) + ");;All Files (*.*)"
@@ -9661,6 +9844,63 @@ class MusicPanelWidget(QWidget):
         t = threading.Thread(target=_fetch_worker, daemon=True)
         t.start()
 
+    def _on_tracks_dropped(self, paths):
+        """Fallback handler for native Windows OLE drops routed from launcher.py."""
+        if not paths:
+            return
+        if hasattr(self, 'stack') and self.stack.currentIndex() == 1 and hasattr(self, 'media_lib_page') and self.media_lib_page:
+            self.media_lib_page._process_dropped_paths(paths)
+            return
+        # Otherwise handle for playlist
+        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
+        if not hasattr(self, '_playlist'):
+            self._playlist = []
+        tracks_to_add = []
+        import datetime
+        for path in paths:
+            if os.path.isdir(path):
+                folder_name = os.path.basename(path) or path
+                try:
+                    for entry in os.scandir(path):
+                        if entry.is_file() and os.path.splitext(entry.name)[1].lower() in audio_exts:
+                            title = os.path.splitext(entry.name)[0]
+                            try:
+                                mtime = entry.stat().st_mtime
+                                dt = datetime.datetime.fromtimestamp(mtime)
+                                date_str = dt.strftime("%b %d, %Y")
+                            except Exception:
+                                date_str = ""
+                            tracks_to_add.append({
+                                'path': entry.path,
+                                'title': title,
+                                'artist': 'Dropped File',
+                                'duration': 0,
+                                'date_added': date_str,
+                                'playlist_group': folder_name
+                            })
+                except Exception:
+                    pass
+            elif os.path.isfile(path):
+                ext = os.path.splitext(path)[1].lower()
+                if ext in audio_exts:
+                    title = os.path.splitext(os.path.basename(path))[0]
+                    try:
+                        mtime = os.path.getmtime(path)
+                        dt = datetime.datetime.fromtimestamp(mtime)
+                        date_str = dt.strftime("%b %d, %Y")
+                    except Exception:
+                        date_str = ""
+                    tracks_to_add.append({
+                        'path': path,
+                        'title': title,
+                        'artist': 'Dropped File',
+                        'duration': 0,
+                        'date_added': date_str
+                    })
+        if tracks_to_add:
+            self._append_tracks_to_playlist(tracks_to_add)
+            self._fetch_metadata_async(self._playlist, "Dropped Media")
+
     def _load_tracks_from_folder(self, folder: str):
         """Scan folder and load tracks."""
         # Use Python fallback scanner - C++ has encoding issues with special characters
@@ -9673,31 +9913,34 @@ class MusicPanelWidget(QWidget):
         
         audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
         tracks = []
-        for root, dirs, files in os.walk(folder):
-            for f in files:
-                ext = os.path.splitext(f)[1].lower()
-                if ext in audio_exts:
-                    path = os.path.join(root, f)
-                    title = os.path.splitext(f)[0]
-                    
-                    # Get file modified time as date added
-                    try:
-                        mtime = os.path.getmtime(path)
-                        dt = datetime.datetime.fromtimestamp(mtime)
-                        date_str = dt.strftime("%b %d, %Y")
-                    except Exception:
-                        date_str = ""
-                    
-                    # Lazy loading for duration
-                    duration = 0
-                    
-                    tracks.append({
-                        'path': path,
-                        'title': title,
-                        'artist': '',
-                        'duration': duration,
-                                                'date_added': date_str
-                    })
+        try:
+            for entry in os.scandir(folder):
+                if entry.is_file():
+                    ext = os.path.splitext(entry.name)[1].lower()
+                    if ext in audio_exts:
+                        path = entry.path
+                        title = os.path.splitext(entry.name)[0]
+                        
+                        # Get file modified time as date added
+                        try:
+                            mtime = entry.stat().st_mtime
+                            dt = datetime.datetime.fromtimestamp(mtime)
+                            date_str = dt.strftime("%b %d, %Y")
+                        except Exception:
+                            date_str = ""
+                        
+                        # Lazy loading for duration
+                        duration = 0
+                        
+                        tracks.append({
+                            'path': path,
+                            'title': title,
+                            'artist': '',
+                            'duration': duration,
+                            'date_added': date_str
+                        })
+        except Exception as e:
+            print(f"[Music] Error scanning folder {folder}: {e}")
         
         playlist_name = os.path.basename(folder) + "'s Playlist"
         self.set_playlist(playlist_name, tracks)

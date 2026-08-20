@@ -634,10 +634,6 @@ class SmoothListScroller(QObject):
         if list_widget.viewport():
             list_widget.viewport().installEventFilter(self)
 
-        app = QApplication.instance()
-        if app:
-            app.installEventFilter(self)
-
         self.shortcut = QShortcut(QKeySequence("Ctrl+A"), list_widget)
         self.shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         self.shortcut.activated.connect(self._on_shortcut_activated)
@@ -682,31 +678,36 @@ class SmoothListScroller(QObject):
         return None
 
     def eventFilter(self, watched, event):
+        if watched not in (self.list_widget, self.list_widget.viewport()):
+            return super().eventFilter(watched, event)
+
         if event.type() == QEvent.Wheel:
-            if watched in (self.list_widget, self.list_widget.viewport()):
-                delta = event.angleDelta().y()
-                if delta != 0:
-                    min_v = self.scrollbar.minimum()
-                    max_v = self.scrollbar.maximum()
-                    
-                    item_h = self._get_item_height()
-                    notches = 1 if delta < 0 else -1
-                    scroll_step = notches * item_h
-                    
-                    if self._anim.state() == QPropertyAnimation.Running:
-                        self._target_val = max(min_v, min(max_v, self._target_val + scroll_step))
-                    else:
-                        self._target_val = max(min_v, min(max_v, self.scrollbar.value() + scroll_step))
-                        
-                    self._anim.stop()
-                    self._anim.setStartValue(self.scrollbar.value())
-                    self._anim.setEndValue(int(self._target_val))
-                    self._anim.start()
+            delta = event.angleDelta().y()
+            if delta != 0:
+                min_v = self.scrollbar.minimum()
+                max_v = self.scrollbar.maximum()
                 
-                event.accept()
-                return True  # Block wheel event from propagating to main window scrollbar!
+                item_h = self._get_item_height()
+                notches = 1 if delta < 0 else -1
+                scroll_step = notches * item_h
+                
+                if self._anim.state() == QPropertyAnimation.Running:
+                    self._target_val = max(min_v, min(max_v, self._target_val + scroll_step))
+                else:
+                    self._target_val = max(min_v, min(max_v, self.scrollbar.value() + scroll_step))
+                    
+                self._anim.stop()
+                self._anim.setStartValue(self.scrollbar.value())
+                self._anim.setEndValue(int(self._target_val))
+                self._anim.start()
+            
+            event.accept()
+            return True  # Block wheel event from propagating to main window scrollbar!
 
         elif event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride):
+            if not self.list_widget.isVisible():
+                return super().eventFilter(watched, event)
+
             from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox
             focus = QApplication.focusWidget()
             if focus and isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)):
