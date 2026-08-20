@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 from smooth_scroll import SmoothScrollArea
 import math, random
-from PySide6.QtGui import QIcon, QFont, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen, QTextDocument, QTextCursor, QRadialGradient, QLinearGradient
+from PySide6.QtGui import QIcon, QFont, QFontMetrics, QKeySequence, QAction, QColor, QCursor, QShortcut, QPixmap, QPainter, QPainterPath, QBrush, QPen, QTextDocument, QTextCursor, QRadialGradient, QLinearGradient
 from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QPointF, Slot, QMetaObject, QPropertyAnimation, QRect, QEasingCurve, QObject, QEvent, QSize, QVariantAnimation, QAbstractAnimation
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton
 
@@ -505,6 +505,19 @@ class HotkeyRecordButton(QPushButton):
             self.releaseMouse()
         except Exception:
             pass
+
+        if full_key and full_key != self._hotkey and full_key.lower() != "escape":
+            is_valid, conflict_owner = validate_shortcut_conflict(full_key, owner_id=getattr(self, '_owner_id', ''))
+            if not is_valid:
+                target_w = self.window() if self.window() else self
+                FloatingToast.show_toast(
+                    target_w,
+                    "Shortcut Conflict",
+                    f"'{full_key}' is already assigned to {conflict_owner}. Please choose another hotkey or use Numpad."
+                )
+                self._stop_recording_ui()
+                return
+
         self._hotkey = full_key
         self._stop_recording_ui()
         self.hotkeyChanged.emit(full_key)
@@ -903,26 +916,43 @@ def enable_rubber_band_selection(list_widget: QListWidget):
     list_widget.mouseReleaseEvent = _mouseReleaseEvent
 
 
-class FloatingToast(QFrame):
-    """Sleek floating toast notification overlay panel for HELXAID."""
+class FloatingToast(QWidget):
+    """
+    Sleek floating toast notification overlay panel for HELXAID.
+    Renders as a separate top-level frameless window to avoid DWM
+    backing-store ghost artifacts on translucent parent windows.
+    Component Name: FloatingToast
+    """
     _active_toasts = []
 
-    def __init__(self, parent, title: str, message: str, duration: int = 3500):
-        super().__init__(parent)
-        self.setWindowFlags(Qt.SubWindow | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_StyledBackground)
-        self.setObjectName("floatingToast")
+    def __init__(self, anchor_window, title: str, message: str, duration: int = 3500):
+        # Top-level window: no parent in the QWidget tree, but we track the anchor
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.setObjectName("FloatingToast")
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
 
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
+        self._anchor_window = anchor_window
+        self._raw_title = title
+        self._raw_message = message
+
+        if anchor_window:
+            try:
+                anchor_window.installEventFilter(self)
+            except Exception:
+                pass
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         self.card = QFrame(self)
         self.card.setObjectName("toastCard")
-        self.card.setAttribute(Qt.WA_StyledBackground)
+        self.card.setAttribute(Qt.WA_StyledBackground, True)
         self.card.setStyleSheet("""
             QFrame#toastCard {
-                background: rgba(255, 255, 255, 0.04);
+                background-color: rgba(12, 14, 20, 0.95);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 14px;
             }
@@ -931,69 +961,150 @@ class FloatingToast(QFrame):
             }
         """)
 
-        layout = QHBoxLayout(self.card)
-        layout.setContentsMargins(18, 12, 18, 12)
-        layout.setSpacing(0)
+        card_layout = QHBoxLayout(self.card)
+        card_layout.setContentsMargins(18, 12, 18, 12)
+        card_layout.setSpacing(0)
 
         text_layout = QVBoxLayout()
         text_layout.setSpacing(3)
         text_layout.setContentsMargins(0, 0, 0, 0)
 
-        title_lbl = QLabel(title)
-        title_lbl.setObjectName("toastTitleLbl")
-        title_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 600; background: transparent; border: none;")
-        text_layout.addWidget(title_lbl)
+        self.title_lbl = QLabel(self.card)
+        self.title_lbl.setObjectName("toastTitleLbl")
+        self.title_lbl.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 600; background: transparent; border: none;")
+        text_layout.addWidget(self.title_lbl)
 
-        msg_lbl = QLabel(message)
-        msg_lbl.setObjectName("toastMsgLbl")
-        msg_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent; border: none;")
-        text_layout.addWidget(msg_lbl)
+        self.msg_lbl = QLabel(self.card)
+        self.msg_lbl.setObjectName("toastMsgLbl")
+        self.msg_lbl.setStyleSheet("color: #888888; font-family: 'Orbitron', sans-serif; font-size: 11px; background: transparent; border: none;")
+        text_layout.addWidget(self.msg_lbl)
 
-        layout.addLayout(text_layout)
+        card_layout.addLayout(text_layout)
+        main_layout.addWidget(self.card)
 
-        outer_layout.addWidget(self.card)
-        self.adjustSize()
-        
         self._opacity_effect = QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(self._opacity_effect)
         self._opacity_effect.setOpacity(0.0)
-        
+
         self._anim_in = QPropertyAnimation(self._opacity_effect, b"opacity")
         self._anim_in.setDuration(220)
         self._anim_in.setStartValue(0.0)
         self._anim_in.setEndValue(1.0)
+
+        self._anim_out = None
+        self._dismiss_timer = QTimer(self)
+        self._dismiss_timer.setSingleShot(True)
+        self._dismiss_timer.timeout.connect(self.fade_out)
+
+        self._apply_text_and_position(title, message)
         self._anim_in.start()
-        
+
         if duration > 0:
-            QTimer.singleShot(duration, self.fade_out)
+            self._dismiss_timer.start(duration)
+
+    def _apply_text_and_position(self, title: str, message: str):
+        """Measure text with Orbitron font metrics, elide long strings, compute exact geometry, and position over anchor window."""
+        self._raw_title = title
+        self._raw_message = message
+        self.setToolTip(message if len(message) > 60 else "")
+
+        aw = self._anchor_window
+        if not aw:
+            return
+
+        anchor_w = aw.width()
+
+        # Max allowed toast width with 80px margin from anchor edges
+        max_allowed_w = max(320, anchor_w - 80)
+        max_text_w = max_allowed_w - 42
+
+        f_title = QFont("Orbitron", 13, QFont.DemiBold)
+        f_msg = QFont("Orbitron", 11)
+        fm_title = QFontMetrics(f_title)
+        fm_msg = QFontMetrics(f_msg)
+
+        disp_title = fm_title.elidedText(title, Qt.ElideRight, max_text_w)
+        disp_msg = fm_msg.elidedText(message, Qt.ElideMiddle, max_text_w)
+
+        self.title_lbl.setText(disp_title)
+        self.msg_lbl.setText(disp_msg)
+
+        title_w = fm_title.horizontalAdvance(disp_title)
+        msg_w = fm_msg.horizontalAdvance(disp_msg)
+        req_w = max(title_w, msg_w) + 42
+        req_w = min(max_allowed_w, max(260, req_w))
+        title_h = fm_title.height()
+        msg_h = fm_msg.height()
+        req_h = title_h + msg_h + 3 + 24  # 3 spacing + 24 padding (12 top + 12 bottom)
+
+        # Calculate absolute screen position centered over anchor window
+        anchor_global = aw.mapToGlobal(QPoint(0, 0))
+        x = anchor_global.x() + (anchor_w - req_w) // 2
+        y = anchor_global.y() + 18
+
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
+        self.resize(req_w, req_h)
+        self.move(x, y)
+
+    def set_content(self, title: str, message: str, duration: int = 3500):
+        self._apply_text_and_position(title, message)
+
+        if self._anim_out and self._anim_out.state() == QPropertyAnimation.Running:
+            self._anim_out.stop()
+
+        self._opacity_effect.setOpacity(1.0)
+        self.show()
+        self.raise_()
+
+        self._dismiss_timer.stop()
+        if duration > 0:
+            self._dismiss_timer.start(duration)
+
+    def eventFilter(self, watched, event):
+        if watched == self._anchor_window:
+            if event.type() in (QEvent.Resize, QEvent.Move, QEvent.WindowStateChange, QEvent.Show):
+                if self._anchor_window and not self._anchor_window.isMinimized():
+                    self._apply_text_and_position(self._raw_title, self._raw_message)
+                elif self._anchor_window and self._anchor_window.isMinimized():
+                    self.hide()
+            elif event.type() == QEvent.Close:
+                self._cleanup_and_close()
+        return super().eventFilter(watched, event)
 
     @classmethod
     def show_toast(cls, parent, title: str, message: str, duration: int = 3500):
         if parent is None:
             return None
+
+        top_w = parent.window() if (hasattr(parent, "window") and parent.window()) else parent
+
+        # Reuse existing active toast on same anchor window
         for t in list(cls._active_toasts):
             try:
-                t.close()
-                t.deleteLater()
+                if t._anchor_window == top_w and not t.isHidden():
+                    t.set_content(title, message, duration)
+                    return t
+            except Exception:
+                pass
+
+        # Cleanup stale toasts
+        for t in list(cls._active_toasts):
+            try:
+                t._cleanup_and_close()
             except Exception:
                 pass
         cls._active_toasts.clear()
 
-        toast = cls(parent, title, message, duration)
+        toast = cls(top_w, title, message, duration)
         cls._active_toasts.append(toast)
-
-        parent_rect = parent.rect()
-        toast_width = toast.width()
-        x = parent_rect.x() + (parent_rect.width() - toast_width) // 2
-        y = parent_rect.y() + 18
-        toast.move(x, y)
         toast.show()
-        toast.raise_()
         return toast
 
     def fade_out(self):
-        if hasattr(self, "_anim_out") and self._anim_out.state() == QPropertyAnimation.Running:
+        if self._anim_out and self._anim_out.state() == QPropertyAnimation.Running:
             return
+        self._dismiss_timer.stop()
         self._anim_out = QPropertyAnimation(self._opacity_effect, b"opacity")
         self._anim_out.setDuration(250)
         self._anim_out.setStartValue(self._opacity_effect.opacity())
@@ -1002,8 +1113,24 @@ class FloatingToast(QFrame):
         self._anim_out.start()
 
     def _on_fade_out_finished(self):
+        self._cleanup_and_close()
+
+    def _cleanup_and_close(self):
         if self in FloatingToast._active_toasts:
             FloatingToast._active_toasts.remove(self)
+        if self._anchor_window:
+            try:
+                self._anchor_window.removeEventFilter(self)
+            except Exception:
+                pass
+            self._anchor_window = None
+        if hasattr(self, "_anim_in") and self._anim_in:
+            self._anim_in.stop()
+        if hasattr(self, "_anim_out") and self._anim_out:
+            self._anim_out.stop()
+        if hasattr(self, "_dismiss_timer") and self._dismiss_timer:
+            self._dismiss_timer.stop()
+        self.hide()
         self.close()
         self.deleteLater()
 
@@ -6522,12 +6649,27 @@ def get_all_registered_global_shortcuts(exclude_owner: str = "") -> dict:
         if norm:
             registry[norm] = f"Windows OS Reserved ({desc})"
 
+    # 7. HELXAID Software Main Navigation Shortcuts (Pages 1 to 7)
+    main_nav_reserved = {
+        "1": "HELXAID Main Navigation (Page 1 - Game Launcher)",
+        "2": "HELXAIC Main Navigation (Page 2 - Music Player)",
+        "3": "HELXAIL Main Navigation (Page 3 - CPU Controller)",
+        "4": "HELXAIR Main Navigation (Page 4 - Crosshair Overlay)",
+        "5": "HELXAIRO Main Navigation (Page 5 - Macro Setting)",
+        "6": "HELXTATS Main Navigation (Page 6 - Performance Booster)",
+        "7": "HELRCUS Main Navigation (Page 7 - Windows Customization)",
+    }
+    for k, desc in main_nav_reserved.items():
+        norm = normalize_shortcut_key(k)
+        if norm:
+            registry[norm] = desc
+
     return registry
 
 
 def validate_shortcut_conflict(proposed_key: str, owner_id: str = "") -> tuple:
     """
-    Validates whether proposed_key conflicts with any existing global shortcuts.
+    Validates whether proposed_key conflicts with any existing global shortcuts or reserved system keys.
     Returns: (is_valid: bool, conflicting_owner_description: str)
     If is_valid is True, conflicting_owner_description will be "".
     """
@@ -6538,6 +6680,29 @@ def validate_shortcut_conflict(proposed_key: str, owner_id: str = "") -> tuple:
     if not norm_proposed:
         return False, "Invalid Shortcut"
 
+    # 1. Check HELXAID Main Page Navigation Reserved Keys (1 - 7, excluding Numpad)
+    main_nav_reserved = {
+        "1": "HELXAID Main Navigation (Page 1 - Game Launcher)",
+        "2": "HELXAIC Main Navigation (Page 2 - Music Player)",
+        "3": "HELXAIL Main Navigation (Page 3 - CPU Controller)",
+        "4": "HELXAIR Main Navigation (Page 4 - Crosshair Overlay)",
+        "5": "HELXAIRO Main Navigation (Page 5 - Macro Setting)",
+        "6": "HELXTATS Main Navigation (Page 6 - Performance Booster)",
+        "7": "HELRCUS Main Navigation (Page 7 - Windows Customization)",
+    }
+    
+    if norm_proposed in main_nav_reserved:
+        return False, main_nav_reserved[norm_proposed]
+
+    # Check chords containing bare top-row digits 1-7 without modifiers (e.g. "1+2")
+    parts = [p.strip() for p in norm_proposed.split('+') if p.strip()]
+    has_mod = any(p.lower() in ("ctrl", "alt", "shift", "win") for p in parts)
+    if not has_mod:
+        for p in parts:
+            if p in main_nav_reserved:
+                return False, main_nav_reserved[p]
+
+    # 2. Check all dynamically registered global shortcuts
     registry = get_all_registered_global_shortcuts(exclude_owner=owner_id)
     if norm_proposed in registry:
         return False, registry[norm_proposed]
@@ -12503,6 +12668,537 @@ class BossKeyDynamicAppCombo(QComboBox):
         super().showPopup()
 
 
+def get_window_info_at_point(x: int, y: int, exclude_hwnds=None):
+    """Win32 High-Speed Window Detection with psutil fallback under (x, y)."""
+    if exclude_hwnds is None:
+        exclude_hwnds = []
+    
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    user32.WindowFromPoint.argtypes = [ctypes.wintypes.POINT]
+    user32.WindowFromPoint.restype = ctypes.c_void_p
+    user32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    user32.GetAncestor.restype = ctypes.c_void_p
+    user32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT)]
+    user32.GetWindowRect.restype = ctypes.c_bool
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.IsWindowVisible.restype = ctypes.c_bool
+    user32.IsIconic.argtypes = [ctypes.c_void_p]
+    user32.IsIconic.restype = ctypes.c_bool
+    user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
+    user32.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    user32.GetWindowLongW.restype = ctypes.c_long
+    user32.SetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_long]
+    user32.SetWindowLongW.restype = ctypes.c_long
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+
+    pt = ctypes.wintypes.POINT(x, y)
+    hwnd = user32.WindowFromPoint(pt)
+    if not hwnd:
+        return None
+    
+    root_hwnd = user32.GetAncestor(hwnd, 2)  # GA_ROOT = 2
+    target_hwnd = root_hwnd if root_hwnd else hwnd
+
+    if target_hwnd in exclude_hwnds:
+        return None
+
+    if not user32.IsWindowVisible(target_hwnd) or user32.IsIconic(target_hwnd):
+        return None
+
+    # Get Window Rect
+    rect = ctypes.wintypes.RECT()
+    if not user32.GetWindowRect(target_hwnd, ctypes.byref(rect)):
+        return None
+
+    w = rect.right - rect.left
+    h = rect.bottom - rect.top
+    if w <= 20 or h <= 20:
+        return None
+
+    # Class name filtering
+    cbuf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(target_hwnd, cbuf, 256)
+    cls_name = cbuf.value.strip()
+    if cls_name in ("Progman", "Shell_TrayWnd", "WorkerW"):
+        return None
+
+    # Title
+    length = user32.GetWindowTextLengthW(target_hwnd)
+    title = ""
+    if length > 0:
+        tbuf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(target_hwnd, tbuf, length + 1)
+        title = tbuf.value.strip()
+
+    if title in ("Program Manager", "Start", "Taskbar", "Windows Input Experience", "MSCTFIME UI"):
+        return None
+
+    # PID & Exe resolution with dual-engine (Win32 + psutil fallback)
+    pid = ctypes.c_ulong()
+    user32.GetWindowThreadProcessId(target_hwnd, ctypes.byref(pid))
+    proc_name = ""
+    proc_full_path = ""
+    
+    if pid.value > 0:
+        h_proc = kernel32.OpenProcess(0x1000, False, pid.value)
+        if not h_proc:
+            h_proc = kernel32.OpenProcess(0x0400, False, pid.value)
+        if h_proc:
+            ebuf = ctypes.create_unicode_buffer(1024)
+            size = ctypes.c_ulong(1024)
+            if kernel32.QueryFullProcessImageNameW(h_proc, 0, ebuf, ctypes.byref(size)):
+                proc_full_path = ebuf.value.replace("\\", "/")
+                proc_name = os.path.basename(proc_full_path)
+            kernel32.CloseHandle(h_proc)
+
+    # Fallback to psutil for UAC/Admin/Store sandbox apps
+    if not proc_name and pid.value > 0:
+        try:
+            p = psutil.Process(pid.value)
+            try:
+                proc_full_path = p.exe().replace("\\", "/")
+                proc_name = p.name()
+            except Exception:
+                proc_name = p.name()
+                proc_full_path = proc_name
+        except Exception:
+            pass
+
+    if not proc_name:
+        if title:
+            proc_name = title
+        else:
+            proc_name = f"Window_{hex(target_hwnd)}"
+
+    return {
+        "hwnd": target_hwnd,
+        "rect": (rect.left, rect.top, w, h),
+        "title": title,
+        "proc_name": proc_name,
+        "proc_path": proc_full_path,
+        "pid": pid.value
+    }
+
+
+class BossKeyFullscreenCaptureOverlay(QWidget):
+    """
+    Invisible/Transparent full-desktop capture overlay that handles hover tracking,
+    drawing highlight rectangles, and left-click selection while HELXAID is minimized.
+    Component Name: BossKeyFullscreenCaptureOverlay
+    """
+    windowSelected = Signal(str, str, str)  # (proc_name, full_path, title)
+    canceled = Signal()
+
+    def __init__(self):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setObjectName("BossKeyFullscreenCaptureOverlay")
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self._target_rect = None
+        self._target_pid = 0
+        self._target_proc = ""
+        self._target_title = ""
+        self._last_info = None
+        self._exclude_hwnds = []
+        self._cursor_pt = None
+        self._is_active = False
+        self._start_time = 0.0
+
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(20)
+        self._poll_timer.timeout.connect(self._on_poll)
+
+    def start_capture(self, exclude_hwnds=None):
+        self._is_active = True
+        self._last_info = None
+        self._cursor_pt = None
+        self._start_time = time.time()
+        self._exclude_hwnds = list(exclude_hwnds) if exclude_hwnds else []
+        try:
+            self._exclude_hwnds.append(int(self.winId()))
+        except Exception:
+            pass
+
+        # Cover entire virtual desktop (all screens)
+        geo = QApplication.primaryScreen().virtualGeometry()
+        for screen in QApplication.screens():
+            geo = geo.united(screen.geometry())
+        self.setGeometry(geo)
+        self.show()
+
+        # Apply WS_EX_TRANSPARENT so WindowFromPoint natively sees all windows beneath
+        hwnd = int(self.winId())
+        GWL_EXSTYLE = -20
+        WS_EX_TRANSPARENT = 0x00000020
+        WS_EX_LAYERED = 0x00080000
+        WS_EX_NOACTIVATE = 0x08000000
+        try:
+            ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE)
+        except Exception:
+            pass
+
+        self._poll_timer.start()
+
+    def _on_poll(self):
+        if not self._is_active:
+            return
+        user32 = ctypes.windll.user32
+
+        # Check Escape or Right Click to cancel
+        if bool(user32.GetAsyncKeyState(0x1B) & 0x8000) or bool(user32.GetAsyncKeyState(0x02) & 0x8000):
+            self._cancel()
+            return
+
+        c_pos = QCursor.pos()
+        self._cursor_pt = (c_pos.x(), c_pos.y())
+
+        info = get_window_info_at_point(c_pos.x(), c_pos.y(), exclude_hwnds=self._exclude_hwnds)
+        if info:
+            self._last_info = info
+            self._target_rect = info["rect"]
+            self._target_proc = info["proc_name"]
+            self._target_title = info["title"]
+            self._target_pid = info.get("pid", 0)
+        else:
+            self._target_rect = None
+            self._target_proc = ""
+            self._target_title = ""
+            self._target_pid = 0
+
+        # Check Left Click to finish (with 150ms start debounce)
+        if (time.time() - self._start_time > 0.15) and bool(user32.GetAsyncKeyState(0x01) & 0x8000):
+            self._finish()
+            return
+
+        self.update()
+
+    def _finish(self):
+        if not self._is_active:
+            return
+        self._is_active = False
+        self._poll_timer.stop()
+        self.hide()
+        if self._last_info:
+            info = self._last_info
+            self.windowSelected.emit(info["proc_name"], info["proc_path"], info["title"])
+        else:
+            self.canceled.emit()
+
+    def _cancel(self):
+        if not self._is_active:
+            return
+        self._is_active = False
+        self._poll_timer.stop()
+        self.hide()
+        self.canceled.emit()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.TextAntialiasing)
+
+        # Draw transparent background
+        p.fillRect(self.rect(), QColor(0, 0, 0, 1))
+
+        if self._target_rect:
+            rx, ry, rw, rh = self._target_rect
+            top_left = self.mapFromGlobal(QPoint(rx, ry))
+            x, y = top_left.x(), top_left.y()
+
+            # 1. Soft subtle surface tint inside detected window
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor(255, 91, 6, 8)))
+            p.drawRect(x, y, rw, rh)
+
+            # Delicate dashed guideline
+            p.setPen(QPen(QColor(255, 91, 6, 45), 1, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(x, y, rw, rh)
+
+            # Precision Corner Reticles (24px length, 2px solid #FF5B06)
+            bracket_pen = QPen(QColor("#FF5B06"), 2.0, Qt.SolidLine, Qt.SquareCap)
+            p.setPen(bracket_pen)
+            blen = 24
+            # Top-Left
+            p.drawLine(x, y, x + blen, y)
+            p.drawLine(x, y, x, y + blen)
+            # Top-Right
+            p.drawLine(x + rw, y, x + rw - blen, y)
+            p.drawLine(x + rw, y, x + rw, y + blen)
+            # Bottom-Left
+            p.drawLine(x, y + rh, x + blen, y + rh)
+            p.drawLine(x, y + rh, x, y + rh - blen)
+            # Bottom-Right
+            p.drawLine(x + rw, y + rh, x + rw - blen, y + rh)
+            p.drawLine(x + rw, y + rh, x + rw, y + rh - blen)
+
+            # Edge Cardinal Center Ticks
+            tick_pen = QPen(QColor(255, 91, 6, 120), 1.5)
+            p.setPen(tick_pen)
+            cx_win = x + rw // 2
+            cy_win = y + rh // 2
+            p.drawLine(cx_win - 8, y, cx_win + 8, y)
+            p.drawLine(cx_win - 8, y + rh, cx_win + 8, y + rh)
+            p.drawLine(x, cy_win - 8, x, cy_win + 8)
+            p.drawLine(x + rw, cy_win - 8, x + rw, cy_win + 8)
+
+            # Top-Left Tactical Status Tag on Window
+            tag_text = "TARGET ACQUIRED // DECOY WINDOW"
+            p.setFont(QFont("Orbitron", 7, QFont.Bold))
+            tag_w = p.fontMetrics().horizontalAdvance(tag_text) + 24
+            tag_h = 18
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor(11, 13, 17, 230)))
+            p.drawRoundedRect(x + 4, y + 4, tag_w, tag_h, 3, 3)
+            p.setPen(QPen(QColor(255, 91, 6, 80), 1))
+            p.drawRoundedRect(x + 4, y + 4, tag_w, tag_h, 3, 3)
+            # Glowing indicator dot
+            p.setPen(Qt.NoPen)
+            p.setBrush(QBrush(QColor("#FF5B06")))
+            p.drawEllipse(x + 10, y + 9, 5, 5)
+            # Tag Text
+            p.setPen(QColor("#D0D5DD"))
+            p.drawText(x + 20, y + 16, tag_text)
+
+            # 2. IMPECCABLE CURSOR HUD CARD
+            if self._cursor_pt and self._target_proc:
+                c_local = self.mapFromGlobal(QPoint(self._cursor_pt[0], self._cursor_pt[1]))
+                cx, cy = c_local.x(), c_local.y()
+
+                title_text = self._target_title
+                if len(title_text) > 46:
+                    title_text = title_text[:43] + "..."
+
+                proc_text = self._target_proc.upper()
+                pid_text = f"PID {self._target_pid}" if self._target_pid else "ACTIVE"
+
+                font_proc = QFont("Orbitron", 10, QFont.Bold)
+                font_pid = QFont("Orbitron", 7, QFont.DemiBold)
+                font_title = QFont("Orbitron", 8, QFont.Normal)
+                font_action = QFont("Orbitron", 7, QFont.Medium)
+
+                p.setFont(font_proc)
+                w_proc = p.fontMetrics().horizontalAdvance(proc_text)
+                p.setFont(font_pid)
+                w_pid = p.fontMetrics().horizontalAdvance(pid_text) + 14
+                p.setFont(font_title)
+                w_title = p.fontMetrics().horizontalAdvance(title_text) if title_text else 0
+
+                card_w = max(w_proc + w_pid + 46, w_title + 32, 270)
+                card_h = 76 if title_text else 58
+
+                # Edge Boundary Flipping
+                tx = cx + 18
+                ty = cy + 18
+                if tx + card_w > self.width() - 10:
+                    tx = cx - card_w - 14
+                if ty + card_h > self.height() - 10:
+                    ty = cy - card_h - 14
+                tx = max(10, tx)
+                ty = max(10, ty)
+
+                # Card Obsidian Glass Base
+                p.setPen(QPen(QColor(255, 255, 255, 18), 1))
+                p.setBrush(QBrush(QColor(11, 13, 17, 245)))
+                p.drawRoundedRect(tx, ty, card_w, card_h, 8, 8)
+
+                # Top Hairline Accent
+                p.setPen(QPen(QColor("#FF5B06"), 1))
+                p.drawLine(tx + 12, ty, tx + card_w - 12, ty)
+
+                # Vector Crosshair Reticle Icon (Crafted Vector, Zero Emojis)
+                icon_cx = tx + 20
+                icon_cy = ty + 20
+                p.setPen(QPen(QColor("#FF5B06"), 1.2))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(icon_cx - 6, icon_cy - 6, 12, 12)
+                p.drawLine(icon_cx - 9, icon_cy, icon_cx + 9, icon_cy)
+                p.drawLine(icon_cx, icon_cy - 9, icon_cx, icon_cy + 9)
+                p.setBrush(QBrush(QColor("#FF5B06")))
+                p.drawEllipse(icon_cx - 2, icon_cy - 2, 4, 4)
+
+                # Process Name
+                p.setFont(font_proc)
+                p.setPen(QColor("#FFFFFF"))
+                p.drawText(tx + 34, ty + 24, proc_text)
+
+                # PID Micro-Badge
+                p.setFont(font_pid)
+                pid_bx = tx + card_w - w_pid - 14
+                pid_by = ty + 12
+                p.setPen(Qt.NoPen)
+                p.setBrush(QBrush(QColor(255, 255, 255, 12)))
+                p.drawRoundedRect(pid_bx, pid_by, w_pid, 16, 4, 4)
+                p.setPen(QColor("#8E95A0"))
+                p.drawText(pid_bx + 7, pid_by + 12, pid_text)
+
+                # Window Title Context
+                curr_y = ty + 42
+                if title_text:
+                    p.setFont(font_title)
+                    p.setPen(QColor("#8D98A7"))
+                    p.drawText(tx + 16, curr_y, title_text)
+                    curr_y += 20
+
+                # Action Badges Row
+                badge1_text = "L-CLICK  SELECT"
+                p.setFont(font_action)
+                b1_w = p.fontMetrics().horizontalAdvance(badge1_text) + 12
+                p.setPen(Qt.NoPen)
+                p.setBrush(QBrush(QColor(0, 230, 118, 22)))
+                p.drawRoundedRect(tx + 14, curr_y - 2, b1_w, 16, 3, 3)
+                p.setPen(QColor("#00E676"))
+                p.drawText(tx + 20, curr_y + 10, badge1_text)
+
+                badge2_text = "ESC  CANCEL"
+                b2_w = p.fontMetrics().horizontalAdvance(badge2_text) + 12
+                p.setPen(Qt.NoPen)
+                p.setBrush(QBrush(QColor(255, 255, 255, 8)))
+                p.drawRoundedRect(tx + 18 + b1_w, curr_y - 2, b2_w, 16, 3, 3)
+                p.setPen(QColor("#707986"))
+                p.drawText(tx + 24 + b1_w, curr_y + 10, badge2_text)
+
+
+class BossKeyHighlightOverlay(BossKeyFullscreenCaptureOverlay):
+    """Backward compatibility alias for BossKeyFullscreenCaptureOverlay."""
+    pass
+
+
+class BossKeyWindowPickerButton(QPushButton):
+    """
+    Precision Crosshair Window Target Picker Button.
+    Clicking minimizes HELXAID, allowing user to hover and left-click on any running window.
+    Component Name: BossKeyAppPickerBtn
+    """
+    windowSelected = Signal(str, str, str)  # (proc_name, full_path, window_title)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("BossKeyAppPickerBtn")
+        self.setToolTip("Target Window Picker (Click to minimize launcher & pick any open window by clicking it)...")
+        self.setFixedSize(30, 30)
+        self.setCursor(Qt.PointingHandCursor)
+        self._overlay = None
+        self._prior_was_fullscreen = False
+        self._prior_was_maximized = False
+
+        self.clicked.connect(self._on_btn_clicked)
+        self._update_style()
+
+    def _update_style(self):
+        self.setStyleSheet("""
+            QPushButton#BossKeyAppPickerBtn {
+                background: rgba(255, 255, 255, 0.1);
+                border: none;
+                border-radius: 8px;
+                padding: 0px;
+            }
+            QPushButton#BossKeyAppPickerBtn:hover {
+                background: rgba(255, 91, 6, 0.3);
+            }
+            QPushButton#BossKeyAppPickerBtn:pressed {
+                background: rgba(255, 91, 6, 0.5);
+            }
+        """)
+
+    def _on_btn_clicked(self):
+        top_w = self.window()
+        exclude = []
+        if top_w and hasattr(top_w, 'winId'):
+            try:
+                exclude.append(int(top_w.winId()))
+            except Exception:
+                pass
+
+        if self._overlay is None:
+            self._overlay = BossKeyFullscreenCaptureOverlay()
+            self._overlay.windowSelected.connect(self._on_picked_from_overlay)
+            self._overlay.canceled.connect(self._on_canceled_from_overlay)
+
+        # Snapshot prior window state before minimizing
+        if top_w:
+            is_full = False
+            if hasattr(top_w, 'isFullScreen') and top_w.isFullScreen():
+                is_full = True
+            elif hasattr(top_w, 'settings') and isinstance(top_w.settings, dict) and top_w.settings.get("window_fullscreen", False):
+                is_full = True
+            self._prior_was_fullscreen = is_full
+            self._prior_was_maximized = bool(top_w.isMaximized()) if hasattr(top_w, 'isMaximized') else False
+
+            # Minimize HELXAID so user has full view of desktop
+            top_w.showMinimized()
+
+        # Start capture overlay after small animation delay
+        QTimer.singleShot(140, lambda: self._overlay.start_capture(exclude_hwnds=exclude))
+
+    def _on_picked_from_overlay(self, proc_name: str, full_path: str, title: str):
+        self._restore_launcher()
+        # 120ms delay ensures GameLauncher is 100% restored to full geometry before toast computes layout
+        QTimer.singleShot(120, lambda: self.windowSelected.emit(proc_name, full_path, title))
+
+    def _on_canceled_from_overlay(self):
+        self._restore_launcher()
+
+    def _restore_launcher(self):
+        top_w = self.window()
+        if top_w:
+            if getattr(self, '_prior_was_fullscreen', False):
+                top_w.showFullScreen()
+                if hasattr(top_w, 'settings') and isinstance(top_w.settings, dict):
+                    top_w.settings["window_fullscreen"] = True
+            elif getattr(self, '_prior_was_maximized', False):
+                top_w.showMaximized()
+            else:
+                top_w.showNormal()
+
+            top_w.activateWindow()
+            top_w.raise_()
+            try:
+                hwnd = int(top_w.winId())
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+            except Exception:
+                pass
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        color = QColor("#FF5B06") if self.underMouse() else QColor("#FFFFFF")
+
+        # Draw Crosshair Target Icon
+        pen = QPen(color, 1.6)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+
+        # Outer Circle
+        r = 6.5
+        p.drawEllipse(QPoint(int(cx), int(cy)), int(r), int(r))
+
+        # Center Dot
+        p.setBrush(QBrush(color))
+        p.drawEllipse(QPoint(int(cx), int(cy)), 1.5, 1.5)
+
+        # Crosshair Lines
+        p.drawLine(int(cx - r - 3), int(cy), int(cx - r + 1), int(cy))
+        p.drawLine(int(cx + r - 1), int(cy), int(cx + r + 3), int(cy))
+        p.drawLine(int(cx), int(cy - r - 3), int(cx), int(cy - r + 1))
+        p.drawLine(int(cx), int(cy + r - 1), int(cx), int(cy + r + 3))
+
+
 class BossKeyTacticalCard(QFrame):
     """
     Clean, borderless tactical telemetry & emergency control card for Boss Key.
@@ -12746,6 +13442,7 @@ class BossKeyController(QObject):
         self.hide_launcher = False
         self.sound_feedback = True
         self.restore_on_second_press = True
+        self.restore_on_alt_tab = True
 
         self._cached_game_hwnd = None
         self._cached_game_title = ""
@@ -13230,6 +13927,9 @@ class BossKeyController(QObject):
     def set_restore_on_second_press(self, enable: bool):
         self.restore_on_second_press = bool(enable)
 
+    def set_restore_on_alt_tab(self, enable: bool):
+        self.restore_on_alt_tab = bool(enable)
+
     def _play_feedback_sound(self, panic_active: bool):
         try:
             import winsound
@@ -13256,10 +13956,25 @@ class BossKeyController(QObject):
             self._last_hotkey_down = False
             return
 
+        # 1. Hotkey Detection for Panic Trigger / Toggle
         down = is_tactical_hotkey_physically_down(self.hotkey)
         if down and not self._last_hotkey_down:
             self.toggle_panic()
         self._last_hotkey_down = down
+
+        # 2. Alt+Tab / Focus Detection back to Game Window to Restore
+        if self.is_panic_active and getattr(self, 'restore_on_alt_tab', True) and self._cached_game_hwnd:
+            if time.perf_counter() - self._last_trigger_time > 0.30:
+                try:
+                    if ctypes.windll.user32.IsWindow(self._cached_game_hwnd):
+                        fg = ctypes.windll.user32.GetForegroundWindow()
+                        if fg == self._cached_game_hwnd:
+                            self.restore_panic()
+                    else:
+                        # Game window was closed while in panic
+                        self._cached_game_hwnd = None
+                except Exception:
+                    pass
 
 
 class BossKeyGuidePanel(QFrame):
@@ -13654,6 +14369,13 @@ class BossKeyPanel(QWidget):
         self.cb_reversible.setToolTip("Pressing the activation hotkey a second time will instantly restore your game, windows, and audio volume.")
         self.cb_reversible.toggled.connect(self._on_reversible_toggled)
         c1_layout.addWidget(self.cb_reversible)
+
+        self.cb_restore_on_alt_tab = AnimatedCheckBox("Alt + Tab to Game Window to Restore")
+        self.cb_restore_on_alt_tab.setObjectName("BossKeyRestoreOnAltTabCb")
+        self.cb_restore_on_alt_tab.setChecked(True)
+        self.cb_restore_on_alt_tab.setToolTip("Switching focus back to your game window (via Alt+Tab or Taskbar) will automatically disarm Panic and restore audio.")
+        self.cb_restore_on_alt_tab.toggled.connect(self._on_restore_on_alt_tab_toggled)
+        c1_layout.addWidget(self.cb_restore_on_alt_tab)
         c1_layout.addStretch()
 
         cfg_layout.addWidget(self.card1, 1)
@@ -13832,6 +14554,13 @@ class BossKeyPanel(QWidget):
 
         self.app_input = self.app_combo
 
+        # 1. Target Window Picker Button (🎯)
+        self.picker_btn = BossKeyWindowPickerButton()
+        self.picker_btn.setObjectName("BossKeyAppPickerBtn")
+        self.picker_btn.windowSelected.connect(self._on_window_picked)
+        app_input_row.addWidget(self.picker_btn)
+
+        # 2. Browse File Button (📁)
         folder_icon_path = os.path.join(script_dir, "UI Icons", "folder-icon-white.svg").replace("\\", "/")
         self.browse_btn = QPushButton()
         self.browse_btn.setObjectName("BossKeyAppBrowseBtn")
@@ -14044,6 +14773,9 @@ class BossKeyPanel(QWidget):
             if "restore_on_second_press" in data:
                 self.cb_reversible.setChecked(bool(data["restore_on_second_press"]))
                 self.controller.set_restore_on_second_press(bool(data["restore_on_second_press"]))
+            if "restore_on_alt_tab" in data:
+                self.cb_restore_on_alt_tab.setChecked(bool(data["restore_on_alt_tab"]))
+                self.controller.set_restore_on_alt_tab(bool(data["restore_on_alt_tab"]))
             if "launch_fullscreen" in data:
                 self.cb_launch_fullscreen.setChecked(bool(data["launch_fullscreen"]))
                 self.controller.set_launch_fullscreen(bool(data["launch_fullscreen"]))
@@ -14065,6 +14797,7 @@ class BossKeyPanel(QWidget):
             "hide_launcher": self.controller.hide_launcher,
             "sound_feedback": self.controller.sound_feedback,
             "restore_on_second_press": self.controller.restore_on_second_press,
+            "restore_on_alt_tab": self.controller.restore_on_alt_tab,
         }
         try:
             with open(self._get_settings_path(), 'w', encoding='utf-8') as f:
@@ -14140,6 +14873,29 @@ class BossKeyPanel(QWidget):
             self.controller.set_app_target_type("file_path")
             self._save_settings()
 
+    def _on_window_picked(self, proc_name: str, full_path: str, win_title: str):
+        if not proc_name and not full_path:
+            return
+        if self.controller.app_target_type == "file_path" and full_path:
+            target_val = full_path
+        else:
+            target_val = proc_name if proc_name else os.path.basename(full_path)
+
+        self.app_combo.blockSignals(True)
+        self.app_combo.setText(target_val)
+        self.app_combo.blockSignals(False)
+        self.controller.set_custom_app(target_val)
+        self._save_settings()
+
+        # Show feedback toast
+        target_w = self.window() if self.window() else self
+        display_title = f" ({win_title})" if win_title else ""
+        FloatingToast.show_toast(
+            target_w,
+            "Target Window Selected",
+            f"Selected decoy application: {target_val}{display_title}"
+        )
+
     def _on_launch_fullscreen_toggled(self, checked: bool):
         self.controller.set_launch_fullscreen(checked)
         self._save_settings()
@@ -14161,6 +14917,10 @@ class BossKeyPanel(QWidget):
 
     def _on_reversible_toggled(self, checked: bool):
         self.controller.set_restore_on_second_press(checked)
+        self._save_settings()
+
+    def _on_restore_on_alt_tab_toggled(self, checked: bool):
+        self.controller.set_restore_on_alt_tab(checked)
         self._save_settings()
 
     def _on_test_preview_clicked(self):
@@ -17688,6 +18448,9 @@ class MacroSettingsPanel(QWidget):
                         if 'restore_on_second_press' in bk:
                             bk_p.cb_reversible.setChecked(bool(bk['restore_on_second_press']))
                             bk_ctrl.set_restore_on_second_press(bool(bk['restore_on_second_press']))
+                        if 'restore_on_alt_tab' in bk:
+                            bk_p.cb_restore_on_alt_tab.setChecked(bool(bk['restore_on_alt_tab']))
+                            bk_ctrl.set_restore_on_alt_tab(bool(bk['restore_on_alt_tab']))
                     else:
                         self.boss_key_panel._load_settings()
             except Exception as e:

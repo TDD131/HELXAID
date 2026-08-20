@@ -5796,19 +5796,36 @@ class MusicPanelWidget(QWidget):
             print(f"[Music] Failed to import tools_downloader: {e}")
     
     def _setup_media_key_service(self):
-        """Initialize global media key listener for hardware media controls.
+        """Initialize global media key listener and Windows SMTC service for hardware media controls.
         
-        Creates a MediaKeyService that captures Play/Pause, Next, Previous,
-        and Stop media key events from ALL input devices globally:
-        - Laptop keyboard Fn keys (e.g. HP Victus Fn+F7/F8/F9)
-        - Bluetooth headphones/earbuds (AVRCP protocol)  
-        - USB media controllers
-        - External keyboards with media keys
+        1. WindowsSMTCService: Native Windows 10/11 System Media Transport Controls
+           Enables Bluetooth AVRCP (TWS earbuds, wireless headphones), lock screen controls,
+           and Windows Volume overlay display without requiring window focus or physical keyboard input.
         
-        The service runs in a background daemon thread and uses Win32
-        RegisterHotKey to capture keys even when the app is not focused.
-        Signals are connected to the corresponding playback control methods.
+        2. MediaKeyService: Low-level Win32 keyboard hook (WH_KEYBOARD_LL)
+           Non-exclusive fallback for USB hardware knobs, external macro pads, and Fn media keys.
         """
+        # 1. Native Windows SMTC Service (Bluetooth AVRCP & Lock Screen)
+        try:
+            from WindowsSMTCService import WindowsSMTCService
+            self._smtc_service = WindowsSMTCService(self)
+            if self._smtc_service.is_available:
+                self._smtc_service.play_requested.connect(self._play_current_or_resume)
+                self._smtc_service.pause_requested.connect(self._pause_playback)
+                self._smtc_service.toggle_play_requested.connect(self._toggle_play)
+                self._smtc_service.next_requested.connect(self._next_track)
+                self._smtc_service.prev_requested.connect(self._prev_track)
+                self._smtc_service.stop_requested.connect(
+                    lambda: self._player.stop() if self._player else None
+                )
+                print("[Music] Windows SMTC Service connected to HELXAIC (Bluetooth AVRCP active)")
+            else:
+                self._smtc_service = None
+        except Exception as e:
+            self._smtc_service = None
+            print(f"[Music] Windows SMTC Service init failed: {e}")
+
+        # 2. Win32 Low-Level Keyboard Hook
         try:
             from MediaKeyService import MediaKeyService
             
@@ -5828,14 +5845,28 @@ class MusicPanelWidget(QWidget):
             
         except ImportError as e:
             # MediaKeyService.py not found - degrade gracefully.
-            # Qt keyPressEvent will still handle media keys when focused.
             self._media_key_service = None
             print(f"[Music] MediaKeyService not available: {e}")
-            print("[Music] Media keys will only work when app has focus")
         except Exception as e:
             # Unexpected error - log but don't crash the music panel
             self._media_key_service = None
             print(f"[Music] Failed to start media key service: {e}")
+
+    def _play_current_or_resume(self):
+        """Resume playback if paused, or play current/first track."""
+        if not hasattr(self, '_player') or self._player is None:
+            return
+        from PySide6.QtMultimedia import QMediaPlayer
+        if self._player.playbackState() != QMediaPlayer.PlayingState:
+            self._toggle_play()
+
+    def _pause_playback(self):
+        """Pause playback if currently playing."""
+        if not hasattr(self, '_player') or self._player is None:
+            return
+        from PySide6.QtMultimedia import QMediaPlayer
+        if self._player.playbackState() == QMediaPlayer.PlayingState:
+            self._player.pause()
     
     def _setup_audio_device_monitor(self):
         """Set up automatic audio device switching when new devices connect.
@@ -5974,16 +6005,29 @@ class MusicPanelWidget(QWidget):
                 self.refresh_playlist_stats()
 
     def keyPressEvent(self, event):
-        """Handle keyboard shortcuts for music control.
-        
-        Standard letter keys (Space, P, N, etc.) are handled here.
-        Hardware media keys (Play/Pause, Next, Previous, Stop) are
-        handled exclusively by MediaKeyService's global hook to
-        avoid double-fire when the app has focus.
-        """
+        """Handle keyboard shortcuts and media keys for music control."""
         key = event.key()
         modifiers = event.modifiers()
         
+        # === Hardware & Multimedia Key Events (from OS / WM_APPCOMMAND) ===
+        if key in (Qt.Key_MediaTogglePlayPause, Qt.Key_MediaPlay, Qt.Key_MediaPause):
+            self._toggle_play()
+            event.accept()
+            return
+        elif key == Qt.Key_MediaNext:
+            self._next_track()
+            event.accept()
+            return
+        elif key == Qt.Key_MediaPrevious:
+            self._prev_track()
+            event.accept()
+            return
+        elif key == Qt.Key_MediaStop:
+            if hasattr(self, '_player') and self._player:
+                self._player.stop()
+            event.accept()
+            return
+
         # === Standard Keyboard Shortcuts ===
         
         # Spacebar: Play/Pause
@@ -7925,6 +7969,12 @@ class MusicPanelWidget(QWidget):
                 
                 # Update Discord Rich Presence
                 self._update_discord(title, artist, is_playing=True)
+
+                # Update Windows SMTC metadata (Bluetooth AVRCP / Windows Volume Flyout)
+                if hasattr(self, '_smtc_service') and self._smtc_service:
+                    thumb = getattr(self, '_current_cover_path', None)
+                    self._smtc_service.update_metadata(title=title, artist=artist, thumbnail_path=thumb)
+                    self._smtc_service.set_playback_status(is_playing=True)
             else:
                 print(f"File not found: {path}")
     
@@ -8707,6 +8757,12 @@ class MusicPanelWidget(QWidget):
         
         # Emit signal for external listeners (e.g., taskbar integration)
         self.playbackStateChanged.emit(state)
+        
+        # Sync with Windows SMTC service for Bluetooth AVRCP & OS Volume Flyout
+        if hasattr(self, '_smtc_service') and self._smtc_service:
+            is_playing = (state == QMediaPlayer.PlayingState)
+            is_stopped = (state == QMediaPlayer.StoppedState)
+            self._smtc_service.set_playback_status(is_playing=is_playing, is_stopped=is_stopped)
         
         # In fullscreen: show playerbar when paused, hide when playing
         if hasattr(self, '_is_fullscreen') and self._is_fullscreen:

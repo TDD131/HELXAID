@@ -166,6 +166,8 @@ class MediaKeyService(QObject):
         self._thread_id = None  # Win32 thread ID for PostThreadMessageW
         self._hook_handle = None  # Handle from SetWindowsHookEx
         self._hook_proc = None  # Must keep reference to prevent GC
+        self._last_hook_action = 0.0
+        self._hook_debounce_gap = 0.25  # 250ms monotonic debounce
 
     def start(self):
         """Start listening for global media key events.
@@ -250,6 +252,10 @@ class MediaKeyService(QObject):
             VK_MEDIA_STOP: (self.stop_playback, "stop_playback"),
         }
 
+        # Track last fired time for monotonic debouncing (250ms)
+        self._last_hook_action = 0.0
+        self._hook_debounce_gap = 0.25
+
         def _hook_callback(nCode, wParam, lParam):
             """Low-level keyboard hook callback.
             
@@ -276,12 +282,16 @@ class MediaKeyService(QObject):
 
                 # Check if this is a media key we care about
                 if vk_code in _MEDIA_VK_CODES:
-                    entry = signal_map.get(vk_code)
-                    if entry:
-                        signal, name = entry
-                        print(f"[MediaKeyService] Media key pressed: {name}")
-                        # Emit Qt signal. PySide6 auto-queues to main thread.
-                        signal.emit()
+                    import time
+                    now = time.monotonic()
+                    if now - self._last_hook_action >= self._hook_debounce_gap:
+                        self._last_hook_action = now
+                        entry = signal_map.get(vk_code)
+                        if entry:
+                            signal, name = entry
+                            print(f"[MediaKeyService] Media key pressed: {name}")
+                            # Emit Qt signal. PySide6 auto-queues to main thread.
+                            signal.emit()
 
             # CRITICAL: Always call CallNextHookEx to forward the event
             # to other applications. This makes the hook NON-EXCLUSIVE.

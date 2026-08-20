@@ -65,6 +65,12 @@ hiddenimports = [
     'clr_loader',
     'pythonnet',
     'core.lhm_wrapper',
+    'WindowsSMTCService',
+    'winrt',
+    'winrt.windows.media',
+    'winrt.windows.media.playback',
+    'winrt.windows.foundation',
+    'winrt.windows.storage.streams',
 ]
 
 a = Analysis(

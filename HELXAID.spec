@@ -27,10 +27,16 @@ hiddenimports = [
     'clr_loader',
     'pythonnet',
     'core.lhm_wrapper',
+    'WindowsSMTCService',
+    'winrt',
+    'winrt.windows.media',
+    'winrt.windows.media.playback',
+    'winrt.windows.foundation',
+    'winrt.windows.storage.streams',
 ]
 
 # Collect all resources and binaries for critical packages
-for pkg in ['PIL', 'mutagen', 'hid', 'hidapi']:
+for pkg in ['PIL', 'mutagen', 'hid', 'hidapi', 'winrt']:
     tmp_datas, tmp_binaries, tmp_hidden = collect_all(pkg)
     datas.extend(tmp_datas)
     binaries.extend(tmp_binaries)

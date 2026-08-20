@@ -109,6 +109,7 @@ class TaskbarEventFilter(QAbstractNativeEventFilter):
             msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
             
             WM_COMMAND = 0x0111
+            WM_APPCOMMAND = 0x0319
             if msg.message == WM_COMMAND:
                 hi_word = (msg.wParam >> 16) & 0xFFFF
                 if hi_word == 0x1800: # THBN_CLICKED
@@ -119,6 +120,29 @@ class TaskbarEventFilter(QAbstractNativeEventFilter):
                         print(f"[Taskbar DEBUG] Layer 1 emitting signal for button {button_id}", flush=True)
                         parent.taskbar_button_clicked.emit(button_id)
                         return True, 0
+            elif msg.message == WM_APPCOMMAND:
+                cmd = (msg.lParam >> 16) & 0x0FFF
+                parent = self._win_ref()
+                if parent and hasattr(parent, 'music_panel') and parent.music_panel:
+                    if cmd in (14, 46):  # APPCOMMAND_MEDIA_PLAY_PAUSE, APPCOMMAND_MEDIA_PLAY
+                        parent.music_panel._toggle_play()
+                        return True, 1
+                    elif cmd == 47:      # APPCOMMAND_MEDIA_PAUSE
+                        if hasattr(parent.music_panel, '_pause_playback'):
+                            parent.music_panel._pause_playback()
+                        else:
+                            parent.music_panel._toggle_play()
+                        return True, 1
+                    elif cmd == 11:      # APPCOMMAND_MEDIA_NEXTTRACK
+                        parent.music_panel._next_track()
+                        return True, 1
+                    elif cmd == 12:      # APPCOMMAND_MEDIA_PREVTRACK
+                        parent.music_panel._prev_track()
+                        return True, 1
+                    elif cmd == 13:      # APPCOMMAND_MEDIA_STOP
+                        if hasattr(parent.music_panel, '_player') and parent.music_panel._player:
+                            parent.music_panel._player.stop()
+                        return True, 1
         except Exception as e:
             print(f"[Taskbar ERROR] Layer 1 Filter Error: {e}")
         return False, 0
@@ -346,6 +370,74 @@ os.makedirs(APPDATA_DIR, exist_ok=True)
 # Set the absolute path to game_library.json in persistent location
 JSON_PATH = os.path.join(APPDATA_DIR, "game_library.json")
 
+# Persistent background wallpaper cache directory & index manifest in AppData
+BG_CACHE_DIR = os.path.join(APPDATA_DIR, "cache", "backgrounds")
+BG_CACHE_INDEX = os.path.join(APPDATA_DIR, "cache", "bg_cache.json")
+try:
+    os.makedirs(BG_CACHE_DIR, exist_ok=True)
+except Exception:
+    pass
+
+def _get_bg_image_signature(image_path: str):
+    """Generate signature and hash based on image path, mtime, and file size."""
+    if not image_path or not os.path.exists(image_path):
+        return 0, 0, ""
+    try:
+        stat = os.stat(image_path)
+        mtime = stat.st_mtime
+        size = stat.st_size
+        import hashlib
+        sig_raw = f"{os.path.normpath(image_path)}_{mtime}_{size}"
+        sig_hash = hashlib.md5(sig_raw.encode('utf-8')).hexdigest()[:12]
+        return mtime, size, sig_hash
+    except Exception:
+        import hashlib
+        sig_hash = hashlib.md5(image_path.encode('utf-8')).hexdigest()[:12]
+        return 0, 0, sig_hash
+
+def _load_bg_cache_manifest():
+    """Load persistent background cache manifest from AppData."""
+    if os.path.exists(BG_CACHE_INDEX):
+        try:
+            with open(BG_CACHE_INDEX, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    return {"version": 1, "images": {}}
+
+def _save_bg_cache_manifest(manifest):
+    """Save persistent background cache manifest atomically."""
+    try:
+        os.makedirs(os.path.dirname(BG_CACHE_INDEX), exist_ok=True)
+        tmp_path = BG_CACHE_INDEX + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+        os.replace(tmp_path, BG_CACHE_INDEX)
+    except Exception as e:
+        print(f"[BackgroundCache] Error saving manifest: {e}")
+
+def _clean_stale_bg_cache(max_files=30):
+    """Prune oldest cached background images if quota exceeded."""
+    try:
+        if not os.path.exists(BG_CACHE_DIR):
+            return
+        files = []
+        for fname in os.listdir(BG_CACHE_DIR):
+            fpath = os.path.join(BG_CACHE_DIR, fname)
+            if os.path.isfile(fpath) and fname.lower().endswith(('.jpg', '.jpeg', '.png')):
+                files.append((fpath, os.path.getmtime(fpath)))
+        if len(files) > max_files:
+            files.sort(key=lambda x: x[1])  # Oldest first
+            for fpath, _ in files[:len(files) - max_files]:
+                try:
+                    os.remove(fpath)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 # Cleanup leftover temp files from previous runs
 def _cleanup_old_temp_files():
     """Remove leftover helxaid_icon_* temp folders and old temp ICO files."""
@@ -378,6 +470,9 @@ def _cleanup_old_temp_files():
                             os.remove(item_path)
                 except:
                     pass
+                    
+        # Prune stale persistent background variant cache
+        _clean_stale_bg_cache(max_files=30)
     except Exception as e:
         print(f"[Cleanup] Error: {e}")
 
@@ -3862,17 +3957,21 @@ class BackgroundProcessor(QThread):
     """
     Background worker for processing large background images asynchronously.
     Handles smooth scaling and pixel brightness calculation without blocking the UI.
+    Saves scaled variant directly to persistent AppData cache.
     """
     from PySide6.QtCore import Signal
     finished = Signal(str, float, str, str)  # bg_image, avg_brightness, scaled_path, current_hash
 
-    def __init__(self, bg_image, mode, width, height, current_hash):
+    def __init__(self, bg_image, mode, width, height, target_scaled_path, current_hash, sig_hash="", known_brightness=None):
         super().__init__()
         self.bg_image = bg_image
         self.mode = mode
         self.container_width = max(width, 100) # prevent 0 division
         self.container_height = max(height, 100)
+        self.target_scaled_path = target_scaled_path
         self.current_hash = current_hash
+        self.sig_hash = sig_hash
+        self.known_brightness = known_brightness
         self.needs_scaled = True # ALWAYS scale to save RAM
 
     def run(self):
@@ -3885,24 +3984,16 @@ class BackgroundProcessor(QThread):
             if img.isNull():
                 return
                 
-            temp_dir = os.path.join(os.environ.get('TEMP', '/tmp'), 'helxaid_bg')
-            os.makedirs(temp_dir, exist_ok=True)
-            # Create a unique filename for the cached background to avoid sharing issues
-            import hashlib
-            name_hash = hashlib.md5(self.bg_image.encode('utf-8')).hexdigest()[:8]
-            scaled_path = os.path.join(temp_dir, f'bg_scaled_{name_hash}.jpg')
+            os.makedirs(os.path.dirname(self.target_scaled_path), exist_ok=True)
             
-            # Scale it down to screen resolution max (e.g. 1920x1080) to save RAM
-            screen_w, screen_h = 1920, 1080
-            if self.container_width > 0:
-                screen_w, screen_h = self.container_width, self.container_height
-                
+            screen_w = self.container_width
+            screen_h = self.container_height
             orig_width, orig_height = img.width(), img.height()
             
             # Always scale if it's larger than container, OR if we need specific aspect ratio
             if self.mode == "fit":
                 scaled = img.scaled(screen_w, screen_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            elif self.mode == "fill" or self.mode == "stretch":
+            elif self.mode in ("fill", "stretch"):
                 scaled = img.scaled(screen_w, screen_h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
             else:
                 if orig_width > screen_w or orig_height > screen_h:
@@ -3910,38 +4001,56 @@ class BackgroundProcessor(QThread):
                 else:
                     scaled = img
                     
-            scaled.save(scaled_path, 'JPG', 80) # 80 quality is enough for background, saves memory
+            # 82 quality provides crystal-clear background graphics while saving disk space and memory
+            scaled.save(self.target_scaled_path, 'JPG', 82)
+            
             # Calculate average brightness from the SCALED image (faster and saves RAM!)
-            avg_brightness = -1.0
-            calc_scaled = scaled.scaled(50, 50, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+            avg_brightness = self.known_brightness
+            if avg_brightness is None or avg_brightness < 0:
+                calc_scaled = scaled.scaled(40, 40, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+                if not calc_scaled.isNull():
+                    brightness_values = []
+                    w, h = calc_scaled.width(), calc_scaled.height()
+                    
+                    for y in range(h):
+                        for x in range(w):
+                            rgb = calc_scaled.pixel(x, y)
+                            r = (rgb >> 16) & 0xFF
+                            g = (rgb >> 8) & 0xFF
+                            b = rgb & 0xFF
+                            lum = 0.299 * r + 0.587 * g + 0.114 * b
+                            
+                            brightness_values.append(lum)
+                            if y < h * 0.4:
+                                brightness_values.append(lum)  # Double weight for upper area
+                    
+                    if brightness_values:
+                        avg_brightness = sum(brightness_values) / len(brightness_values)
+                else:
+                    avg_brightness = 50.0
             
             # Free up original huge QImage immediately now that we don't need it
             img = QImage()
             scaled = QImage()
             
-            if not calc_scaled.isNull():
-                import time
-                brightness_values = []
-                w, h = calc_scaled.width(), calc_scaled.height()
-                
-                for y in range(h):
-                    for x in range(w):
-                        rgb = calc_scaled.pixel(x, y)
-                        r = (rgb >> 16) & 0xFF
-                        g = (rgb >> 8) & 0xFF
-                        b = rgb & 0xFF
-                        lum = 0.299 * r + 0.587 * g + 0.114 * b
-                        
-                        brightness_values.append(lum)
-                        if y < h * 0.4:
-                            brightness_values.append(lum)  # Double weight for upper area
-                            
-                    pass
-                
-                if brightness_values:
-                    avg_brightness = sum(brightness_values) / len(brightness_values)
+            # Persist metadata to AppData cache manifest
+            if self.sig_hash:
+                try:
+                    manifest = _load_bg_cache_manifest()
+                    images = manifest.setdefault("images", {})
+                    entry = images.setdefault(self.sig_hash, {})
+                    entry["path"] = self.bg_image
+                    entry["avg_brightness"] = float(avg_brightness)
+                    entry["text_color"] = "#FFFFFF"
+                    entry["opacity"] = 0.25 if float(avg_brightness) > 140 else 0.50
+                    variants = entry.setdefault("variants", {})
+                    variant_key = f"{self.mode}_{self.container_width}x{self.container_height}"
+                    variants[variant_key] = os.path.basename(self.target_scaled_path)
+                    _save_bg_cache_manifest(manifest)
+                except Exception as ex:
+                    print(f"[BackgroundProcessor] Manifest write error: {ex}")
             
-            self.finished.emit(self.bg_image, avg_brightness, scaled_path, self.current_hash)
+            self.finished.emit(self.bg_image, float(avg_brightness), self.target_scaled_path, self.current_hash)
         except Exception as e:
             print(f"[BackgroundProcessor] Error: {e}")
 
@@ -4892,21 +5001,38 @@ class GameLauncher(QWidget):
             print("[Debug] F9 ignored: Developer Mode is not enabled in settings.")
 
     def _switch_panel_from_key(self, index):
-        """Global shortcut handler for numerical panel switching (Focus-Aware & Input Capture-Aware)."""
-        # Ignore navigation shortcuts if user is actively typing in text fields or in key recording/capturing mode
+        """Global shortcut handler for numerical panel switching (Focus-Aware, Numpad-Immune & Input Capture-Aware)."""
+        # 1. IMMUNITY: Block any page switching if ANY Numpad key (VK_NUMPAD0..VK_NUMPAD9 = 0x60..0x69) is physically pressed
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            for vk_numpad in range(0x60, 0x6A):
+                if bool(user32.GetAsyncKeyState(vk_numpad) & 0x8000):
+                    return
+        except Exception:
+            pass
+
+        # 2. KEYBOARD GRABBER CHECK: If any widget currently has keyboard grabbed for hotkey recording, do not switch
+        try:
+            if QApplication.keyboardGrabber() is not None:
+                return
+        except Exception:
+            pass
+
+        # 3. FOCUS CHECK: Ignore if actively typing in text fields, dropdowns, or hotkey recording widgets
         focus_widget = QApplication.focusWidget()
         if focus_widget:
-            from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox
-            if isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)):
+            from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox
+            if isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox)):
                 return
             
-            # Reject panel switching while any widget or parent is in input-capturing / recording mode
+            # Reject if the focused widget or any parent is capturing / recording
             w = focus_widget
             while w:
                 if getattr(w, "_is_capturing", False) or getattr(w, "_recording", False):
                     return
                 w = w.parent()
-            
+
         # Specific handling for CPU panel (panel 2) which needs state reset
         if index == 2:
             self._on_cpu_nav_clicked()
@@ -6285,8 +6411,13 @@ class GameLauncher(QWidget):
         # Re-apply theme to lock in the colors and scaled image
         self.apply_theme()
 
-    def apply_theme(self):
-        """Apply theme colors and background image"""
+    def apply_theme(self, update_root_stylesheet=False):
+        """Apply theme colors and background image.
+        
+        Root stylesheet on top-level GameLauncherMain is only applied once on startup
+        or when explicitly requested (e.g. theme color changed in settings) to prevent
+        expensive recursive CSS parsing and UI repainting during window resizes.
+        """
         # Use default theme colors
         colors = DEFAULT_SETTINGS["theme_colors"]
         
@@ -6314,204 +6445,188 @@ class GameLauncher(QWidget):
             r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
             return f"rgba({r}, {g}, {b}, {alpha})"
         
-        # Use simple gradient background (no image in stylesheet - causes memory issues)
-        # Background image will be handled separately via paintEvent if needed
-        bg_style = f"""
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {bg_dark}, stop:0.5 {bg_light}, stop:1 {bg_dark});
-        """
-        
-        # Generate full stylesheet
-        # NOTE: Gradient background is scoped to the main window only (#GameLauncherMain)
-        # to prevent Qt from allocating a separate gradient buffer for every child widget.
-        # Child widgets inherit color/font but use transparent background.
-        stylesheet = f"""
-            QWidget#GameLauncherMain {{
-                {bg_style}
-                color: {text};
-                font-family: 'Orbitron', sans-serif;
-            }}
-            QWidget#GameLauncherMain > QWidget {{
-                background: transparent;
-                color: {text};
-                font-family: 'Orbitron', sans-serif;
-            }}
-            QWidget#ContentStack, QWidget#HomePanel, QWidget#cpuPanel, QWidget#musicPanel,
-            QWidget#crosshairPanel, QWidget#macroPanel, QWidget#hardwarePanel, QWidget#wincustomPanel,
-            QScrollArea, QScrollArea > QWidget, QWidget#gamesScrollArea, QWidget#gamesContainer {{
-                background: transparent;
-            }}
-            QPushButton {{
-                border: 1px solid {primary};
-                padding: 8px 16px;
-                border-radius: 12px;
+        # Only re-evaluate root window stylesheet when requested or on first run
+        if update_root_stylesheet or not getattr(self, '_root_stylesheet_applied', False):
+            bg_style = f"""
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {hex_to_rgba(bg_light, 0.9)}, stop:1 {hex_to_rgba(bg_dark, 0.95)});
-                color: {text};
-                min-width: 32px;
-                min-height: 32px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {hex_to_rgba(primary, 0.3)}, stop:1 {hex_to_rgba(secondary, 0.4)});
-                border: 1px solid {secondary};
-            }}
-            QPushButton:pressed {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {hex_to_rgba(secondary, 0.5)}, stop:1 {hex_to_rgba(primary, 0.6)});
-                border: 1px solid {secondary};
-            }}
-            QPushButton#gameBtn {{
-                border: none;
-                padding: 0;
-                background: transparent;
-            }}
-            QPushButton#gameBtn:hover {{
-                border: none;
-            }}
-            QPushButton#gameBtn:pressed {{
-                border: none;
-            }}
-            QScrollArea {{
-                border: none;
-                background: transparent;
-            }}
-            QScrollBar:vertical {{
-                background: {hex_to_rgba(bg_dark, 0.8)};
-                width: 16px;
-                border-radius: 8px;
-                margin: 4px;
-                border: 1px solid {hex_to_rgba(primary, 0.3)};
-            }}
-            QScrollBar::handle:vertical {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {primary}, stop:0.5 {secondary}, stop:1 {primary});
-                border-radius: 7px;
-                min-height: 40px;
-                border: 2px solid {hex_to_rgba(secondary, 0.8)};
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 {secondary}, stop:0.5 #FFFF00, stop:1 {secondary});
-                border: 2px solid #FFFF00;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: none;
-            }}
-            QScrollBar:horizontal {{
-                background: {hex_to_rgba(bg_dark, 0.8)};
-                height: 16px;
-                border-radius: 8px;
-                margin: 4px;
-                border: 1px solid {hex_to_rgba(primary, 0.3)};
-            }}
-            QScrollBar::handle:horizontal {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {primary}, stop:0.5 {secondary}, stop:1 {primary});
-                border-radius: 7px;
-                min-width: 40px;
-                border: 2px solid {hex_to_rgba(secondary, 0.8)};
-            }}
-            QScrollBar::handle:horizontal:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {secondary}, stop:0.5 #FFFF00, stop:1 {secondary});
-                border: 2px solid #FFFF00;
-            }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-                width: 0px;
-            }}
-            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
-                background: none;
-            }}
-            QSlider::groove:horizontal {{
-                height: 4px;
-                background: {hex_to_rgba(bg_light, 0.7)};
-                border-radius: 2px;
-            }}
-            QSlider::handle:horizontal {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {primary}, stop:1 {secondary});
-                width: 14px;
-                height: 14px;
-                margin: -5px 0;
-                border-radius: 7px;
-                border: none;
-            }}
-            QSlider::handle:horizontal:hover {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {secondary}, stop:1 {primary});
-            }}
-            QLabel {{
-                background: transparent;
-            }}
-            QLineEdit {{
-                background: {hex_to_rgba(bg_light, 0.8)};
-                border: 1px solid {primary};
-                border-radius: 8px;
-                padding: 8px;
-                color: {text};
-            }}
-            QLineEdit:focus {{
-                border: 2px solid {primary};
-            }}
-            QWidget#windowsCustomPanel QLineEdit {{
-                background: #2a2d35;
-                border: none;
-                border-radius: 5px;
-                padding: 6px 8px;
-                color: #e0e0e0;
-            }}
-            QWidget#windowsCustomPanel QLineEdit:focus {{
-                background: #32353e;
-                border: 1px solid rgba(255, 91, 6, 0.6);
-            }}
-            QWidget#windowsCustomPanel QComboBox {{
-                background: #2a2d35;
-                border: none;
-                border-radius: 5px;
-                padding: 5px 10px;
-                color: #e0e0e0;
-            }}
-            QWidget#windowsCustomPanel QComboBox:focus {{
-                background: #32353e;
-                border: 1px solid rgba(255, 91, 6, 0.6);
-            }}
-        """
-        
-        self.setStyleSheet(stylesheet)
+                    stop:0 {bg_dark}, stop:0.5 {bg_light}, stop:1 {bg_dark});
+            """
+            stylesheet = f"""
+                QWidget#GameLauncherMain {{
+                    {bg_style}
+                    color: {text};
+                    font-family: 'Orbitron', sans-serif;
+                }}
+                QWidget#GameLauncherMain > QWidget {{
+                    background: transparent;
+                    color: {text};
+                    font-family: 'Orbitron', sans-serif;
+                }}
+                QWidget#ContentStack, QWidget#HomePanel, QWidget#cpuPanel, QWidget#musicPanel,
+                QWidget#crosshairPanel, QWidget#macroPanel, QWidget#hardwarePanel, QWidget#wincustomPanel,
+                QScrollArea, QScrollArea > QWidget, QWidget#gamesScrollArea, QWidget#gamesContainer {{
+                    background: transparent;
+                }}
+                QPushButton {{
+                    border: 1px solid {primary};
+                    padding: 8px 16px;
+                    border-radius: 12px;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {hex_to_rgba(bg_light, 0.9)}, stop:1 {hex_to_rgba(bg_dark, 0.95)});
+                    color: {text};
+                    min-width: 32px;
+                    min-height: 32px;
+                    font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {hex_to_rgba(primary, 0.3)}, stop:1 {hex_to_rgba(secondary, 0.4)});
+                    border: 1px solid {secondary};
+                }}
+                QPushButton:pressed {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {hex_to_rgba(secondary, 0.5)}, stop:1 {hex_to_rgba(primary, 0.6)});
+                    border: 1px solid {secondary};
+                }}
+                QPushButton#gameBtn {{
+                    border: none;
+                    padding: 0;
+                    background: transparent;
+                }}
+                QPushButton#gameBtn:hover {{
+                    border: none;
+                }}
+                QPushButton#gameBtn:pressed {{
+                    border: none;
+                }}
+                QScrollArea {{
+                    border: none;
+                    background: transparent;
+                }}
+                QScrollBar:vertical {{
+                    background: {hex_to_rgba(bg_dark, 0.8)};
+                    width: 16px;
+                    border-radius: 8px;
+                    margin: 4px;
+                    border: 1px solid {hex_to_rgba(primary, 0.3)};
+                }}
+                QScrollBar::handle:vertical {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 {primary}, stop:0.5 {secondary}, stop:1 {primary});
+                    border-radius: 7px;
+                    min-height: 40px;
+                    border: 2px solid {hex_to_rgba(secondary, 0.8)};
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 {secondary}, stop:0.5 #FFFF00, stop:1 {secondary});
+                    border: 2px solid #FFFF00;
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                    height: 0px;
+                }}
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                    background: none;
+                }}
+                QScrollBar:horizontal {{
+                    background: {hex_to_rgba(bg_dark, 0.8)};
+                    height: 16px;
+                    border-radius: 8px;
+                    margin: 4px;
+                    border: 1px solid {hex_to_rgba(primary, 0.3)};
+                }}
+                QScrollBar::handle:horizontal {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {primary}, stop:0.5 {secondary}, stop:1 {primary});
+                    border-radius: 7px;
+                    min-width: 40px;
+                    border: 2px solid {hex_to_rgba(secondary, 0.8)};
+                }}
+                QScrollBar::handle:horizontal:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {secondary}, stop:0.5 #FFFF00, stop:1 {secondary});
+                    border: 2px solid #FFFF00;
+                }}
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                    width: 0px;
+                }}
+                QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+                    background: none;
+                }}
+                QSlider::groove:horizontal {{
+                    height: 4px;
+                    background: {hex_to_rgba(bg_light, 0.7)};
+                    border-radius: 2px;
+                }}
+                QSlider::handle:horizontal {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {primary}, stop:1 {secondary});
+                    width: 14px;
+                    height: 14px;
+                    margin: -5px 0;
+                    border-radius: 7px;
+                    border: none;
+                }}
+                QSlider::handle:horizontal:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 {secondary}, stop:1 {primary});
+                }}
+                QLabel {{
+                    background: transparent;
+                }}
+                QLineEdit {{
+                    background: {hex_to_rgba(bg_light, 0.8)};
+                    border: 1px solid {primary};
+                    border-radius: 8px;
+                    padding: 8px;
+                    color: {text};
+                }}
+                QLineEdit:focus {{
+                    border: 2px solid {primary};
+                }}
+                QWidget#windowsCustomPanel QLineEdit {{
+                    background: #2a2d35;
+                    border: none;
+                    border-radius: 5px;
+                    padding: 6px 8px;
+                    color: #e0e0e0;
+                }}
+                QWidget#windowsCustomPanel QLineEdit:focus {{
+                    background: #32353e;
+                    border: 1px solid rgba(255, 91, 6, 0.6);
+                }}
+                QWidget#windowsCustomPanel QComboBox {{
+                    background: #2a2d35;
+                    border: none;
+                    border-radius: 5px;
+                    padding: 5px 10px;
+                    color: #e0e0e0;
+                }}
+                QWidget#windowsCustomPanel QComboBox:focus {{
+                    background: #32353e;
+                    border: 1px solid rgba(255, 91, 6, 0.6);
+                }}
+            """
+            self.setStyleSheet(stylesheet)
+            self._root_stylesheet_applied = True
         
         # Apply background image to games container only
         if not hasattr(self, '_bg_brightness_cache'):
             self._bg_brightness_cache = {}
 
-        # Instant fast-path brightness calculation (0ms delay on frame 1)
-        if bg_image and os.path.exists(bg_image) and bg_image not in self._bg_brightness_cache:
-            try:
-                from PySide6.QtGui import QImage
-                from PySide6.QtCore import Qt
-                test_img = QImage(bg_image)
-                if not test_img.isNull():
-                    small = test_img.scaled(30, 30, Qt.IgnoreAspectRatio, Qt.FastTransformation)
-                    total_lum = 0
-                    count = small.width() * small.height()
-                    for y in range(small.height()):
-                        for x in range(small.width()):
-                            rgb = small.pixel(x, y)
-                            r = (rgb >> 16) & 0xFF
-                            g = (rgb >> 8) & 0xFF
-                            b = rgb & 0xFF
-                            total_lum += 0.299 * r + 0.587 * g + 0.114 * b
-                    if count > 0:
-                        avg_b = total_lum / count
-                        t_color = "#FFFFFF"
-                        opac = 0.25 if avg_b > 140 else 0.50
-                        self._bg_brightness_cache[bg_image] = (avg_b, t_color, opac, True)
-            except Exception:
-                pass
+        sig_hash = ""
+        mtime, size = 0, 0
+        if bg_image and os.path.exists(bg_image):
+            mtime, size, sig_hash = _get_bg_image_signature(bg_image)
+            # If brightness not in memory, query persistent manifest in AppData (0ms freeze, no main-thread QImage!)
+            if bg_image not in self._bg_brightness_cache and sig_hash:
+                manifest = _load_bg_cache_manifest()
+                entry = manifest.get("images", {}).get(sig_hash)
+                if entry and "avg_brightness" in entry:
+                    avg_b = float(entry["avg_brightness"])
+                    t_col = entry.get("text_color", "#FFFFFF")
+                    op = float(entry.get("opacity", 0.25 if avg_b > 140 else 0.50))
+                    self._bg_brightness_cache[bg_image] = (avg_b, t_col, op, True)
 
         # Check background brightness for adaptive glass card styling
         is_bright_bg = False
@@ -6573,49 +6688,50 @@ class GameLauncher(QWidget):
                 
                 print(f"[Background] Container size: {container_width}x{container_height}")
                 
-                # Check if we can skip heavy image processing entirely
-                if not hasattr(self, '_bg_brightness_cache'):
-                    self._bg_brightness_cache = {}
+                variant_key = f"{mode}_{container_width}x{container_height}"
+                scaled_filename = f"bg_{sig_hash}_{variant_key}.jpg"
+                target_scaled_path = os.path.join(BG_CACHE_DIR, scaled_filename)
                 
-                temp_dir = os.path.join(os.environ.get('TEMP', '/tmp'), 'helxaid_bg')
-                os.makedirs(temp_dir, exist_ok=True)
-                
-                import hashlib
-                name_hash = hashlib.md5(bg_image.encode('utf-8')).hexdigest()[:8]
-                scaled_path = os.path.join(temp_dir, f'bg_scaled_{name_hash}.jpg')
                 bg_image_css = bg_image.replace("\\", "/")
-                scaled_image_css = scaled_path.replace("\\", "/")
+                scaled_image_css = target_scaled_path.replace("\\", "/")
                 
-                # We ALWAYS use scaled images now to save RAM!
-                needs_scaled = True
+                current_hash = f"{bg_image}_{variant_key}"
                 last_hash = getattr(self, '_last_bg_hash', "")
-                current_hash = f"{bg_image}_{mode}_{container_width}_{container_height}"
                 
-                # Check if scaled image exists on disk
-                scaled_exists = os.path.exists(scaled_path)
+                # Check if scaled variant image exists on disk and is valid
+                scaled_exists = os.path.exists(target_scaled_path) and os.path.getsize(target_scaled_path) > 100
                 
-                if bg_image in self._bg_brightness_cache and last_hash == current_hash and scaled_exists:
-                    # Fast path! We have brightness cached, and the scaled image is ready.
+                if bg_image in self._bg_brightness_cache and scaled_exists:
+                    # Fast path! We have brightness cached in RAM/AppData, and the scaled variant is ready.
                     avg_brightness, self._game_text_color, self._title_bg_opacity, self._has_bg_image = self._bg_brightness_cache[bg_image]
-                    print(f"[Background] Fast path cache hit for: {os.path.basename(bg_image)}")
+                    self._last_bg_hash = current_hash
+                    print(f"[Background] Fast path cache hit for: {os.path.basename(bg_image)} [{container_width}x{container_height}]")
                 else:
-                    # Async path! Cache miss or window resized
+                    # Async path! Cache miss or new resolution variant
+                    known_b = self._bg_brightness_cache[bg_image][0] if (bg_image in self._bg_brightness_cache) else -1.0
+                    
                     if not hasattr(self, '_bg_processor'):
-                        print(f"[Background] Starting async processor for: {os.path.basename(bg_image)}")
+                        print(f"[Background] Starting async processor for: {os.path.basename(bg_image)} [{container_width}x{container_height}]")
                         
-                        # Apply default placeholders while we calculate
-                        self._game_text_color = "#e0e0e0"
-                        self._title_bg_opacity = 0.50
-                        self._has_bg_image = True
+                        # Apply sensible defaults while we calculate
+                        if bg_image in self._bg_brightness_cache:
+                            _, self._game_text_color, self._title_bg_opacity, self._has_bg_image = self._bg_brightness_cache[bg_image]
+                        else:
+                            self._game_text_color = "#e0e0e0"
+                            self._title_bg_opacity = 0.50
+                            self._has_bg_image = True
                         
-                        self._bg_processor = BackgroundProcessor(bg_image, mode, container_width, container_height, current_hash)
+                        self._bg_processor = BackgroundProcessor(
+                            bg_image, mode, container_width, container_height,
+                            target_scaled_path, current_hash, sig_hash=sig_hash, known_brightness=known_b
+                        )
                         self._bg_processor.finished.connect(self._on_bg_processed)
                         from PySide6.QtCore import QThread
                         self._bg_processor.start(QThread.LowestPriority)
                     else:
-                        # Processing is already running, use defaults for now
-                        self._game_text_color = "#e0e0e0"
-                        self._title_bg_opacity = 0.50
+                        # Processing is already running, preserve current settings
+                        self._game_text_color = getattr(self, '_game_text_color', "#e0e0e0")
+                        self._title_bg_opacity = getattr(self, '_title_bg_opacity', 0.50)
                         self._has_bg_image = True
                         
                     # If scaled is not ready, temporarily use the unscaled image to avoid blank background
@@ -6664,26 +6780,39 @@ class GameLauncher(QWidget):
                 
 
                 
-                # Apply to games container
+                # Apply to games container (only if changed)
                 if hasattr(self, 'games_container'):
-                    self.games_container.setStyleSheet(container_style)
+                    if getattr(self, '_last_applied_container_css', None) != container_style:
+                        self.games_container.setStyleSheet(container_style)
+                        self._last_applied_container_css = container_style
                 
-                # Apply to recently played
+                # Apply to recently played (only if changed)
                 if hasattr(self, 'recently_played_widget'):
-                    self.recently_played_widget.setStyleSheet(recently_played_style)
+                    if getattr(self, '_last_applied_recently_style', None) != recently_played_style:
+                        self.recently_played_widget.setStyleSheet(recently_played_style)
+                        self._last_applied_recently_style = recently_played_style
                 
-                # Apply to sort bar
+                # Apply to sort bar (only if changed)
                 if hasattr(self, 'sort_bar'):
-                    self.sort_bar.setStyleSheet(sort_bar_style)
+                    if getattr(self, '_last_applied_sort_bar_style', None) != sort_bar_style:
+                        self.sort_bar.setStyleSheet(sort_bar_style)
+                        self._last_applied_sort_bar_style = sort_bar_style
                 
                 # Apply adaptive text color to sort bar labels
                 label_style = f"font-size: 13px; color: {self._game_text_color}; background: transparent;"
                 if hasattr(self, 'sort_label'):
-                    self.sort_label.setStyleSheet(label_style)
+                    if getattr(self, '_last_applied_sort_label_style', None) != label_style:
+                        self.sort_label.setStyleSheet(label_style)
+                        self._last_applied_sort_label_style = label_style
                 if hasattr(self, 'filter_label'):
-                    self.filter_label.setStyleSheet(label_style)
+                    if getattr(self, '_last_applied_filter_label_style', None) != label_style:
+                        self.filter_label.setStyleSheet(label_style)
+                        self._last_applied_filter_label_style = label_style
                 if hasattr(self, 'game_counter'):
-                    self.game_counter.setStyleSheet(f"font-size: 13px; color: {self._game_text_color}; padding: 0 10px; background: transparent;")
+                    counter_style = f"font-size: 13px; color: {self._game_text_color}; padding: 0 10px; background: transparent;"
+                    if getattr(self, '_last_applied_game_counter_style', None) != counter_style:
+                        self.game_counter.setStyleSheet(counter_style)
+                        self._last_applied_game_counter_style = counter_style
                         
             except Exception as e:
                 print(f"[Background] Error scaling image: {e}")
@@ -6693,20 +6822,33 @@ class GameLauncher(QWidget):
             self._title_bg_opacity = 0  # No opacity needed
             
             if hasattr(self, 'games_container'):
-                self.games_container.setStyleSheet("background: transparent;")
+                if getattr(self, '_last_applied_container_css', None) != "background: transparent;":
+                    self.games_container.setStyleSheet("background: transparent;")
+                    self._last_applied_container_css = "background: transparent;"
             if hasattr(self, 'recently_played_widget'):
-                self.recently_played_widget.setStyleSheet(recently_played_style)
+                if getattr(self, '_last_applied_recently_style', None) != recently_played_style:
+                    self.recently_played_widget.setStyleSheet(recently_played_style)
+                    self._last_applied_recently_style = recently_played_style
             if hasattr(self, 'sort_bar'):
-                self.sort_bar.setStyleSheet(sort_bar_style)
+                if getattr(self, '_last_applied_sort_bar_style', None) != sort_bar_style:
+                    self.sort_bar.setStyleSheet(sort_bar_style)
+                    self._last_applied_sort_bar_style = sort_bar_style
             
             # Apply white text color to sortBar labels when no background image
             label_style = f"font-size: 13px; color: {self._sortbar_label_color}; background: transparent;"
             if hasattr(self, 'sort_label'):
-                self.sort_label.setStyleSheet(label_style)
+                if getattr(self, '_last_applied_sort_label_style', None) != label_style:
+                    self.sort_label.setStyleSheet(label_style)
+                    self._last_applied_sort_label_style = label_style
             if hasattr(self, 'filter_label'):
-                self.filter_label.setStyleSheet(label_style)
+                if getattr(self, '_last_applied_filter_label_style', None) != label_style:
+                    self.filter_label.setStyleSheet(label_style)
+                    self._last_applied_filter_label_style = label_style
             if hasattr(self, 'game_counter'):
-                self.game_counter.setStyleSheet(f"font-size: 13px; color: {self._sortbar_label_color}; padding: 0 10px; background: transparent;")
+                counter_style = f"font-size: 13px; color: {self._sortbar_label_color}; padding: 0 10px; background: transparent;"
+                if getattr(self, '_last_applied_game_counter_style', None) != counter_style:
+                    self.game_counter.setStyleSheet(counter_style)
+                    self._last_applied_game_counter_style = counter_style
 
 
     # =============================================
@@ -7094,12 +7236,11 @@ Stylesheet Selector:
             if self.isFullScreen():
                 self.showNormal()
                 self.settings["window_fullscreen"] = False
-                # Restore previous geometry if available
+                # Restore previous geometry if available in a single OS call
                 geometry = self.settings.get("window_geometry")
                 if geometry and len(geometry) == 4:
                     x, y, w, h = self._sanitize_window_geometry(geometry[0], geometry[1], geometry[2], geometry[3])
-                    self.resize(w, h)
-                    self.move(x, y)
+                    self.setGeometry(x, y, w, h)
                 # Re-apply resizable constraint if non-resizable
                 if not self.settings.get("resizable_window", True):
                     self.setFixedSize(self.size())
@@ -7116,14 +7257,22 @@ Stylesheet Selector:
                     self.settings["window_geometry"] = [gx, gy, gw, gh]
                 self.showFullScreen()
                 self.settings["window_fullscreen"] = True
-            save_settings(self.settings)
+            
+            # Defer disk write so it doesn't hitch the animation frame
+            QTimer.singleShot(600, lambda: save_settings(self.settings))
         finally:
-            # Clear transition lock after OS window state animation completes
-            QTimer.singleShot(500, lambda: setattr(self, '_is_toggling_fullscreen', False))
+            # Clear transition lock and perform clean final layout & background pass
+            def _finish_transition():
+                self._is_toggling_fullscreen = False
+                self.reflow_grid()
+                self.apply_theme(update_root_stylesheet=False)
+            QTimer.singleShot(400, _finish_transition)
     
     def _update_nav_gradient(self):
         """Update the gradient offset for animated nav button with a 100% seamless mathematical loop."""
         if not hasattr(self, '_active_nav_btn') or not self._active_nav_btn:
+            return
+        if getattr(self, '_is_toggling_fullscreen', False):
             return
         
         # Palette RGB tuples for linear interpolation (OMEN Cyberpunk Neon theme)
@@ -10291,19 +10440,25 @@ Stylesheet Selector:
         if not items:
             return
                 
-        # Remove them from the layout (without deleting the widgets)
-        for i in reversed(range(self.grid.count())):
-            self.grid.takeAt(i)
-            
-        # Re-add to grid with new column alignment
-        col = 0
-        row = 0
-        for item in items:
-            self.grid.addWidget(item, row, col, Qt.AlignLeft | Qt.AlignTop)
-            col += 1
-            if col >= num_columns:
-                col = 0
-                row += 1
+        if hasattr(self, 'games_container'):
+            self.games_container.setUpdatesEnabled(False)
+        try:
+            # Remove them from the layout (without deleting the widgets)
+            for i in reversed(range(self.grid.count())):
+                self.grid.takeAt(i)
+                
+            # Re-add to grid with new column alignment
+            col = 0
+            row = 0
+            for item in items:
+                self.grid.addWidget(item, row, col, Qt.AlignLeft | Qt.AlignTop)
+                col += 1
+                if col >= num_columns:
+                    col = 0
+                    row += 1
+        finally:
+            if hasattr(self, 'games_container'):
+                self.games_container.setUpdatesEnabled(True)
                 
     def refresh(self):
         """Public refresh handler triggered by Refresh button or menu with 5-second cooldown."""
@@ -11028,6 +11183,21 @@ Stylesheet Selector:
                             return True
                         self._shortcut_last_fired[key] = now
                         
+                        # === Hardware Media Keys (Qt Key Events from OS) ===
+                        if key in (Qt.Key_MediaTogglePlayPause, Qt.Key_MediaPlay, Qt.Key_MediaPause):
+                            self.music_panel._toggle_play()
+                            return True
+                        elif key == Qt.Key_MediaNext:
+                            self.music_panel._next_track()
+                            return True
+                        elif key == Qt.Key_MediaPrevious:
+                            self.music_panel._prev_track()
+                            return True
+                        elif key == Qt.Key_MediaStop:
+                            if hasattr(self.music_panel, '_player') and self.music_panel._player:
+                                self.music_panel._player.stop()
+                            return True
+
                         # Space: Toggle play/pause
                         if key == Qt.Key_Space:
                             self.music_panel._toggle_play()
@@ -13489,12 +13659,16 @@ First Played: {first_played_formatted}
         if hasattr(self, 'floating_loading_panel') and self.floating_loading_panel and self.floating_loading_panel.isVisible():
             self.floating_loading_panel.show_centered()
         
+        # During fullscreen transition animation, let OS animate smoothly without intermediate layout churn
+        if getattr(self, '_is_toggling_fullscreen', False):
+            return
+        
         # Debounce the grid reflow so it doesn't stutter during window dragging
         if not hasattr(self, '_resize_timer'):
             self._resize_timer = QTimer(self)
             self._resize_timer.setSingleShot(True)
             self._resize_timer.timeout.connect(self.reflow_grid)
-        self._resize_timer.start(100)  # 100ms debounce
+        self._resize_timer.start(120)  # 120ms debounce
         
         # Re-scale background image to new container size (debounced separately)
         # Without this, the background stays at the initial startup size after resize
@@ -13502,8 +13676,8 @@ First Played: {first_played_formatted}
             if not hasattr(self, '_bg_resize_timer'):
                 self._bg_resize_timer = QTimer(self)
                 self._bg_resize_timer.setSingleShot(True)
-                self._bg_resize_timer.timeout.connect(self.apply_theme)
-            self._bg_resize_timer.start(200)  # 200ms debounce to avoid stutter
+                self._bg_resize_timer.timeout.connect(lambda: self.apply_theme(update_root_stylesheet=False))
+            self._bg_resize_timer.start(150)  # 150ms debounce to avoid stutter
 
     def closeEvent(self, event):
         if self.confirm_on_exit:
