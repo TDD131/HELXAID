@@ -4939,30 +4939,44 @@ class ResumeNotificationWidget(QFrame):
         self.move(x, 20)
 
     def animate_out(self, callback=None):
-        """Fade out and hide the banner, then execute callback."""
-        print("[Music DEBUG] ResumeNotificationWidget.animate_out called!")
+        """Fade out and slide up the banner, then execute callback."""
         self._timer.stop()
-        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+        self.btn_resume.setEnabled(False)
+        self.btn_dismiss.setEnabled(False)
+        
+        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QPoint, QAbstractAnimation
         from PySide6.QtWidgets import QGraphicsOpacityEffect
         
-        self.opacity_effect = QGraphicsOpacityEffect(self)
-        self.setGraphicsEffect(self.opacity_effect)
+        if not self.graphicsEffect():
+            effect = QGraphicsOpacityEffect(self)
+            self.setGraphicsEffect(effect)
+        else:
+            effect = self.graphicsEffect()
+            
+        self._anim_group = QParallelAnimationGroup(self)
         
-        self._fade_anim = QPropertyAnimation(self.opacity_effect, b"opacity", self)
-        self._fade_anim.setDuration(200)
-        self._fade_anim.setStartValue(1.0)
-        self._fade_anim.setEndValue(0.0)
-        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        pos_anim = QPropertyAnimation(self, b"pos")
+        pos_anim.setDuration(250)
+        pos_anim.setStartValue(self.pos())
+        pos_anim.setEndValue(self.pos() + QPoint(0, -30))
+        pos_anim.setEasingCurve(QEasingCurve.InCubic)
+        
+        fade_anim = QPropertyAnimation(effect, b"opacity")
+        fade_anim.setDuration(250)
+        fade_anim.setStartValue(1.0)
+        fade_anim.setEndValue(0.0)
+        
+        self._anim_group.addAnimation(pos_anim)
+        self._anim_group.addAnimation(fade_anim)
         
         def on_finished():
-            print("[Music DEBUG] animate_out on_finished callback executing!")
             self.hide()
             self.setGraphicsEffect(None)
             if callback:
                 callback()
                 
-        self._fade_anim.finished.connect(on_finished)
-        self._fade_anim.start()
+        self._anim_group.finished.connect(on_finished)
+        self._anim_group.start(QAbstractAnimation.DeleteWhenStopped)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -4980,19 +4994,17 @@ class ResumeNotificationWidget(QFrame):
             effect = self.graphicsEffect()
             
         effect.setOpacity(0.0)
-        
-        if self.parent():
-            x = self.parent().width() - self.width() - 20
-            self.move(x, 20)
+        self.update_position()
             
-        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QPoint
+        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QPoint, QAbstractAnimation
         self._in_anim_group = QParallelAnimationGroup(self)
         
+        target_y = self.y()
         pos_anim = QPropertyAnimation(self, b"pos")
-        pos_anim.setDuration(400)
+        pos_anim.setDuration(300)
         pos_anim.setStartValue(QPoint(self.x(), -30))
-        pos_anim.setEndValue(QPoint(self.x(), 20))
-        pos_anim.setEasingCurve(QEasingCurve.OutBack)
+        pos_anim.setEndValue(QPoint(self.x(), target_y))
+        pos_anim.setEasingCurve(QEasingCurve.OutCubic)
         
         fade_anim = QPropertyAnimation(effect, b"opacity")
         fade_anim.setDuration(300)
@@ -5001,43 +5013,11 @@ class ResumeNotificationWidget(QFrame):
         
         self._in_anim_group.addAnimation(pos_anim)
         self._in_anim_group.addAnimation(fade_anim)
-        from PySide6.QtCore import QAbstractAnimation
+        
+        def on_in_finished():
+            self.setGraphicsEffect(None)
+        self._in_anim_group.finished.connect(on_in_finished)
         self._in_anim_group.start(QAbstractAnimation.DeleteWhenStopped)
-            
-    def animate_out(self, callback=None):
-        self.btn_resume.setEnabled(False)
-        self.btn_dismiss.setEnabled(False)
-        
-        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QPoint
-        from PySide6.QtWidgets import QGraphicsOpacityEffect
-        
-        if not self.graphicsEffect():
-            effect = QGraphicsOpacityEffect(self)
-            self.setGraphicsEffect(effect)
-        else:
-            effect = self.graphicsEffect()
-            
-        self._anim_group = QParallelAnimationGroup(self)
-        
-        pos_anim = QPropertyAnimation(self, b"pos")
-        pos_anim.setDuration(350)
-        pos_anim.setStartValue(self.pos())
-        pos_anim.setEndValue(self.pos() + QPoint(0, -30))
-        pos_anim.setEasingCurve(QEasingCurve.InBack)
-        
-        fade_anim = QPropertyAnimation(effect, b"opacity")
-        fade_anim.setDuration(300)
-        fade_anim.setStartValue(1.0)
-        fade_anim.setEndValue(0.0)
-        
-        self._anim_group.addAnimation(pos_anim)
-        self._anim_group.addAnimation(fade_anim)
-        
-        def on_finished():
-            self.hide()
-        self._anim_group.finished.connect(on_finished)
-        from PySide6.QtCore import QAbstractAnimation
-        self._anim_group.start(QAbstractAnimation.DeleteWhenStopped)
 
 
 class FloatingUrlInputWidget(QFrame):
@@ -5613,6 +5593,7 @@ class MusicPanelWidget(QWidget):
         self._render_gate_reason = None
 
         self._is_maximized = False
+        self._initial_state_loaded = False
 
         # Internal state
         self._rtss_excluded_once = False
@@ -5704,7 +5685,6 @@ class MusicPanelWidget(QWidget):
                     dur = self._player.duration()
                     if dur > 0:
                         self.player_bar.set_position(pos / 1000.0, dur / 1000.0)
-                        # Metadata Feedback Loop for QMediaPlayer
                         if hasattr(self, '_playlist') and 0 <= self._current_index < len(self._playlist):
                             track = self._playlist[self._current_index]
                             if track.get('duration', 0) == 0:
@@ -5712,6 +5692,11 @@ class MusicPanelWidget(QWidget):
                                 if hasattr(self, 'table'): self.table._render_tracks()
             except Exception:
                 pass
+                
+        if hasattr(self, 'resume_banner') and not self.resume_banner.isHidden():
+            if hasattr(self.resume_banner, 'update_position'):
+                self.resume_banner.update_position()
+            self.resume_banner.raise_()
     
     def _check_ffmpeg(self) -> bool:
         """Check if FFmpeg is available in AppData tools path."""
@@ -8933,20 +8918,31 @@ class MusicPanelWidget(QWidget):
                 print(f"Loaded state: {folder}")
         except Exception as e:
             print(f"Failed to load state: {e}")
+        finally:
+            self._initial_state_loaded = True
     
     def _save_state(self):
         """Save current state to config."""
         import json
         try:
+            if not getattr(self, '_initial_state_loaded', False):
+                return
             if not hasattr(self, 'player_bar') or self.player_bar is None:
                 return
                 
             current_track_path = ''
             position = 0
+            
             if hasattr(self, '_playlist') and self._playlist and len(self._playlist) > 0:
                 if 0 <= self._current_index < len(self._playlist):
                     current_track_path = self._playlist[self._current_index].get('path', '')
                 # Use tracked position (player.position() returns 0 when stopped)
+                position = getattr(self, '_last_known_position', 0) or (self._player.position() if hasattr(self, '_player') and self._player else 0)
+            elif getattr(self, '_pending_single_track_resume', None):
+                current_track_path = self._pending_single_track_resume.get('path', '')
+                position = getattr(self, '_last_known_position', 0) or self._pending_single_track_resume.get('position', 0)
+            elif getattr(self, '_current_media_path', None) and os.path.exists(self._current_media_path):
+                current_track_path = self._current_media_path
                 position = getattr(self, '_last_known_position', 0) or (self._player.position() if hasattr(self, '_player') and self._player else 0)
             else:
                 self._music_folder = ''
