@@ -4499,6 +4499,10 @@ class PlayerBar(QFrame):
     def set_track_info(self, title: str, artist: str):
         self.title_label.setText(title)
         self.artist_label.setText(artist or "-")
+        # Update docked taskbar widget if available
+        parent_widget = self.parent()
+        if parent_widget and hasattr(parent_widget, '_taskbar_media_widget') and parent_widget._taskbar_media_widget:
+            parent_widget._taskbar_media_widget.set_track_info(title, artist or "")
 
     def set_shuffle(self, enabled: bool):
         """Set shuffle state and update UI."""
@@ -5632,9 +5636,8 @@ class MusicPanelWidget(QWidget):
         if app:
             app.aboutToQuit.connect(self._save_state)
         
-        # Start global media key listener for hardware media keys (deferred by 1.5s)
-        # (keyboard Fn keys, Bluetooth headphone/earbuds, USB controllers)
-        QTimer.singleShot(1500, self._setup_media_key_service)
+        # Start global media key listener and taskbar widget (ready quickly after UI init)
+        QTimer.singleShot(100, self._setup_media_key_service)
         
         # Monitor audio device changes (deferred by 2s)
         # connects (e.g. Bluetooth headphones, USB DAC)
@@ -5697,6 +5700,15 @@ class MusicPanelWidget(QWidget):
             if hasattr(self.resume_banner, 'update_position'):
                 self.resume_banner.update_position()
             self.resume_banner.raise_()
+
+        # Show and sync taskbar media widget when HELXAIC panel is viewed
+        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+            if getattr(self, '_taskbar_widget_enabled', True):
+                self._taskbar_media_widget.show()
+                self._taskbar_media_widget.sync_position()
+                self._taskbar_media_widget.raise_()
+        elif getattr(self, '_taskbar_widget_enabled', True):
+            self._setup_media_key_service()
     
     def _check_ffmpeg(self) -> bool:
         """Check if FFmpeg is available in AppData tools path."""
@@ -5829,6 +5841,105 @@ class MusicPanelWidget(QWidget):
             # Unexpected error - log but don't crash the music panel
             self._media_key_service = None
             print(f"[Music] Failed to start media key service: {e}")
+
+        # 3. Native Taskbar Docked Media Controls (Directly on Windows Taskbar)
+        try:
+            from TaskbarMediaWidget import TaskbarMediaWidget
+            if not hasattr(self, '_taskbar_media_widget') or self._taskbar_media_widget is None:
+                self._taskbar_media_widget = TaskbarMediaWidget(self)
+                self._taskbar_media_widget.prev_clicked.connect(self._prev_track)
+                self._taskbar_media_widget.playpause_clicked.connect(self._toggle_play)
+                self._taskbar_media_widget.next_clicked.connect(self._next_track)
+                self._taskbar_media_widget.title_clicked.connect(self._bring_helxaic_to_front)
+                self._taskbar_media_widget.close_clicked.connect(self._hide_taskbar_media_widget)
+                
+                # Apply saved position mode (default: left near start)
+                saved_pos = getattr(self, '_taskbar_widget_position', 'left')
+                self._taskbar_media_widget.set_position_mode(saved_pos)
+                
+                # Sync current state
+                from PySide6.QtMultimedia import QMediaPlayer
+                is_playing = (self._player.playbackState() == QMediaPlayer.PlayingState) if hasattr(self, '_player') and self._player else False
+                self._taskbar_media_widget.set_playback_state(is_playing)
+                
+                current_title = self.player_bar.title_label.text() if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'title_label') else ""
+                current_artist = self.player_bar.artist_label.text() if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'artist_label') else ""
+                if current_title:
+                    self._taskbar_media_widget.set_track_info(current_title, current_artist if current_artist != "-" else "")
+                
+                # Only show immediately if HELXAIC panel is currently visible or music is currently playing
+                if getattr(self, '_taskbar_widget_enabled', True) and (self.isVisible() or is_playing):
+                    self._taskbar_media_widget.show()
+                    self._taskbar_media_widget.sync_position()
+                    self._taskbar_media_widget.raise_()
+                print("[Music] Taskbar Media Widget docked to Windows Taskbar")
+        except Exception as e:
+            self._taskbar_media_widget = None
+            print(f"[Music] Taskbar Media Widget init error: {e}")
+
+    def _bring_helxaic_to_front(self):
+        """Restore and raise HELXAID window directly to the HELXAIC music page."""
+        try:
+            main_win = self.window()
+            if main_win:
+                if main_win.isMinimized():
+                    main_win.showNormal()
+                main_win.show()
+                main_win.raise_()
+                main_win.activateWindow()
+                if hasattr(main_win, 'switch_panel'):
+                    main_win.switch_panel(1)
+        except Exception as e:
+            print(f"[Music] Error bringing HELXAIC to front: {e}")
+
+    def _hide_taskbar_media_widget(self):
+        """Hide the taskbar widget and persist user preference."""
+        self._taskbar_widget_enabled = False
+        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+            self._taskbar_media_widget.hide()
+        if hasattr(self, 'action_taskbar_enable'):
+            self.action_taskbar_enable.blockSignals(True)
+            self.action_taskbar_enable.setChecked(False)
+            self.action_taskbar_enable.blockSignals(False)
+        self._save_state()
+
+    def toggle_taskbar_media_widget(self, enabled=None):
+        """Toggle or set taskbar widget visibility."""
+        if enabled is None:
+            self._taskbar_widget_enabled = not getattr(self, '_taskbar_widget_enabled', True)
+        else:
+            self._taskbar_widget_enabled = bool(enabled)
+            
+        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+            if self._taskbar_widget_enabled:
+                self._taskbar_media_widget.show()
+                self._taskbar_media_widget.sync_position()
+            else:
+                self._taskbar_media_widget.hide()
+        elif self._taskbar_widget_enabled:
+            self._setup_media_key_service()
+            
+        if hasattr(self, 'action_taskbar_enable'):
+            self.action_taskbar_enable.blockSignals(True)
+            self.action_taskbar_enable.setChecked(self._taskbar_widget_enabled)
+            self.action_taskbar_enable.blockSignals(False)
+            
+        self._save_state()
+
+    def set_taskbar_media_position(self, mode: str):
+        """Change taskbar widget position and persist setting."""
+        self._taskbar_widget_position = mode
+        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+            self._taskbar_media_widget.set_position_mode(mode)
+        
+        # Sync menu checkmarks
+        if hasattr(self, '_taskbar_pos_actions'):
+            for m_key, action in self._taskbar_pos_actions.items():
+                action.blockSignals(True)
+                action.setChecked(m_key == mode)
+                action.blockSignals(False)
+                
+        self._save_state()
 
     def _play_current_or_resume(self):
         """Resume playback if paused, or play current/first track."""
@@ -7191,6 +7302,45 @@ class MusicPanelWidget(QWidget):
         self.action_convert_mp3 = QAction("Convert to MP3...", self)
         self.action_convert_mp3.triggered.connect(self._show_convert_dialog)
         tools_menu.addAction(self.action_convert_mp3)
+        
+        tools_menu.addSeparator()
+        
+        # Taskbar Media Widget Submenu (with Position dropdown on hover)
+        self.taskbar_media_menu = tools_menu.addMenu("Taskbar Media Widget")
+        self.taskbar_media_menu.setObjectName("taskbarMediaMenu")
+        
+        # Enable / Disable Action
+        self.action_taskbar_enable = QAction("Enable Widget", self)
+        self.action_taskbar_enable.setCheckable(True)
+        self.action_taskbar_enable.setChecked(getattr(self, '_taskbar_widget_enabled', True))
+        self.action_taskbar_enable.toggled.connect(self.toggle_taskbar_media_widget)
+        self.taskbar_media_menu.addAction(self.action_taskbar_enable)
+        
+        self.taskbar_media_menu.addSeparator()
+        
+        # Position Selection Group
+        self._taskbar_pos_group = QActionGroup(self)
+        self._taskbar_pos_group.setExclusive(True)
+        
+        pos_options = [
+            ("right", "Dock: Right (Near System Tray)"),
+            ("center", "Dock: Center (Taskbar Center)"),
+            ("left", "Dock: Left (Near Start Button)"),
+            ("top_right", "Float: Top-Right Screen"),
+            ("top_center", "Float: Top-Center Screen")
+        ]
+        
+        self._taskbar_pos_actions = {}
+        current_pos = getattr(self, '_taskbar_widget_position', 'left')
+        
+        for mode_key, mode_label in pos_options:
+            pos_act = QAction(mode_label, self)
+            pos_act.setCheckable(True)
+            pos_act.setChecked(mode_key == current_pos)
+            pos_act.triggered.connect(lambda checked, m=mode_key: self.set_taskbar_media_position(m))
+            self._taskbar_pos_group.addAction(pos_act)
+            self.taskbar_media_menu.addAction(pos_act)
+            self._taskbar_pos_actions[mode_key] = pos_act
         
         # Apply menu bar styling
         menu_bar.setStyleSheet("""
@@ -8559,6 +8709,15 @@ class MusicPanelWidget(QWidget):
             is_playing = (state == QMediaPlayer.PlayingState)
             is_stopped = (state == QMediaPlayer.StoppedState)
             self._smtc_service.set_playback_status(is_playing=is_playing, is_stopped=is_stopped)
+            
+        # Sync with docked taskbar media widget
+        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+            is_play = (state == QMediaPlayer.PlayingState)
+            self._taskbar_media_widget.set_playback_state(is_play)
+            if is_play and getattr(self, '_taskbar_widget_enabled', True):
+                self._taskbar_media_widget.show()
+                self._taskbar_media_widget.sync_position()
+                self._taskbar_media_widget.raise_()
         
         # In fullscreen: show playerbar when paused, hide when playing
         if hasattr(self, '_is_fullscreen') and self._is_fullscreen:
@@ -8915,6 +9074,31 @@ class MusicPanelWidget(QWidget):
                     self._shuffled_sequence = []
                     self._shuffled_pointer = -1
                 
+                # Restore taskbar widget state & position
+                taskbar_enabled = state.get('taskbar_widget_enabled', True)
+                self._taskbar_widget_enabled = taskbar_enabled
+                taskbar_pos = state.get('taskbar_widget_position', 'left')
+                self._taskbar_widget_position = taskbar_pos
+
+                if hasattr(self, 'action_taskbar_enable'):
+                    self.action_taskbar_enable.blockSignals(True)
+                    self.action_taskbar_enable.setChecked(taskbar_enabled)
+                    self.action_taskbar_enable.blockSignals(False)
+
+                if hasattr(self, '_taskbar_pos_actions'):
+                    for m_key, action in self._taskbar_pos_actions.items():
+                        action.blockSignals(True)
+                        action.setChecked(m_key == taskbar_pos)
+                        action.blockSignals(False)
+
+                if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+                    self._taskbar_media_widget.set_position_mode(taskbar_pos)
+                    if taskbar_enabled:
+                        self._taskbar_media_widget.show()
+                        self._taskbar_media_widget.sync_position()
+                    else:
+                        self._taskbar_media_widget.hide()
+
                 print(f"Loaded state: {folder}")
         except Exception as e:
             print(f"Failed to load state: {e}")
@@ -8965,7 +9149,9 @@ class MusicPanelWidget(QWidget):
                 'audio_device_id': getattr(self._audio_output.device(), 'id', lambda: b'')().data().decode('utf-8', 'ignore') if hasattr(self, '_audio_output') and hasattr(self._audio_output, 'device') else '',
                 'playback_speed': getattr(self._player, 'playbackRate', lambda: 1.0)() if hasattr(self, '_player') else 1.0,
                 'crossfade_enabled': getattr(self, '_crossfade_enabled', True),
-                'crossfade_duration': getattr(self, '_crossfade_duration', 3.0)
+                'crossfade_duration': getattr(self, '_crossfade_duration', 3.0),
+                'taskbar_widget_enabled': getattr(self, '_taskbar_widget_enabled', True),
+                'taskbar_widget_position': getattr(self, '_taskbar_widget_position', 'left')
             }
             
             with open(self._config_path, 'w', encoding='utf-8') as f:

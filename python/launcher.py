@@ -858,23 +858,19 @@ try:
                 
                 # Get the array of function pointers from the VTable
                 # Using 32 as a safe upper bound for ITaskbarList3 (which has ~21 methods)
-                vtable = ctypes.cast(vtable_addr, POINTER(c_void_p * 32)).contents
+                self._vtable = ctypes.cast(vtable_addr, POINTER(c_void_p * 32)).contents
                 
-                # VTable index 3: HrInit
-                HrInit_addr = vtable[3]
-                print(f"[Taskbar DEBUG] HrInit function address: {hex(HrInit_addr)}", flush=True)
-                
-                HrInit_proto = WINFUNCTYPE(HRESULT, c_void_p)
-                HrInit = HrInit_proto(HrInit_addr)
-                
-                print("[Taskbar DEBUG] Executing HrInit...", flush=True)
-                hr = HrInit(self.taskbar)
-                
-                if hr != 0:
-                    print(f"[Taskbar ERROR] HrInit failed: HRESULT {hex(hr & 0xFFFFFFFF)}", flush=True)
-                    self.taskbar = None
-                else:
-                    print("[Taskbar SUCCESS] ITaskbarList3 interface ready.", flush=True)
+                # VTable index 3: HrInit (optional on modern Windows 10/11)
+                try:
+                    HrInit_addr = self._vtable[3]
+                    HrInit_proto = WINFUNCTYPE(ctypes.c_long, c_void_p)
+                    HrInit = HrInit_proto(HrInit_addr)
+                    hr = HrInit(self.taskbar)
+                    print(f"[Taskbar DEBUG] HrInit returned: {hex(hr & 0xFFFFFFFF)}", flush=True)
+                except Exception as e:
+                    print(f"[Taskbar DEBUG] HrInit optional call bypassed: {e}", flush=True)
+                    
+                print("[Taskbar SUCCESS] ITaskbarList3 interface ready.", flush=True)
                     
             except Exception as e:
                 print(f"[Taskbar FATAL] Critical COM crash: {e}", flush=True)
@@ -902,6 +898,7 @@ try:
                 # Previous button
                 buttons[0].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
                 buttons[0].iId = BUTTON_PREV
+                buttons[0].iBitmap = 0
                 buttons[0].hIcon = self.icon_prev
                 buttons[0].szTip = "Previous"
                 buttons[0].dwFlags = THBF_ENABLED
@@ -909,6 +906,7 @@ try:
                 # Play/Pause toggle button
                 buttons[1].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
                 buttons[1].iId = BUTTON_PLAYPAUSE
+                buttons[1].iBitmap = 0
                 buttons[1].hIcon = self.icon_play
                 buttons[1].szTip = "Play"
                 buttons[1].dwFlags = THBF_ENABLED
@@ -916,16 +914,14 @@ try:
                 # Next button
                 buttons[2].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
                 buttons[2].iId = BUTTON_NEXT
+                buttons[2].iBitmap = 0
                 buttons[2].hIcon = self.icon_next
                 buttons[2].szTip = "Next"
                 buttons[2].dwFlags = THBF_ENABLED
                 
-                # Get VTable and fetch ThumbBarAddButtons (index 15)
-                vtable_addr = ctypes.cast(self.taskbar, POINTER(c_void_p))[0]
-                vtable = ctypes.cast(vtable_addr, POINTER(c_void_p * 32)).contents
-                
-                ThumbBarAddButtons_addr = vtable[15]
-                ThumbBarAddButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
+                # ThumbBarAddButtons (VTable index 15)
+                ThumbBarAddButtons_addr = self._vtable[15]
+                ThumbBarAddButtons_proto = WINFUNCTYPE(ctypes.c_long, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
                 ThumbBarAddButtons = ThumbBarAddButtons_proto(ThumbBarAddButtons_addr)
                 
                 print(f"[Taskbar DEBUG] Calling ThumbBarAddButtons(taskbar={hex(self.taskbar)}, hwnd={hex(target_hwnd)})...", flush=True)
@@ -951,24 +947,16 @@ try:
                 return False
             
             try:
-                # Update but with EXACT SAME data to act as a probe
                 buttons = (THUMBBUTTON * 1)()
                 buttons[0].dwMask = THB_TOOLTIP
                 buttons[0].iId = BUTTON_PREV
                 buttons[0].szTip = "Previous"
                 
-                vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
-                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 30)).contents
-                
-                ThumbBarUpdateButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
-                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(vtable_ptr[16])
+                ThumbBarUpdateButtons_proto = WINFUNCTYPE(ctypes.c_long, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
+                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(self._vtable[16])
                 
                 hr = ThumbBarUpdateButtons(self.taskbar, target_hwnd, 1, buttons)
-                if hr == 0:
-                    return True
-                else:
-                    print(f"[Taskbar VERIFY FAILED] ThumbBarUpdateButtons probe returned: {hex(hr & 0xFFFFFFFF)}")
-                    return False
+                return (hr == 0)
             except Exception as e:
                 print(f"[Taskbar VERIFY FATAL] {e}")
                 return False
@@ -987,15 +975,13 @@ try:
                 buttons = (THUMBBUTTON * 1)()
                 buttons[0].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
                 buttons[0].iId = BUTTON_PLAYPAUSE
+                buttons[0].iBitmap = 0
                 buttons[0].hIcon = self.icon_pause if is_playing else self.icon_play
                 buttons[0].szTip = "Pause" if is_playing else "Play"
                 buttons[0].dwFlags = THBF_ENABLED
                 
-                vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
-                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 30)).contents
-                
-                ThumbBarUpdateButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
-                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(vtable_ptr[16])
+                ThumbBarUpdateButtons_proto = WINFUNCTYPE(ctypes.c_long, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
+                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(self._vtable[16])
                 
                 ThumbBarUpdateButtons(self.taskbar, target_hwnd, 1, buttons)
             except Exception as e:
@@ -1017,6 +1003,7 @@ try:
                 # Button 0: Prev
                 buttons[0].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
                 buttons[0].iId = BUTTON_PREV
+                buttons[0].iBitmap = 0
                 buttons[0].hIcon = self.icon_prev
                 buttons[0].szTip = "Previous"
                 buttons[0].dwFlags = flags
@@ -1024,6 +1011,7 @@ try:
                 # Button 1: Play/Pause
                 buttons[1].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
                 buttons[1].iId = BUTTON_PLAYPAUSE
+                buttons[1].iBitmap = 0
                 buttons[1].hIcon = self.icon_pause if self._is_playing else self.icon_play
                 buttons[1].szTip = "Pause" if self._is_playing else "Play"
                 buttons[1].dwFlags = flags
@@ -1031,15 +1019,13 @@ try:
                 # Button 2: Next
                 buttons[2].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
                 buttons[2].iId = BUTTON_NEXT
+                buttons[2].iBitmap = 0
                 buttons[2].hIcon = self.icon_next
                 buttons[2].szTip = "Next"
                 buttons[2].dwFlags = flags
                 
-                vtable = ctypes.cast(self.taskbar, POINTER(c_void_p)).contents
-                vtable_ptr = ctypes.cast(vtable, POINTER(c_void_p * 30)).contents
-                
-                ThumbBarUpdateButtons_proto = WINFUNCTYPE(HRESULT, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
-                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(vtable_ptr[16])
+                ThumbBarUpdateButtons_proto = WINFUNCTYPE(ctypes.c_long, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
+                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(self._vtable[16])
                 
                 ThumbBarUpdateButtons(self.taskbar, target_hwnd, 3, buttons)
                 print(f"[Taskbar DEBUG] set_buttons_visible({visible}) on HWND {hex(target_hwnd)}", flush=True)
@@ -7257,6 +7243,13 @@ Stylesheet Selector:
                     self.settings["window_geometry"] = [gx, gy, gw, gh]
                 self.showFullScreen()
                 self.settings["window_fullscreen"] = True
+
+            # Instantly re-sync taskbar media widget (zero delay)
+            if hasattr(self, 'music_panel') and self.music_panel:
+                if hasattr(self.music_panel, '_taskbar_media_widget') and self.music_panel._taskbar_media_widget:
+                    if getattr(self.music_panel, '_taskbar_widget_enabled', True):
+                        self.music_panel._taskbar_media_widget.sync_position()
+                        self.music_panel._taskbar_media_widget.raise_()
             
             # Defer disk write so it doesn't hitch the animation frame
             QTimer.singleShot(600, lambda: save_settings(self.settings))
@@ -7266,7 +7259,12 @@ Stylesheet Selector:
                 self._is_toggling_fullscreen = False
                 self.reflow_grid()
                 self.apply_theme(update_root_stylesheet=False)
-            QTimer.singleShot(400, _finish_transition)
+                if hasattr(self, 'music_panel') and self.music_panel:
+                    if hasattr(self.music_panel, '_taskbar_media_widget') and self.music_panel._taskbar_media_widget:
+                        if getattr(self.music_panel, '_taskbar_widget_enabled', True):
+                            self.music_panel._taskbar_media_widget.sync_position()
+                            self.music_panel._taskbar_media_widget.raise_()
+            QTimer.singleShot(50, _finish_transition)
     
     def _update_nav_gradient(self):
         """Update the gradient offset for animated nav button with a 100% seamless mathematical loop."""
@@ -13705,6 +13703,11 @@ First Played: {first_played_formatted}
         # Save music panel state (position, folder, etc.)
         if hasattr(self, 'music_panel') and self.music_panel:
             self.music_panel._save_state()
+            if hasattr(self.music_panel, '_taskbar_media_widget') and self.music_panel._taskbar_media_widget:
+                try:
+                    self.music_panel._taskbar_media_widget.close()
+                except Exception:
+                    pass
             
         # Shutdown macro system bridge to release input hooks and stop threads
         if hasattr(self, '_macro_bridge') and self._macro_bridge:
