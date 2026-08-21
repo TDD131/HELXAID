@@ -5857,9 +5857,11 @@ class MusicPanelWidget(QWidget):
                 self._taskbar_media_widget.close_clicked.connect(self._hide_taskbar_media_widget)
                 self._taskbar_media_widget.state_changed.connect(self._save_state)
                 
-                # Apply saved position mode (default: left near start)
+                # Apply saved position mode & opacity (default: left near start, 75% opacity)
                 saved_pos = getattr(self, '_taskbar_widget_position', 'left')
+                saved_opacity = getattr(self, '_taskbar_widget_opacity', 75)
                 self._taskbar_media_widget.set_position_mode(saved_pos)
+                self._taskbar_media_widget.set_widget_opacity(saved_opacity)
                 
                 # Sync current state
                 from PySide6.QtMultimedia import QMediaPlayer
@@ -9101,7 +9103,7 @@ class MusicPanelWidget(QWidget):
                     self._shuffled_sequence = []
                     self._shuffled_pointer = -1
                 
-                # Restore taskbar widget state & position & collapse & custom position & lock
+                # Restore taskbar widget state & position & collapse & custom position & lock & opacity
                 taskbar_enabled = state.get('taskbar_widget_enabled', True)
                 self._taskbar_widget_enabled = taskbar_enabled
                 taskbar_pos = state.get('taskbar_widget_position', 'left')
@@ -9110,6 +9112,8 @@ class MusicPanelWidget(QWidget):
                 taskbar_collapsed = state.get('taskbar_widget_collapsed', False)
                 taskbar_locked = state.get('taskbar_widget_locked', False)
                 taskbar_width = state.get('taskbar_widget_width', 240)
+                taskbar_opacity = state.get('taskbar_widget_opacity', 75)
+                self._taskbar_widget_opacity = taskbar_opacity
 
                 if hasattr(self, 'action_taskbar_enable'):
                     self.action_taskbar_enable.blockSignals(True)
@@ -9128,6 +9132,7 @@ class MusicPanelWidget(QWidget):
                     self._taskbar_media_widget.set_locked(taskbar_locked)
                     self._taskbar_media_widget.set_position_mode(taskbar_pos)
                     self._taskbar_media_widget._expanded_width = taskbar_width
+                    self._taskbar_media_widget.set_widget_opacity(taskbar_opacity)
                     if taskbar_collapsed:
                         self._taskbar_media_widget.collapse(animate=False)
                     else:
@@ -9179,12 +9184,14 @@ class MusicPanelWidget(QWidget):
             custom_w = 240
             custom_pos = None
             pos_mode = getattr(self, '_taskbar_widget_position', 'left')
+            widget_opacity = getattr(self, '_taskbar_widget_opacity', 75)
             if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
                 is_collapsed = getattr(self._taskbar_media_widget, '_is_collapsed', False)
                 is_locked = getattr(self._taskbar_media_widget, '_is_locked', False)
                 custom_w = getattr(self._taskbar_media_widget, '_expanded_width', 240)
                 custom_pos = getattr(self._taskbar_media_widget, '_custom_pos', None)
                 pos_mode = self._taskbar_media_widget.get_position_mode()
+                widget_opacity = self._taskbar_media_widget.get_widget_opacity()
 
             state = {
                 'folder': self._music_folder or '',
@@ -9206,7 +9213,8 @@ class MusicPanelWidget(QWidget):
                 'taskbar_widget_custom_pos': custom_pos,
                 'taskbar_widget_collapsed': is_collapsed,
                 'taskbar_widget_locked': is_locked,
-                'taskbar_widget_width': custom_w
+                'taskbar_widget_width': custom_w,
+                'taskbar_widget_opacity': widget_opacity
             }
             
             with open(self._config_path, 'w', encoding='utf-8') as f:

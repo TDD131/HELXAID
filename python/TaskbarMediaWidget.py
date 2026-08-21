@@ -101,6 +101,7 @@ SVG_LOCK = """<svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 8h-1V6c0
 SVG_UNLOCK = """<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5-2.28 0-4.27 1.54-4.84 3.75-.14.54.18 1.08.72 1.23.53.14 1.08-.18 1.22-.72C9.44 3.88 10.6 3 12 3c1.66 0 3 1.34 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z"/></svg>"""
 SVG_POSITION = """<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>"""
 SVG_OPEN_APP = """<svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>"""
+SVG_OPACITY = """<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18V4c4.41 0 8 3.59 8 8s-3.59 8-8 8z"/></svg>"""
 
 
 class TaskbarGripButton(QPushButton):
@@ -233,6 +234,134 @@ class MiniSpectrumVisualizer(QWidget):
         p.end()
 
 
+class TaskbarMarqueeLabel(QLabel):
+    """
+    Animated Marquee Title Label for TaskbarMediaWidget.
+    Smoothly scrolls long track titles horizontally when playing, with seamless loop.
+    
+    Component Name: TaskbarMarqueeLabel
+    """
+    def __init__(self, text="HELXAIC Music", parent=None):
+        super().__init__(text, parent)
+        self.setObjectName("taskbarMediaTitle")
+        self._full_text = text
+        self._offset = 0.0
+        self._is_scrolling = False
+        self._is_playing = False
+        self._scroll_speed = 1.0  # smooth pixels per tick
+        self._pause_at_start = 30  # ticks to pause at beginning (~1.0s)
+        self._pause_counter = self._pause_at_start
+        self._loop_gap = 40  # pixels between loop repetitions
+        
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self.setMinimumWidth(0)
+        self.setCursor(QCursor(Qt.PointingHandCursor))
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._scroll_tick)
+        self._timer.setInterval(33)  # ~30fps smooth animation
+
+    def set_full_text(self, text: str):
+        """Update track title and check if marquee scrolling is needed."""
+        clean = (text or "").strip()
+        if clean == self._full_text and self._is_scrolling:
+            return
+        self._full_text = clean
+        self._offset = 0.0
+        self._pause_counter = self._pause_at_start
+        self._check_scroll_needed()
+        self.update()
+
+    def set_playback_state(self, is_playing: bool):
+        """Start or pause marquee scrolling based on playback state."""
+        self._is_playing = is_playing
+        if not is_playing:
+            self._timer.stop()
+            self._offset = 0.0
+            self._pause_counter = self._pause_at_start
+        else:
+            self._check_scroll_needed()
+        self.update()
+
+    def _check_scroll_needed(self):
+        """Determine if text length exceeds label width."""
+        fm = self.fontMetrics()
+        text_width = fm.horizontalAdvance(self._full_text)
+        avail_width = self.width()
+
+        if text_width > avail_width and avail_width > 15:
+            self._is_scrolling = True
+            if self._is_playing and not self._timer.isActive():
+                self._timer.start()
+        else:
+            self._is_scrolling = False
+            self._timer.stop()
+            self._offset = 0.0
+            self._pause_counter = self._pause_at_start
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._check_scroll_needed()
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+    def _scroll_tick(self):
+        """Advance marquee scroll position."""
+        if not self._is_scrolling or not self._is_playing:
+            return
+
+        if self._pause_counter > 0:
+            self._pause_counter -= 1
+            return
+
+        fm = self.fontMetrics()
+        text_width = fm.horizontalAdvance(self._full_text)
+
+        self._offset += self._scroll_speed
+        if self._offset >= text_width + self._loop_gap:
+            self._offset = 0.0
+            self._pause_counter = self._pause_at_start
+
+        self.update()
+
+    def paintEvent(self, event):
+        """Custom paint with smooth clipping and marquee text loop."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.setFont(self.font())
+        
+        is_hover = self.underMouse()
+        color = QColor("#FDA903") if is_hover else QColor("#f2f2f8")
+        painter.setPen(color)
+
+        fm = painter.fontMetrics()
+        text_width = fm.horizontalAdvance(self._full_text)
+        avail_width = self.width()
+        y = (self.height() + fm.ascent() - fm.descent()) // 2
+
+        if not self._is_scrolling or not self._is_playing:
+            if text_width > avail_width and avail_width > 10:
+                elided = fm.elidedText(self._full_text, Qt.ElideRight, avail_width)
+                painter.drawText(0, y, elided)
+            else:
+                painter.drawText(0, y, self._full_text)
+        else:
+            painter.setClipRect(0, 0, avail_width, self.height())
+            x1 = int(-self._offset)
+            painter.drawText(x1, y, self._full_text)
+            
+            x2 = int(-self._offset + text_width + self._loop_gap)
+            painter.drawText(x2, y, self._full_text)
+
+        painter.end()
+
+
 class TaskbarMediaWidget(QWidget):
     """
     Taskbar Media Widget for HELXAIC.
@@ -263,10 +392,97 @@ class TaskbarMediaWidget(QWidget):
         self._expanded_width = 240
         self._is_animating = False
         self._is_dragging = False
+        self._widget_opacity = 75
 
         self._init_win32_styles()
         self._init_ui()
         self._init_timer()
+
+    def get_widget_opacity(self) -> int:
+        """Get container background idle opacity percentage (65 to 100)."""
+        return getattr(self, '_widget_opacity', 75)
+
+    def set_widget_opacity(self, pct: int):
+        """Set container background idle opacity (65% to 100%) and update stylesheet."""
+        pct = max(65, min(100, int(pct)))
+        self._widget_opacity = pct
+        self._apply_style()
+        self.state_changed.emit()
+
+    def _apply_style(self):
+        """Apply container background gradient stylesheet based on configured idle opacity."""
+        pct = self.get_widget_opacity()
+        if pct >= 100:
+            idle_top = 1.0
+            idle_bot = 1.0
+            hover_top = 1.0
+            hover_bot = 1.0
+        else:
+            base_alpha = pct / 100.0
+            # Idle: Top slightly softer (-0.10), Bottom is base_alpha
+            idle_top = max(0.40, base_alpha - 0.10)
+            idle_bot = base_alpha
+            # Hover: +10% boost for interactive glass highlight
+            hover_top = min(1.0, base_alpha)
+            hover_bot = min(1.0, base_alpha + 0.10)
+
+        self.container.setStyleSheet(f"""
+            QFrame#taskbarMediaContainer {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(36, 38, 50, {idle_top:.2f}),
+                    stop:1 rgba(16, 16, 24, {idle_bot:.2f}));
+                border-radius: 8px;
+                border: none;
+            }}
+            QFrame#taskbarMediaContainer:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(46, 48, 64, {hover_top:.2f}),
+                    stop:1 rgba(22, 22, 32, {hover_bot:.2f}));
+                border: none;
+            }}
+            QLabel#taskbarMediaTitle {{
+                color: #f2f2f8;
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
+                font-size: 10px;
+                font-weight: 700;
+                background: transparent;
+                padding-left: 2px;
+            }}
+            QLabel#taskbarMediaTitle:hover {{
+                color: #FDA903;
+            }}
+            QLabel#taskbarMediaIcon {{
+                background: transparent;
+            }}
+            QPushButton {{
+                background: rgba(255, 255, 255, 0.08);
+                border: none;
+                border-radius: 5px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background: #383b41;
+            }}
+            QPushButton:pressed {{
+                background: #464a52;
+            }}
+            QPushButton#taskbarMediaCloseBtn {{
+                background: transparent;
+            }}
+            QPushButton#taskbarMediaCloseBtn:hover {{
+                background: #383b41;
+            }}
+            QPushButton#taskbarMediaMinimizeBtn {{
+                background: transparent;
+                border-radius: 3px;
+            }}
+            QPushButton#taskbarMediaMinimizeBtn:hover {{
+                background: rgba(255, 91, 6, 0.25);
+            }}
+            QPushButton#taskbarMediaMinimizeBtn:pressed {{
+                background: rgba(255, 91, 6, 0.40);
+            }}
+        """)
 
     def nativeEvent(self, eventType, message):
         """Intercept native Windows messages to prevent click focus stealing and Z-order flicker."""
@@ -308,63 +524,7 @@ class TaskbarMediaWidget(QWidget):
         self.container.setObjectName("taskbarMediaContainer")
         
         # UI Rule: Less border, more rich background-color + Orbitron font + Glassmorphism
-        self.container.setStyleSheet("""
-            QFrame#taskbarMediaContainer {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(36, 38, 50, 0.65),
-                    stop:1 rgba(16, 16, 24, 0.75));
-                border-radius: 8px;
-                border: none;
-            }
-            QFrame#taskbarMediaContainer:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 rgba(46, 48, 64, 0.75),
-                    stop:1 rgba(22, 22, 32, 0.85));
-                border: none;
-            }
-            QLabel#taskbarMediaTitle {
-                color: #f2f2f8;
-                font-family: 'Orbitron', 'Segoe UI', sans-serif;
-                font-size: 10px;
-                font-weight: 700;
-                background: transparent;
-                padding-left: 2px;
-            }
-            QLabel#taskbarMediaTitle:hover {
-                color: #FDA903;
-            }
-            QLabel#taskbarMediaIcon {
-                background: transparent;
-            }
-            QPushButton {
-                background: rgba(255, 255, 255, 0.08);
-                border: none;
-                border-radius: 5px;
-                padding: 0px;
-            }
-            QPushButton:hover {
-                background: #383b41;
-            }
-            QPushButton:pressed {
-                background: #464a52;
-            }
-            QPushButton#taskbarMediaCloseBtn {
-                background: transparent;
-            }
-            QPushButton#taskbarMediaCloseBtn:hover {
-                background: #383b41;
-            }
-            QPushButton#taskbarMediaMinimizeBtn {
-                background: transparent;
-                border-radius: 3px;
-            }
-            QPushButton#taskbarMediaMinimizeBtn:hover {
-                background: rgba(255, 91, 6, 0.25);
-            }
-            QPushButton#taskbarMediaMinimizeBtn:pressed {
-                background: rgba(255, 91, 6, 0.40);
-            }
-        """)
+        self._apply_style()
 
         container_layout = QHBoxLayout(self.container)
         container_layout.setContentsMargins(6, 2, 6, 2)
@@ -380,12 +540,8 @@ class TaskbarMediaWidget(QWidget):
         self.lbl_note_icon.mouseReleaseEvent = self._on_body_mouse_release
         container_layout.addWidget(self.lbl_note_icon)
 
-        # Track Title Label (Clickable & Draggable)
-        self.lbl_title = QLabel("HELXAIC Music", self.container)
-        self.lbl_title.setObjectName("taskbarMediaTitle")
-        self.lbl_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        self.lbl_title.setMinimumWidth(0)
-        self.lbl_title.setCursor(QCursor(Qt.PointingHandCursor))
+        # Track Title Label (Clickable & Draggable with animated Marquee scrolling)
+        self.lbl_title = TaskbarMarqueeLabel("HELXAIC Music", self.container)
         container_layout.addWidget(self.lbl_title)
 
         # Enable free drag moving on container and title
@@ -545,12 +701,37 @@ class TaskbarMediaWidget(QWidget):
 
         menu.addSeparator()
 
-        # 3. Open HELXAIC Action
+        # 3. Widget Opacity Submenu (65% to 100%)
+        opacity_icon = _get_ui_icon("opacity-white.svg", fallback_svg=SVG_OPACITY, size=13)
+        opacity_menu = menu.addMenu(opacity_icon, "Widget Opacity")
+        opacity_menu.setObjectName("taskbarMediaContextMenu")
+        opacity_menu.setWindowFlags(opacity_menu.windowFlags() | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+
+        opacity_options = [
+            (65, "65% (Minimum)"),
+            (70, "70%"),
+            (75, "75% (Default)"),
+            (80, "80%"),
+            (85, "85%"),
+            (90, "90%"),
+            (95, "95%"),
+            (100, "100% (Solid)"),
+        ]
+        curr_opacity = self.get_widget_opacity()
+        for pct_val, label in opacity_options:
+            act = opacity_menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(curr_opacity == pct_val)
+            act.triggered.connect(lambda chk=False, v=pct_val: self.set_widget_opacity(v))
+
+        menu.addSeparator()
+
+        # 4. Open HELXAIC Action
         open_icon = _get_ui_icon("open-white.svg", fallback_svg=SVG_OPEN_APP, size=13)
         act_open = menu.addAction(open_icon, "Open HELXAIC")
         act_open.triggered.connect(self.title_clicked.emit)
 
-        # 4. Hide Widget Action
+        # 5. Hide Widget Action
         hide_icon = _get_ui_icon("close-icon-white.svg", fallback_svg=SVG_CLOSE, size=12)
         act_hide = menu.addAction(hide_icon, "Hide Widget")
         act_hide.triggered.connect(self.close_clicked.emit)
@@ -788,10 +969,12 @@ class TaskbarMediaWidget(QWidget):
         self._pos_timer.start(200)
 
     def set_playback_state(self, is_playing: bool):
-        """Update Play/Pause icon and audio visualizer based on playback state."""
+        """Update Play/Pause icon, audio visualizer, and marquee scrolling based on playback state."""
         self._is_playing = is_playing
         if hasattr(self, 'visualizer') and self.visualizer:
             self.visualizer.set_active(is_playing)
+        if hasattr(self, 'lbl_title') and hasattr(self.lbl_title, 'set_playback_state'):
+            self.lbl_title.set_playback_state(is_playing)
         if is_playing:
             self.btn_play.setIcon(_get_taskbar_icon("taskbar-pause-icon.png", SVG_PAUSE, size=13, color="#FF5B06"))
             self.btn_play.setToolTip("Pause")
@@ -800,29 +983,25 @@ class TaskbarMediaWidget(QWidget):
             self.btn_play.setToolTip("Play")
 
     def _update_title_elide(self):
-        """Update elided title text dynamically based on current widget width."""
-        if not hasattr(self, 'lbl_title') or not hasattr(self, '_full_title'):
-            return
-        from PySide6.QtGui import QFontMetrics
-        fm = QFontMetrics(self.lbl_title.font())
-        max_title_w = max(30, self.width() - 190)
-        elided = fm.elidedText(self._full_title, Qt.ElideRight, max_title_w)
-        self.lbl_title.setText(elided)
-        self.lbl_title.setToolTip(f"Now Playing: {self._full_title}\nClick to open HELXAIC")
+        """Update marquee scroll bounds dynamically based on current widget width."""
+        if hasattr(self, 'lbl_title') and hasattr(self.lbl_title, '_check_scroll_needed'):
+            self.lbl_title._check_scroll_needed()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_title_elide()
 
     def set_track_info(self, title: str, artist: str = ""):
-        """Update displayed track title and artist."""
+        """Update displayed track title and artist with marquee animation."""
         clean_title = (title or "HELXAIC Music").strip()
         if artist and artist.strip():
             clean_title = f"{clean_title} - {artist.strip()}"
         
         self._full_title = clean_title
         self._artist = artist or ""
-        self._update_title_elide()
+        if hasattr(self, 'lbl_title') and hasattr(self.lbl_title, 'set_full_text'):
+            self.lbl_title.set_full_text(self._full_title)
+            self.lbl_title.setToolTip(f"Now Playing: {self._full_title}\nClick to open HELXAIC")
         self.sync_position()
 
     def set_position_mode(self, mode: str):
