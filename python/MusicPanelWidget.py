@@ -9132,7 +9132,7 @@ class MusicPanelWidget(QWidget):
                         self._taskbar_media_widget.collapse(animate=False)
                     else:
                         self._taskbar_media_widget.expand(animate=False)
-                    if taskbar_enabled:
+                    if taskbar_enabled and (self.isVisible() or (hasattr(self, '_player') and self._player and self._player.playbackState() == QMediaPlayer.PlayingState)):
                         self._taskbar_media_widget.show()
                         self._taskbar_media_widget.sync_position()
                     else:

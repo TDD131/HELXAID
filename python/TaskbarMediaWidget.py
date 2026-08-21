@@ -383,10 +383,10 @@ class TaskbarMediaWidget(QWidget):
         # Track Title Label (Clickable & Draggable)
         self.lbl_title = QLabel("HELXAIC Music", self.container)
         self.lbl_title.setObjectName("taskbarMediaTitle")
-        self.lbl_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.lbl_title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         self.lbl_title.setMinimumWidth(0)
         self.lbl_title.setCursor(QCursor(Qt.PointingHandCursor))
-        container_layout.addWidget(self.lbl_title, 1)
+        container_layout.addWidget(self.lbl_title)
 
         # Enable free drag moving on container and title
         self._body_drag_active = False
@@ -402,12 +402,18 @@ class TaskbarMediaWidget(QWidget):
         self.lbl_title.mouseMoveEvent = self._on_body_mouse_move
         self.lbl_title.mouseReleaseEvent = self._on_body_mouse_release
 
-        # Animated Mini Spectrum Visualizer (Placed to the right of the Title)
+        # Left Stretch (Symmetrically balances visualizer between Title and Prev button)
+        container_layout.addStretch(1)
+
+        # Animated Mini Spectrum Visualizer (Positioned in the middle)
         self.visualizer = MiniSpectrumVisualizer(self.container, bar_count=7)
         self.visualizer.mousePressEvent = self._on_body_mouse_press
         self.visualizer.mouseMoveEvent = self._on_body_mouse_move
         self.visualizer.mouseReleaseEvent = self._on_body_mouse_release
         container_layout.addWidget(self.visualizer)
+
+        # Right Stretch (Symmetrically balances visualizer between Title and Prev button)
+        container_layout.addStretch(1)
 
         # Prev Button
         self.btn_prev = QPushButton(self.container)
@@ -715,11 +721,13 @@ class TaskbarMediaWidget(QWidget):
         def _on_val(v):
             w_int = int(v)
             self.setFixedWidth(w_int)
+            self._update_title_elide()
             self.sync_position()
 
         def _on_done():
             self._is_animating = False
             self.setFixedWidth(target_w)
+            self._update_title_elide()
             self.sync_position()
 
         self._width_anim.valueChanged.connect(_on_val)
@@ -761,6 +769,7 @@ class TaskbarMediaWidget(QWidget):
             target_w = min(380, max(180, target_w))
             self._expanded_width = target_w
             self.setFixedWidth(target_w)
+            self._update_title_elide()
 
         self.sync_position()
 
@@ -790,6 +799,21 @@ class TaskbarMediaWidget(QWidget):
             self.btn_play.setIcon(_get_taskbar_icon("taskbar-play-icon.png", SVG_PLAY, size=13, color="#FF5B06"))
             self.btn_play.setToolTip("Play")
 
+    def _update_title_elide(self):
+        """Update elided title text dynamically based on current widget width."""
+        if not hasattr(self, 'lbl_title') or not hasattr(self, '_full_title'):
+            return
+        from PySide6.QtGui import QFontMetrics
+        fm = QFontMetrics(self.lbl_title.font())
+        max_title_w = max(30, self.width() - 190)
+        elided = fm.elidedText(self._full_title, Qt.ElideRight, max_title_w)
+        self.lbl_title.setText(elided)
+        self.lbl_title.setToolTip(f"Now Playing: {self._full_title}\nClick to open HELXAIC")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_title_elide()
+
     def set_track_info(self, title: str, artist: str = ""):
         """Update displayed track title and artist."""
         clean_title = (title or "HELXAIC Music").strip()
@@ -798,15 +822,7 @@ class TaskbarMediaWidget(QWidget):
         
         self._full_title = clean_title
         self._artist = artist or ""
-        
-        # Elide text to fit compactly
-        from PySide6.QtGui import QFontMetrics
-        fm = QFontMetrics(self.lbl_title.font())
-        avail_w = max(80, self.width() - 130)
-        elided = fm.elidedText(self._full_title, Qt.ElideRight, avail_w)
-        self.lbl_title.setText(elided)
-        self.lbl_title.setToolTip(f"Now Playing: {self._full_title}\nClick to open HELXAIC")
-        
+        self._update_title_elide()
         self.sync_position()
 
     def set_position_mode(self, mode: str):
@@ -820,6 +836,7 @@ class TaskbarMediaWidget(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._update_title_elide()
         self.sync_position()
         self.raise_()
 
