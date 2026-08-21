@@ -14214,23 +14214,29 @@ First Played: {first_played_formatted}
             self.tray_icon.setIcon(self.windowIcon())
         
         # Create tray menu
-        tray_menu = QMenu()
+        self.tray_menu = QMenu()
+        self.tray_menu.setObjectName("systemTrayMenu")
+        self.tray_menu.aboutToShow.connect(self._update_tray_menu)
         
-        show_action = tray_menu.addAction("Show Launcher")
+        show_action = self.tray_menu.addAction("Show Launcher")
         show_action.triggered.connect(self.show_from_tray)
         
-        tray_menu.addSeparator()
+        self.tray_menu.addSeparator()
         
         # Crosshair toggle
-        crosshair_action = tray_menu.addAction("Toggle Crosshair (Ctrl+Shift+C)")
+        crosshair_action = self.tray_menu.addAction("Toggle Crosshair (Ctrl+Shift+C)")
         crosshair_action.triggered.connect(self._toggle_crosshair_from_tray)
         
-        tray_menu.addSeparator()
+        # Media Widget toggle (Dynamic: Show Media Widget / Hide Media Widget)
+        self.media_widget_action = self.tray_menu.addAction("Show Media Widget")
+        self.media_widget_action.triggered.connect(self._toggle_taskbar_media_widget_from_tray)
         
-        exit_action = tray_menu.addAction("Exit")
+        self.tray_menu.addSeparator()
+        
+        exit_action = self.tray_menu.addAction("Exit")
         exit_action.triggered.connect(self.quit_app)
         
-        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.setContextMenu(self.tray_menu)
         self.tray_icon.activated.connect(self.on_tray_activated)
         self.tray_icon.setToolTip("HELXAID")
         self.tray_icon.show()
@@ -14253,6 +14259,42 @@ First Played: {first_played_formatted}
         """Toggle crosshair overlay from tray menu."""
         if hasattr(self, 'crosshair_panel') and self.crosshair_panel:
             self.crosshair_panel._on_toggle()
+
+    def _is_taskbar_media_widget_active(self) -> bool:
+        """Check if taskbar media widget is currently shown and active."""
+        if hasattr(self, 'music_panel') and self.music_panel:
+            if hasattr(self.music_panel, '_taskbar_media_widget') and self.music_panel._taskbar_media_widget:
+                return self.music_panel._taskbar_media_widget.isVisible()
+            return getattr(self.music_panel, '_taskbar_widget_enabled', False)
+        return False
+
+    def _update_tray_menu(self):
+        """Update dynamic items in system tray menu right before showing."""
+        if hasattr(self, 'media_widget_action') and self.media_widget_action:
+            if self._is_taskbar_media_widget_active():
+                self.media_widget_action.setText("Hide Media Widget")
+            else:
+                self.media_widget_action.setText("Show Media Widget")
+
+    def _toggle_taskbar_media_widget_from_tray(self):
+        """Toggle taskbar media widget from system tray menu."""
+        if hasattr(self, 'music_panel') and self.music_panel:
+            is_active = self._is_taskbar_media_widget_active()
+            if is_active:
+                self.music_panel._hide_taskbar_media_widget()
+            else:
+                self.music_panel._taskbar_widget_enabled = True
+                if hasattr(self.music_panel, '_taskbar_media_widget') and self.music_panel._taskbar_media_widget:
+                    self.music_panel._taskbar_media_widget.show()
+                    self.music_panel._taskbar_media_widget.sync_position()
+                    self.music_panel._taskbar_media_widget.raise_()
+                elif hasattr(self.music_panel, '_setup_media_key_service'):
+                    self.music_panel._setup_media_key_service()
+                if hasattr(self.music_panel, 'action_taskbar_enable'):
+                    self.music_panel.action_taskbar_enable.blockSignals(True)
+                    self.music_panel.action_taskbar_enable.setChecked(True)
+                    self.music_panel.action_taskbar_enable.blockSignals(False)
+                self.music_panel._save_state()
     
     def quit_app(self):
         """Actually quit the application."""

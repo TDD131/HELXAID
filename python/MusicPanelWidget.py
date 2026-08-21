@@ -4499,10 +4499,13 @@ class PlayerBar(QFrame):
     def set_track_info(self, title: str, artist: str):
         self.title_label.setText(title)
         self.artist_label.setText(artist or "-")
-        # Update docked taskbar widget if available
-        parent_widget = self.parent()
-        if parent_widget and hasattr(parent_widget, '_taskbar_media_widget') and parent_widget._taskbar_media_widget:
-            parent_widget._taskbar_media_widget.set_track_info(title, artist or "")
+        # Update docked taskbar widget if available across parent hierarchy
+        curr = self.parent()
+        while curr is not None:
+            if hasattr(curr, '_taskbar_media_widget') and curr._taskbar_media_widget:
+                curr._taskbar_media_widget.set_track_info(title, artist if artist != "-" else "")
+                break
+            curr = curr.parent()
 
     def set_shuffle(self, enabled: bool):
         """Set shuffle state and update UI."""
@@ -5852,6 +5855,7 @@ class MusicPanelWidget(QWidget):
                 self._taskbar_media_widget.next_clicked.connect(self._next_track)
                 self._taskbar_media_widget.title_clicked.connect(self._bring_helxaic_to_front)
                 self._taskbar_media_widget.close_clicked.connect(self._hide_taskbar_media_widget)
+                self._taskbar_media_widget.state_changed.connect(self._save_state)
                 
                 # Apply saved position mode (default: left near start)
                 saved_pos = getattr(self, '_taskbar_widget_position', 'left')
@@ -5862,8 +5866,19 @@ class MusicPanelWidget(QWidget):
                 is_playing = (self._player.playbackState() == QMediaPlayer.PlayingState) if hasattr(self, '_player') and self._player else False
                 self._taskbar_media_widget.set_playback_state(is_playing)
                 
-                current_title = self.player_bar.title_label.text() if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'title_label') else ""
-                current_artist = self.player_bar.artist_label.text() if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'artist_label') else ""
+                current_title = ""
+                current_artist = ""
+                if hasattr(self, '_playlist') and self._playlist and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
+                    track = self._playlist[self._current_index]
+                    current_title = track.get('title', '')
+                    current_artist = track.get('artist', '')
+                
+                if not current_title and hasattr(self, 'player_bar') and hasattr(self.player_bar, 'title_label'):
+                    txt = self.player_bar.title_label.text()
+                    if txt and txt != "No track playing":
+                        current_title = txt
+                        current_artist = self.player_bar.artist_label.text() if hasattr(self.player_bar, 'artist_label') else ""
+                
                 if current_title:
                     self._taskbar_media_widget.set_track_info(current_title, current_artist if current_artist != "-" else "")
                 
@@ -7619,6 +7634,11 @@ class MusicPanelWidget(QWidget):
         from PySide6.QtMultimedia import QMediaPlayer
         self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
         
+        # Explicitly sync taskbar media widget and visualizer
+        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+            self._taskbar_media_widget.set_playback_state(True)
+            self._taskbar_media_widget.set_track_info(title, artist if artist != "-" else "")
+        
         # Reset state
         self._audio_output.setVolume(self._user_volume)
         self._audio_output2.setVolume(0.0)
@@ -8690,13 +8710,20 @@ class MusicPanelWidget(QWidget):
             time_remaining = (dur - pos) / 1000.0  # seconds remaining
             if time_remaining <= self._crossfade_duration and time_remaining > 0:
                 self._start_crossfade()
+        
+        # Ensure taskbar widget visualizer stays active when audio position is actively advancing
+        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+            if hasattr(self._taskbar_media_widget, 'visualizer') and self._taskbar_media_widget.visualizer:
+                if not self._taskbar_media_widget.visualizer._is_active:
+                    if hasattr(self, '_player') and self._player and self._player.playbackState() == QMediaPlayer.PlayingState:
+                        self._taskbar_media_widget.set_playback_state(True)
     
     def _on_state(self, state):
         if not hasattr(self, 'player_bar') or self.player_bar is None:
             return
             
-        # Ignore StoppedState during track switching to prevent icon flicker
-        if state == QMediaPlayer.StoppedState and getattr(self, '_switching_track', False):
+        # Ignore StoppedState during track switching or active crossfade
+        if state == QMediaPlayer.StoppedState and (getattr(self, '_switching_track', False) or getattr(self, '_crossfade_active', False)):
             return
         
         self.player_bar.set_playing(state == QMediaPlayer.PlayingState)
@@ -9074,11 +9101,15 @@ class MusicPanelWidget(QWidget):
                     self._shuffled_sequence = []
                     self._shuffled_pointer = -1
                 
-                # Restore taskbar widget state & position
+                # Restore taskbar widget state & position & collapse & custom position & lock
                 taskbar_enabled = state.get('taskbar_widget_enabled', True)
                 self._taskbar_widget_enabled = taskbar_enabled
                 taskbar_pos = state.get('taskbar_widget_position', 'left')
                 self._taskbar_widget_position = taskbar_pos
+                taskbar_custom_pos = state.get('taskbar_widget_custom_pos', None)
+                taskbar_collapsed = state.get('taskbar_widget_collapsed', False)
+                taskbar_locked = state.get('taskbar_widget_locked', False)
+                taskbar_width = state.get('taskbar_widget_width', 240)
 
                 if hasattr(self, 'action_taskbar_enable'):
                     self.action_taskbar_enable.blockSignals(True)
@@ -9092,7 +9123,15 @@ class MusicPanelWidget(QWidget):
                         action.blockSignals(False)
 
                 if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+                    if taskbar_custom_pos:
+                        self._taskbar_media_widget._custom_pos = taskbar_custom_pos
+                    self._taskbar_media_widget.set_locked(taskbar_locked)
                     self._taskbar_media_widget.set_position_mode(taskbar_pos)
+                    self._taskbar_media_widget._expanded_width = taskbar_width
+                    if taskbar_collapsed:
+                        self._taskbar_media_widget.collapse(animate=False)
+                    else:
+                        self._taskbar_media_widget.expand(animate=False)
                     if taskbar_enabled:
                         self._taskbar_media_widget.show()
                         self._taskbar_media_widget.sync_position()
@@ -9135,6 +9174,18 @@ class MusicPanelWidget(QWidget):
                 
             print(f"[Music] Saving position: {position}ms (_last_known: {getattr(self, '_last_known_position', 'not set')})")
             
+            is_collapsed = False
+            is_locked = False
+            custom_w = 240
+            custom_pos = None
+            pos_mode = getattr(self, '_taskbar_widget_position', 'left')
+            if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+                is_collapsed = getattr(self._taskbar_media_widget, '_is_collapsed', False)
+                is_locked = getattr(self._taskbar_media_widget, '_is_locked', False)
+                custom_w = getattr(self._taskbar_media_widget, '_expanded_width', 240)
+                custom_pos = getattr(self._taskbar_media_widget, '_custom_pos', None)
+                pos_mode = self._taskbar_media_widget.get_position_mode()
+
             state = {
                 'folder': self._music_folder or '',
                 'playlist_name': getattr(self.header, '_name', 'Previous Session') if hasattr(self, 'header') else 'Previous Session',
@@ -9151,7 +9202,11 @@ class MusicPanelWidget(QWidget):
                 'crossfade_enabled': getattr(self, '_crossfade_enabled', True),
                 'crossfade_duration': getattr(self, '_crossfade_duration', 3.0),
                 'taskbar_widget_enabled': getattr(self, '_taskbar_widget_enabled', True),
-                'taskbar_widget_position': getattr(self, '_taskbar_widget_position', 'left')
+                'taskbar_widget_position': pos_mode,
+                'taskbar_widget_custom_pos': custom_pos,
+                'taskbar_widget_collapsed': is_collapsed,
+                'taskbar_widget_locked': is_locked,
+                'taskbar_widget_width': custom_w
             }
             
             with open(self._config_path, 'w', encoding='utf-8') as f:
