@@ -29,6 +29,8 @@
 #pragma comment(lib, "psapi.lib")
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "user32.lib")
 
 // ============================================
 // RAM FUNCTIONS
@@ -263,6 +265,71 @@ static PyObject* get_temperatures(PyObject* self, PyObject* args) {
 }
 
 // ============================================
+// WINDOW MANAGEMENT FUNCTIONS (Native C++ / Win32)
+// ============================================
+
+static PyObject* center_window_on_primary_display(PyObject* self, PyObject* args) {
+    unsigned long long hwnd_val = 0;
+    int min_w = 1380;
+    int min_h = 790;
+    
+    if (!PyArg_ParseTuple(args, "K|ii", &hwnd_val, &min_w, &min_h)) {
+        return NULL;
+    }
+    
+    HWND hwnd = (HWND)(uintptr_t)hwnd_val;
+    if (!hwnd || !IsWindow(hwnd)) {
+        Py_RETURN_FALSE;
+    }
+    
+    // Get primary display work area (excludes Windows Taskbar)
+    RECT workArea = {0};
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0)) {
+        workArea.left = 0;
+        workArea.top = 0;
+        workArea.right = GetSystemMetrics(SM_CXSCREEN);
+        workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+    
+    int screenW = workArea.right - workArea.left;
+    int screenH = workArea.bottom - workArea.top;
+    
+    // Get current window bounds
+    RECT winRect = {0};
+    GetWindowRect(hwnd, &winRect);
+    int winW = winRect.right - winRect.left;
+    int winH = winRect.bottom - winRect.top;
+    
+    if (winW < min_w) winW = min_w;
+    if (winH < min_h) winH = min_h;
+    if (winW > screenW) winW = screenW;
+    if (winH > screenH) winH = screenH;
+    
+    // Calculate centered coordinates on primary display
+    int posX = workArea.left + (screenW - winW) / 2;
+    int posY = workArea.top + (screenH - winH) / 2;
+    
+    // Atomically move and resize window using Win32 API
+    BOOL success = SetWindowPos(
+        hwnd, 
+        NULL, 
+        posX, 
+        posY, 
+        winW, 
+        winH, 
+        SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+    );
+    
+    return Py_BuildValue("{s:O,s:i,s:i,s:i,s:i}",
+        "success", success ? Py_True : Py_False,
+        "x", posX,
+        "y", posY,
+        "width", winW,
+        "height", winH
+    );
+}
+
+// ============================================
 // MODULE DEFINITION
 // ============================================
 
@@ -275,6 +342,7 @@ static PyMethodDef HardwareMethods[] = {
     {"get_disk_info", get_disk_info, METH_NOARGS, "Get disk usage for all drives"},
     {"get_network_stats", get_network_stats, METH_NOARGS, "Get network upload/download stats"},
     {"get_temperatures", get_temperatures, METH_NOARGS, "Get CPU/GPU temperatures"},
+    {"center_window_on_primary_display", center_window_on_primary_display, METH_VARARGS, "Center a window HWND on the primary display work area"},
     {NULL, NULL, 0, NULL}
 };
 

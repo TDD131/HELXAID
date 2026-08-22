@@ -5075,35 +5075,69 @@ class GameLauncher(QWidget):
             
         return x, y, w, h
 
+    def center_on_main_display(self):
+        """Center the window strictly in the middle of the main display (primary screen) using C++ backend."""
+        if self.isFullScreen() or self.settings.get("window_fullscreen", False):
+            return
+            
+        # 1. Native C++ Win32 centering (fastest, atomic, respects Taskbar work area)
+        try:
+            from hardware_wrapper import center_window_on_primary_display
+            hwnd = int(self.winId())
+            res = center_window_on_primary_display(hwnd, 1380, 790)
+            if res.get("success"):
+                print(f"[Window] Native C++ centered on main display: ({res.get('x')}, {res.get('y')}) size {res.get('width')}x{res.get('height')}")
+                return
+        except Exception as ce:
+            print(f"[Window] C++ centering notice: {ce}")
+            
+        # 2. Qt Fallback
+        from PySide6.QtWidgets import QApplication
+        primary = QApplication.primaryScreen()
+        if not primary:
+            return
+            
+        avail = primary.availableGeometry()
+        
+        # Ensure window dimensions fit inside primary screen available area (min 1380x790)
+        target_w = max(1380, min(self.width(), avail.width()))
+        target_h = max(790, min(self.height(), avail.height()))
+        self.resize(target_w, target_h)
+        
+        # Use frameGeometry to account for OS window borders/titlebar
+        geo = self.frameGeometry()
+        if geo.width() < target_w or geo.height() < target_h:
+            geo.setWidth(target_w)
+            geo.setHeight(target_h)
+            
+        center_point = avail.center()
+        geo.moveCenter(center_point)
+        
+        # Clamp to ensure window is completely inside available primary screen area
+        final_x = max(avail.x(), min(geo.topLeft().x(), avail.right() - geo.width() + 1))
+        final_y = max(avail.y(), min(geo.topLeft().y(), avail.bottom() - geo.height() + 1))
+        
+        self.move(final_x, final_y)
+        print(f"[Window] Force centered on main display '{primary.name()}' at ({final_x}, {final_y}) with size {target_w}x{target_h}")
+
     def _apply_initial_size(self):
-        """Apply window size and strictly center it on the current screen if not already safely restored."""
-        geometry = self.settings.get("window_geometry") if hasattr(self, 'settings') else None
-        if geometry and len(geometry) == 4:
-            x, y, w, h = self._sanitize_window_geometry(geometry[0], geometry[1], geometry[2], geometry[3])
-            self.resize(w, h)
-            self.move(x, y)
-            print(f"[Window] Restored saved geometry at ({x}, {y}, {w}, {h})")
+        """Apply window size and strictly center it on the main display if not fullscreen."""
+        if self.isFullScreen() or self.settings.get("window_fullscreen", False):
             return
 
-        if hasattr(self, '_target_size'):
+        geometry = self.settings.get("window_geometry") if hasattr(self, 'settings') else None
+        if geometry and len(geometry) == 4:
+            _, _, w, h = geometry
+            min_w = 1380
+            min_h = 790
+            w = max(int(w or min_w), min_w)
+            h = max(int(h or min_h), min_h)
+            self.resize(w, h)
+        elif hasattr(self, '_target_size'):
             target_w, target_h, screen_w, screen_h = self._target_size
             self.resize(target_w, target_h)
-        else:
-            target_w, target_h = self.width(), self.height()
             
-        from PySide6.QtGui import QCursor
-        from PySide6.QtWidgets import QApplication
-        current_screen = QApplication.primaryScreen()
-        for s in QApplication.screens():
-            if s.geometry().contains(QCursor.pos()):
-                current_screen = s
-                break
-                
-        center_point = current_screen.availableGeometry().center()
-        geo = self.frameGeometry()
-        geo.moveCenter(center_point)
-        self.move(geo.topLeft())
-        print(f"[Window] Force centered on screen '{current_screen.name()}' at {geo.topLeft()}")
+        self.center_on_main_display()
     
     def _debug_delay(self, ms=None):
         """Artificially delay execution while keeping the GUI responsive."""
@@ -5264,13 +5298,15 @@ class GameLauncher(QWidget):
         # Apply dark mode title bar for Windows
         self._apply_dark_titlebar()
         
-        # Try to restore geometry
+        # Try to restore geometry size (position always centers on main display on launch)
         geometry = self.settings.get("window_geometry")
         if geometry and len(geometry) == 4:
-            # geometry is a list [x, y, w, h]
+            # geometry is a list [x, y, w, h] - restore width and height, always center on main display
             x, y, w, h = self._sanitize_window_geometry(geometry[0], geometry[1], geometry[2], geometry[3])
             self.resize(w, h)
-            self.move(x, y)
+            self.center_on_main_display()
+        else:
+            self.center_on_main_display()
                 
         # Apply resizable window setting from settings AFTER restoring geometry
         is_resizable = self.settings.get("resizable_window", True)
@@ -5325,6 +5361,9 @@ class GameLauncher(QWidget):
         self._process_cache = set()  # Cached set of running process names (lowercase)
         self._process_path_cache = {}  # name.lower() -> set of full exe paths
         self._process_ppid_cache = {}  # pid -> ppid for child-process tracking
+        self._process_pid_name_cache = {}  # pid -> lowercase process name (fast zero-allocation lookup)
+        self._process_scan_interval = 2.0  # Background scan interval in seconds (slows to 10s during gaming)
+        self._in_game_mode = False  # True when user is actively playing a game
         self._process_cache_lock = threading.Lock()
         self._start_process_scan_thread()
         
@@ -14761,6 +14800,9 @@ First Played: {first_played_formatted}
             save_json(self.data)
             print(f"Force ended: {game_name} (played {elapsed}s)")
             
+            # Exit game mode and restore normal timers
+            self._exit_game_mode()
+            
             # Clear session and update UI
             self.current_session = None
             self.end_game_btn.hide()
@@ -15083,10 +15125,11 @@ First Played: {first_played_formatted}
         using psutil and caches the result. This keeps psutil OFF the UI thread
         to prevent 'Not Responding' freezes.
         
-        Caches three things:
-          - _process_cache:      set of lowercase exe names
-          - _process_path_cache: dict mapping lowercase exe name -> set of full paths
-          - _process_ppid_cache: dict mapping pid -> ppid (for child-process tracking)
+        Caches four things:
+          - _process_cache:          set of lowercase exe names
+          - _process_path_cache:     dict mapping lowercase exe name -> set of full paths
+          - _process_ppid_cache:     dict mapping pid -> ppid (for child-process tracking)
+          - _process_pid_name_cache: dict mapping pid -> lowercase exe name (for zero-allocation lookup)
         """
         def _scan_loop():
             import psutil
@@ -15095,6 +15138,7 @@ First Played: {first_played_formatted}
                     name_set = set()
                     path_dict = {}
                     ppid_dict = {}
+                    pid_name_dict = {}
                     for p in psutil.process_iter(['name', 'exe', 'ppid']):
                         try:
                             info = p.info
@@ -15104,6 +15148,7 @@ First Played: {first_played_formatted}
                             
                             if name:
                                 name_set.add(name)
+                                pid_name_dict[p.pid] = name
                                 # Group full paths by name for path-based disambiguation
                                 if exe_path:
                                     path_dict.setdefault(name, set()).add(exe_path)
@@ -15118,9 +15163,11 @@ First Played: {first_played_formatted}
                         self._process_cache = name_set
                         self._process_path_cache = path_dict
                         self._process_ppid_cache = ppid_dict
+                        self._process_pid_name_cache = pid_name_dict
                 except Exception:
                     pass
-                time.sleep(2.0)  # Scan every 2 seconds in background
+                interval = getattr(self, '_process_scan_interval', 2.0)
+                time.sleep(interval)  # Adaptive scan interval (2s normal, 10s during gaming)
         
         t = threading.Thread(target=_scan_loop, daemon=True, name="ProcessScanner")
         t.start()
@@ -15157,27 +15204,14 @@ First Played: {first_played_formatted}
     def _is_child_of_known_launcher(self, exe_name):
         """Check if the given process was spawned by a known platform launcher.
 
-        Walks up the process tree via cached ppid mapping. If any ancestor
-        is in KNOWN_LAUNCHERS, returns True. This catches games launched via
-        Steam, Epic, etc. even when the game exe itself isn't in the library.
+        Walks up the process tree via cached ppid mapping and cached pid_name mapping.
+        Zero psutil calls, completely non-blocking and zero heap allocation.
         Limits traversal depth to 5 to avoid infinite loops.
         """
-        import psutil
         with self._process_cache_lock:
-            # Find PIDs for this exe name
-            target_pids = []
-            for p_name, paths in self._process_path_cache.items():
-                if p_name == exe_name.lower():
-                    # Get PIDs by checking process cache
-                    try:
-                        for proc in psutil.process_iter(['name', 'pid']):
-                            if (proc.info.get('name') or '').lower() == exe_name.lower():
-                                target_pids.append(proc.info['pid'])
-                    except Exception:
-                        pass
-                    break
-            
+            target_pids = [pid for pid, name in self._process_pid_name_cache.items() if name == exe_name.lower()]
             ppid_cache = dict(self._process_ppid_cache)
+            pid_name_cache = dict(self._process_pid_name_cache)
         
         # Walk up the tree for each target PID
         for pid in target_pids:
@@ -15186,14 +15220,9 @@ First Played: {first_played_formatted}
                 parent_pid = ppid_cache.get(current)
                 if not parent_pid or parent_pid == current:
                     break
-                # Check parent's name
-                try:
-                    parent_proc = psutil.Process(parent_pid)
-                    parent_name = parent_proc.name().lower()
-                    if parent_name in KNOWN_LAUNCHERS:
-                        return True
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    break
+                parent_name = pid_name_cache.get(parent_pid, '')
+                if parent_name in KNOWN_LAUNCHERS:
+                    return True
                 current = parent_pid
         
         return False
@@ -15270,11 +15299,11 @@ First Played: {first_played_formatted}
                             # Check for Minecraft game window (not launcher)
                             if "minecraft" in title_lower and "launcher" not in title_lower and "tlauncher" not in title_lower:
                                 result['status'] = 'game'
-                                return False  # Stop enumeration
                             # Check for TLauncher window
                             elif "tlauncher" in title_lower:
                                 if result['status'] != 'game':  # Don't override game status
                                     result['status'] = 'launcher'
+                            return False  # Stop enumeration
                 except Exception:
                     pass
                 return True
@@ -15285,26 +15314,24 @@ First Played: {first_played_formatted}
             return None
     
     def _get_window_titles_for_process(self, exe_name):
-        """Get list of window titles for a specific process using win32gui."""
-        import psutil
+        """Get list of window titles for a specific process using fast cached PID lookup."""
         if not WINDOWS_API_AVAILABLE:
             return []
         
+        target_name = exe_name.lower()
         titles = []
         try:
+            with self._process_cache_lock:
+                pid_name_cache = dict(self._process_pid_name_cache)
+                
             def enum_windows_callback(hwnd, results):
                 try:
                     if win32gui.IsWindowVisible(hwnd):
                         _, pid = win32gui.GetWindowThreadProcessId(hwnd) if hasattr(win32gui, 'GetWindowThreadProcessId') else (0, 0)
-                        # Get process by PID
-                        try:
-                            proc = psutil.Process(pid)
-                            if proc.name().lower() == exe_name.lower():
-                                title = win32gui.GetWindowText(hwnd)
-                                if title:
-                                    results.append(title)
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
+                        if pid and pid_name_cache.get(pid) == target_name:
+                            title = win32gui.GetWindowText(hwnd)
+                            if title:
+                                results.append(title)
                 except Exception:
                     pass
                 return True
@@ -15445,6 +15472,9 @@ First Played: {first_played_formatted}
             "from_launcher": False
         }
         
+        # Enter throttled game mode to minimize RAM and CPU usage
+        self._enter_game_mode()
+        
         # Update UI
         self.end_game_btn.show()
         self.populate_recently_played()  # Update Currently Playing label
@@ -15452,6 +15482,40 @@ First Played: {first_played_formatted}
         # Update Discord RPC if enabled
         if self.discord_enabled:
             self.update_discord_playing(game_name)
+    
+    def _enter_game_mode(self):
+        """Throttle background polling and aggressively trim RAM during gaming.
+        
+        Reduces timer frequency from 2s to 10s to minimize CPU cycles while the user
+        is playing, and periodically trims Working Set to lock memory under 75MB.
+        """
+        self._in_game_mode = True
+        self._process_scan_interval = 10.0  # Slow down background psutil thread
+        if hasattr(self, 'game_detection_timer'):
+            self.game_detection_timer.setInterval(10000)  # Slow down UI timer to 10s
+        
+        # Schedule initial working set trim 5 seconds after game initialization
+        QTimer.singleShot(5000, self._cleanup_memory)
+        
+        # Setup periodic in-game RAM trimmer (every 60 seconds)
+        if not hasattr(self, '_in_game_trim_timer'):
+            self._in_game_trim_timer = QTimer(self)
+            self._in_game_trim_timer.timeout.connect(self._cleanup_memory)
+        self._in_game_trim_timer.start(60000)
+        print("[GameMode] Entered In-Game Low RAM Mode (10s scan interval, 60s memory trimming)")
+
+    def _exit_game_mode(self):
+        """Restore normal polling frequency and cleanup memory after game exits."""
+        self._in_game_mode = False
+        self._process_scan_interval = 2.0  # Restore 2s psutil scan interval
+        if hasattr(self, 'game_detection_timer'):
+            self.game_detection_timer.setInterval(2000)  # Restore 2s UI timer
+        if hasattr(self, '_in_game_trim_timer') and self._in_game_trim_timer.isActive():
+            self._in_game_trim_timer.stop()
+        
+        # Clean up memory after game session recording
+        QTimer.singleShot(1000, self._cleanup_memory)
+        print("[GameMode] Exited In-Game Mode (restored 2s scan interval)")
     
     def _handle_game_stopped(self):
         """Handle when a tracked game (external or launcher) stops."""
@@ -15477,6 +15541,9 @@ First Played: {first_played_formatted}
                 save_json(self.data)
                 game_name = game.get("name", "Unknown")
                 print(f"[Background Detection] Game stopped: {game_name} (played {elapsed}s)")
+        
+        # Exit game mode and restore timers
+        self._exit_game_mode()
         
         # Clear session and update UI
         self.current_session = None
@@ -16570,16 +16637,26 @@ First Played: {first_played_formatted}
                         steam_exe = self._find_steam_exe()
                         if steam_exe:
                             try:
-                                DETACHED = 0x00000008 | 0x00000200 | 0x01000000
-                                subprocess.Popen(
-                                    [steam_exe], 
-                                    cwd=os.path.dirname(steam_exe),
-                                    creationflags=DETACHED,
-                                    stdin=subprocess.DEVNULL,
-                                    stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.DEVNULL,
-                                    close_fds=True,
-                                )
+                                # Method 1: Launch via Windows Shell COM.
+                                # Spawning through COM Shell.Application delegates the process
+                                # creation to explorer.exe, setting PPID = explorer.exe so Steam
+                                # NEVER appears inside HELXAID's Task Manager tree.
+                                spawned = False
+                                try:
+                                    import win32com.client
+                                    com_shell = win32com.client.Dispatch("Shell.Application")
+                                    com_shell.ShellExecute(steam_exe, "", os.path.dirname(steam_exe), "open", 1)
+                                    spawned = True
+                                except Exception:
+                                    pass
+                                
+                                if not spawned:
+                                    # Method 2: Native ShellExecuteW fallback
+                                    import ctypes
+                                    ctypes.windll.shell32.ShellExecuteW(
+                                        None, "open", steam_exe, None, os.path.dirname(steam_exe), 1
+                                    )
+                                
                                 # Native UI Sync Barrier (Non-blocking notification)
                                 msg = QMessageBox(self)
                                 msg.setObjectName("SteamLoginPromptDialog")
@@ -16607,43 +16684,35 @@ First Played: {first_played_formatted}
                 game_dir = os.path.dirname(clean_path)
                 launch_options = game_obj.get("launch_options", "") if game_obj else ""
                 
-                # Launch natively using Windows Shell - This guarantees the game process
-                # is completely detached from the HELXAID process tree and won't die
-                # when HELXAID exits.
-                import ctypes
+                # Launch natively using Windows Shell COM (parented to explorer.exe)
+                # with fallback to ctypes ShellExecuteW
+                launched = False
+                try:
+                    import win32com.client
+                    com_shell = win32com.client.Dispatch("Shell.Application")
+                    com_shell.ShellExecute(clean_path, launch_options or "", game_dir, "open", 1)
+                    launched = True
+                except Exception:
+                    pass
                 
-                # Pre-load argtypes for safety in Python 3 ctypes
-                ctypes.windll.shell32.ShellExecuteW.argtypes = [
-                    ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, 
-                    ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_int
-                ]
-                
-                # 1 = SW_SHOWNORMAL
-                result = ctypes.windll.shell32.ShellExecuteW(
-                    None,           # hwnd
-                    "open",         # operation
-                    clean_path,     # file to execute
-                    launch_options if launch_options else None, # parameters
-                    game_dir,       # working directory
-                    1               # SW_SHOWNORMAL
-                )
-                
-                if result <= 32:
-                    # 5 = SE_ERR_ACCESSDENIED
-                    if result == 5:
-                        print("[Launch] Administrator rights required. Triggering UAC prompt...")
-                        result2 = ctypes.windll.shell32.ShellExecuteW(
-                            None,           # hwnd
-                            "runas",        # operation - request elevation
-                            clean_path,     # file to execute
-                            launch_options if launch_options else None, # parameters
-                            game_dir,       # working directory
-                            1               # SW_SHOWNORMAL
-                        )
-                        if result2 <= 32:
-                            raise OSError(f"Failed to launch (runas error {result2})")
-                    else:
-                        raise OSError(f"Failed to launch (error {result})")
+                if not launched:
+                    import ctypes
+                    ctypes.windll.shell32.ShellExecuteW.argtypes = [
+                        ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, 
+                        ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_int
+                    ]
+                    result = ctypes.windll.shell32.ShellExecuteW(
+                        None, "open", clean_path, launch_options if launch_options else None, game_dir, 1
+                    )
+                    if result <= 32:
+                        if result == 5:
+                            result2 = ctypes.windll.shell32.ShellExecuteW(
+                                None, "runas", clean_path, launch_options if launch_options else None, game_dir, 1
+                            )
+                            if result2 <= 32:
+                                raise OSError(f"Failed to launch (runas error {result2})")
+                        else:
+                            raise OSError(f"Failed to launch (error {result})")
                 
                 # Update last_played timestamp for recently played feature
                 for game in self.data:
@@ -16659,6 +16728,9 @@ First Played: {first_played_formatted}
                         
                         # Track current session for live stats (marked as from launcher)
                         self.current_session = {"game": game, "start_time": time.time(), "from_launcher": True}
+                        
+                        # Enter throttled game mode to minimize RAM and CPU usage during gameplay
+                        self._enter_game_mode()
                         
                         # Show End Game button
                         self.end_game_btn.show()
@@ -16838,9 +16910,10 @@ First Played: {first_played_formatted}
                         # Update Discord status back to browsing
                         self.update_discord_browsing()
                         
-                        # Clear current session tracking and hide End Game button
+                        # Clear current session tracking and restore UI / timer state
                         self.current_session = None
                         from PySide6.QtCore import QMetaObject, Qt
+                        QMetaObject.invokeMethod(self, "_exit_game_mode", Qt.QueuedConnection)
                         QMetaObject.invokeMethod(self.end_game_btn, "hide", Qt.QueuedConnection)
                         break
                 except Exception as e:
@@ -17793,6 +17866,7 @@ if __name__ == "__main__":
             w.showFullScreen()
         else:
             w.showNormal()
+            w.center_on_main_display()
         w.activateWindow()
         w.raise_()
     

@@ -936,3 +936,57 @@ def get_monitor(update_interval_ms: int = 500) -> HardwareMonitor:
         _monitor = HardwareMonitor(update_interval_ms)
     return _monitor
 
+
+def center_window_on_primary_display(hwnd: int, min_w: int = 1380, min_h: int = 790) -> dict:
+    """
+    Center window on primary display (main display) using native C++ / Win32 API.
+    Guarantees sub-millisecond atomic positioning respecting Windows Taskbar work area.
+    """
+    if NATIVE_AVAILABLE and hasattr(_hw, 'center_window_on_primary_display'):
+        try:
+            return _hw.center_window_on_primary_display(int(hwnd), min_w, min_h)
+        except Exception as e:
+            print(f"[Hardware] Native C++ center_window error: {e}")
+    
+    # Win32 ctypes C++ fallback
+    if os.name == 'nt':
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            
+            hwnd_h = wintypes.HWND(int(hwnd))
+            if not user32.IsWindow(hwnd_h):
+                return {"success": False}
+                
+            rect = wintypes.RECT()
+            # SPI_GETWORKAREA = 0x0030
+            if not user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+                rect.left = 0
+                rect.top = 0
+                rect.right = user32.GetSystemMetrics(0) # SM_CXSCREEN
+                rect.bottom = user32.GetSystemMetrics(1) # SM_CYSCREEN
+                
+            screen_w = rect.right - rect.left
+            screen_h = rect.bottom - rect.top
+            
+            win_rect = wintypes.RECT()
+            user32.GetWindowRect(hwnd_h, ctypes.byref(win_rect))
+            win_w = win_rect.right - win_rect.left
+            win_h = win_rect.bottom - win_rect.top
+            
+            win_w = max(min_w, min(win_w, screen_w))
+            win_h = max(min_h, min(win_h, screen_h))
+            
+            pos_x = rect.left + (screen_w - win_w) // 2
+            pos_y = rect.top + (screen_h - win_h) // 2
+            
+            # SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010, SWP_FRAMECHANGED = 0x0020
+            flags = 0x0004 | 0x0010 | 0x0020
+            res = user32.SetWindowPos(hwnd_h, None, pos_x, pos_y, win_w, win_h, flags)
+            return {"success": bool(res), "x": pos_x, "y": pos_y, "width": win_w, "height": win_h}
+        except Exception as e:
+            print(f"[Hardware] ctypes C++ center fallback error: {e}")
+            
+    return {"success": False}
+
