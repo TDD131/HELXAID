@@ -16,8 +16,18 @@ datas = [
     ('python/hardware_utils.cp314-win_amd64.pyd', '.'),
     ('python/hardware_utils.pyd', '.'),
 ]
-binaries = []
+binaries = [
+    ('python/helxaid_native.cp314-win_amd64.pyd', '.'),
+    ('python/helxairo_native.cp314-win_amd64.pyd', '.'),
+    ('python/hardware_utils.cp314-win_amd64.pyd', '.'),
+    ('python/hardware_utils.pyd', '.'),
+]
 hiddenimports = [
+    'hardware_utils',
+    'hardware_wrapper',
+    'native_wrapper',
+    'helxaid_native',
+    'helxairo_native',
     'hid',
     'yt_dlp',
     'win32timezone',
@@ -47,7 +57,7 @@ for pkg in ['PIL', 'mutagen', 'hid', 'hidapi', 'winrt']:
 
 a = Analysis(
     ['python/launcher.py'],
-    pathex=[],
+    pathex=['python', '.'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

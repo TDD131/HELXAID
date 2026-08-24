@@ -38,7 +38,17 @@ class AnimatedButton(QPushButton):
         
         # Force hover fill animation even if button has an icon
         self._force_hover_fill = False
+        self._hover_mode = "slide"  # "slide" or "fade"
+        self._gradient_direction = "horizontal"  # "horizontal" or "vertical"
     
+    def setHoverMode(self, mode: str):
+        """Set hover animation mode: 'slide' (sliding wipe) or 'fade' (full button fade)."""
+        self._hover_mode = mode
+
+    def setGradientDirection(self, direction: str):
+        """Set gradient direction: 'horizontal' (left-to-right) or 'vertical' (top-to-bottom)."""
+        self._gradient_direction = direction
+
     def setHoverGradient(self, colors):
         """Set custom gradient colors for hover effect.
         Args:
@@ -81,12 +91,16 @@ class AnimatedButton(QPushButton):
     
     def _animate_fill(self, target):
         """Animate the fill progress."""
+        duration = 180 if self._hover_mode == "fade" else 300
+        easing = QEasingCurve.InOutQuad if self._hover_mode == "fade" else QEasingCurve.InOutCubic
         if not hasattr(self, '_fill_animation'):
             self._fill_animation = QPropertyAnimation(self, b"fillProgress")
-            self._fill_animation.setDuration(300)  # 0.3 seconds
-            self._fill_animation.setEasingCurve(QEasingCurve.InOutCubic)
+            self._fill_animation.setDuration(duration)
+            self._fill_animation.setEasingCurve(easing)
         else:
             self._fill_animation.stop()
+            self._fill_animation.setDuration(duration)
+            self._fill_animation.setEasingCurve(easing)
         
         self._fill_animation.setStartValue(self._fill_progress)
         self._fill_animation.setEndValue(target)
@@ -115,13 +129,52 @@ class AnimatedButton(QPushButton):
         adjusted_rect = QRectF(rect.adjusted(1, 1, -1, -1))
         radius = min(12.0, adjusted_rect.height() / 2.0)  # Border radius (matches tech aesthetic)
         
+        if self._hover_mode == "fade":
+            # Fade hover mode: full-surface opacity fade matching FadeHoverButton / helxairo_editorDeleteKeyBtn
+            if self._fill_progress > 0.001:
+                if self._gradient_direction == "vertical":
+                    gradient = QLinearGradient(0, 0, 0, rect.height())
+                else:
+                    gradient = QLinearGradient(0, 0, rect.width(), 0)
+                colors = self._gradient_colors
+                if len(colors) == 1:
+                    gradient.setColorAt(0, QColor(*colors[0]))
+                    gradient.setColorAt(1, QColor(*colors[0]))
+                else:
+                    for i, c in enumerate(colors):
+                        gradient.setColorAt(i / (len(colors) - 1), QColor(*c))
+                
+                path = QPainterPath()
+                path.addRoundedRect(adjusted_rect, radius, radius)
+                painter.setOpacity(self._fill_progress)
+                painter.fillPath(path, QBrush(gradient))
+                painter.setOpacity(1.0)
+            
+            # Draw border (fades out on hover so fully hovered state is borderless matching helxairo_editorModifyKeyBtn)
+            border_opacity = 1.0 - self._fill_progress
+            if border_opacity > 0.05:
+                border_color = QColor(255, 255, 255, int(150 * border_opacity))
+                pen = QPen(border_color)
+                pen.setWidth(1)
+                painter.setPen(pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(adjusted_rect, radius, radius)
+            
+            # Text stays crisp white Orbitron matching helxairo_editorModifyKeyBtn
+            painter.setPen(QColor(255, 255, 255))
+            font = self.font()
+            font.setFamily("Orbitron")
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(rect, Qt.AlignCenter, self.text())
+            painter.end()
+            return
+
         # Calculate fill width based on progress
         fill_width = int(rect.width() * self._fill_progress)
         
         # Draw background fill with gradient (sliding from left)
         if fill_width > 0:
-            from PySide6.QtGui import QLinearGradient
-            
             # Create horizontal gradient using custom colors
             gradient = QLinearGradient(0, 0, rect.width(), 0)
             colors = self._gradient_colors
@@ -180,7 +233,10 @@ class AnimatedButton(QPushButton):
                 painter.drawPixmap(x, y, pixmap)
         else:
             painter.setPen(text_color)
-            painter.setFont(self.font())
+            font = self.font()
+            font.setFamily("Orbitron")
+            font.setBold(True)
+            painter.setFont(font)
             painter.drawText(rect, Qt.AlignCenter, self.text())
         
         painter.end()
@@ -513,7 +569,22 @@ class FadeHoverButton(QPushButton):
     Styled matching cpuSavePresetBtn (#FF5B06 -> #FDA903 theme, border-radius 10px, Orbitron font).
     """
     
-    def __init__(self, text="", parent=None, is_secondary=False, border_radius=6.0, color_mode="default"):
+    # Signal emitted on double-click
+    doubleClicked = Signal()
+
+    def __init__(
+        self,
+        text="",
+        parent=None,
+        is_secondary=False,
+        border_radius=6.0,
+        color_mode="default",
+        text_align=Qt.AlignCenter,
+        font_size=None,
+        border_color=None,
+        hover_border_color=None,
+        padding_left=0
+    ):
         super().__init__(text, parent)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.NoFocus)
@@ -527,6 +598,11 @@ class FadeHoverButton(QPushButton):
         self._is_secondary = is_secondary
         self._color_mode = color_mode if not is_secondary else "secondary"
         self._border_radius = float(border_radius)  # Default 6.0px matching input controls
+        self._text_align = text_align
+        self._font_size = font_size
+        self._border_color = border_color
+        self._hover_border_color = hover_border_color
+        self._padding_left = padding_left
 
     def getHoverProgress(self) -> float:
         return self._hover_progress
@@ -554,6 +630,12 @@ class FadeHoverButton(QPushButton):
         self._anim.setEndValue(0.0)
         self._anim.start()
         super().leaveEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.doubleClicked.emit()
+            event.accept()
+        super().mouseDoubleClickEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -635,6 +717,23 @@ class FadeHoverButton(QPushButton):
         path.addRoundedRect(adjusted_rect, self._border_radius, self._border_radius)
         painter.fillPath(path, QBrush(gradient))
 
+        # Optional border drawing
+        if self._border_color is not None:
+            if self._hover_border_color is not None:
+                br0, bg0, bb0, ba0 = self._border_color.getRgb()
+                br1, bg1, bb1, ba1 = self._hover_border_color.getRgb()
+                curr_br = int(br0 + (br1 - br0) * self._hover_progress)
+                curr_bg = int(bg0 + (bg1 - bg0) * self._hover_progress)
+                curr_bb = int(bb0 + (bb1 - bb0) * self._hover_progress)
+                curr_ba = int(ba0 + (ba1 - ba0) * self._hover_progress)
+                border_col = QColor(curr_br, curr_bg, curr_bb, curr_ba)
+            else:
+                border_col = self._border_color
+            pen = QPen(border_col, 1)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(adjusted_rect, self._border_radius, self._border_radius)
+
         # Draw text & icon with proper layout
         has_text = bool(self.text())
         has_icon = not self.icon().isNull()
@@ -642,7 +741,9 @@ class FadeHoverButton(QPushButton):
         if has_text or has_icon:
             font = self.font()
             font.setFamily("Orbitron")
-            if self.height() <= 24:
+            if self._font_size is not None:
+                font.setPixelSize(self._font_size)
+            elif self.height() <= 24:
                 font.setPixelSize(10)
             else:
                 font.setPixelSize(12)
@@ -673,6 +774,11 @@ class FadeHoverButton(QPushButton):
                 iy = int((rect.height() - icon_size.height()) / 2)
                 painter.drawPixmap(ix, iy, pix)
             elif has_text:
-                painter.drawText(adjusted_rect, Qt.AlignCenter, self.text())
+                if self._text_align == Qt.AlignCenter:
+                    painter.drawText(adjusted_rect, Qt.AlignCenter, self.text())
+                else:
+                    pad = self._padding_left if self._padding_left > 0 else 8
+                    text_rect = adjusted_rect.adjusted(pad, 0, -4, 0)
+                    painter.drawText(text_rect, self._text_align | Qt.AlignVCenter, self.text())
 
         painter.end()

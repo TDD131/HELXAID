@@ -944,16 +944,36 @@ def center_window_on_primary_display(hwnd: int, min_w: int = 1380, min_h: int = 
     """
     if NATIVE_AVAILABLE and hasattr(_hw, 'center_window_on_primary_display'):
         try:
-            return _hw.center_window_on_primary_display(int(hwnd), min_w, min_h)
+            res = _hw.center_window_on_primary_display(int(hwnd), min_w, min_h)
+            if isinstance(res, dict) and res.get("success"):
+                return res
         except Exception as e:
             print(f"[Hardware] Native C++ center_window error: {e}")
     
-    # Win32 ctypes C++ fallback
+    # Win32 ctypes C++ fallback with explicit 64-bit types
     if os.name == 'nt':
         try:
             import ctypes
             from ctypes import wintypes
             user32 = ctypes.windll.user32
+            
+            # Setup 64-bit prototypes for safe 64-bit pointer handling
+            user32.IsWindow.argtypes = [wintypes.HWND]
+            user32.IsWindow.restype = wintypes.BOOL
+            
+            user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+            user32.GetWindowRect.restype = wintypes.BOOL
+            
+            user32.SystemParametersInfoW.argtypes = [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT]
+            user32.SystemParametersInfoW.restype = wintypes.BOOL
+            
+            user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+            user32.GetSystemMetrics.restype = ctypes.c_int
+            
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT
+            ]
+            user32.SetWindowPos.restype = wintypes.BOOL
             
             hwnd_h = wintypes.HWND(int(hwnd))
             if not user32.IsWindow(hwnd_h):

@@ -48,6 +48,7 @@ build/
 # Temporary / Agent generated files
 *.patch
 *.txt
+scratch/
 scratch_*.py
 query
 brain/
