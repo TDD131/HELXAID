@@ -2149,7 +2149,8 @@ DEFAULT_SETTINGS = {
     "confirm_on_exit": True,
     "developer_mode": False,
     "calculate_page_initialize": False,
-    "calculate_tab_initialize": False
+    "calculate_tab_initialize": False,
+    "keep_stream_extraction_open": False
 }
 
 def load_settings():
@@ -8254,6 +8255,15 @@ class GameLauncher(QWidget):
         
         # Load settings
         self.settings = load_settings()
+        
+        # Sync Developer Mode & Stream Extraction settings to QSettings for child widgets
+        try:
+            from PySide6.QtCore import QSettings
+            _qs = QSettings("TDD131", "HELXAID")
+            _qs.setValue("Developer/developer_mode", self.settings.get("developer_mode", False))
+            _qs.setValue("Developer/stream_extract_no_auto_close", self.settings.get("keep_stream_extraction_open", False))
+        except Exception:
+            pass
         
         # Initialize core variables early so processEvents in _debug_delay doesn't crash on resize/paint
         self.data = []
@@ -14493,6 +14503,10 @@ Stylesheet Selector:
                 # Only handle key press events on music panel (index 1)
                 if hasattr(self, 'content_stack') and hasattr(self, 'music_panel') and self.content_stack.currentWidget() == self.music_panel:
                     if hasattr(self, 'music_panel') and self.music_panel:
+                        # Skip if floating URL input is visible
+                        if hasattr(self.music_panel, 'floating_url_input') and self.music_panel.floating_url_input.isVisible():
+                            return False
+                            
                         focus_widget = QApplication.focusWidget()
                         
                         # Skip if typing in input or recording hotkeys
@@ -15097,6 +15111,12 @@ Stylesheet Selector:
         turn_off_psutil_cb.setChecked(self.settings.get("turn_off_psutil", False))
         dev_sub_container_layout.addWidget(turn_off_psutil_cb)
 
+        # Toggle to keep Stream Extraction panel open without auto-close
+        keep_stream_panel_open_cb = AnimatedCheckBox("Keep Stream Extraction Panel Open")
+        keep_stream_panel_open_cb.setObjectName("keepStreamExtractionOpenCheckBox")
+        keep_stream_panel_open_cb.setChecked(self.settings.get("keep_stream_extraction_open", False))
+        dev_sub_container_layout.addWidget(keep_stream_panel_open_cb)
+
         dev_layout.addWidget(dev_sub_container)
 
         # Dark Overlay State Updater (Option A - Fixed Layout Shift)
@@ -15106,6 +15126,7 @@ Stylesheet Selector:
             calc_page_init_cb.setEnabled(is_dev)
             calc_tab_init_cb.setEnabled(is_dev)
             turn_off_psutil_cb.setEnabled(is_dev)
+            keep_stream_panel_open_cb.setEnabled(is_dev)
             dev_opacity_effect.setOpacity(1.0 if is_dev else 0.35)
 
         dev_mode_cb.toggled.connect(_update_dev_mode_state)
@@ -15202,6 +15223,7 @@ Stylesheet Selector:
             new_calc_init = calc_page_init_cb.isChecked()
             new_calc_tab_init = calc_tab_init_cb.isChecked()
             new_psutil = turn_off_psutil_cb.isChecked()
+            new_keep_stream_open = keep_stream_panel_open_cb.isChecked()
             new_check = check_daily_cb.isChecked()
             new_startup = startup_cb.isChecked()
             new_delay = delay_slider.value()
@@ -15221,6 +15243,7 @@ Stylesheet Selector:
                 new_calc_init == self.settings.get("calculate_page_initialize", False) and
                 new_calc_tab_init == self.settings.get("calculate_tab_initialize", False) and
                 new_psutil == self.settings.get("turn_off_psutil", False) and
+                new_keep_stream_open == self.settings.get("keep_stream_extraction_open", False) and
                 new_check == self.settings.get("check_version_daily", True) and
                 new_startup == orig_startup and
                 new_delay == self.settings.get("startup_delay", 0)):
@@ -15248,9 +15271,19 @@ Stylesheet Selector:
             self.settings["calculate_page_initialize"] = new_calc_init
             self.settings["calculate_tab_initialize"] = new_calc_tab_init
             self.settings["turn_off_psutil"] = new_psutil
+            self.settings["keep_stream_extraction_open"] = new_keep_stream_open
             self.settings["check_version_daily"] = new_check
             self.settings["startup_delay"] = new_delay
             save_settings(self.settings)
+            
+            # Sync Developer Mode & Stream Extraction settings to QSettings
+            try:
+                from PySide6.QtCore import QSettings
+                _qs = QSettings("TDD131", "HELXAID")
+                _qs.setValue("Developer/developer_mode", new_dev)
+                _qs.setValue("Developer/stream_extract_no_auto_close", new_keep_stream_open)
+            except Exception:
+                pass
             
             # If Developer Mode was turned OFF, clamp CPU reapply interval back to min 300s
             if not new_dev:
@@ -20205,8 +20238,11 @@ if __name__ == "__main__":
             if event.type() in (QEvent.KeyPress, QEvent.KeyRelease, QEvent.ShortcutOverride):
                 if hasattr(event, "key") and event.key() == Qt.Key_Space:
                     # 1. Allow normal text typing in input fields
-                    from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit
+                    from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
                     if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                        return False
+                    fw = QApplication.focusWidget()
+                    if isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)):
                         return False
                     
                     # 2. Allow key capture / recorder widgets (e.g. TacticalInputCatcherButton)

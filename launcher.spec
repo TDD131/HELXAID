@@ -49,6 +49,8 @@ hiddenimports = [
     'ctypes.wintypes',
     'mutagen',
     'yt_dlp',
+    'innertube_fast_resolver',
+    'fast_stream_resolver',
     'macro_system',
     'macro_system.core',
     'macro_system.core.input_listener',

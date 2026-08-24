@@ -15,12 +15,16 @@ datas = [
     ('python/helxairo_native.cp314-win_amd64.pyd', '.'),
     ('python/hardware_utils.cp314-win_amd64.pyd', '.'),
     ('python/hardware_utils.pyd', '.'),
+    ('python/innertube_fast_resolver.cp314-win_amd64.pyd', '.'),
+    ('python/innertube_fast_resolver.pyd', '.'),
 ]
 binaries = [
     ('python/helxaid_native.cp314-win_amd64.pyd', '.'),
     ('python/helxairo_native.cp314-win_amd64.pyd', '.'),
     ('python/hardware_utils.cp314-win_amd64.pyd', '.'),
     ('python/hardware_utils.pyd', '.'),
+    ('python/innertube_fast_resolver.cp314-win_amd64.pyd', '.'),
+    ('python/innertube_fast_resolver.pyd', '.'),
 ]
 hiddenimports = [
     'hardware_utils',
@@ -28,6 +32,8 @@ hiddenimports = [
     'native_wrapper',
     'helxaid_native',
     'helxairo_native',
+    'innertube_fast_resolver',
+    'fast_stream_resolver',
     'hid',
     'yt_dlp',
     'win32timezone',

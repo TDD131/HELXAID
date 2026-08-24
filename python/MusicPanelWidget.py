@@ -14,8 +14,9 @@ from PySide6.QtWidgets import (
     QScrollArea, QLineEdit, QSpinBox, QSpacerItem,
     QDialog, QComboBox, QRadioButton, QButtonGroup, QCheckBox,
     QProgressBar, QGroupBox, QSplitter, QApplication, QToolButton,
-    QStyledItemDelegate, QStyle, QMenu  
+    QStyledItemDelegate, QStyle, QMenu, QGraphicsDropShadowEffect
 )
+from AnimatedButton import FadeHoverButton, AnimatedButton
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import (
     Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
@@ -45,6 +46,23 @@ try:
     PIL_AVAILABLE = True
 except Exception:
     PIL_AVAILABLE = False
+
+
+def trim_current_process_memory():
+    """
+    Instantly trim working set memory of HELXAID process.
+    Releases unused pages (post-extraction/yt-dlp/FFmpeg setup) back to OS.
+    """
+    try:
+        import gc
+        gc.collect()
+        if sys.platform == 'win32':
+            import ctypes
+            h_proc = ctypes.windll.kernel32.GetCurrentProcess()
+            ctypes.windll.psapi.EmptyWorkingSet(h_proc)
+    except Exception:
+        pass
+
 
 
 class FadingHandleSlider(QSlider):
@@ -2263,11 +2281,15 @@ class CoverCropDialog(QDialog):
 class FullscreenImageOverlay(QDialog):
     def __init__(self, pixmap, parent=None):
         super().__init__(parent)
-        from PySide6.QtCore import Qt
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QFrame
+        from PySide6.QtGui import QGuiApplication
+        screen = parent.screen() if parent and hasattr(parent, 'screen') and parent.screen() else QGuiApplication.primaryScreen()
+        if screen:
+            self.setGeometry(screen.geometry())
+
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QFrame, QGraphicsOpacityEffect
         
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -2275,6 +2297,15 @@ class FullscreenImageOverlay(QDialog):
         self.bg_frame = QFrame(self)
         self.bg_frame.setStyleSheet("QFrame { background-color: rgba(0, 0, 0, 230); }")
         main_layout.addWidget(self.bg_frame)
+
+        # Smooth Opacity Transition Effect
+        self.opacity_effect = QGraphicsOpacityEffect(self.bg_frame)
+        self.opacity_effect.setOpacity(0.0)
+        self.bg_frame.setGraphicsEffect(self.opacity_effect)
+
+        self._fade_anim = QPropertyAnimation(self.opacity_effect, b"opacity", self)
+        self._fade_anim.finished.connect(self._on_anim_finished)
+        self._is_closing = False
         
         frame_layout = QHBoxLayout(self.bg_frame)
         frame_layout.setContentsMargins(50, 50, 50, 50)
@@ -2284,7 +2315,7 @@ class FullscreenImageOverlay(QDialog):
         
         # Left Close Label
         self.close_lbl_left = QLabel("Click here to close", self.bg_frame)
-        self.close_lbl_left.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 18px; font-weight: bold; background: transparent;")
+        self.close_lbl_left.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; background: transparent;")
         self.close_lbl_left.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.close_lbl_left.setCursor(Qt.PointingHandCursor)
         frame_layout.addWidget(self.close_lbl_left)
@@ -2294,33 +2325,70 @@ class FullscreenImageOverlay(QDialog):
         self.img_lbl.setStyleSheet("background: transparent;")
         
         if pixmap and not pixmap.isNull():
-            from PySide6.QtGui import QGuiApplication
-            screen = QGuiApplication.primaryScreen().availableGeometry()
-            w = int(screen.width() * 0.60)
-            h = int(screen.height() * 0.85)
-            self.img_lbl.setPixmap(pixmap.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            if screen:
+                geom = screen.geometry()
+                w = int(geom.width() * 0.60)
+                h = int(geom.height() * 0.85)
+                self.img_lbl.setPixmap(pixmap.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             
         frame_layout.addWidget(self.img_lbl)
         
         # Right Close Label
         self.close_lbl_right = QLabel("Click here to close", self.bg_frame)
-        self.close_lbl_right.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 18px; font-weight: bold; background: transparent;")
+        self.close_lbl_right.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: bold; background: transparent;")
         self.close_lbl_right.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.close_lbl_right.setCursor(Qt.PointingHandCursor)
         frame_layout.addWidget(self.close_lbl_right)
         
         frame_layout.addStretch()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._is_closing = False
+        self._fade_anim.stop()
+        self._fade_anim.setDuration(200)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_anim.start()
+
+    def _start_close_transition(self):
+        if self._is_closing:
+            return
+        self._is_closing = True
+        self._fade_anim.stop()
+        self._fade_anim.setDuration(160)
+        self._fade_anim.setStartValue(self.opacity_effect.opacity())
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.InCubic)
+        self._fade_anim.start()
+
+    def _on_anim_finished(self):
+        if self._is_closing:
+            super().accept()
         
     def mousePressEvent(self, event):
+        if self._is_closing:
+            return
         child = self.childAt(event.pos())
         if child == self.img_lbl:
             return
-        self.accept()
+        self._start_close_transition()
         
     def keyPressEvent(self, event):
-        from PySide6.QtCore import Qt
-        if event.key() == Qt.Key_Escape:
-            self.accept()
+        if event.key() in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Space):
+            if not self._is_closing:
+                self._start_close_transition()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def done(self, r):
+        super().done(r)
+        if self.parent():
+            self.parent().activateWindow()
+            self.parent().raise_()
+            self.parent().setFocus()
 
 
 class RoundedImageLabel(QLabel):
@@ -2374,43 +2442,111 @@ class RoundedImageLabel(QLabel):
         super().paintEvent(event)
 
 
-class InteractiveCoverLabel(QWidget):
-    from PySide6.QtCore import Signal
+class InteractiveCoverLabel(QFrame):
+    """
+    Glass card containing a single cover preview (Front or Back),
+    action overlay, directory path, and explore button.
+
+    Component Name: InteractiveCoverLabel
+    """
     clicked_signal = Signal()
     remove_clicked_signal = Signal()
     folder_clicked_signal = Signal()
 
     def __init__(self, title, action_text, parent=None):
         super().__init__(parent)
+        self.setObjectName("interactiveCoverCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.action_text = action_text
         self._current_pixmap = None
 
-        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QToolButton
+        self.setStyleSheet("""
+            QFrame#interactiveCoverCard {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+            }
+            QLabel#coverTitleLabel {
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 13px;
+                font-weight: bold;
+                background: transparent;
+                letter-spacing: 0.5px;
+            }
+            QLabel#coverDirLabel {
+                color: #8a8d98;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                background: transparent;
+            }
+            QLineEdit#coverPathEdit {
+                background: rgba(0, 0, 0, 0.4);
+                color: #d0d0d0;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 4px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                padding: 2px 6px;
+            }
+            QToolButton#coverFolderBtn {
+                background: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 4px;
+                min-width: 22px;
+                max-width: 22px;
+                min-height: 22px;
+                max-height: 22px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QToolButton#coverFolderBtn:hover {
+                background: rgba(255, 91, 6, 0.35);
+                border: 1px solid rgba(255, 91, 6, 0.8);
+            }
+            QToolButton#coverFolderBtn:disabled {
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.04);
+            }
+        """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
         title_lbl = QLabel(title)
+        title_lbl.setObjectName("coverTitleLabel")
         title_lbl.setAlignment(Qt.AlignCenter)
-        title_lbl.setStyleSheet("color: white; font-weight: bold; font-size: 14px; margin-bottom: 5px;")
         layout.addWidget(title_lbl)
 
         # Image Container
         self.img_container = QWidget()
-        self.img_container.setFixedSize(160, 160)
+        self.img_container.setObjectName("coverImgContainer")
+        self.img_container.setFixedSize(170, 170)
 
-        self.img_lbl = RoundedImageLabel(radius=8, parent=self.img_container)
-        self.img_lbl.setGeometry(0, 0, 160, 160)
-        # Note: No need for setScaledContents or stylesheet because RoundedImageLabel draws it
+        self.img_lbl = RoundedImageLabel(radius=10, parent=self.img_container)
+        self.img_lbl.setObjectName("coverRoundedImg")
+        self.img_lbl.setGeometry(0, 0, 170, 170)
 
         self.overlay = QLabel(self.img_container)
-        self.overlay.setGeometry(0, 0, 160, 160)
+        self.overlay.setObjectName("coverActionOverlay")
+        self.overlay.setGeometry(0, 0, 170, 170)
         self.overlay.setAlignment(Qt.AlignCenter)
         self.overlay.setText(self.action_text)
         self.overlay.hide()
         self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.overlay.setStyleSheet("background: rgba(0,0,0,0.6); color: white; font-weight: bold; font-size: 14px; border-radius: 8px;")
+        self.overlay.setStyleSheet("""
+            QLabel#coverActionOverlay {
+                background: rgba(8, 8, 12, 0.78);
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-weight: bold;
+                font-size: 11px;
+                border-radius: 10px;
+                border: 1px solid rgba(255, 91, 6, 0.6);
+            }
+        """)
 
         if self.action_text:
             self.img_container.setCursor(Qt.PointingHandCursor)
@@ -2419,48 +2555,44 @@ class InteractiveCoverLabel(QWidget):
 
         layout.addWidget(self.img_container, alignment=Qt.AlignCenter)
 
-        # Directory row exactly as requested
+        # Directory row
         dir_layout = QHBoxLayout()
+        dir_layout.setContentsMargins(0, 0, 0, 0)
+        dir_layout.setSpacing(6)
         dir_lbl = QLabel("Directory:")
-        dir_lbl.setStyleSheet("color: #aaaaaa; font-size: 10px; font-weight: bold;")
-        
+        dir_lbl.setObjectName("coverDirLabel")
+        dir_lbl.setFixedHeight(24)
+
         self.path_edit = QLineEdit()
+        self.path_edit.setObjectName("coverPathEdit")
         self.path_edit.setReadOnly(True)
-        self.path_edit.setStyleSheet("background: #1e1e28; color: #888; border: 1px solid #333; font-size: 10px; padding: 2px; border-radius: 3px;")
-        # Hide the line edit cursor so it looks cleaner
+        self.path_edit.setFixedHeight(24)
+        self.path_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.path_edit.setCursor(Qt.ArrowCursor)
-        
-        self.folder_btn = QToolButton()
-        import os
-        from PySide6.QtGui import QIcon
-        from PySide6.QtCore import QSize
+
         script_dir = os.path.dirname(os.path.abspath(__file__))
         folder_icon_path = os.path.join(script_dir, "UI Icons", "folder-icon-white.svg").replace("\\", "/")
+
+        self.folder_btn = QToolButton()
+        self.folder_btn.setObjectName("coverFolderBtn")
+        self.folder_btn.setFixedSize(24, 24)
+        self.folder_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.folder_btn.setIcon(QIcon(folder_icon_path))
         self.folder_btn.setIconSize(QSize(14, 14))
-        self.folder_btn.setToolTip("Pick File" if action_text == "Edit" else "Open Folder")
-        self.folder_btn.setStyleSheet("""
-            QToolButton {
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid #444; border-radius: 4px; padding: 3px;
-            }
-            QToolButton:hover {
-                background: rgba(255, 91, 6, 0.5);
-                border: 1px solid rgba(255, 91, 6, 1);
-            }
-        """)
+        self.folder_btn.setCursor(Qt.PointingHandCursor)
+        self.folder_btn.setToolTip("Pick File" if action_text == "Edit" else "Open Folder in Explorer")
         self.folder_btn.clicked.connect(self.folder_clicked_signal.emit)
         self.folder_btn.setEnabled(False)
 
-        dir_layout.addWidget(dir_lbl)
-        dir_layout.addWidget(self.path_edit)
-        dir_layout.addWidget(self.folder_btn)
+        dir_layout.addWidget(dir_lbl, 0)
+        dir_layout.addWidget(self.path_edit, 1)
+        dir_layout.addWidget(self.folder_btn, 0)
 
         layout.addLayout(dir_layout)
 
     def _on_press(self, event):
-        from PySide6.QtCore import Qt
         if event.button() == Qt.LeftButton:
+            self.overlay.hide()
             if self._current_pixmap and not self._current_pixmap.isNull() and self.action_text == "Edit":
                 if event.pos().y() > self.img_container.height() / 2:
                     self.remove_clicked_signal.emit()
@@ -2470,7 +2602,6 @@ class InteractiveCoverLabel(QWidget):
                 self.clicked_signal.emit()
 
     def eventFilter(self, obj, event):
-        from PySide6.QtCore import QEvent
         if obj == self.img_container and self.action_text:
             if event.type() == QEvent.Enter:
                 self.overlay.show()
@@ -2496,25 +2627,27 @@ class InteractiveCoverLabel(QWidget):
         self.folder_btn.setEnabled(bool(source_path))
 
     def _open_folder(self):
-        """Review Mode only action (or optional). Opens the file's current containing folder."""
-        import os, subprocess
+        """Review Mode only action. Opens the file's containing folder."""
         path = self.path_edit.text()
         if path and os.path.exists(path):
             try:
                 subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
             except Exception as e:
                 print(f"[Cover] Error opening explorer: {e}")
-                
+
     @property
     def current_path(self):
         return self.path_edit.text()
 
 
 class CoverManagerDialog(QDialog):
+    """
+    Glassmorphism Floating Panel Dialog for Reviewing and Editing Album/Track Covers.
+    
+    Component Name: CoverManagerDialog
+    """
     def __init__(self, mode, front_path, back_path, front_source='', back_source='', parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Review Images" if mode == 'review' else "Edit Covers")
-        self.setFixedSize(500, 350)
         self.mode = mode
         self.front_path = front_path
         self.back_path = back_path
@@ -2527,86 +2660,288 @@ class CoverManagerDialog(QDialog):
         self.new_back_source = back_source
         self.reset_all = False
 
-        self.setStyleSheet("""
-            QDialog {
-                background-color: rgba(30, 30, 42, 255);
-                border: 1px solid rgba(255, 255, 255, 0.1);
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+
+        self.setObjectName("CoverManagerDialog")
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setFixedSize(560, 430)
+
+        # Smooth Open & Close Window Opacity Animation
+        self._fade_anim = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade_anim.finished.connect(self._on_fade_finished)
+        self._is_closing = False
+        self._close_action = "reject"
+        self.setWindowOpacity(0.0)
+
+        # Outer Layout
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(10, 10, 10, 10)
+
+        # Glass Container
+        self.container = QFrame(self)
+        self.container.setObjectName("coverManagerContainer")
+        self.container.setStyleSheet("""
+            QFrame#coverManagerContainer {
+                background-color: rgba(14, 15, 20, 0.97);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
             }
-            QPushButton {
-                background: #3a3a4a;
-                color: #ffffff;
-                border: none;
-                padding: 6px 15px;
-                border-radius: 4px;
+            QWidget#coverManagerTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#coverManagerTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
                 font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 0.5px;
             }
-            QPushButton:hover {
-                background: #4a4a5a;
+            QPushButton#coverManagerCloseBtn {
+                background: transparent;
+                border: none;
+                border-radius: 6px;
             }
-            QPushButton#applyBtn {
-                background: rgba(255, 91, 6, 0.8);
-            }
-            QPushButton#applyBtn:hover {
-                background: rgba(255, 91, 6, 1);
+            QPushButton#coverManagerCloseBtn:hover {
+                background: rgba(255, 255, 255, 0.08);
             }
         """)
 
-        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton
-        from PySide6.QtGui import QPixmap
+        # Drop Shadow
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(24)
+        shadow.setColor(QColor(0, 0, 0, 180))
+        shadow.setOffset(0, 8)
+        self.container.setGraphicsEffect(shadow)
 
-        main_layout = QVBoxLayout(self)
-        
-        # Covers layout
+        outer_layout.addWidget(self.container)
+
+        container_layout = QVBoxLayout(self.container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        # Title Bar
+        self.title_bar = QWidget()
+        self.title_bar.setObjectName("coverManagerTitleBar")
+        self.title_bar.setFixedHeight(44)
+        title_layout = QHBoxLayout(self.title_bar)
+        title_layout.setContentsMargins(14, 0, 10, 0)
+        title_layout.setSpacing(10)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        panel_icon_path = os.path.join(script_dir, "UI Icons", "display-icon.svg").replace('\\', '/')
+        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon-white.svg").replace('\\', '/')
+
+        icon_lbl = QLabel()
+        icon_lbl.setObjectName("coverManagerIconLabel")
+        icon_lbl.setFixedSize(18, 18)
+        icon_lbl.setScaledContents(True)
+        if os.path.exists(panel_icon_path):
+            icon_lbl.setPixmap(QPixmap(panel_icon_path))
+        title_layout.addWidget(icon_lbl)
+
+        dialog_title = "REVIEW IMAGES" if mode == 'review' else "EDIT COVERS"
+        title_lbl = QLabel(dialog_title)
+        title_lbl.setObjectName("coverManagerTitleLabel")
+        title_layout.addWidget(title_lbl)
+        title_layout.addStretch()
+
+        container_layout.addWidget(self.title_bar)
+
+        # Content Area
+        content_widget = QWidget()
+        content_widget.setObjectName("coverManagerContentWidget")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(16, 16, 16, 16)
+        content_layout.setSpacing(16)
+
+        # Covers Layout
         covers_layout = QHBoxLayout()
+        covers_layout.setSpacing(14)
         is_edit = (self.mode == 'edit')
         action_text = "Edit" if is_edit else "Show at Fullscreen"
-        
+
         self.front_lbl = InteractiveCoverLabel("Front Cover", action_text=action_text)
+        self.front_lbl.setObjectName("frontCoverCard")
         self.front_lbl.clicked_signal.connect(lambda: self._handle_click('front'))
         self.front_lbl.remove_clicked_signal.connect(lambda: self._handle_remove('front'))
         self.front_lbl.folder_clicked_signal.connect(lambda: self._handle_folder_click('front'))
-            
+
         self.back_lbl = InteractiveCoverLabel("Back Cover", action_text=action_text)
+        self.back_lbl.setObjectName("backCoverCard")
         self.back_lbl.clicked_signal.connect(lambda: self._handle_click('back'))
         self.back_lbl.remove_clicked_signal.connect(lambda: self._handle_remove('back'))
         self.back_lbl.folder_clicked_signal.connect(lambda: self._handle_folder_click('back'))
 
         covers_layout.addWidget(self.front_lbl)
         covers_layout.addWidget(self.back_lbl)
-        main_layout.addLayout(covers_layout)
+        content_layout.addLayout(covers_layout)
 
         # Initial content loading
         self._load_initial_contents()
 
-        # Bottom buttons
+        # Bottom Buttons
         btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-        
+        btn_layout.setSpacing(10)
+
         if self.mode == 'review':
-            close_btn = QPushButton("Close")
-            close_btn.clicked.connect(self.reject)
-            btn_layout.addWidget(close_btn)
-        else:
-            reset_btn = QPushButton("Reset to Defaults")
-            reset_btn.setStyleSheet("background: #5a2a2a;")
-            reset_btn.clicked.connect(self._reset_covers)
-            
-            cancel_btn = QPushButton("Cancel")
-            cancel_btn.clicked.connect(self.reject)
-            
-            apply_btn = QPushButton("Save & Apply")
-            apply_btn.setObjectName("applyBtn")
-            apply_btn.clicked.connect(self.accept)
-            
-            btn_layout.addWidget(reset_btn)
             btn_layout.addStretch()
-            btn_layout.addWidget(cancel_btn)
-            btn_layout.addWidget(apply_btn)
-            
-        main_layout.addLayout(btn_layout)
+            self.close_action_btn = FadeHoverButton("Close", border_radius=6.0, is_secondary=True)
+            self.close_action_btn.setObjectName("coverManagerReviewCloseBtn")
+            self.close_action_btn.setFixedSize(110, 36)
+            self.close_action_btn.clicked.connect(self.reject)
+            btn_layout.addWidget(self.close_action_btn)
+        else:
+            self.reset_btn = FadeHoverButton("Reset to Defaults", border_radius=6.0, color_mode="red")
+            self.reset_btn.setObjectName("coverManagerResetBtn")
+            self.reset_btn.setFixedSize(170, 36)
+            self.reset_btn.clicked.connect(self._reset_covers)
+            btn_layout.addWidget(self.reset_btn)
+
+            btn_layout.addStretch()
+
+            self.cancel_btn = FadeHoverButton("Cancel", border_radius=6.0, is_secondary=True)
+            self.cancel_btn.setObjectName("coverManagerCancelBtn")
+            self.cancel_btn.setFixedSize(100, 36)
+            self.cancel_btn.clicked.connect(self.reject)
+            btn_layout.addWidget(self.cancel_btn)
+
+            self.apply_btn = FadeHoverButton("Save & Apply", border_radius=6.0, is_secondary=False)
+            self.apply_btn.setObjectName("coverManagerApplyBtn")
+            self.apply_btn.setFixedSize(140, 36)
+            self.apply_btn.clicked.connect(self.accept)
+            btn_layout.addWidget(self.apply_btn)
+
+        content_layout.addLayout(btn_layout)
+        container_layout.addWidget(content_widget)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._is_closing = False
+        self._fade_anim.stop()
+        self._fade_anim.setDuration(180)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_anim.start()
+
+    def accept(self):
+        self._start_close_animation("accept")
+
+    def reject(self):
+        self._start_close_animation("reject")
+
+    def _start_close_animation(self, action="reject"):
+        if self._is_closing:
+            return
+        self._is_closing = True
+        self._close_action = action
+        self._fade_anim.stop()
+        self._fade_anim.setDuration(140)
+        self._fade_anim.setStartValue(self.windowOpacity())
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.InCubic)
+        self._fade_anim.start()
+
+    def _on_fade_finished(self):
+        if self._is_closing:
+            if self._close_action == "accept":
+                super().accept()
+            else:
+                super().reject()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            title_rect = self.title_bar.rect()
+            title_mapped = self.title_bar.mapTo(self, title_rect.topLeft())
+            drag_area = QRect(title_mapped, self.title_bar.size())
+            click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            if drag_area.contains(click_pos):
+                self._is_dragging = True
+                global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+                self._drag_start_pos = global_pos - self.frameGeometry().topLeft()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            self.move(global_pos - self._drag_start_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_F12:
+            main_window = self.parent()
+            while main_window and not hasattr(main_window, '_trigger_inspector'):
+                main_window = main_window.parent()
+            if main_window and hasattr(main_window, '_trigger_inspector'):
+                main_window._trigger_inspector()
+            else:
+                self._trigger_dialog_inspector()
+            event.accept()
+            return
+        elif event.key() == Qt.Key_Escape:
+            self.reject()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _trigger_dialog_inspector(self):
+        """Component Inspector handler inside modal CoverManagerDialog."""
+        cursor_pos = QCursor.pos()
+        widget = QApplication.widgetAt(cursor_pos)
+        if not widget:
+            pos = self.mapFromGlobal(cursor_pos)
+            widget = self.childAt(pos)
+        if widget:
+            hierarchy = []
+            w = widget
+            while w:
+                name = w.objectName() or "(no name)"
+                hierarchy.append(f"{w.__class__.__name__}#{name}")
+                w = w.parent()
+
+            widget_type = widget.__class__.__name__
+            component_name = widget.objectName() or widget_type
+            selector_text = f"{widget_type}#{widget.objectName()}" if widget.objectName() else f"<{widget_type}: set objectName first>"
+            info = f"""Component Inspector
+
+Component: {component_name}
+Widget Type: {widget_type}
+Object Name: {widget.objectName() or '(not set)'}
+Size: {widget.width()} x {widget.height()}
+
+Hierarchy (child \u2192 parent):
+{chr(10).join(f"  {i}. {h}" for i, h in enumerate(hierarchy[:6]))}
+
+Stylesheet Selector:
+  {selector_text}
+"""
+            from PySide6.QtWidgets import QMessageBox
+            msg = QMessageBox(self)
+            msg.setIcon(QMessageBox.Information)
+            msg.setWindowTitle("Component Inspector (F12) - HELXAID")
+            msg.setText(info)
+            msg.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+            QApplication.clipboard().setText(info)
+            msg.addButton("Copy Info", QMessageBox.ActionRole)
+            msg.addButton(QMessageBox.Ok)
+            msg.exec()
+
 
     def _load_initial_contents(self):
-        from PySide6.QtGui import QPixmap
         f_pix = QPixmap(self.front_path) if self.front_path else None
         b_pix = QPixmap(self.back_path) if self.back_path else None
         self.front_lbl.set_content(f_pix, self.front_path)
@@ -2633,7 +2968,6 @@ class CoverManagerDialog(QDialog):
             self.back_lbl.set_content(None, "")
 
     def _handle_click(self, target):
-        import os
         if self.mode == 'edit':
             # CLICK IMAGE (Edit) = CROP current source (Priority: High-Res Source)
             lbl = self.front_lbl if target == 'front' else self.back_lbl
@@ -2650,17 +2984,21 @@ class CoverManagerDialog(QDialog):
         else:
             # Mode review: Show Fullscreen Overlay
             lbl = self.front_lbl if target == 'front' else self.back_lbl
+            lbl.overlay.hide()
             pixmap = lbl._current_pixmap
             if pixmap and not pixmap.isNull():
                 overlay = FullscreenImageOverlay(pixmap, self)
                 overlay.showFullScreen()
+                overlay.exec()
+                self.activateWindow()
+                self.raise_()
+                self.setFocus()
 
     def _handle_folder_click(self, target):
         if self.mode == 'edit':
-            # CLICK FOLDER BUTTON (📁) = PICK NEW SOURCE (Edit Direktori)
+            # CLICK FOLDER BUTTON = PICK NEW SOURCE
             path = self._open_file_picker(target)
             if path:
-                # Automatically go to crop for the new file
                 self._pick_and_crop(target, path)
         else:
             # Mode review: Open explorer location
@@ -2668,7 +3006,6 @@ class CoverManagerDialog(QDialog):
             lbl._open_folder()
 
     def _open_file_picker(self, target):
-        import os, json
         from PySide6.QtWidgets import QFileDialog
 
         IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.tif *.ico);;All Files (*)"
@@ -2700,19 +3037,16 @@ class CoverManagerDialog(QDialog):
         return path
 
     def _pick_and_crop(self, target, path):
-        from PySide6.QtGui import QPixmap
         pixmap = QPixmap(path)
         if pixmap.isNull():
             return
             
         max_size = 2048
         if pixmap.width() > max_size or pixmap.height() > max_size:
-            from PySide6.QtCore import Qt
             pixmap = pixmap.scaled(max_size, max_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
         # Show Crop Dialog
         dialog = CoverCropDialog(pixmap, self)
-        from PySide6.QtWidgets import QDialog
         if dialog.exec() == QDialog.Accepted:
             cropped = dialog.get_cropped_pixmap()
             if not cropped or cropped.isNull():
@@ -2987,9 +3321,9 @@ class PlaylistHeader(QFrame):
         from PySide6.QtWidgets import QDialog
         if dialog.exec() == QDialog.Accepted:
             changes = dialog.get_changes()
-            playlist_name = getattr(self, '_name', '')
+            playlist_name = getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or 'My Playlist'
             if not playlist_name:
-                return
+                playlist_name = 'My Playlist'
 
             if changes.get('reset'):
                 self._reset_covers()
@@ -3037,7 +3371,7 @@ class PlaylistHeader(QFrame):
                     )
                     changed = True
 
-            # If edits were made, perist the UI setting
+            # If edits were made, persist the UI setting
             if changed:
                 self._save_cover_setting(
                     playlist_name,
@@ -3100,9 +3434,11 @@ class PlaylistHeader(QFrame):
         self._cover_back_source = ''
         self.cover_front.clear()
         self.cover_back.clear()
-        playlist_name = getattr(self, '_name', '')
+        playlist_name = getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or 'My Playlist'
         if playlist_name:
             self._save_cover_setting(playlist_name, '', '', '', '')
+            if playlist_name == 'My Playlist':
+                self._save_cover_setting('__default__', '', '', '', '')
 
     def _save_cover_setting(
         self, playlist_name: str, front_path: str, back_path: str, 
@@ -3110,6 +3446,7 @@ class PlaylistHeader(QFrame):
     ):
         """
         Persist the front and back cover paths to APPDATA/HELXAID/settings.json.
+        Also syncs __default__ fallback so custom covers persist seamlessly.
 
         Storage schema::
 
@@ -3119,9 +3456,6 @@ class PlaylistHeader(QFrame):
                 'front_source': '/path/to/original.jpg',
                 'back_source':  '/path/to/original.png'
             }
-
-        If an old entry exists in the legacy single-string format it will be
-        silently overwritten the first time the user picks a new cover.
 
         Parameters
         ----------
@@ -3146,41 +3480,45 @@ class PlaylistHeader(QFrame):
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
             covers = settings.setdefault('playlist_covers', {})
-            covers[playlist_name] = {
+            cover_entry = {
                 'front': front_path, 
                 'back': back_path,
                 'front_source': front_source,
                 'back_source': back_source
             }
+            covers[playlist_name] = cover_entry
+            
+            # Sync to __default__ fallback if on 'My Playlist' or if __default__ has no front/back
+            if playlist_name == 'My Playlist' or '__default__' not in covers or not (covers['__default__'].get('front') or covers['__default__'].get('back')):
+                covers['__default__'] = dict(cover_entry)
+
             with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"[Cover] Failed to save cover setting: {e}")
 
-    def load_saved_cover(self, playlist_name: str):
+    def load_saved_cover(self, playlist_name: str = ''):
         """
-        Restore previously saved cover images for this playlist on load.
+        Restore previously saved cover images for this playlist on load with hierarchical fallback.
 
-        Called by MusicPanelWidget.set_playlist() each time a new playlist
-        is activated.  Handles both the new dict format::
-
-            {'front': path, 'back': path}
-
-        and the legacy single-string format (pre-upgrade) by applying the
-        same path to both covers as a graceful fallback.
+        Resolution Order:
+          1. Exact match for `playlist_name` in settings['playlist_covers'].
+          2. Global fallback key `__default__` or `My Playlist`.
+          3. Any first valid custom cover entry in settings['playlist_covers'].
+          4. Default placeholder (clear labels).
 
         Parameters
         ----------
-        playlist_name : str
-            Playlist display name used to look up the saved entry.
+        playlist_name : str, optional
+            Playlist display name used to look up the saved entry. If empty,
+            uses current title or 'My Playlist'.
         """
         import json
         settings_path = os.path.join(
             os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json'
         )
 
-        # Reset in-memory paths before loading so a playlist with no saved
-        # covers doesn't accidentally display the previous playlist's art.
+        # Reset in-memory paths before loading
         self._cover_front_path = ''
         self._cover_back_path = ''
         self._cover_front_source = ''
@@ -3194,35 +3532,76 @@ class PlaylistHeader(QFrame):
             with open(settings_path, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
 
-            val = settings.get('playlist_covers', {}).get(playlist_name)
-            if not val:
+            covers_map = settings.get('playlist_covers', {})
+            if not isinstance(covers_map, dict) or not covers_map:
                 self.cover_front.clear()
                 self.cover_back.clear()
                 return
 
-            # Backward-compat: old format stored a raw string path for the
-            # single image that was applied to both covers simultaneously.
-            if isinstance(val, str):
-                front_path = back_path = val
-            else:
-                front_path = val.get('front', '')
-                back_path  = val.get('back', '')
-                self._cover_front_source = val.get('front_source', '')
-                self._cover_back_source = val.get('back_source', '')
+            lookup_name = playlist_name or getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or 'My Playlist'
 
-            self._cover_front_path = front_path
-            self._cover_back_path  = back_path
+            def _extract_paths(entry):
+                if not entry:
+                    return None, None, '', ''
+                if isinstance(entry, str):
+                    if os.path.exists(entry):
+                        return entry, entry, '', ''
+                    return None, None, '', ''
+                elif isinstance(entry, dict):
+                    f_p = entry.get('front', '')
+                    b_p = entry.get('back', '')
+                    f_src = entry.get('front_source', '')
+                    b_src = entry.get('back_source', '')
+                    f_valid = f_p if (f_p and os.path.exists(f_p)) else None
+                    b_valid = b_p if (b_p and os.path.exists(b_p)) else None
+                    if f_valid or b_valid:
+                        return f_valid, b_valid, f_src, b_src
+                return None, None, '', ''
 
-            if front_path and os.path.exists(front_path):
+            # Tier 1: Exact match
+            front_path, back_path, front_source, back_source = _extract_paths(covers_map.get(lookup_name))
+
+            # Tier 2: Global default / fallback ('__default__', 'My Playlist')
+            if not front_path and not back_path:
+                front_path, back_path, front_source, back_source = _extract_paths(covers_map.get('__default__'))
+            if not front_path and not back_path:
+                front_path, back_path, front_source, back_source = _extract_paths(covers_map.get('My Playlist'))
+
+            # Tier 3: First available valid custom cover entry
+            if not front_path and not back_path:
+                for k, entry in covers_map.items():
+                    fp, bp, fs, bs = _extract_paths(entry)
+                    if fp or bp:
+                        front_path, back_path, front_source, back_source = fp, bp, fs, bs
+                        break
+
+            # Tier 4: No valid covers anywhere
+            if not front_path and not back_path:
+                self.cover_front.clear()
+                self.cover_back.clear()
+                return
+
+            self._cover_front_path = front_path or ''
+            self._cover_back_path  = back_path or ''
+            self._cover_front_source = front_source or ''
+            self._cover_back_source = back_source or ''
+
+            if front_path:
                 pix = QPixmap(front_path)
                 self.cover_front.setPixmap(
-                    pix.scaled(100, 100, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                    pix.scaled(95, 95, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 )
-            if back_path and os.path.exists(back_path):
+            else:
+                self.cover_front.clear()
+
+            if back_path:
                 pix = QPixmap(back_path)
                 self.cover_back.setPixmap(
-                    pix.scaled(90, 90, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                    pix.scaled(85, 85, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 )
+            else:
+                self.cover_back.clear()
+
         except Exception as e:
             print(f"[Cover] Failed to load saved cover: {e}")
 
@@ -5027,93 +5406,175 @@ class ResumeNotificationWidget(QFrame):
         self._in_anim_group.start(QAbstractAnimation.DeleteWhenStopped)
 
 
+SVG_CLOSE_ICON = """<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>"""
+
+
+def _render_svg_icon_sharp(svg_str: str, size: int = 12, color: str = "#FFFFFF"):
+    """Render crisp, sharp vector SVG icon with anti-aliasing and DevicePixelRatio 2.0."""
+    try:
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtGui import QPainter, QPixmap, QIcon
+        from PySide6.QtCore import Qt
+        formatted_svg = svg_str.replace('currentColor', color)
+        renderer = QSvgRenderer(bytearray(formatted_svg, encoding='utf-8'))
+        pixmap = QPixmap(size * 2, size * 2)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        renderer.render(painter)
+        painter.end()
+        pixmap.setDevicePixelRatio(2.0)
+        return QIcon(pixmap)
+    except Exception:
+        from PySide6.QtGui import QIcon
+        return QIcon()
+
+
 class FloatingUrlInputWidget(QFrame):
     """
-    Floating URL input overlay matching HELXAIL UI design system.
+    Floating URL input overlay matching HELXAID glassmorphism UI design system.
     
     Component Name: FloatingUrlInputWidget
     """
-    url_submitted = Signal(str)
+    url_submitted = Signal(str, str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("floatingUrlInput")
-        self.setFixedSize(470, 100)
+        self.setFixedSize(480, 116)
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._is_closing = False
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
         self.hide()
         
-        # Obey UI Rule: Less use border, more use background-color
+        # Load user's preferred stream mode (default: "buffer")
+        from PySide6.QtCore import QSettings
+        settings = QSettings("TDD131", "HELXAID")
+        self._current_mode = settings.value("MusicPlayer/stream_mode", "buffer", type=str)
+        if self._current_mode not in ("buffer", "direct"):
+            self._current_mode = "buffer"
+        
+        # Glassmorphism floating panel design system
         self.setStyleSheet("""
             QFrame#floatingUrlInput {
-                background-color: rgba(22, 23, 29, 0.96);
-                border: none;
+                background-color: rgba(14, 15, 20, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 12px;
             }
-            QLabel#urlInputHeaderTitle {
-                color: #FF5B06;
-                font-family: 'Orbitron', sans-serif;
+            QWidget#floatingUrlTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 11px;
+                border-top-right-radius: 11px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#floatingUrlTitleLabel {
+                color: #FFFFFF;
                 font-size: 11px;
-                font-weight: 700;
-                letter-spacing: 0.5px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
                 background: transparent;
+                letter-spacing: 0.5px;
             }
-            QLineEdit {
-                background: rgba(255, 255, 255, 0.05);
+            QPushButton#floatingUrlCloseBtn {
+                background: transparent;
                 border: none;
-                border-radius: 6px;
-                color: #FFFFFF;
-                padding: 0px 12px;
-                font-size: 12px;
-                font-family: 'Orbitron', sans-serif;
-                selection-background-color: #FF5B06;
+                border-radius: 4px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 22px;
+                max-width: 22px;
+                min-height: 22px;
+                max-height: 22px;
             }
-            QLineEdit:focus {
-                background: rgba(255, 255, 255, 0.09);
+            QPushButton#floatingUrlCloseBtn:hover {
+                background: rgba(255, 255, 255, 0.12);
+            }
+            QWidget#streamModeContainer {
+                background-color: rgba(255, 255, 255, 0.04);
                 border: none;
+                border-radius: 5px;
             }
-            QLineEdit::placeholder {
-                color: #777777;
-                font-family: 'Orbitron', sans-serif;
-            }
-            QPushButton#btnSearchStream {
-                color: #FFFFFF;
-                background-color: #FF5B06;
-                border: none;
-                border-radius: 6px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
-                font-weight: 700;
-                padding: 0px 18px;
-            }
-            QPushButton#btnSearchStream:hover {
-                background-color: #FF7326;
-            }
-            QPushButton#btnSearchStream:pressed {
-                background-color: #E04B00;
-            }
-            QLabel#errorLabel {
-                color: #FF4D4D;
+            QPushButton#btnModeBuffer, QPushButton#btnModeDirect {
                 font-family: 'Orbitron', sans-serif;
                 font-size: 10px;
                 font-weight: 600;
-                background: transparent;
-            }
-            QPushButton#btnCloseStreamInput {
+                border: none;
+                border-radius: 4px;
+                padding: 0px 8px;
+                min-height: 22px;
+                max-height: 22px;
+                height: 22px;
                 color: #888888;
                 background-color: transparent;
-                border: none;
-                border-radius: 10px;
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 12px;
-                font-weight: bold;
             }
-            QPushButton#btnCloseStreamInput:hover {
+            QPushButton#btnModeBuffer:hover, QPushButton#btnModeDirect:hover {
                 color: #FFFFFF;
-                background-color: rgba(255, 255, 255, 0.12);
+                background-color: rgba(255, 255, 255, 0.06);
             }
-            QPushButton#btnCloseStreamInput:pressed {
-                color: #FF5B06;
-                background-color: rgba(255, 91, 6, 0.25);
+            QPushButton#btnModeBuffer[active="true"], QPushButton#btnModeDirect[active="true"] {
+                color: #FFFFFF;
+                font-weight: bold;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+            }
+            QLineEdit#streamUrlInput {
+                background-color: rgba(30, 30, 30, 0.85);
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 5px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                padding: 0px 8px;
+                min-height: 28px;
+                max-height: 28px;
+                height: 28px;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
+            }
+            QLineEdit#streamUrlInput:focus {
+                background-color: #383b41;
+                border: 1px solid rgba(255, 255, 255, 0.16);
+            }
+            QLineEdit#streamUrlInput::placeholder {
+                color: #70737d;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+            }
+            QPushButton#btnSearchStream {
+                color: #FFFFFF;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                border: none;
+                border-radius: 5px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                letter-spacing: 0.5px;
+                padding: 0px 14px;
+                min-height: 28px;
+                max-height: 28px;
+                height: 28px;
+            }
+            QPushButton#btnSearchStream:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7326, stop:1 #FFBA24);
+            }
+            QPushButton#btnSearchStream:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #E04B00, stop:1 #E09000);
+            }
+            QLabel#streamErrorLabel {
+                color: #FF4D4D;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 9px;
+                font-weight: 600;
+                background: transparent;
+            }
+            QToolTip {
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                color: #EDEDED;
+                background-color: #121318;
+                border: 1px solid rgba(255, 91, 6, 0.45);
+                border-radius: 6px;
+                padding: 6px 10px;
             }
         """)
         
@@ -5121,74 +5582,206 @@ class FloatingUrlInputWidget(QFrame):
             from PySide6.QtWidgets import QGraphicsDropShadowEffect
             from PySide6.QtGui import QColor
             shadow = QGraphicsDropShadowEffect(self)
-            shadow.setBlurRadius(20)
-            shadow.setColor(QColor(0, 0, 0, 160))
-            shadow.setOffset(0, 4)
+            shadow.setBlurRadius(24)
+            shadow.setColor(QColor(0, 0, 0, 180))
+            shadow.setOffset(0, 8)
             self.setGraphicsEffect(shadow)
         except Exception:
             pass
         
         from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(14, 8, 14, 10)
-        main_layout.setSpacing(6)
+        from PySide6.QtGui import QPixmap, QIcon
+        from PySide6.QtCore import QSize
         
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         
-        self.lbl_header = QLabel("OPEN STREAM URL", self)
-        self.lbl_header.setObjectName("urlInputHeaderTitle")
+        # Draggable Title Bar (32px)
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("floatingUrlTitleBar")
+        self.title_bar.setFixedHeight(32)
+        title_layout = QHBoxLayout(self.title_bar)
+        title_layout.setContentsMargins(12, 0, 10, 0)
+        title_layout.setSpacing(8)
+        title_layout.setAlignment(Qt.AlignVCenter)
         
-        self.btn_close_header = QPushButton("✕", self)
-        self.btn_close_header.setObjectName("btnCloseStreamInput")
-        self.btn_close_header.setFixedSize(20, 20)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        panel_icon_path = os.path.join(script_dir, "UI Icons", "open-white.svg").replace('\\', '/')
+        
+        icon_lbl = QLabel(self.title_bar)
+        icon_lbl.setObjectName("floatingUrlIconLabel")
+        icon_lbl.setFixedSize(14, 14)
+        icon_lbl.setScaledContents(True)
+        if os.path.exists(panel_icon_path):
+            icon_lbl.setPixmap(QPixmap(panel_icon_path))
+        title_layout.addWidget(icon_lbl, 0, Qt.AlignVCenter)
+        
+        self.lbl_header = QLabel("OPEN STREAM URL", self.title_bar)
+        self.lbl_header.setObjectName("floatingUrlTitleLabel")
+        title_layout.addWidget(self.lbl_header, 0, Qt.AlignVCenter)
+        title_layout.addStretch(1)
+        
+        self.btn_close_header = QPushButton(self.title_bar)
+        self.btn_close_header.setObjectName("floatingUrlCloseBtn")
+        self.btn_close_header.setFixedSize(22, 22)
         self.btn_close_header.setCursor(Qt.PointingHandCursor)
+        self.btn_close_header.setToolTip("Close (Esc / Ctrl+Y)")
+        self.btn_close_header.setIcon(_render_svg_icon_sharp(SVG_CLOSE_ICON, size=10, color="#FFFFFF"))
+        self.btn_close_header.setIconSize(QSize(10, 10))
         self.btn_close_header.clicked.connect(self.close_panel)
+        title_layout.addWidget(self.btn_close_header, 0, Qt.AlignVCenter)
         
-        header_layout.addWidget(self.lbl_header, 0, Qt.AlignVCenter)
-        header_layout.addStretch(1)
-        header_layout.addWidget(self.btn_close_header, 0, Qt.AlignRight | Qt.AlignVCenter)
-        main_layout.addLayout(header_layout)
+        layout.addWidget(self.title_bar)
+        
+        # Content Area
+        content_widget = QWidget(self)
+        content_widget.setObjectName("floatingUrlContentWidget")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(12, 6, 12, 8)
+        content_layout.setSpacing(5)
+        
+        # Mode Switcher (Pill Selector)
+        self.mode_container = QWidget(content_widget)
+        self.mode_container.setObjectName("streamModeContainer")
+        self.mode_container.setFixedHeight(26)
+        mode_layout = QHBoxLayout(self.mode_container)
+        mode_layout.setContentsMargins(2, 2, 2, 2)
+        mode_layout.setSpacing(3)
+        
+        self.btn_mode_buffer = QPushButton("Buffer Cache", self.mode_container)
+        self.btn_mode_buffer.setObjectName("btnModeBuffer")
+        self.btn_mode_buffer.setFixedHeight(22)
+        self.btn_mode_buffer.setFocusPolicy(Qt.NoFocus)
+        self.btn_mode_buffer.setCursor(Qt.PointingHandCursor)
+        self.btn_mode_buffer.setToolTip(
+            "<b>BUFFER CACHE (Recommended for Gaming)</b><br>"
+            "Downloads audio stream to local temp cache.<br>"
+            "• 100% stutter-free & zero lag during gameplay<br>"
+            "• Instant seeking without buffering delays<br>"
+            "• Temp files auto-cleaned after 24h"
+        )
+        
+        self.btn_mode_direct = QPushButton("Direct Stream", self.mode_container)
+        self.btn_mode_direct.setObjectName("btnModeDirect")
+        self.btn_mode_direct.setFixedHeight(22)
+        self.btn_mode_direct.setFocusPolicy(Qt.NoFocus)
+        self.btn_mode_direct.setCursor(Qt.PointingHandCursor)
+        self.btn_mode_direct.setToolTip(
+            "<b>DIRECT STREAM (Instant Stream)</b><br>"
+            "Streams audio directly without downloading to disk.<br>"
+            "• Immediate playback startup with minimal disk usage<br>"
+            "• Best for quick music preview and streaming"
+        )
+        
+        mode_layout.addWidget(self.btn_mode_buffer)
+        mode_layout.addWidget(self.btn_mode_direct)
+        content_layout.addWidget(self.mode_container)
         
         input_layout = QHBoxLayout()
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(8)
         
-        self.input_field = QLineEdit(self)
+        self.input_field = QLineEdit(content_widget)
+        self.input_field.setObjectName("streamUrlInput")
         self.input_field.setPlaceholderText("Type media title or paste stream URL...")
-        self.input_field.setFixedHeight(32)
+        self.input_field.setFixedHeight(28)
         
-        self.btn_play = QPushButton("Search", self)
+        self.btn_play = QPushButton("Search", content_widget)
         self.btn_play.setObjectName("btnSearchStream")
-        self.btn_play.setFixedHeight(32)
+        self.btn_play.setFixedHeight(28)
+        self.btn_play.setFocusPolicy(Qt.NoFocus)
         self.btn_play.setCursor(Qt.PointingHandCursor)
+        self.btn_play.setToolTip("Extract and play stream (Enter)")
         
         input_layout.addWidget(self.input_field)
         input_layout.addWidget(self.btn_play)
-        main_layout.addLayout(input_layout)
+        content_layout.addLayout(input_layout)
         
-        self.error_label = QLabel("", self)
-        self.error_label.setObjectName("errorLabel")
+        self.error_label = QLabel("", content_widget)
+        self.error_label.setObjectName("streamErrorLabel")
         self.error_label.hide()
-        main_layout.addWidget(self.error_label)
+        content_layout.addWidget(self.error_label)
+        
+        layout.addWidget(content_widget)
         
         # Connections
+        self.btn_mode_buffer.clicked.connect(lambda: self._set_mode("buffer"))
+        self.btn_mode_direct.clicked.connect(lambda: self._set_mode("direct"))
+        self._set_mode(self._current_mode)
+        
         self.btn_play.clicked.connect(self._submit)
         self.input_field.returnPressed.connect(self._submit)
         
-        # Intercept Ctrl+Y and Esc inside QLineEdit (prevent QLineEdit from swallowing Ctrl+Y for Redo)
-        orig_key_press = self.input_field.keyPressEvent
-        def _input_key_press(event):
-            if (event.key() == Qt.Key_Y and event.modifiers() & Qt.ControlModifier) or event.key() == Qt.Key_Escape:
-                self.close_panel()
+        # Install robust event filter for Spacebar and shortcut interception
+        self.input_field.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        from PySide6.QtCore import QEvent
+        if obj == self.input_field:
+            if event.type() == QEvent.ShortcutOverride:
+                # Stop Qt shortcut system from stealing Space, Backspace, or letters while typing
+                if event.key() in (Qt.Key_Space, Qt.Key_Backspace, Qt.Key_Delete, Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End, Qt.Key_P, Qt.Key_N, Qt.Key_L, Qt.Key_F, Qt.Key_R):
+                    event.accept()
+                    return True
+            elif event.type() == QEvent.KeyPress:
+                if (event.key() == Qt.Key_Y and bool(event.modifiers() & Qt.ControlModifier)) or event.key() == Qt.Key_Escape:
+                    self.close_panel()
+                    return True
+                if event.key() == Qt.Key_Space:
+                    self.input_field.insert(" ")
+                    event.accept()
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _set_mode(self, mode: str):
+        self._current_mode = mode
+        self.btn_mode_buffer.setProperty("active", "true" if mode == "buffer" else "false")
+        self.btn_mode_direct.setProperty("active", "true" if mode == "direct" else "false")
+        self.btn_mode_buffer.style().unpolish(self.btn_mode_buffer)
+        self.btn_mode_buffer.style().polish(self.btn_mode_buffer)
+        self.btn_mode_direct.style().unpolish(self.btn_mode_direct)
+        self.btn_mode_direct.style().polish(self.btn_mode_direct)
+        
+        from PySide6.QtCore import QSettings
+        settings = QSettings("TDD131", "HELXAID")
+        settings.setValue("MusicPlayer/stream_mode", mode)
+        self.input_field.setFocus()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            title_rect = self.title_bar.rect()
+            title_mapped = self.title_bar.mapTo(self, title_rect.topLeft())
+            drag_area = QRect(title_mapped, self.title_bar.size())
+            click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            if drag_area.contains(click_pos):
+                self._is_dragging = True
+                global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+                self._drag_start_pos = global_pos - self.frameGeometry().topLeft()
+                event.accept()
                 return
-            orig_key_press(event)
-        self.input_field.keyPressEvent = _input_key_press
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            self.move(global_pos - self._drag_start_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event):
-        if (event.key() == Qt.Key_Y and event.modifiers() & Qt.ControlModifier) or event.key() == Qt.Key_Escape:
+        if (event.key() == Qt.Key_Y and bool(event.modifiers() & Qt.ControlModifier)) or event.key() == Qt.Key_Escape:
             self.close_panel()
+            return
+        if event.key() == Qt.Key_Space:
+            self.input_field.insert(" ")
+            self.input_field.setFocus()
+            event.accept()
             return
         super().keyPressEvent(event)
 
@@ -5199,9 +5792,10 @@ class FloatingUrlInputWidget(QFrame):
         self.show()
         self.raise_()
         self.input_field.setFocus()
-        if self.parent():
-            x = (self.parent().width() - self.width()) // 2
-            self.move(x, 60)
+        
+        target_x = max(10, (self.parent().width() - self.width()) // 2) if self.parent() else self.x()
+        target_y = max(10, (self.parent().height() - self.height()) // 2) if self.parent() else self.y()
+        self.move(target_x, target_y)
             
         from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
         if hasattr(self, '_anim') and self._anim.state() == QPropertyAnimation.Running:
@@ -5209,8 +5803,8 @@ class FloatingUrlInputWidget(QFrame):
             
         self._anim = QPropertyAnimation(self, b"pos")
         self._anim.setDuration(250)
-        self._anim.setStartValue(QPoint(self.x(), 20))
-        self._anim.setEndValue(QPoint(self.x(), 60))
+        self._anim.setStartValue(QPoint(target_x, max(0, target_y - 25)))
+        self._anim.setEndValue(QPoint(target_x, target_y))
         self._anim.setEasingCurve(QEasingCurve.OutBack)
         self._anim.start()
         
@@ -5263,13 +5857,13 @@ class FloatingUrlInputWidget(QFrame):
                 self._shake_var.start()
                 return
                 
-            self.url_submitted.emit(url)
+            self.url_submitted.emit(url, self._current_mode)
             self.close_panel()
 
 
 class StreamLoadingOverlayWidget(QFrame):
     """
-    Floating loading overlay with progress bar for Stream extraction.
+    Floating draggable loading overlay with progress bar and collapsible console for Stream extraction.
     
     Component Name: StreamLoadingOverlayWidget
     """
@@ -5278,44 +5872,125 @@ class StreamLoadingOverlayWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("streamLoadingOverlay")
-        self.setFixedSize(420, 150)
+        self.setFixedSize(460, 138)
         self.hide()
+        
+        self._is_dragging = False
+        self._drag_start_pos = None
         
         # Obey UI Rule: Less use border, more use background-color
         self.setStyleSheet("""
             QFrame#streamLoadingOverlay {
-                background-color: rgba(22, 23, 29, 0.96);
+                background-color: rgba(20, 21, 26, 0.98);
                 border: none;
-                border-radius: 12px;
+                border-radius: 10px;
             }
-            QLabel#streamHeaderTag {
-                color: #FF5B06;
+            QWidget#floatingStreamLoadingTitleBar {
+                background-color: rgba(255, 255, 255, 0.03);
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+            }
+            QLabel#floatingStreamLoadingTitleLabel {
+                color: #FFFFFF;
                 font-family: 'Orbitron', sans-serif;
                 font-size: 11px;
                 font-weight: 700;
                 letter-spacing: 0.5px;
                 background: transparent;
             }
+            QPushButton#floatingStreamLoadingCloseBtn {
+                background-color: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 22px;
+                max-width: 22px;
+                min-height: 22px;
+                max-height: 22px;
+            }
+            QPushButton#floatingStreamLoadingCloseBtn:hover {
+                background-color: rgba(255, 255, 255, 0.12);
+            }
+            QWidget#streamLoadingContentWidget {
+                background: transparent;
+            }
             QLabel#lblMsg {
                 color: #FFFFFF;
                 font-family: 'Orbitron', sans-serif;
-                font-size: 12px;
+                font-size: 11px;
                 font-weight: 500;
                 background: transparent;
                 border: none;
             }
-            QPlainTextEdit {
-                background-color: rgba(14, 15, 20, 0.9);
-                color: #CCCCCC;
+            QProgressBar#streamLoadingProgressBar {
+                background-color: rgba(255, 255, 255, 0.06);
+                border: none;
+                border-radius: 2px;
+                min-height: 4px;
+                max-height: 4px;
+                height: 4px;
+            }
+            QProgressBar#streamLoadingProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                border-radius: 2px;
+            }
+            QPlainTextEdit#streamLoadingTerminal {
+                background-color: rgba(12, 13, 17, 0.95);
+                color: #B8B8B8;
                 font-family: 'Consolas', 'Orbitron', monospace;
                 font-size: 10px;
                 border: none;
                 border-radius: 6px;
-                padding: 6px;
+                padding: 6px 8px;
             }
-            QPushButton {
+            QPushButton#streamLoadingToggleBtn {
+                background-color: transparent;
+                color: #888888;
+                border: none;
+                text-align: left;
+                font-size: 10px;
                 font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
+                padding: 0px;
+            }
+            QPushButton#streamLoadingToggleBtn:hover {
+                color: #FFFFFF;
+            }
+            QPushButton#streamLoadingCopyBtn {
+                background-color: rgba(255, 255, 255, 0.06);
+                color: #E0E0E0;
+                border: none;
+                border-radius: 5px;
+                font-size: 10px;
+                font-family: 'Orbitron', sans-serif;
+                padding: 0 10px;
+                min-height: 24px;
+                max-height: 24px;
+                height: 24px;
+            }
+            QPushButton#streamLoadingCopyBtn:hover {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #FFFFFF;
+            }
+            QPushButton#streamLoadingCloseBtn {
+                background-color: rgba(255, 255, 255, 0.08);
+                color: #FFFFFF;
+                border: none;
+                border-radius: 5px;
+                font-size: 10px;
+                font-family: 'Orbitron', sans-serif;
+                font-weight: 600;
+                padding: 0 14px;
+                min-height: 24px;
+                max-height: 24px;
+                height: 24px;
+            }
+            QPushButton#streamLoadingCloseBtn:hover {
+                background-color: rgba(220, 53, 69, 0.85);
+            }
+            QPushButton#streamLoadingCloseBtn:pressed {
+                background-color: #C82333;
             }
         """)
         
@@ -5323,133 +5998,176 @@ class StreamLoadingOverlayWidget(QFrame):
             from PySide6.QtWidgets import QGraphicsDropShadowEffect
             from PySide6.QtGui import QColor
             shadow = QGraphicsDropShadowEffect(self)
-            shadow.setBlurRadius(20)
-            shadow.setColor(QColor(0, 0, 0, 160))
-            shadow.setOffset(0, 4)
+            shadow.setBlurRadius(24)
+            shadow.setColor(QColor(0, 0, 0, 180))
+            shadow.setOffset(0, 8)
             self.setGraphicsEffect(shadow)
         except Exception:
             pass
             
-        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QPlainTextEdit
-        from PySide6.QtCore import Qt
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
+        from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QLabel, QProgressBar, QPlainTextEdit, QPushButton
+        from PySide6.QtGui import QPixmap, QIcon
+        from PySide6.QtCore import Qt, QSize, QPoint
         
-        vbox = QVBoxLayout()
-        vbox.setSpacing(8)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         
-        header_layout = QHBoxLayout()
-        self.lbl_tag = QLabel("STREAM EXTRACTION", self)
-        self.lbl_tag.setObjectName("streamHeaderTag")
-        header_layout.addWidget(self.lbl_tag)
-        header_layout.addStretch()
-        vbox.addLayout(header_layout)
+        # Draggable Title Bar (32px)
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("floatingStreamLoadingTitleBar")
+        self.title_bar.setFixedHeight(32)
+        title_layout = QHBoxLayout(self.title_bar)
+        title_layout.setContentsMargins(12, 0, 10, 0)
+        title_layout.setSpacing(8)
+        title_layout.setAlignment(Qt.AlignVCenter)
         
-        self.lbl_msg = QLabel("Extracting stream URL...", self)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        panel_icon_path = os.path.join(script_dir, "UI Icons", "open-white.svg").replace('\\', '/')
+        
+        icon_lbl = QLabel(self.title_bar)
+        icon_lbl.setObjectName("floatingStreamLoadingIconLabel")
+        icon_lbl.setFixedSize(14, 14)
+        icon_lbl.setScaledContents(True)
+        if os.path.exists(panel_icon_path):
+            icon_lbl.setPixmap(QPixmap(panel_icon_path))
+        title_layout.addWidget(icon_lbl, 0, Qt.AlignVCenter)
+        
+        self.lbl_tag = QLabel("STREAM EXTRACTION", self.title_bar)
+        self.lbl_tag.setObjectName("floatingStreamLoadingTitleLabel")
+        title_layout.addWidget(self.lbl_tag, 0, Qt.AlignVCenter)
+        title_layout.addStretch(1)
+        
+        self.btn_close_header = QPushButton(self.title_bar)
+        self.btn_close_header.setObjectName("floatingStreamLoadingCloseBtn")
+        self.btn_close_header.setFixedSize(22, 22)
+        self.btn_close_header.setCursor(Qt.PointingHandCursor)
+        self.btn_close_header.setToolTip("Close")
+        self.btn_close_header.setIcon(_render_svg_icon_sharp(SVG_CLOSE_ICON, size=10, color="#FFFFFF"))
+        self.btn_close_header.setIconSize(QSize(10, 10))
+        self.btn_close_header.clicked.connect(self.hide)
+        title_layout.addWidget(self.btn_close_header, 0, Qt.AlignVCenter)
+        
+        layout.addWidget(self.title_bar)
+        
+        # Content Area
+        content_widget = QWidget(self)
+        content_widget.setObjectName("streamLoadingContentWidget")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(14, 8, 14, 10)
+        content_layout.setSpacing(6)
+        
+        self.lbl_msg = QLabel("Extracting stream URL...", content_widget)
         self.lbl_msg.setObjectName("lblMsg")
         self.lbl_msg.setAlignment(Qt.AlignCenter)
+        self.lbl_msg.setWordWrap(True)
+        content_layout.addWidget(self.lbl_msg)
         
-        self.progress = QProgressBar(self)
+        self.progress = QProgressBar(content_widget)
+        self.progress.setObjectName("streamLoadingProgressBar")
         self.progress.setTextVisible(False)
         self.progress.setRange(0, 0)
         self.progress.setFixedHeight(4)
-        self.progress.setStyleSheet("""
-            QProgressBar {
-                background-color: rgba(255, 255, 255, 0.05);
-                border: none;
-                border-radius: 2px;
-            }
-            QProgressBar::chunk {
-                background-color: #FF5B06;
-                border-radius: 2px;
-            }
-        """)
+        content_layout.addWidget(self.progress)
         
-        self.terminal = QPlainTextEdit(self)
+        self.terminal = QPlainTextEdit(content_widget)
+        self.terminal.setObjectName("streamLoadingTerminal")
         self.terminal.setReadOnly(True)
-        self.terminal.setMaximumBlockCount(100)
-        self.terminal.setFixedHeight(120)
+        self.terminal.setMaximumBlockCount(150)
+        self.terminal.setFixedHeight(110)
         self.terminal.hide()
         self.terminal.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
+        content_layout.addWidget(self.terminal)
         
-        self.btn_toggle = QPushButton("▶ Show Details", self)
+        # Footer Action Row
+        footer_layout = QHBoxLayout()
+        footer_layout.setContentsMargins(0, 2, 0, 0)
+        footer_layout.setSpacing(6)
+        
+        self.btn_toggle = QPushButton("▶ Show Details", content_widget)
+        self.btn_toggle.setObjectName("streamLoadingToggleBtn")
         self.btn_toggle.setCursor(Qt.PointingHandCursor)
-        self.btn_toggle.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #888888;
-                border: none;
-                text-align: left;
-                font-size: 11px;
-                font-family: 'Orbitron', sans-serif;
-                padding: 2px 0px;
-            }
-            QPushButton:hover { color: #CCCCCC; }
-        """)
         
         def toggle_terminal():
             if self.terminal.isHidden():
                 self.terminal.show()
                 self.btn_copy.show()
                 self.btn_toggle.setText("▼ Hide Details")
-                self.setFixedSize(420, 275)
+                self.setFixedSize(460, 265)
+                if self.parent() and not getattr(self, '_is_dragging', False):
+                    self.move(max(10, (self.parent().width() - 460) // 2), max(10, (self.parent().height() - 265) // 2))
             else:
                 self.terminal.hide()
                 self.btn_copy.hide()
                 self.btn_toggle.setText("▶ Show Details")
-                self.setFixedSize(420, 150)
+                self.setFixedSize(460, 138)
+                if self.parent() and not getattr(self, '_is_dragging', False):
+                    self.move(max(10, (self.parent().width() - 460) // 2), max(10, (self.parent().height() - 138) // 2))
             
         self.btn_toggle.clicked.connect(toggle_terminal)
+        footer_layout.addWidget(self.btn_toggle)
+        footer_layout.addStretch()
         
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(8)
-        
-        self.btn_copy = QPushButton("Copy Log", self)
-        self.btn_copy.setFixedHeight(26)
+        self.btn_copy = QPushButton("Copy Log", content_widget)
+        self.btn_copy.setObjectName("streamLoadingCopyBtn")
         self.btn_copy.setCursor(Qt.PointingHandCursor)
-        self.btn_copy.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 0.06); color: #FFFFFF; border: none; border-radius: 6px; font-size: 11px; font-family: 'Orbitron', sans-serif; padding: 0 12px;
-            }
-            QPushButton:hover { background-color: rgba(255, 255, 255, 0.12); }
-            QPushButton:pressed { background-color: rgba(255, 255, 255, 0.04); }
-        """)
         self.btn_copy.clicked.connect(self._copy_log)
         self.btn_copy.hide()
+        footer_layout.addWidget(self.btn_copy)
         
-        self.btn_close = QPushButton("Close", self)
-        self.btn_close.setFixedHeight(26)
-        self.btn_close.setFixedWidth(100)
+        self.btn_close = QPushButton("Close", content_widget)
+        self.btn_close.setObjectName("streamLoadingCloseBtn")
         self.btn_close.setCursor(Qt.PointingHandCursor)
-        self.btn_close.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 0.08); color: #FFFFFF; border: none; border-radius: 6px; font-size: 11px; font-family: 'Orbitron', sans-serif; font-weight: 500; padding: 0 12px;
-            }
-            QPushButton:hover { background-color: rgba(220, 53, 69, 0.8); }
-            QPushButton:pressed { background-color: #C82333; }
-        """)
         self.btn_close.clicked.connect(self.hide)
+        footer_layout.addWidget(self.btn_close)
         
-        btn_layout.addStretch()
-        btn_layout.addWidget(self.btn_copy)
-        btn_layout.addWidget(self.btn_close)
-        
-        vbox.addWidget(self.lbl_msg)
-        vbox.addWidget(self.progress)
-        vbox.addWidget(self.btn_toggle)
-        vbox.addWidget(self.terminal)
-        vbox.addLayout(btn_layout)
-        layout.addLayout(vbox)
+        content_layout.addLayout(footer_layout)
+        layout.addWidget(content_widget)
         
         self.log_updated.connect(self._append_log)
         
+    def mousePressEvent(self, event):
+        from PySide6.QtCore import Qt, QRect
+        if event.button() == Qt.LeftButton:
+            title_rect = self.title_bar.rect()
+            title_mapped = self.title_bar.mapTo(self, title_rect.topLeft())
+            drag_area = QRect(title_mapped, self.title_bar.size())
+            click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
+            if drag_area.contains(click_pos):
+                self._is_dragging = True
+                global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+                self._drag_start_pos = global_pos - self.frameGeometry().topLeft()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        from PySide6.QtCore import Qt
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
+            self.move(global_pos - self._drag_start_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        super().mouseReleaseEvent(event)
+
     def _copy_log(self):
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(self.terminal.toPlainText())
         self.btn_copy.setText("Copied!")
         from PySide6.QtCore import QTimer
-        QTimer.singleShot(2000, lambda: self.btn_copy.setText("Copy Log"))
+        QTimer.singleShot(2000, lambda: self.btn_copy.setText("Copy Log") if hasattr(self, 'btn_copy') else None)
         
+    def log_msg(self, msg):
+        """Thread-safe log message emission."""
+        if hasattr(self, 'log_updated'):
+            self.log_updated.emit(str(msg))
+        else:
+            self._append_log(str(msg))
+
     def _append_log(self, msg):
         self.terminal.appendPlainText(msg.strip())
         bar = self.terminal.verticalScrollBar()
@@ -5458,22 +6176,51 @@ class StreamLoadingOverlayWidget(QFrame):
     def show_msg(self, msg):
         self.lbl_msg.setText(msg)
         self.terminal.clear()
-        self.setFixedSize(400, 150)
+        self.setFixedSize(460, 138)
         self.show()
         self.raise_()
-        
+        if self.parent():
+            x = max(10, (self.parent().width() - self.width()) // 2)
+            y = max(10, (self.parent().height() - self.height()) // 2)
+            self.move(x, y)
+            
     def finish_and_close_with_countdown(self):
         self.progress.setMaximum(100)
         self.progress.setValue(100)
         self.lbl_msg.setText("Done! Added to playlist.")
         
         self.btn_close.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+            QPushButton#streamLoadingCloseBtn {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                color: #FFFFFF;
+                border: none;
+                border-radius: 5px;
+                font-size: 10px;
+                font-family: 'Orbitron', sans-serif;
+                font-weight: 600;
+                padding: 0 14px;
+                min-height: 24px;
+                max-height: 24px;
+                height: 24px;
             }
-            QPushButton:hover { background-color: #DC3545; }
-            QPushButton:pressed { background-color: #C82333; }
+            QPushButton#streamLoadingCloseBtn:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7326, stop:1 #FFBA24);
+            }
         """)
+        
+        # Check Developer Mode toggle: keep panel open without auto-close countdown
+        from PySide6.QtCore import QSettings
+        settings = QSettings("TDD131", "HELXAID")
+        is_dev = settings.value("Developer/developer_mode", False, type=bool)
+        no_auto_close = is_dev and settings.value("Developer/stream_extract_no_auto_close", False, type=bool)
+        
+        if no_auto_close:
+            if hasattr(self, '_countdown_timer'):
+                self._countdown_timer.stop()
+            if hasattr(self, '_countdown'):
+                delattr(self, '_countdown')
+            self.btn_close.setText("Close")
+            return
         
         self._countdown = 3
         self.btn_close.setText(f"Closing in {self._countdown}...")
@@ -5517,11 +6264,22 @@ class StreamLoadingOverlayWidget(QFrame):
         if hasattr(self, 'btn_close'):
             self.btn_close.setText("Close")
             self.btn_close.setStyleSheet("""
-                QPushButton {
-                    background-color: #DC3545; color: #FFFFFF; border: none; border-radius: 4px; font-size: 10px; padding: 0 15px;
+                QPushButton#streamLoadingCloseBtn {
+                    background-color: rgba(255, 255, 255, 0.08);
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 5px;
+                    font-size: 10px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-weight: 600;
+                    padding: 0 14px;
+                    min-height: 24px;
+                    max-height: 24px;
+                    height: 24px;
                 }
-                QPushButton:hover { background-color: #E04B59; }
-                QPushButton:pressed { background-color: #C82333; }
+                QPushButton#streamLoadingCloseBtn:hover {
+                    background-color: rgba(220, 53, 69, 0.85);
+                }
             """)
         if hasattr(self, 'terminal'):
             self.terminal.hide()
@@ -5529,7 +6287,7 @@ class StreamLoadingOverlayWidget(QFrame):
             self.btn_copy.hide()
         if hasattr(self, 'btn_toggle'):
             self.btn_toggle.setText("▶ Show Details")
-        self.setFixedSize(400, 150)
+        self.setFixedSize(460, 138)
 
     def hideEvent(self, event):
         self._reset_ui()
@@ -5538,8 +6296,8 @@ class StreamLoadingOverlayWidget(QFrame):
     def showEvent(self, event):
         super().showEvent(event)
         if self.parent():
-            x = (self.parent().width() - self.width()) // 2
-            y = (self.parent().height() - self.height()) // 2
+            x = max(10, (self.parent().width() - self.width()) // 2)
+            y = max(10, (self.parent().height() - self.height()) // 2)
             self.move(x, y)
 
 
@@ -5642,6 +6400,12 @@ class MusicPanelWidget(QWidget):
         # Start global media key listener and taskbar widget (ready quickly after UI init)
         QTimer.singleShot(100, self._setup_media_key_service)
         
+        # Auto RAM Trimmer (debounced working set trim)
+        self._ram_trim_timer = QTimer(self)
+        self._ram_trim_timer.setSingleShot(True)
+        self._ram_trim_timer.timeout.connect(trim_current_process_memory)
+        self.schedule_ram_trim(3000)
+        
         # Monitor audio device changes (deferred by 2s)
         # connects (e.g. Bluetooth headphones, USB DAC)
         QTimer.singleShot(2000, self._setup_audio_device_monitor)
@@ -5666,8 +6430,14 @@ class MusicPanelWidget(QWidget):
 
 
 
+    def schedule_ram_trim(self, delay_ms: int = 2000):
+        """Schedule a debounced working set memory trim."""
+        if hasattr(self, '_ram_trim_timer'):
+            self._ram_trim_timer.start(delay_ms)
+
     def on_helxaic_page_hidden(self):
         self._helxaic_page_visible = False
+        self.schedule_ram_trim(500)
 
     def on_helxaic_page_shown(self):
         self._helxaic_page_visible = True
@@ -6112,6 +6882,16 @@ class MusicPanelWidget(QWidget):
 
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts and media keys for music control."""
+        if hasattr(self, 'floating_url_input') and self.floating_url_input.isVisible():
+            super().keyPressEvent(event)
+            return
+
+        from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
+        fw = QApplication.focusWidget()
+        if isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            super().keyPressEvent(event)
+            return
+
         key = event.key()
         modifiers = event.modifiers()
         
@@ -6835,6 +7615,11 @@ class MusicPanelWidget(QWidget):
             else:
                 self.resume_banner.move(max(20, (self.width() - self.resume_banner.width()) // 2), 20)
             
+        if hasattr(self, 'floating_url_input') and self.floating_url_input.isVisible() and not getattr(self.floating_url_input, '_is_dragging', False):
+            self.floating_url_input.move(max(10, (self.width() - self.floating_url_input.width()) // 2), max(10, (self.height() - self.floating_url_input.height()) // 2))
+        if hasattr(self, 'stream_loading') and self.stream_loading.isVisible() and not getattr(self.stream_loading, '_is_dragging', False):
+            self.stream_loading.move(max(10, (self.width() - self.stream_loading.width()) // 2), max(10, (self.height() - self.stream_loading.height()) // 2))
+            
         try:
             if getattr(self, '_is_fullscreen', False) and getattr(self, '_playerbar_overlay_enabled', False):
                 self._update_playerbar_overlay_geometry()
@@ -7095,8 +7880,36 @@ class MusicPanelWidget(QWidget):
                 self.table.select_all()
                 
     def _on_player_error(self, error, error_string):
-        """Handle media player errors."""
+        """Handle media player errors with automatic recovery for online streams."""
+        import time
+        from PySide6.QtMultimedia import QMediaPlayer
         print(f"Player error: {error} - {error_string}")
+        
+        # Auto-recover online streams from CDN dropouts / Demuxing failed
+        if 0 <= getattr(self, '_current_index', -1) < len(getattr(self, '_playlist', [])):
+            track = self._playlist[self._current_index]
+            if isinstance(track, dict) and track.get('is_online', False):
+                now = time.time()
+                last_retry = getattr(self, '_last_stream_error_retry', 0)
+                retry_count = getattr(self, '_stream_error_retry_count', 0)
+                
+                if now - last_retry > 12:
+                    retry_count = 0
+                    
+                if retry_count < 3:
+                    self._last_stream_error_retry = now
+                    self._stream_error_retry_count = retry_count + 1
+                    
+                    saved_pos = max(0, getattr(self, '_last_known_pos', 0) or (self._player.position() if hasattr(self, '_player') else 0))
+                    print(f"[Stream Auto-Recovery] Attempt {self._stream_error_retry_count}/3: Reconnecting stream at {saved_pos}ms...")
+                    
+                    # Invalidate expired stream URL to force fresh token extraction
+                    track.pop('stream_url', None)
+                    
+                    def _recover():
+                        self._load_and_play_stream(track, start_pos=saved_pos)
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(600, _recover)
     
     def _on_media_status(self, status):
         """Handle media status changes (for end-of-track and loop handling)."""
@@ -8070,6 +8883,9 @@ class MusicPanelWidget(QWidget):
                     thumb = getattr(self, '_current_cover_path', None)
                     self._smtc_service.update_metadata(title=title, artist=artist, thumbnail_path=thumb)
                     self._smtc_service.set_playback_status(is_playing=True)
+                    
+                # Schedule debounced RAM trim after playback starts
+                self.schedule_ram_trim(2000)
             else:
                 print(f"File not found: {path}")
     
@@ -8445,50 +9261,40 @@ class MusicPanelWidget(QWidget):
                 
         threading.Thread(target=fetch, daemon=True).start()
         
-    def _load_and_play_stream(self, track):
-        """Fetch the direct stream URL and play it."""
+    def _load_and_play_stream(self, track, start_pos=0):
+        """Fetch the direct stream URL and play it using C++ Fast-Path with yt-dlp fallback."""
         import threading
+        from fast_stream_resolver import resolve_stream
+        
+        request_id = getattr(self, '_stream_request_id', 0)
+        direct_url = track.get('stream_url')
+        if direct_url and (direct_url.startswith('http://') or direct_url.startswith('https://')):
+            self._play_resolved_stream(direct_url, track, request_id, start_pos=start_pos)
+            return
+
         self.player_bar.set_track_info(f"Loading {track.get('title', 'Stream')}...", track.get('artist', ''))
         
+        raw_url = track.get('original_url') or track.get('path', '')
+        target_url = prepare_ytdlp_target(raw_url)
+        
         def fetch():
-            url = track.get('original_url', track.get('path', ''))
-            request_id = getattr(self, '_stream_request_id', 0)
-            
-            try:
-                import yt_dlp
-                ydl_opts = {
-                    'format': 'bestaudio/best',
-                    'quiet': True,
-                    'no_warnings': True,
-                    'extract_flat': False,
-                    'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web']}},
-                    'http_headers': {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.5',
-                    },
-                }
-                
-                from PySide6.QtCore import QSettings
-                settings = QSettings("TDD131", "HELXAID")
-                saved_browser = settings.value("UniversalDownloader/browser_cookies", "None", type=str)
-                if saved_browser.lower() != 'none':
-                    ydl_opts['cookiesfrombrowser'] = (saved_browser.lower(),)
+            res = resolve_stream(target_url)
+            if res.get('success') and res.get('stream_url'):
+                stream_url = res['stream_url']
+                if res.get('original_url'):
+                    track['original_url'] = res['original_url']
+                track['stream_url'] = stream_url
+                if res.get('title') and (not track.get('title') or track.get('title').startswith('Loading') or track.get('title') == 'Stream'):
+                    track['title'] = res['title']
+                if res.get('artist') and not track.get('artist'):
+                    track['artist'] = res['artist']
+                if res.get('duration') and not track.get('duration'):
+                    track['duration'] = res['duration']
                     
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                    if 'entries' in info:
-                        info = info['entries'][0]
-                    stream_url = info.get('url')
-                    
-                    if stream_url:
-                        from PySide6.QtCore import QTimer
-                        QTimer.singleShot(0, lambda: self._play_resolved_stream(stream_url, track, request_id))
-                    else:
-                        print(f"Failed to extract stream url for {url}")
-                        self._revert_loading_ui(track, request_id)
-            except Exception as e:
-                print(f"yt-dlp fetch error: {e}")
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._play_resolved_stream(stream_url, track, request_id, start_pos=start_pos))
+            else:
+                print(f"[FastStream] Resolution failed for {target_url}: {res.get('error')}")
                 self._revert_loading_ui(track, request_id)
                 
         threading.Thread(target=fetch, daemon=True).start()
@@ -8504,7 +9310,7 @@ class MusicPanelWidget(QWidget):
             self.player_bar.set_track_info(f"Failed: {title[:20]}", artist)
         QTimer.singleShot(0, restore)
         
-    def _play_resolved_stream(self, stream_url, track, request_id):
+    def _play_resolved_stream(self, stream_url, track, request_id, start_pos=0):
         """Play the resolved direct stream URL with QMediaPlayer."""
         from PySide6.QtCore import QUrl, QTimer
         
@@ -8527,10 +9333,26 @@ class MusicPanelWidget(QWidget):
         self._player.setSource(QUrl(stream_url))
         self._set_current_media_url(stream_url)
         self._player.play()
+        if start_pos > 0:
+            QTimer.singleShot(300, lambda: self._player.setPosition(int(start_pos)))
             
         QTimer.singleShot(200, lambda: setattr(self, '_switching_track', False))
         self._save_state()
         self._update_discord(title, artist, is_playing=True)
+        
+        # Background pre-fetching of next track in playlist (C++ 0ms instant Next play)
+        try:
+            from fast_stream_resolver import prefetch_track
+            next_idx = self._current_index + 1
+            if hasattr(self, '_playlist') and 0 <= next_idx < len(self._playlist):
+                next_t = self._playlist[next_idx]
+                if isinstance(next_t, dict) and (next_t.get('is_online') or next_t.get('is_stream')):
+                    prefetch_track(next_t)
+        except Exception:
+            pass
+            
+        # Schedule debounced RAM trim after stream playback starts
+        self.schedule_ram_trim(2000)
     
 
     def eventFilter(self, obj, event):
@@ -8949,6 +9771,10 @@ class MusicPanelWidget(QWidget):
                 
             print(f"[Music DEBUG] Resuming pending single track: '{track_info['title']}' at index {found_index}")
             self.table.set_tracks(self._playlist)
+            if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
+                pl_name = track_info.get('playlist_name', 'Single Track')
+                self.header.set_info(pl_name, len(self._playlist), self._format_playlist_duration())
+                self.header.load_saved_cover(pl_name)
             self._pending_single_track_resume = None
             
             if track_info.get('position', 0) > 0:
@@ -8962,6 +9788,8 @@ class MusicPanelWidget(QWidget):
         if hasattr(self, '_playlist') and self._playlist and getattr(self, '_current_index', -1) >= 0:
             print(f"[Music DEBUG] Resuming existing track at index {self._current_index}")
             self.table.set_tracks(self._playlist)
+            if hasattr(self, 'header') and hasattr(self.header, 'load_saved_cover'):
+                self.header.load_saved_cover()
             if hasattr(self, 'stack'):
                 self.stack.setCurrentIndex(0)
             if hasattr(self, '_last_known_position') and self._last_known_position > 0:
@@ -8985,6 +9813,9 @@ class MusicPanelWidget(QWidget):
                 if folder and os.path.exists(folder):
                     self._music_folder = folder
                     self._load_tracks_from_folder(folder)
+                elif hasattr(self, 'header') and hasattr(self.header, 'load_saved_cover'):
+                    # Ensure covers are loaded even if no folder is active
+                    self.header.load_saved_cover(state.get('playlist_name', ''))
                     
                 # Restore last track
                 last_path = state.get('last_track_path', '')
@@ -9021,6 +9852,9 @@ class MusicPanelWidget(QWidget):
                                     self.resume_banner.show()
                                     self.resume_banner.raise_()
                             
+                            if hasattr(self, 'header') and hasattr(self.header, 'load_saved_cover'):
+                                self.header.load_saved_cover(state.get('playlist_name', ''))
+                                
                             print(f"Restored last track: {track.get('title')}")
                             track_found = True
                             break
@@ -9035,6 +9869,9 @@ class MusicPanelWidget(QWidget):
                             'position': last_pos,
                             'playlist_name': state.get('playlist_name', 'Previous Session')
                         }
+                        if hasattr(self, 'header') and hasattr(self.header, 'load_saved_cover'):
+                            self.header.load_saved_cover(state.get('playlist_name', 'Previous Session'))
+                            
                         if last_pos > 0:
                             self._last_known_position = last_pos
                             self.resume_banner.set_track_title(title)
@@ -9296,14 +10133,22 @@ class MusicPanelWidget(QWidget):
             else:
                 self.floating_url_input.show_panel()
 
-    def _process_url_stream_async(self, url):
+    def _process_url_stream_async(self, url, mode=None):
         import threading
         
+        if not mode:
+            from PySide6.QtCore import QSettings
+            settings = QSettings("TDD131", "HELXAID")
+            mode = settings.value("MusicPlayer/stream_mode", "buffer", type=str)
+        if mode not in ("buffer", "direct"):
+            mode = "buffer"
+            
         from PySide6.QtWidgets import QMessageBox
         
         if hasattr(self, 'stream_loading'):
             display_url = url if len(url) <= 45 else url[:42] + "..."
-            self.stream_loading.show_msg(f"Extracting stream URL\n{display_url}")
+            mode_tag = "Direct Stream" if mode == "direct" else "Buffer Cache"
+            self.stream_loading.show_msg(f"Extracting ({mode_tag})\n{display_url}")
             
         class YtLogger:
             def __init__(self, overlay):
@@ -9326,6 +10171,71 @@ class MusicPanelWidget(QWidget):
             import time
             import glob
             
+            from PySide6.QtCore import QSettings
+            settings = QSettings("TDD131", "HELXAID")
+            saved_browser = settings.value("UniversalDownloader/browser_cookies", "None", type=str)
+            
+            target_query = prepare_ytdlp_target(url)
+            
+            # --- Mode == "direct" (Direct Fast Stream Resolution via Native C++ / yt-dlp) ---
+            if mode == "direct":
+                try:
+                    from fast_stream_resolver import resolve_stream
+                    logger = YtLogger(self.stream_loading) if hasattr(self, 'stream_loading') else None
+                    if hasattr(self, 'stream_loading'):
+                        if hasattr(self.stream_loading, 'log_msg'):
+                            self.stream_loading.log_msg(f"[Engine] Resolving via Fast-Path Engine: {target_query}")
+                        elif hasattr(self.stream_loading, 'log_updated'):
+                            self.stream_loading.log_updated.emit(f"[Engine] Resolving via Fast-Path Engine: {target_query}")
+                        
+                    res = resolve_stream(target_query, logger=logger)
+                    
+                    if res.get('success') and res.get('stream_url'):
+                        stream_url = res['stream_url']
+                        title = res.get('title', 'Unknown Stream')
+                        artist = res.get('artist', 'Unknown Artist')
+                        duration = res.get('duration', 0)
+                        webpage_url = res.get('original_url') or url
+                        
+                        track = {
+                            'path': stream_url,
+                            'title': title,
+                            'artist': artist,
+                            'duration': duration,
+                            'date_added': "Direct Stream",
+                            'is_stream': True,
+                            'is_online': True,
+                            'original_url': webpage_url,
+                            'stream_url': stream_url
+                        }
+                        def _update_ui_direct():
+                            if hasattr(self, 'stream_loading'):
+                                self.stream_loading.finish_and_close_with_countdown()
+                            self._append_tracks_to_playlist([track], group_name="Online Streams")
+                            if hasattr(self, '_playlist') and self._playlist:
+                                target_idx = len(self._playlist) - 1
+                                self._play_track(target_idx)
+                            self.schedule_ram_trim(1500)
+                        QTimer.singleShot(0, self, _update_ui_direct)
+                    else:
+                        err_msg = res.get('error', 'Failed to extract direct stream URL.')
+                        def _err_direct():
+                            if hasattr(self, 'stream_loading'):
+                                self.stream_loading.hide()
+                            from PySide6.QtWidgets import QMessageBox
+                            QMessageBox.warning(self, "Stream Error", f"Could not resolve direct stream:\n{err_msg}")
+                        QTimer.singleShot(0, self, _err_direct)
+                except Exception as e:
+                    print(f"[Stream] Error resolving direct URL: {e}")
+                    def _err_ex_direct():
+                        if hasattr(self, 'stream_loading'):
+                            self.stream_loading.hide()
+                        from PySide6.QtWidgets import QMessageBox
+                        QMessageBox.warning(self, "Stream Error", f"Could not resolve direct stream:\n{e}")
+                    QTimer.singleShot(0, self, _err_ex_direct)
+                return
+
+            # --- Mode == "buffer" (Download to Temp Buffer) ---
             temp_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_Streams')
             os.makedirs(temp_dir, exist_ok=True)
             
@@ -9372,16 +10282,12 @@ class MusicPanelWidget(QWidget):
             if hasattr(self, 'stream_loading'):
                 ydl_opts['logger'] = YtLogger(self.stream_loading)
                 
-            from PySide6.QtCore import QSettings
-            settings = QSettings("TDD131", "HELXAID")
-            saved_browser = settings.value("UniversalDownloader/browser_cookies", "None", type=str)
             if saved_browser.lower() != 'none':
                 ydl_opts['cookiesfrombrowser'] = (saved_browser.lower(),)
             
-            
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
+                    info = ydl.extract_info(target_query, download=True)
                     
                     if 'entries' in info:
                         info = info['entries'][0]
@@ -9390,6 +10296,7 @@ class MusicPanelWidget(QWidget):
                     title = info.get('title', 'Unknown Stream')
                     artist = info.get('uploader', 'Unknown Artist')
                     duration = info.get('duration', 0)
+                    webpage_url = info.get('webpage_url') or (f"https://www.youtube.com/watch?v={info.get('id')}" if info.get('id') else url)
                     
                     if os.path.exists(local_path):
                         track = {
@@ -9400,13 +10307,17 @@ class MusicPanelWidget(QWidget):
                             'date_added': "Online Stream",
                             'is_stream': True,
                             'is_online': False,  # Play natively as local file
-                            'original_url': url
+                            'original_url': webpage_url
                         }
                         
                         def _update_ui():
                             if hasattr(self, 'stream_loading'):
                                 self.stream_loading.finish_and_close_with_countdown()
                             self._append_tracks_to_playlist([track], group_name="Online Streams")
+                            if hasattr(self, '_playlist') and self._playlist:
+                                target_idx = len(self._playlist) - 1
+                                self._play_track(target_idx)
+                            self.schedule_ram_trim(1500)
                             
                         QTimer.singleShot(0, self, _update_ui)
                     else:
