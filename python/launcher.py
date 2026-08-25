@@ -7913,7 +7913,7 @@ class GameLauncher(QWidget):
         
         # Check Version Daily logic
         if self.settings.get("check_version_daily", True):
-            last_check = self.settings.get("last_update_check", 0)
+            last_check = self.settings.get("pdate_check", 0)
             import time
             if time.time() - last_check > 86400: # 24 hours
                 self._check_for_updates_silent()
@@ -7921,14 +7921,8 @@ class GameLauncher(QWidget):
         # Setup deferred button animations (improves startup time)
         self._setup_deferred_button_animations()
 
-        # =============================================
-        # Start Universal Macro Hook Engine (EARLY - before panels load)
-        # This must run from launcher, NOT from MacroSettingsPanel,
-        # because the hook needs to be alive even if the user never opens the HELXAIRO tab.
-        # =============================================
-        self._start_universal_macro_hook()
-
         # Pre-instantiate panel widgets sequentially on idle timers so tab switching is instantaneous
+        # NOTE: HELXAIR (3), HELXAIRO (4), and HELXTATS (5) are strictly lazy-loaded on page initialize
         def _prewarm_panel_step(step):
             if not hasattr(self, 'content_stack'):
                 return
@@ -7937,12 +7931,6 @@ class GameLauncher(QWidget):
                     self._setup_music_panel()
                 elif step == 2 and not hasattr(self, 'cpu_panel'):
                     self._setup_cpu_panel()
-                elif step == 3 and not hasattr(self, 'crosshair_panel'):
-                    self._setup_crosshair_panel()
-                elif step == 4 and not hasattr(self, 'macro_panel'):
-                    self._setup_macro_panel()
-                elif step == 5 and not hasattr(self, 'hardware_panel'):
-                    self._setup_hardware_panel()
                 elif step == 6 and not hasattr(self, 'wincustom_panel'):
                     self._setup_wincustom_panel()
             except Exception as pe:
@@ -7950,18 +7938,12 @@ class GameLauncher(QWidget):
 
         QTimer.singleShot(150, lambda: _prewarm_panel_step(1))
         QTimer.singleShot(300, lambda: _prewarm_panel_step(2))
-        QTimer.singleShot(450, lambda: _prewarm_panel_step(3))
-        QTimer.singleShot(600, lambda: _prewarm_panel_step(4))
-        QTimer.singleShot(750, lambda: _prewarm_panel_step(5))
-        QTimer.singleShot(900, lambda: _prewarm_panel_step(6))
+        QTimer.singleShot(450, lambda: _prewarm_panel_step(6))
 
         # Pre-instantiate panel shells sequentially in idle ticks so panel switches are INSTANT (< 1ms)
         QTimer.singleShot(300, lambda: self._ensure_panel_preloaded(1))   # HELXAIC - Music
         QTimer.singleShot(600, lambda: self._ensure_panel_preloaded(2))   # HELXAIL - CPU
-        QTimer.singleShot(900, lambda: self._ensure_panel_preloaded(3))   # HELXAIR - Crosshair
-        QTimer.singleShot(1200, lambda: self._ensure_panel_preloaded(4))  # HELXAIRO - Macro
-        QTimer.singleShot(1500, lambda: self._ensure_panel_preloaded(5))  # HELXTATS - Hardware
-        QTimer.singleShot(1800, lambda: self._ensure_panel_preloaded(6))  # HELRCUS - Win Custom
+        QTimer.singleShot(900, lambda: self._ensure_panel_preloaded(6))   # HELRCUS - Win Custom
 
     def _ensure_panel_preloaded(self, index: int):
         """Pre-instantiate panel shell safely in background idle time."""
@@ -7970,12 +7952,6 @@ class GameLauncher(QWidget):
                 self._setup_music_panel()
             elif index == 2 and not hasattr(self, 'cpu_panel'):
                 self._setup_cpu_panel()
-            elif index == 3 and not hasattr(self, 'crosshair_panel'):
-                self._setup_crosshair_panel()
-            elif index == 4 and not hasattr(self, 'macro_panel'):
-                self._setup_macro_panel()
-            elif index == 5 and not hasattr(self, 'hardware_panel'):
-                self._setup_hardware_panel()
             elif index == 6 and not hasattr(self, 'wincustom_panel'):
                 self._setup_wincustom_panel()
         except Exception as e:
@@ -8482,9 +8458,6 @@ class GameLauncher(QWidget):
         # Setup system tray icon
         self.setup_system_tray()
         self._debug_delay()
-
-        # Start Universal Macro Hook Engine directly on app startup (300ms delay)
-        QTimer.singleShot(300, self._start_universal_macro_hook)
 
         # =============================================
         # MAIN LAYOUT: Sidebar + Content Panel
@@ -12194,16 +12167,13 @@ Stylesheet Selector:
         """Setup the Windows Customization (HELRCUS) panel."""
         if hasattr(self, 'wincustom_panel'):
             return
-        # Ensure hardware panel placeholder exists at index 5 first
-        if not hasattr(self, 'hardware_panel'):
-            self._setup_hardware_panel()
         
         try:
             import WindowsCustomPanel as wcp
             print(f"[HELRCUS] Loaded WindowsCustomPanel from: {wcp.__file__}")
             from WindowsCustomPanel import WindowsCustomPanel
             self.wincustom_panel = WindowsCustomPanel(self)
-            self.content_stack.insertWidget(6, self.wincustom_panel)
+            self.content_stack.addWidget(self.wincustom_panel)
         except ImportError as e:
             # Fallback: create empty placeholder panel
             self.wincustom_panel = QWidget()
@@ -12212,7 +12182,7 @@ Stylesheet Selector:
             error_label = QLabel(f"Windows Customization unavailable:\n{e}")
             error_label.setStyleSheet("color: #e74c3c; font-size: 16px;")
             layout.addWidget(error_label)
-            self.content_stack.insertWidget(6, self.wincustom_panel)
+            self.content_stack.addWidget(self.wincustom_panel)
     
     def _setup_hardware_panel(self):
         """Setup the Hardware Monitor panel."""
@@ -12832,6 +12802,8 @@ Stylesheet Selector:
         """Setup the Macro settings panel."""
         if hasattr(self, 'macro_panel'):
             return
+        # Start Universal Macro Hook Engine when HELXAIRO page is initialized
+        self._start_universal_macro_hook()
         try:
             from MacroSettingsPanel import MacroSettingsPanel
             self.macro_panel = MacroSettingsPanel(self)
@@ -17300,6 +17272,8 @@ Stylesheet Selector:
     
     def _toggle_crosshair_from_tray(self):
         """Toggle crosshair overlay from tray menu."""
+        if not hasattr(self, 'crosshair_panel'):
+            self._setup_crosshair_panel()
         if hasattr(self, 'crosshair_panel') and self.crosshair_panel:
             self.crosshair_panel._on_toggle()
 

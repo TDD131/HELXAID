@@ -7094,6 +7094,8 @@ class MusicPanelWidget(QWidget):
                 self._playlist.extend(tracks_to_add)
                 if hasattr(self, 'table'):
                     self.table.set_tracks(self._playlist)
+                if getattr(self.player_bar, '_is_shuffled', False):
+                    self._generate_shuffled_sequence()
                 self._save_state()
                 self.refresh_playlist_stats()
                 if hasattr(self, '_track_count_label'):
@@ -7797,6 +7799,8 @@ class MusicPanelWidget(QWidget):
         self._playlist.extend(new_tracks)
         if hasattr(self, 'table'):
             self.table.set_tracks(self._playlist)
+        if getattr(self.player_bar, '_is_shuffled', False):
+            self._generate_shuffled_sequence()
         self._save_state()
         self.refresh_playlist_stats()
         if hasattr(self, '_track_count_label'):
@@ -7883,9 +7887,25 @@ class MusicPanelWidget(QWidget):
         """Handle media player errors with automatic recovery for online streams."""
         import time
         from PySide6.QtMultimedia import QMediaPlayer
+        
+        pos = getattr(self, '_last_known_position', 0) or (self._player.position() if hasattr(self, '_player') else 0)
+        dur = self._player.duration() if hasattr(self, '_player') else 0
+        if dur <= 0 and hasattr(self, '_playlist') and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
+            dur = getattr(self._playlist[self._current_index], 'get', lambda k, d: d)('duration', 0) * 1000.0
+            
+        time_remaining = (dur - pos) / 1000.0 if dur > 0 else 999.0
+        progress = (pos / dur) if dur > 0 else 0.0
+        
+        # If error occurs near the end of media (EOF demuxing cutoff), treat as natural EndOfMedia
+        is_eof = (dur > 0 and (time_remaining <= 3.5 or progress >= 0.92)) or ("demux" in str(error_string).lower() and (time_remaining <= 5.0 or progress >= 0.88))
+        if is_eof:
+            print(f"[Music] Cleanly transitioning at EOF (Demuxing EOF handled as EndOfMedia at {pos}/{dur}ms)")
+            self._on_media_status(QMediaPlayer.EndOfMedia)
+            return
+            
         print(f"Player error: {error} - {error_string}")
         
-        # Auto-recover online streams from CDN dropouts / Demuxing failed
+        # Auto-recover online streams from true mid-stream dropouts
         if 0 <= getattr(self, '_current_index', -1) < len(getattr(self, '_playlist', [])):
             track = self._playlist[self._current_index]
             if isinstance(track, dict) and track.get('is_online', False):
@@ -7900,7 +7920,7 @@ class MusicPanelWidget(QWidget):
                     self._last_stream_error_retry = now
                     self._stream_error_retry_count = retry_count + 1
                     
-                    saved_pos = max(0, getattr(self, '_last_known_pos', 0) or (self._player.position() if hasattr(self, '_player') else 0))
+                    saved_pos = max(0, pos)
                     print(f"[Stream Auto-Recovery] Attempt {self._stream_error_retry_count}/3: Reconnecting stream at {saved_pos}ms...")
                     
                     # Invalidate expired stream URL to force fresh token extraction
@@ -7931,7 +7951,7 @@ class MusicPanelWidget(QWidget):
                 self._next_track()
             else:
                 # No loop: go to next track, stop at end of playlist
-                if self._current_index < len(self._playlist) - 1:
+                if not self._is_at_playlist_end():
                     self._next_track()
                 else:
                     if hasattr(self, 'action_close_on_done') and self.action_close_on_done.isChecked():
@@ -8336,19 +8356,57 @@ class MusicPanelWidget(QWidget):
         if hasattr(self, 'player_bar') and self.player_bar._loop_mode == "one":
             return
         
-        # Get next track index
-        import random
-        if hasattr(self, 'player_bar') and self.player_bar._is_shuffled:
-            # Shuffle mode: pick random track
-            if len(self._playlist) > 1:
-                available = [i for i in range(len(self._playlist)) if i != self._current_index]
-                next_idx = random.choice(available)
+        # Get next track index respecting shuffle deck and sorted order
+        loop_mode = self.player_bar._loop_mode if hasattr(self, 'player_bar') else "off"
+        is_shuffled = getattr(self.player_bar, '_is_shuffled', False) if hasattr(self, 'player_bar') else False
+        
+        next_shuffled_ptr = None
+        if is_shuffled:
+            if not getattr(self, '_shuffled_sequence', []) or len(self._shuffled_sequence) != len(self._playlist):
+                self._generate_shuffled_sequence()
             else:
-                next_idx = 0
-        elif hasattr(self, 'table') and hasattr(self.table, 'get_next_index'):
-            next_idx = self.table.get_next_index(self._current_index)
+                self._sync_shuffled_pointer_to_current()
+                
+            if not self._shuffled_sequence:
+                self._crossfade_disabled_for_current = True
+                return
+                
+            candidate_ptr = getattr(self, '_shuffled_pointer', 0) + 1
+            if candidate_ptr < len(self._shuffled_sequence):
+                next_idx = self._shuffled_sequence[candidate_ptr]
+                next_shuffled_ptr = candidate_ptr
+            elif loop_mode == "all":
+                # Wrap to index 0 of established shuffled sequence
+                next_idx = self._shuffled_sequence[0]
+                next_shuffled_ptr = 0
+            else:
+                # End of shuffled playlist reached with loop off
+                self._crossfade_disabled_for_current = True
+                return
         else:
-            next_idx = (self._current_index + 1) % len(self._playlist) if self._playlist else -1
+            if hasattr(self, 'table') and hasattr(self.table, '_sorted_indices') and self.table._sorted_indices:
+                sorted_indices = self.table._sorted_indices
+                try:
+                    pos = sorted_indices.index(self._current_index)
+                except ValueError:
+                    pos = 0
+                if pos == len(sorted_indices) - 1:
+                    if loop_mode == "all":
+                        next_idx = sorted_indices[0]
+                    else:
+                        self._crossfade_disabled_for_current = True
+                        return
+                else:
+                    next_idx = sorted_indices[pos + 1]
+            else:
+                if self._current_index >= len(self._playlist) - 1:
+                    if loop_mode == "all":
+                        next_idx = 0
+                    else:
+                        self._crossfade_disabled_for_current = True
+                        return
+                else:
+                    next_idx = self._current_index + 1
         
         if next_idx < 0 or next_idx >= len(self._playlist):
             self._crossfade_disabled_for_current = True
@@ -8365,6 +8423,7 @@ class MusicPanelWidget(QWidget):
             
         self._crossfade_active = True
         self._crossfade_next_idx = next_idx
+        self._crossfade_next_shuffled_ptr = next_shuffled_ptr
         self._crossfade_start_time = self._player.position()
         
         print(f"[Music] Starting crossfade to: {next_track.get('title', 'Unknown')}")
@@ -8437,6 +8496,15 @@ class MusicPanelWidget(QWidget):
         # Update current index
         self._current_index = self._crossfade_next_idx
         self.table.highlight_playing(self._current_index)
+        
+        # Sync shuffle pointer if active
+        if getattr(self.player_bar, '_is_shuffled', False):
+            if getattr(self, '_crossfade_next_shuffled_ptr', None) is not None:
+                self._shuffled_pointer = self._crossfade_next_shuffled_ptr
+            else:
+                self._sync_shuffled_pointer_to_current()
+        
+        self._save_state()
         
         # Update UI
         track = self._playlist[self._current_index]
@@ -8670,9 +8738,7 @@ class MusicPanelWidget(QWidget):
                 
                 existing_paths = [t.get('path') for t in self._playlist if isinstance(t, dict)]
                 if dest_path not in existing_paths:
-                    self._playlist.append(track)
-                    if hasattr(self, 'table') and hasattr(self.table, 'set_tracks'):
-                        self.table.set_tracks(self._playlist)
+                    self._append_tracks_to_playlist([track])
                     print(f"[DEBUG MusicPanelWidget] Successfully added track to Track Playlist: {track.get('title')} ({dest_path})")
                 else:
                     print(f"[DEBUG MusicPanelWidget] Track already present in Track Playlist: {dest_path}")
@@ -8735,6 +8801,23 @@ class MusicPanelWidget(QWidget):
                 # Track might not be in sequence (e.g. newly added or playlist changed)
                 self._generate_shuffled_sequence()
     
+    def _is_at_playlist_end(self) -> bool:
+        """Check if playback is at the end of the active playback sequence."""
+        if not hasattr(self, '_playlist') or not self._playlist:
+            return True
+        is_shuffled = getattr(self.player_bar, '_is_shuffled', False) if hasattr(self, 'player_bar') else False
+        if is_shuffled and getattr(self, '_shuffled_sequence', []):
+            ptr = getattr(self, '_shuffled_pointer', -1)
+            return ptr >= len(self._shuffled_sequence) - 1
+        if hasattr(self, 'table') and getattr(self.table, '_sorted_indices', None):
+            sorted_indices = self.table._sorted_indices
+            try:
+                pos = sorted_indices.index(self._current_index)
+                return pos >= len(sorted_indices) - 1
+            except ValueError:
+                pass
+        return self._current_index >= len(self._playlist) - 1
+    
     def _format_playlist_duration(self) -> str:
         """Calculate and format total playlist duration as HH:MM:SS or MM:SS."""
         if not hasattr(self, '_playlist') or not self._playlist:
@@ -8791,6 +8874,9 @@ class MusicPanelWidget(QWidget):
         self.header.set_info(name, len(tracks), self._format_playlist_duration())
         self.table.set_tracks(tracks)
         
+        if getattr(self.player_bar, '_is_shuffled', False):
+            self._generate_shuffled_sequence()
+        
         # Load user-selected cover art for this playlist (if previously saved)
         self.header.load_saved_cover(name)
     
@@ -8812,8 +8898,21 @@ class MusicPanelWidget(QWidget):
             if getattr(self, '_stream_request_id', None) is None:
                 self._stream_request_id = 0
             self._stream_request_id += 1
+            self._stream_error_retry_count = 0
             
-            # Subdue overlapping QMediaPlayer triggers
+            # Subdue overlapping QMediaPlayer triggers and active crossfade
+            if getattr(self, '_crossfade_active', False):
+                if hasattr(self, '_crossfade_timer') and self._crossfade_timer:
+                    self._crossfade_timer.stop()
+                    self._crossfade_timer = None
+                if hasattr(self, '_player2') and self._player2:
+                    self._player2.stop()
+                if hasattr(self, '_audio_output') and self._audio_output:
+                    self._audio_output.setVolume(self._user_volume)
+                if hasattr(self, '_audio_output2') and self._audio_output2:
+                    self._audio_output2.setVolume(0.0)
+                self._crossfade_active = False
+
             self._player.stop()
             if hasattr(self, 'resume_banner') and self.resume_banner.isVisible():
                 self.resume_banner.hide()
@@ -9030,8 +9129,7 @@ class MusicPanelWidget(QWidget):
                 # Wrap pointer if at end
                 if self._shuffled_pointer >= len(self._shuffled_sequence):
                     if loop_mode == "all" or force_wrap:
-                        # Reshuffle on full loop for better variety in next pass
-                        self._generate_shuffled_sequence()
+                        # Wrap pointer to start of established shuffled sequence
                         self._shuffled_pointer = 0
                     else:
                         self._shuffled_pointer = len(self._shuffled_sequence) - 1
@@ -10212,9 +10310,6 @@ class MusicPanelWidget(QWidget):
                             if hasattr(self, 'stream_loading'):
                                 self.stream_loading.finish_and_close_with_countdown()
                             self._append_tracks_to_playlist([track], group_name="Online Streams")
-                            if hasattr(self, '_playlist') and self._playlist:
-                                target_idx = len(self._playlist) - 1
-                                self._play_track(target_idx)
                             self.schedule_ram_trim(1500)
                         QTimer.singleShot(0, self, _update_ui_direct)
                     else:
@@ -10314,9 +10409,6 @@ class MusicPanelWidget(QWidget):
                             if hasattr(self, 'stream_loading'):
                                 self.stream_loading.finish_and_close_with_countdown()
                             self._append_tracks_to_playlist([track], group_name="Online Streams")
-                            if hasattr(self, '_playlist') and self._playlist:
-                                target_idx = len(self._playlist) - 1
-                                self._play_track(target_idx)
                             self.schedule_ram_trim(1500)
                             
                         QTimer.singleShot(0, self, _update_ui)
