@@ -38,7 +38,7 @@ import tempfile
 import urllib.request
 import hashlib
 import time
-from typing import Optional
+from typing import Optional, Any, List, Dict, Union
 from functools import partial
 
 try:
