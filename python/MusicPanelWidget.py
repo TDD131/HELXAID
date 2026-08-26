@@ -14,17 +14,17 @@ from PySide6.QtWidgets import (
     QScrollArea, QLineEdit, QSpinBox, QSpacerItem,
     QDialog, QComboBox, QRadioButton, QButtonGroup, QCheckBox,
     QProgressBar, QGroupBox, QSplitter, QApplication, QToolButton,
-    QStyledItemDelegate, QStyle, QMenu, QGraphicsDropShadowEffect
+    QStyledItemDelegate, QStyle, QMenu, QGraphicsDropShadowEffect, QGraphicsOpacityEffect
 )
-from AnimatedButton import FadeHoverButton, AnimatedButton
+from AnimatedButton import FadeHoverButton, AnimatedButton, AnimatedCheckBox
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import (
-    Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
-    QSize, QPoint, QUrl, QThread, QSettings, QRect, Property, QEvent
+    Qt, Signal, QTimer, QPropertyAnimation, QVariantAnimation, QEasingCurve,
+    QSize, QPoint, QPointF, QUrl, QThread, QSettings, QRect, QRectF, Property, QEvent
 )
 from PySide6.QtGui import (
     QPixmap, QIcon, QFont, QColor, QPalette, QCursor,
-    QFontDatabase
+    QFontDatabase, QPainter, QPainterPath, QPolygonF, QBrush, QPen, QRadialGradient, QLinearGradient
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
@@ -2442,248 +2442,2617 @@ class RoundedImageLabel(QLabel):
         super().paintEvent(event)
 
 
-class InteractiveCoverLabel(QFrame):
+class CollageEngineCategory1:
     """
-    Glass card containing a single cover preview (Front or Back),
-    action overlay, directory path, and explore button.
-
-    Component Name: InteractiveCoverLabel
+    Mathematical vector rendering engine for Category 1 (Single Album Art / 1-Photo).
+    
+    Component Name: CollageEngineCategory1
     """
-    clicked_signal = Signal()
-    remove_clicked_signal = Signal()
-    folder_clicked_signal = Signal()
 
-    def __init__(self, title, action_text, parent=None):
+    TEMPLATES = [
+        {
+            "id": "1_circle_disc",
+            "name": "Circular Vinyl Disc",
+            "desc": "100% circular cutout with vinyl center hole",
+        },
+        {
+            "id": "1_full",
+            "name": "Full Clean Square",
+            "desc": "100% Full square cover with rounded corners",
+        },
+        {
+            "id": "1_vinyl_disc",
+            "name": "Vinyl Sleeve & Disc",
+            "desc": "Sleeve with exposed glossy grooved vinyl record",
+        },
+        {
+            "id": "1_ambient_blur",
+            "name": "Ambient Blur Backdrop",
+            "desc": "Floating card with blurred ambient color backdrop",
+        },
+        {
+            "id": "1_cyber_frame",
+            "name": "Cyber Framed Inset",
+            "desc": "Inset cover with Orbitron neon accent border",
+        },
+    ]
+
+    @classmethod
+    def get_all_templates(cls):
+        return cls.TEMPLATES
+
+    @classmethod
+    def get_template_info(cls, template_id: str) -> dict:
+        for t in cls.TEMPLATES:
+            if t["id"] == template_id:
+                return t
+        return cls.TEMPLATES[0]
+
+    @classmethod
+    def _create_placeholder_pixmap(cls, size: int = 240) -> QPixmap:
+        """Create a stylish dark carbon gradient placeholder if artwork is missing."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        grad = QLinearGradient(0, 0, size, size)
+        grad.setColorAt(0.0, QColor(40, 42, 54))
+        grad.setColorAt(1.0, QColor(20, 22, 30))
+        painter.fillRect(0, 0, size, size, grad)
+
+        painter.end()
+        return pixmap
+
+    @classmethod
+    def render_pixmap(
+        cls,
+        p1: Optional[QPixmap],
+        template_id: str = "1_full",
+        size: int = 240,
+        corner_radius: float = 12.0,
+    ) -> QPixmap:
+        """
+        Renders a Category 1 template onto a transparent QPixmap of given size.
+        """
+        if p1 is None or p1.isNull():
+            p1 = cls._create_placeholder_pixmap(size)
+
+        output = QPixmap(size, size)
+        output.fill(Qt.transparent)
+
+        painter = QPainter(output)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        cls.draw_template(
+            painter, p1, template_id, float(size), float(size), corner_radius
+        )
+        painter.end()
+        return output
+
+    @classmethod
+    def draw_template(
+        cls,
+        painter: QPainter,
+        p1: QPixmap,
+        template_id: str,
+        W: float = 240.0,
+        H: float = 240.0,
+        corner_radius: float = 12.0,
+    ):
+        """
+        Draws the Category 1 template onto the provided QPainter canvas within (W, H).
+        """
+        if p1 is None or p1.isNull():
+            p1 = cls._create_placeholder_pixmap(int(W))
+
+        # 1. Full Single (Standard 1:1 Rounded Square)
+        if template_id == "1_full" or not template_id:
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, W, H, corner_radius, corner_radius)
+            painter.save()
+            painter.setClipPath(path)
+            scaled = p1.scaled(
+                int(W), int(H), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+            )
+            sx = int((scaled.width() - W) / 2)
+            sy = int((scaled.height() - H) / 2)
+            painter.drawPixmap(0, 0, scaled, sx, sy, int(W), int(H))
+            painter.restore()
+
+        # 2. Vinyl Sleeve & Exposed Record
+        elif template_id == "1_vinyl_disc":
+            # Step A: Draw vinyl record on right (1:1 square ratio)
+            disc_size = H * 0.92
+            disc_x = W - disc_size - 4
+            disc_y = (H - disc_size) / 2
+            disc_rect = QRectF(disc_x, disc_y, disc_size, disc_size)
+
+            painter.save()
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            vinyl_svg_path = os.path.join(script_dir, "UI Icons", "vinyl_record.svg").replace('\\', '/')
+            
+            from PySide6.QtSvg import QSvgRenderer
+            renderer = QSvgRenderer(vinyl_svg_path)
+            renderer.render(painter, disc_rect)
+
+            # Center Spindle Label (Clipped Album Artwork)
+            center_pt = disc_rect.center()
+            label_radius = (disc_size / 2.0) * (90.0 / 250.0)
+            label_rect = QRectF(center_pt.x() - label_radius, center_pt.y() - label_radius, label_radius * 2.0, label_radius * 2.0)
+            
+            label_path = QPainterPath()
+            label_path.addEllipse(label_rect)
+            painter.setClipPath(label_path)
+            scaled_label = p1.scaled(
+                int(label_rect.width()),
+                int(label_rect.height()),
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation,
+            )
+            sx = int((scaled_label.width() - label_rect.width()) / 2)
+            sy = int((scaled_label.height() - label_rect.height()) / 2)
+            painter.drawPixmap(
+                int(label_rect.x()),
+                int(label_rect.y()),
+                scaled_label,
+                sx,
+                sy,
+                int(label_rect.width()),
+                int(label_rect.height()),
+            )
+
+            # Center Spindle Hole
+            painter.setClipping(False)
+            spindle_radius = (disc_size / 2.0) * (16.0 / 250.0)
+            painter.setBrush(QColor("#060608"))
+            painter.setPen(QPen(QColor("#8890a5"), 1.0))
+            painter.drawEllipse(center_pt, spindle_radius, spindle_radius)
+            painter.restore()
+
+            # Step B: Draw Front Sleeve overlapping on left with shadow
+            sleeve_rect = QRectF(0, H * 0.04, W * 0.72, H * 0.92)
+            sleeve_path = QPainterPath()
+            sleeve_path.addRoundedRect(sleeve_rect, 8.0, 8.0)
+
+            painter.save()
+            # Shadow behind sleeve
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 180))
+            painter.drawRoundedRect(
+                QRectF(
+                    sleeve_rect.x() + 4,
+                    sleeve_rect.y() + 3,
+                    sleeve_rect.width(),
+                    sleeve_rect.height(),
+                ),
+                8.0,
+                8.0,
+            )
+
+            # Sleeve artwork
+            painter.setClipPath(sleeve_path)
+            scaled_sleeve = p1.scaled(
+                int(sleeve_rect.width()),
+                int(sleeve_rect.height()),
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation,
+            )
+            sx = int((scaled_sleeve.width() - sleeve_rect.width()) / 2)
+            sy = int((scaled_sleeve.height() - sleeve_rect.height()) / 2)
+            painter.drawPixmap(
+                int(sleeve_rect.x()),
+                int(sleeve_rect.y()),
+                scaled_sleeve,
+                sx,
+                sy,
+                int(sleeve_rect.width()),
+                int(sleeve_rect.height()),
+            )
+            painter.restore()
+
+        # 3. Ambient Blurred Card
+        elif template_id == "1_ambient_blur":
+            # Step A: Draw heavily blurred backdrop
+            blurred_bg = p1.scaled(
+                32, 32, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+            ).scaled(int(W), int(H), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            outer_path = QPainterPath()
+            outer_path.addRoundedRect(0, 0, W, H, corner_radius, corner_radius)
+
+            painter.save()
+            painter.setClipPath(outer_path)
+            painter.drawPixmap(0, 0, blurred_bg)
+            # Darken tint
+            painter.fillRect(0, 0, int(W), int(H), QColor(0, 0, 0, 140))
+            painter.restore()
+
+            # Step B: Draw floating centered sharp card
+            card_rect = QRectF(W * 0.12, H * 0.12, W * 0.76, H * 0.76)
+            card_path = QPainterPath()
+            card_path.addRoundedRect(card_rect, 8.0, 8.0)
+
+            painter.save()
+            # Drop shadow
+            painter.setBrush(QColor(0, 0, 0, 180))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(
+                QRectF(
+                    card_rect.x() + 2,
+                    card_rect.y() + 4,
+                    card_rect.width(),
+                    card_rect.height(),
+                ),
+                8.0,
+                8.0,
+            )
+            # Front image
+            painter.setClipPath(card_path)
+            scaled_card = p1.scaled(
+                int(card_rect.width()),
+                int(card_rect.height()),
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation,
+            )
+            sx = int((scaled_card.width() - card_rect.width()) / 2)
+            sy = int((scaled_card.height() - card_rect.height()) / 2)
+            painter.drawPixmap(
+                int(card_rect.x()),
+                int(card_rect.y()),
+                scaled_card,
+                sx,
+                sy,
+                int(card_rect.width()),
+                int(card_rect.height()),
+            )
+            painter.restore()
+
+        # 4. Cyber Framed Inset
+        elif template_id == "1_cyber_frame":
+            outer_path = QPainterPath()
+            outer_path.addRoundedRect(0, 0, W, H, corner_radius, corner_radius)
+            painter.save()
+            painter.setClipPath(outer_path)
+            # Dark carbon background
+            painter.fillRect(0, 0, int(W), int(H), QColor(15, 15, 20))
+
+            # Inset card
+            margin = W * 0.06
+            inset_rect = QRectF(margin, margin, W - (2 * margin), H - (2 * margin))
+            inset_path = QPainterPath()
+            inset_path.addRoundedRect(inset_rect, 6.0, 6.0)
+            painter.setClipPath(inset_path)
+            scaled_inset = p1.scaled(
+                int(inset_rect.width()),
+                int(inset_rect.height()),
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation,
+            )
+            sx = int((scaled_inset.width() - inset_rect.width()) / 2)
+            sy = int((scaled_inset.height() - inset_rect.height()) / 2)
+            painter.drawPixmap(
+                int(inset_rect.x()),
+                int(inset_rect.y()),
+                scaled_inset,
+                sx,
+                sy,
+                int(inset_rect.width()),
+                int(inset_rect.height()),
+            )
+            painter.restore()
+
+        # 5. Circular Vinyl Disc Cutout
+        elif template_id == "1_circle_disc":
+            circle_rect = QRectF(6, 6, W - 12, H - 12)
+            circle_path = QPainterPath()
+            circle_path.addEllipse(circle_rect)
+
+            painter.save()
+            painter.setClipPath(circle_path)
+            scaled_circle = p1.scaled(
+                int(circle_rect.width()),
+                int(circle_rect.height()),
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation,
+            )
+            sx = int((scaled_circle.width() - circle_rect.width()) / 2)
+            sy = int((scaled_circle.height() - circle_rect.height()) / 2)
+            painter.drawPixmap(
+                int(circle_rect.x()),
+                int(circle_rect.y()),
+                scaled_circle,
+                sx,
+                sy,
+                int(circle_rect.width()),
+                int(circle_rect.height()),
+            )
+
+            # Center spindle hole
+            painter.setClipping(False)
+            painter.setBrush(QColor(10, 10, 15))
+            painter.setPen(QPen(QColor(255, 255, 255, 80), 1.5))
+            painter.drawEllipse(circle_rect.center(), W * 0.08, H * 0.08)
+            painter.restore()
+
+class CollageEngineCategory2:
+    """
+    Pure Mathematical Vector Rendering Engine for Category 2 (17 Geometric Templates & Layouts).
+    
+    Catalog:
+      1. Linear & Asymmetric Splits: 2_vert_50, 2_vert_30_70, 2_vert_70_30, 2_horiz_50, 2_horiz_30_70, 2_horiz_70_30
+      2. Angular & Slanted Slices:   2_diag_tl_br, 2_diag_tr_bl, 2_slant_v_left, 2_slant_v_right, 2_slant_h_up, 2_slant_h_down
+      3. Chevron Cyberpunk Arrows:   2_chevron_right, 2_chevron_left
+      4. Inset Cards & 3D Layered:   2_inset_br, 2_inset_bl, 2_vinyl_stack, 2_polaroid_stack, 2_hero_inset
+    
+    Component Name: CollageEngineCategory2
+    """
+    TEMPLATES = [
+        # --- Signature Circular Split (Template 1) ---
+        {
+            "id": "2_circle_split",
+            "name": "Circular Split Disc",
+            "desc": "Circular vinyl disc split in half with center spindle hole",
+            "category": 2
+        },
+
+        # --- Linear & Asymmetrical Splits ---
+        {
+            "id": "2_vert_50",
+            "name": "Vertical 50:50",
+            "desc": "Equal left/right split with cyber neon hairline divider",
+            "category": 2
+        },
+        {
+            "id": "2_vert_30_70",
+            "name": "Vertical Left Focus",
+            "desc": "Asymmetric 35:65 split with left teaser & wide right hero",
+            "category": 2
+        },
+        {
+            "id": "2_vert_70_30",
+            "name": "Vertical Right Focus",
+            "desc": "Asymmetric 65:35 split with wide left hero & right teaser",
+            "category": 2
+        },
+        {
+            "id": "2_horiz_50",
+            "name": "Horizontal 50:50",
+            "desc": "Top and bottom equal split with sleek obsidian separator",
+            "category": 2
+        },
+        {
+            "id": "2_horiz_30_70",
+            "name": "Horizontal Top Focus",
+            "desc": "Asymmetric 35:65 top header & tall bottom canvas",
+            "category": 2
+        },
+        {
+            "id": "2_horiz_70_30",
+            "name": "Horizontal Bottom Focus",
+            "desc": "Asymmetric 65:35 tall top canvas & bottom footer strip",
+            "category": 2
+        },
+
+        # --- Angular & Slanted Slices ---
+        {
+            "id": "2_diag_tl_br",
+            "name": "Diagonal Cut \\",
+            "desc": "Top-Left to Bottom-Right dynamic angled slice with neon seam",
+            "category": 2
+        },
+        {
+            "id": "2_diag_tr_bl",
+            "name": "Diagonal Cut /",
+            "desc": "Top-Right to Bottom-Left dynamic angled slice with neon seam",
+            "category": 2
+        },
+        {
+            "id": "2_slant_v_left",
+            "name": "Slanted Vert Left",
+            "desc": "Steep slanted vertical slice with left perspective",
+            "category": 2
+        },
+        {
+            "id": "2_slant_v_right",
+            "name": "Slanted Vert Right",
+            "desc": "Steep slanted vertical slice with right perspective",
+            "category": 2
+        },
+        {
+            "id": "2_slant_h_up",
+            "name": "Slanted Horiz Up",
+            "desc": "Dynamic upward-slanted horizontal divider seam",
+            "category": 2
+        },
+        {
+            "id": "2_slant_h_down",
+            "name": "Slanted Horiz Down",
+            "desc": "Dynamic downward-slanted horizontal divider seam",
+            "category": 2
+        },
+
+        # --- Cyberpunk Chevron Arrows ---
+        {
+            "id": "2_chevron_right",
+            "name": "Chevron Right ( > )",
+            "desc": "Cyberpunk right-pointing arrow partition",
+            "category": 2
+        },
+        {
+            "id": "2_chevron_left",
+            "name": "Chevron Left ( < )",
+            "desc": "Cyberpunk left-pointing arrow partition",
+            "category": 2
+        },
+
+        # --- Inset Cards & 3D Layered ---
+        {
+            "id": "2_inset_br",
+            "name": "Inset Bottom-Right",
+            "desc": "Full background cover with floating bottom-right inset card",
+            "category": 2
+        },
+        {
+            "id": "2_inset_bl",
+            "name": "Inset Bottom-Left",
+            "desc": "Full background cover with floating bottom-left inset card",
+            "category": 2
+        },
+        {
+            "id": "2_vinyl_stack",
+            "name": "Twin Vinyl Sleeves",
+            "desc": "Layered dual albums with exposed grooved records",
+            "category": 2
+        },
+        {
+            "id": "2_polaroid_stack",
+            "name": "Stacked Floating Cards",
+            "desc": "Angled cards overlapping on an ambient aura glow",
+            "category": 2
+        },
+        {
+            "id": "2_hero_inset",
+            "name": "Hero Backdrop & Inset",
+            "desc": "Ambient blurred backdrop with sharp floating inset card",
+            "category": 2
+        },
+    ]
+
+    ALIASES = {
+        "2_split_vertical": "2_vert_50",
+        "2_split_horizontal": "2_horiz_50",
+        "2_diagonal_slice": "2_diag_tl_br",
+        "2_dual_vinyl": "2_vinyl_stack",
+    }
+
+    @classmethod
+    def get_all_templates(cls):
+        return cls.TEMPLATES
+
+    @classmethod
+    def get_template_info(cls, template_id: str) -> dict:
+        real_id = cls.ALIASES.get(template_id, template_id)
+        for t in cls.TEMPLATES:
+            if t["id"] == real_id:
+                return t
+        return cls.TEMPLATES[0]
+
+    @classmethod
+    def _create_placeholder(cls, width: int, height: int, text: str = "HELXAIC", subtext: str = "") -> QPixmap:
+        pix = QPixmap(width, height)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        
+        grad = QLinearGradient(0, 0, width, height)
+        grad.setColorAt(0.0, QColor("#141622"))
+        grad.setColorAt(0.5, QColor("#1C1E2E"))
+        grad.setColorAt(1.0, QColor("#12131A"))
+        p.fillRect(0, 0, width, height, grad)
+
+        p.setPen(QColor("#FFFFFF"))
+        font = p.font()
+        font.setFamily("Orbitron")
+        font.setBold(True)
+        font.setPixelSize(max(10, int(width * 0.09)))
+        p.setFont(font)
+        p.drawText(0, int(height * 0.45), width, int(height * 0.25), Qt.AlignCenter, text)
+        
+        if subtext:
+            font.setPixelSize(max(8, int(width * 0.06)))
+            font.setBold(False)
+            p.setFont(font)
+            p.setPen(QColor("#8A8D98"))
+            p.drawText(0, int(height * 0.62), width, int(height * 0.2), Qt.AlignCenter, subtext)
+            
+        p.end()
+        return pix
+
+    @classmethod
+    def _draw_fitted_pixmap(cls, painter: QPainter, pixmap: QPixmap, target_rect: QRectF):
+        """Draw pixmap into target_rect with center-crop Qt.KeepAspectRatioByExpanding."""
+        if not pixmap or pixmap.isNull():
+            return
+        w = max(1, int(target_rect.width()))
+        h = max(1, int(target_rect.height()))
+        scaled = pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        src_x = max(0, (scaled.width() - w) // 2)
+        src_y = max(0, (scaled.height() - h) // 2)
+        painter.drawPixmap(target_rect.toRect(), scaled, QRect(src_x, src_y, w, h))
+
+    @classmethod
+    def _draw_poly(cls, painter: QPainter, pixmap: QPixmap, poly: QPolygonF, W: float, H: float):
+        """Draw pixmap clipped inside a vector polygon."""
+        painter.save()
+        path = QPainterPath()
+        path.addPolygon(poly)
+        path.closeSubpath()
+        painter.setClipPath(path)
+        cls._draw_fitted_pixmap(painter, pixmap, QRectF(0, 0, W, H))
+        painter.restore()
+
+    @classmethod
+    def _draw_seam_line(cls, painter: QPainter, p1: QPointF, p2: QPointF, width: float = 2.5, neon_color: str = ""):
+        """Draw clean obsidian divider seam line without colored border."""
+        painter.save()
+        painter.setPen(QPen(QColor("#060608"), width))
+        painter.drawLine(p1, p2)
+        painter.restore()
+
+    @classmethod
+    def _draw_inset(cls, painter: QPainter, pixmap: QPixmap, inset_rect: QRectF, radius: float = 8.0):
+        """Draw floating inset picture-in-picture card with shadow without colored border."""
+        # Drop shadow
+        shadow_rect = inset_rect.translated(2, 4)
+        shadow_path = QPainterPath()
+        shadow_path.addRoundedRect(shadow_rect, radius, radius)
+        painter.fillPath(shadow_path, QColor(0, 0, 0, 180))
+
+        # Inset Card
+        painter.save()
+        inset_path = QPainterPath()
+        inset_path.addRoundedRect(inset_rect, radius, radius)
+        painter.setClipPath(inset_path)
+        cls._draw_fitted_pixmap(painter, pixmap, inset_rect)
+        painter.restore()
+
+    @classmethod
+    def render_pixmap(
+        cls, p1: Optional[QPixmap], p2: Optional[QPixmap], 
+        template_id: str = "2_vert_50", size: int = 240
+    ) -> QPixmap:
+        """Render a 2-photo collage into a transparent square QPixmap."""
+        canvas = QPixmap(size, size)
+        canvas.fill(Qt.transparent)
+
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        img1 = p1 if (p1 and not p1.isNull()) else cls._create_placeholder(size, size, "PHOTO 1", "HELXAIC")
+        img2 = p2 if (p2 and not p2.isNull()) else cls._create_placeholder(size, size, "PHOTO 2", "HELXAIC")
+
+        try:
+            cls.draw_template(painter, img1, img2, template_id, float(size), float(size), corner_radius=12.0)
+        except Exception as e:
+            print(f"[CollageEngineCategory2] Error rendering template '{template_id}': {e}")
+        finally:
+            painter.end()
+
+        return canvas
+
+    @classmethod
+    def draw_template(
+        cls, painter: QPainter, p1: QPixmap, p2: QPixmap, 
+        template_id: str, W: float, H: float, corner_radius: float = 12.0
+    ):
+        real_id = cls.ALIASES.get(template_id, template_id)
+
+        if real_id == "2_circle_split":
+            cls._draw_circle_split(painter, p1, p2, W, H)
+            return
+        
+        painter.save()
+        # Global outer canvas rounded clip mask
+        outer_path = QPainterPath()
+        outer_path.addRoundedRect(QRectF(0, 0, W, H), corner_radius, corner_radius)
+        painter.setClipPath(outer_path)
+
+        sep = 3.0
+
+        if real_id == "2_vert_50":
+            half_w = (W - sep) / 2.0
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
+            cls._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, H))
+            cls._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
+
+        elif real_id == "2_vert_30_70":
+            w1 = W * 0.35 - sep / 2.0
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H))
+            cls._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, W - w1 - sep, H))
+            cls._draw_seam_line(painter, QPointF(w1 + sep / 2.0, 0), QPointF(w1 + sep / 2.0, H), sep)
+
+        elif real_id == "2_vert_70_30":
+            w1 = W * 0.65 - sep / 2.0
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H))
+            cls._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, W - w1 - sep, H))
+            cls._draw_seam_line(painter, QPointF(w1 + sep / 2.0, 0), QPointF(w1 + sep / 2.0, H), sep)
+
+        elif real_id == "2_horiz_50":
+            half_h = (H - sep) / 2.0
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h))
+            cls._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, W, half_h))
+            cls._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
+
+        elif real_id == "2_horiz_30_70":
+            h1 = H * 0.35 - sep / 2.0
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1))
+            cls._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, H - h1 - sep))
+            cls._draw_seam_line(painter, QPointF(0, h1 + sep / 2.0), QPointF(W, h1 + sep / 2.0), sep)
+
+        elif real_id == "2_horiz_70_30":
+            h1 = H * 0.65 - sep / 2.0
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1))
+            cls._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, H - h1 - sep))
+            cls._draw_seam_line(painter, QPointF(0, h1 + sep / 2.0), QPointF(W, h1 + sep / 2.0), sep)
+
+        elif real_id == "2_diag_tl_br":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(W, 0), QPointF(W, H), QPointF(0, H)])
+            cls._draw_poly(painter, p1, poly1, W, H)
+            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_seam_line(painter, QPointF(W, 0), QPointF(0, H), sep)
+
+        elif real_id == "2_diag_tr_bl":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W, H), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H)])
+            cls._draw_poly(painter, p1, poly1, W, H)
+            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_seam_line(painter, QPointF(0, 0), QPointF(W, H), sep)
+
+        elif real_id == "2_slant_v_left":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.62, 0), QPointF(W * 0.38, H), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(W * 0.62, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.38, H)])
+            cls._draw_poly(painter, p1, poly1, W, H)
+            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_seam_line(painter, QPointF(W * 0.62, 0), QPointF(W * 0.38, H), sep)
+
+        elif real_id == "2_slant_v_right":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.38, 0), QPointF(W * 0.62, H), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(W * 0.38, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.62, H)])
+            cls._draw_poly(painter, p1, poly1, W, H)
+            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_seam_line(painter, QPointF(W * 0.38, 0), QPointF(W * 0.62, H), sep)
+
+        elif real_id == "2_slant_h_up":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.38), QPointF(0, H * 0.62)])
+            poly2 = QPolygonF([QPointF(0, H * 0.62), QPointF(W, H * 0.38), QPointF(W, H), QPointF(0, H)])
+            cls._draw_poly(painter, p1, poly1, W, H)
+            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_seam_line(painter, QPointF(0, H * 0.62), QPointF(W, H * 0.38), sep)
+
+        elif real_id == "2_slant_h_down":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.62), QPointF(0, H * 0.38)])
+            poly2 = QPolygonF([QPointF(0, H * 0.38), QPointF(W, H * 0.62), QPointF(W, H), QPointF(0, H)])
+            cls._draw_poly(painter, p1, poly1, W, H)
+            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_seam_line(painter, QPointF(0, H * 0.38), QPointF(W, H * 0.62), sep)
+
+        elif real_id == "2_chevron_right":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.52, 0), QPointF(W * 0.78, H * 0.5), QPointF(W * 0.52, H), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(W * 0.52, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.52, H), QPointF(W * 0.78, H * 0.5)])
+            cls._draw_poly(painter, p1, poly1, W, H)
+            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_seam_line(painter, QPointF(W * 0.52, 0), QPointF(W * 0.78, H * 0.5), sep)
+            cls._draw_seam_line(painter, QPointF(W * 0.78, H * 0.5), QPointF(W * 0.52, H), sep)
+
+        elif real_id == "2_chevron_left":
+            poly1 = QPolygonF([QPointF(W * 0.48, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.48, H), QPointF(W * 0.22, H * 0.5)])
+            poly2 = QPolygonF([QPointF(0, 0), QPointF(W * 0.48, 0), QPointF(W * 0.22, H * 0.5), QPointF(W * 0.48, H), QPointF(0, H)])
+            cls._draw_poly(painter, p1, poly1, W, H)
+            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_seam_line(painter, QPointF(W * 0.48, 0), QPointF(W * 0.22, H * 0.5), sep)
+            cls._draw_seam_line(painter, QPointF(W * 0.22, H * 0.5), QPointF(W * 0.48, H), sep)
+
+        elif real_id == "2_inset_br":
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
+            cls._draw_inset(painter, p2, QRectF(W * 0.48, H * 0.48, W * 0.48, H * 0.48), radius=8.0)
+
+        elif real_id == "2_inset_bl":
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
+            cls._draw_inset(painter, p2, QRectF(W * 0.04, H * 0.48, W * 0.48, H * 0.48), radius=8.0)
+
+        elif real_id == "2_vinyl_stack":
+            cls._draw_dual_vinyl(painter, p1, p2, W, H, corner_radius)
+
+        elif real_id == "2_polaroid_stack":
+            cls._draw_polaroid_stack(painter, p1, p2, W, H, corner_radius)
+
+        elif real_id == "2_hero_inset":
+            cls._draw_hero_inset(painter, p1, p2, W, H, corner_radius)
+
+        else:
+            half_w = (W - sep) / 2.0
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
+            cls._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, H))
+            cls._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
+
+        painter.restore()
+
+    @classmethod
+    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float):
+        margin = W * 0.02
+        circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
+        c = circle_rect.center()
+        radius = circle_rect.width() / 2.0
+        sep = 3.0
+
+        painter.save()
+        outer_circle = QPainterPath()
+        outer_circle.addEllipse(circle_rect)
+        painter.setClipPath(outer_circle)
+
+        # Left Semicircle (90 to 270 deg)
+        path_left = QPainterPath()
+        path_left.moveTo(c)
+        path_left.arcTo(circle_rect, 90.0, 180.0)
+        path_left.closeSubpath()
+
+        painter.save()
+        painter.setClipPath(path_left)
+        cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
+        painter.restore()
+
+        # Right Semicircle (270 to 450/90 deg)
+        path_right = QPainterPath()
+        path_right.moveTo(c)
+        path_right.arcTo(circle_rect, 270.0, 180.0)
+        path_right.closeSubpath()
+
+        painter.save()
+        painter.setClipPath(path_right)
+        cls._draw_fitted_pixmap(painter, p2, QRectF(0, 0, W, H))
+        painter.restore()
+
+        # Center Seam Line
+        cls._draw_seam_line(painter, QPointF(c.x(), margin), QPointF(c.x(), H - margin), sep)
+
+        # Subtle Vinyl Grooves
+        for r_factor in [0.88, 0.76, 0.64]:
+            painter.setPen(QPen(QColor(255, 255, 255, 14), 0.8))
+            painter.drawEllipse(c, radius * r_factor, radius * r_factor)
+
+        # Center Spindle Hole
+        hole_r = radius * 0.12
+        painter.setBrush(QBrush(QColor("#060608")))
+        painter.setPen(QPen(QColor(255, 255, 255, 80), 1.5))
+        painter.drawEllipse(c, hole_r, hole_r)
+        painter.restore()
+
+    @classmethod
+    def _draw_dual_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float):
+        # Sleeve sizes
+        sleeve_w = W * 0.54
+        sleeve_h = H * 0.54
+        sleeve_r = 8.0
+
+        # Disc 2 (Peeking out to top-right behind Sleeve 2)
+        disc2_rect = QRectF(W * 0.44, H * 0.04, sleeve_h * 0.94, sleeve_h * 0.94)
+        cls._draw_mini_vinyl(painter, disc2_rect, p2)
+
+        # Sleeve 2 (Back Top-Right)
+        sleeve2_rect = QRectF(W * 0.28, H * 0.08, sleeve_w, sleeve_h)
+        painter.save()
+        sleeve2_path = QPainterPath()
+        sleeve2_path.addRoundedRect(sleeve2_rect, sleeve_r, sleeve_r)
+        painter.setClipPath(sleeve2_path)
+        cls._draw_fitted_pixmap(painter, p2, sleeve2_rect)
+        painter.restore()
+
+        # Disc 1 (Peeking out to bottom-right behind Sleeve 1)
+        disc1_rect = QRectF(W * 0.24, H * 0.42, sleeve_h * 0.94, sleeve_h * 0.94)
+        cls._draw_mini_vinyl(painter, disc1_rect, p1)
+
+        # Sleeve 1 (Front Bottom-Left with drop shadow)
+        sleeve1_rect = QRectF(W * 0.08, H * 0.38, sleeve_w, sleeve_h)
+        
+        # Shadow for Sleeve 1
+        shadow_rect = sleeve1_rect.translated(2, 4)
+        shadow_path = QPainterPath()
+        shadow_path.addRoundedRect(shadow_rect, sleeve_r, sleeve_r)
+        painter.fillPath(shadow_path, QColor(0, 0, 0, 170))
+
+        # Draw Sleeve 1
+        painter.save()
+        sleeve1_path = QPainterPath()
+        sleeve1_path.addRoundedRect(sleeve1_rect, sleeve_r, sleeve_r)
+        painter.setClipPath(sleeve1_path)
+        cls._draw_fitted_pixmap(painter, p1, sleeve1_rect)
+        painter.restore()
+
+    @classmethod
+    def _draw_mini_vinyl(cls, painter: QPainter, disc_rect: QRectF, label_pix: QPixmap):
+        painter.save()
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        vinyl_svg_path = os.path.join(script_dir, "UI Icons", "vinyl_record.svg").replace('\\', '/')
+        
+        from PySide6.QtSvg import QSvgRenderer
+        renderer = QSvgRenderer(vinyl_svg_path)
+        renderer.render(painter, disc_rect)
+
+        # Center Label with album art
+        center = disc_rect.center()
+        radius = disc_rect.width() / 2.0
+        label_r = radius * (90.0 / 250.0)
+        label_rect = QRectF(center.x() - label_r, center.y() - label_r, label_r * 2.0, label_r * 2.0)
+        
+        label_path = QPainterPath()
+        label_path.addEllipse(label_rect)
+        painter.setClipPath(label_path)
+        cls._draw_fitted_pixmap(painter, label_pix, label_rect)
+
+        # Spindle hole
+        painter.setClipping(False)
+        hole_r = radius * (16.0 / 250.0)
+        painter.setPen(QPen(QColor("#8890a5"), 1.0))
+        painter.setBrush(QBrush(QColor("#060608")))
+        painter.drawEllipse(center, hole_r, hole_r)
+        painter.restore()
+
+    @classmethod
+    def _draw_polaroid_stack(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float):
+        card_size = W * 0.62
+        card_r = 8.0
+
+        # Back Card (P2, angled -7 deg)
+        painter.save()
+        painter.translate(W * 0.44, H * 0.44)
+        painter.rotate(-7.0)
+        card2_rect = QRectF(-card_size / 2.0, -card_size / 2.0, card_size, card_size)
+        
+        # Back card shadow
+        painter.fillRect(card2_rect.translated(2, 4), QColor(0, 0, 0, 140))
+        card2_path = QPainterPath()
+        card2_path.addRoundedRect(card2_rect, card_r, card_r)
+        painter.setClipPath(card2_path)
+        cls._draw_fitted_pixmap(painter, p2, card2_rect)
+        painter.restore()
+
+        # Front Card (P1, angled +4 deg)
+        painter.save()
+        painter.translate(W * 0.56, H * 0.56)
+        painter.rotate(4.0)
+        card1_rect = QRectF(-card_size / 2.0, -card_size / 2.0, card_size, card_size)
+        
+        # Front card shadow
+        painter.fillRect(card1_rect.translated(3, 5), QColor(0, 0, 0, 170))
+        card1_path = QPainterPath()
+        card1_path.addRoundedRect(card1_rect, card_r, card_r)
+        painter.setClipPath(card1_path)
+        cls._draw_fitted_pixmap(painter, p1, card1_rect)
+        painter.restore()
+
+    @classmethod
+    def _draw_hero_inset(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float):
+        # 1. Background: Blurred downsampled P1
+        small = p1.scaled(24, 24, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        blurred_bg = small.scaled(int(W), int(H), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        painter.drawPixmap(0, 0, blurred_bg)
+
+        # Ambient Dark Gradient Overlay
+        dark_grad = QLinearGradient(0, 0, 0, H)
+        dark_grad.setColorAt(0.0, QColor(14, 15, 20, 130))
+        dark_grad.setColorAt(1.0, QColor(6, 6, 10, 185))
+        painter.fillRect(QRectF(0, 0, W, H), dark_grad)
+
+        # 2. Inset Card (P2, centered)
+        inset_size = W * 0.65
+        inset_rect = QRectF((W - inset_size) / 2.0, (H - inset_size) / 2.0, inset_size, inset_size)
+        inset_r = 8.0
+
+        # Drop shadow
+        shadow_rect = inset_rect.translated(2, 4)
+        shadow_path = QPainterPath()
+        shadow_path.addRoundedRect(shadow_rect, inset_r, inset_r)
+        painter.fillPath(shadow_path, QColor(0, 0, 0, 180))
+
+        # Draw Inset P2
+        painter.save()
+        inset_path = QPainterPath()
+        inset_path.addRoundedRect(inset_rect, inset_r, inset_r)
+        painter.setClipPath(inset_path)
+        cls._draw_fitted_pixmap(painter, p2, inset_rect)
+        painter.restore()
+
+
+class CollageEngineCategory3:
+    """
+    Pure Mathematical Vector Rendering Engine for Category 3 (3-Photo Collage Layouts).
+    
+    Component Name: CollageEngineCategory3
+    """
+    TEMPLATES = [
+        # --- Signature Circular Split (Template 1) ---
+        {
+            "id": "3_circle_split",
+            "name": "Circular Trinity Disc",
+            "desc": "Circular disc split into 3 pie sectors with center spindle hole",
+            "category": 3
+        },
+
+        # --- Hero Linear Splits (Templates 2 - 5) ---
+        {
+            "id": "3_hero_left",
+            "name": "Hero Left Split",
+            "desc": "Prominent 50% left hero with two stacked right cards",
+            "category": 3
+        },
+        {
+            "id": "3_hero_right",
+            "name": "Hero Right Split",
+            "desc": "Prominent 50% right hero with two stacked left cards",
+            "category": 3
+        },
+        {
+            "id": "3_hero_top",
+            "name": "Hero Top Banner",
+            "desc": "Wide 50% top hero banner with two bottom columns",
+            "category": 3
+        },
+        {
+            "id": "3_hero_bottom",
+            "name": "Hero Bottom Footer",
+            "desc": "Wide 50% bottom hero footer with two top columns",
+            "category": 3
+        },
+
+        # --- Hero Slanted / Angular (Templates 5 - 8) ---
+        {
+            "id": "3_slanted_hero_top",
+            "name": "Slanted Hero Top",
+            "desc": "Dynamic angled top hero banner with two bottom segments",
+            "category": 3
+        },
+        {
+            "id": "3_slanted_hero_bottom",
+            "name": "Slanted Hero Bottom",
+            "desc": "Dynamic angled bottom hero footer with two top segments",
+            "category": 3
+        },
+        {
+            "id": "3_slanted_hero_left",
+            "name": "Slanted Hero Left",
+            "desc": "Steep angled left hero with two right stacked segments",
+            "category": 3
+        },
+        {
+            "id": "3_slanted_hero_right",
+            "name": "Slanted Hero Right",
+            "desc": "Steep angled right hero with two left stacked segments",
+            "category": 3
+        },
+
+        # --- Triangle / Pyramid & V-Split (Templates 9 - 10) ---
+        {
+            "id": "3_pyramid",
+            "name": "Pyramid Apex Split",
+            "desc": "Triangular central pyramid apex with dual side flanks",
+            "category": 3
+        },
+        {
+            "id": "3_inverted_v",
+            "name": "Inverted V-Split",
+            "desc": "Central descending inverted V-chevron wedge with dual flanks",
+            "category": 3
+        },
+
+        # --- Slanted Columns & Rows (Templates 11 - 14) ---
+        {
+            "id": "3_slanted_cols_r",
+            "name": "Slanted Columns Right",
+            "desc": "Three parallel right-leaning slanted vertical stripes",
+            "category": 3
+        },
+        {
+            "id": "3_slanted_cols_l",
+            "name": "Slanted Columns Left",
+            "desc": "Three parallel left-leaning slanted vertical stripes",
+            "category": 3
+        },
+        {
+            "id": "3_slanted_rows_up",
+            "name": "Slanted Rows Up",
+            "desc": "Three parallel upward-angled horizontal rows",
+            "category": 3
+        },
+        {
+            "id": "3_slanted_rows_down",
+            "name": "Slanted Rows Down",
+            "desc": "Three parallel downward-angled horizontal rows",
+            "category": 3
+        },
+
+        # --- Linear Columns & Rows (Templates 15 - 20) ---
+        {
+            "id": "3_vert_cols",
+            "name": "3 Equal Columns",
+            "desc": "Three equal 33% vertical columns with neon separators",
+            "category": 3
+        },
+        {
+            "id": "3_horiz_rows",
+            "name": "3 Equal Rows",
+            "desc": "Three equal 33% horizontal rows with sleek separators",
+            "category": 3
+        },
+        {
+            "id": "3_wide_col_left",
+            "name": "Wide Left Column",
+            "desc": "Asymmetrical 50% left column with two 25% right columns",
+            "category": 3
+        },
+        {
+            "id": "3_wide_col_right",
+            "name": "Wide Right Column",
+            "desc": "Asymmetrical two 25% left columns with 50% right column",
+            "category": 3
+        },
+        {
+            "id": "3_wide_row_top",
+            "name": "Wide Top Row",
+            "desc": "Asymmetrical 50% top row with two 25% bottom rows",
+            "category": 3
+        },
+        {
+            "id": "3_wide_row_bottom",
+            "name": "Wide Bottom Row",
+            "desc": "Asymmetrical two 25% top rows with 50% bottom row",
+            "category": 3
+        },
+
+        # --- Inset Picture-in-Picture (Templates 21 - 22) ---
+        {
+            "id": "3_inset_stack_r",
+            "name": "Double Inset Right",
+            "desc": "Full background cover with two floating right inset cards",
+            "category": 3
+        },
+        {
+            "id": "3_inset_bottom_h",
+            "name": "Double Inset Bottom",
+            "desc": "Full background cover with two floating bottom inset cards",
+            "category": 3
+        },
+
+        # --- Signature & 3D (Templates 23 - 25) ---
+        {
+            "id": "3_vinyl_stack",
+            "name": "Trinity Vinyl Sleeves",
+            "desc": "Layered 3D trio sleeves with exposed grooved records",
+            "category": 3
+        },
+        {
+            "id": "3_ambient_stack",
+            "name": "Ambient Blur Trio",
+            "desc": "Blurred ambient backdrop of Photo 1 with 2 floating cards",
+            "category": 3
+        },
+    ]
+
+    ALIASES = {
+        "3_vert_triptych": "3_vert_cols",
+        "3_horiz_triptych": "3_horiz_rows",
+        "3_hero_left_dual_right": "3_hero_left",
+        "3_hero_top_dual_bottom": "3_hero_top",
+        "3_hero_right_dual_left": "3_hero_right",
+        "3_diagonal_slices": "3_slanted_cols_r",
+    }
+
+    @classmethod
+    def get_all_templates(cls):
+        return cls.TEMPLATES
+
+    @classmethod
+    def get_template_info(cls, template_id: str) -> dict:
+        real_id = cls.ALIASES.get(template_id, template_id)
+        for t in cls.TEMPLATES:
+            if t["id"] == real_id:
+                return t
+        return cls.TEMPLATES[0]
+
+    @classmethod
+    def render_pixmap(
+        cls, p1: Optional[QPixmap], p2: Optional[QPixmap], p3: Optional[QPixmap],
+        template_id: str = "3_hero_left", size: int = 240
+    ) -> QPixmap:
+        canvas = QPixmap(size, size)
+        canvas.fill(Qt.transparent)
+
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        img1 = p1 if (p1 and not p1.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 1", "HELXAIC")
+        img2 = p2 if (p2 and not p2.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 2", "HELXAIC")
+        img3 = p3 if (p3 and not p3.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 3", "HELXAIC")
+
+        try:
+            cls.draw_template(painter, img1, img2, img3, template_id, float(size), float(size), corner_radius=12.0)
+        except Exception as e:
+            print(f"[CollageEngineCategory3] Error rendering template '{template_id}': {e}")
+        finally:
+            painter.end()
+
+        return canvas
+
+    @classmethod
+    def draw_template(
+        cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap,
+        template_id: str, W: float, H: float, corner_radius: float = 12.0
+    ):
+        real_id = cls.ALIASES.get(template_id, template_id)
+
+        if real_id == "3_circle_split":
+            cls._draw_circle_split(painter, p1, p2, p3, W, H)
+            return
+
+        painter.save()
+        outer_path = QPainterPath()
+        outer_path.addRoundedRect(QRectF(0, 0, W, H), corner_radius, corner_radius)
+        painter.setClipPath(outer_path)
+
+        sep = 3.0
+
+        # --- 1. Hero Linear Splits ---
+        if real_id == "3_hero_left":
+            half_w = (W - sep) / 2.0
+            half_h = (H - sep) / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
+
+        elif real_id == "3_hero_right":
+            half_w = (W - sep) / 2.0
+            half_h = (H - sep) / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, 0, half_w, H))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(half_w, half_h + sep / 2.0), sep)
+
+        elif real_id == "3_hero_top":
+            half_w = (W - sep) / 2.0
+            half_h = (H - sep) / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, half_h + sep), QPointF(half_w + sep / 2.0, H), sep)
+
+        elif real_id == "3_hero_bottom":
+            half_w = (W - sep) / 2.0
+            half_h = (H - sep) / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, W, half_h))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, half_h), sep)
+
+        # --- 2. Hero Slanted / Angular ---
+        elif real_id == "3_slanted_hero_top":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.40 - sep / 2.0), QPointF(0, H * 0.55 - sep / 2.0)])
+            poly2 = QPolygonF([QPointF(0, H * 0.55 + sep / 2.0), QPointF(W * 0.5 - sep / 2.0, H * 0.475), QPointF(W * 0.5 - sep / 2.0, H), QPointF(0, H)])
+            poly3 = QPolygonF([QPointF(W * 0.5 + sep / 2.0, H * 0.475), QPointF(W, H * 0.40 + sep / 2.0), QPointF(W, H), QPointF(W * 0.5 + sep / 2.0, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.55), QPointF(W, H * 0.40), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.5, H * 0.475), QPointF(W * 0.5, H), sep)
+
+        elif real_id == "3_slanted_hero_bottom":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.5 - sep / 2.0, 0), QPointF(W * 0.5 - sep / 2.0, H * 0.525), QPointF(0, H * 0.45 - sep / 2.0)])
+            poly2 = QPolygonF([QPointF(W * 0.5 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H * 0.60 - sep / 2.0), QPointF(W * 0.5 + sep / 2.0, H * 0.525)])
+            poly3 = QPolygonF([QPointF(0, H * 0.45 + sep / 2.0), QPointF(W, H * 0.60 + sep / 2.0), QPointF(W, H), QPointF(0, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.5, 0), QPointF(W * 0.5, H * 0.525), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.45), QPointF(W, H * 0.60), sep)
+
+        elif real_id == "3_slanted_hero_left":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.55 - sep / 2.0, 0), QPointF(W * 0.40 - sep / 2.0, H), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(W * 0.55 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H * 0.50 - sep / 2.0), QPointF(W * 0.475, H * 0.50 - sep / 2.0)])
+            poly3 = QPolygonF([QPointF(W * 0.475, H * 0.50 + sep / 2.0), QPointF(W, H * 0.50 + sep / 2.0), QPointF(W, H), QPointF(W * 0.40 + sep / 2.0, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.55, 0), QPointF(W * 0.40, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.475, H * 0.50), QPointF(W, H * 0.50), sep)
+
+        elif real_id == "3_slanted_hero_right":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.525, 0), QPointF(W * 0.525, H * 0.50 - sep / 2.0), QPointF(0, H * 0.50 - sep / 2.0)])
+            poly2 = QPolygonF([QPointF(0, H * 0.50 + sep / 2.0), QPointF(W * 0.475, H * 0.50 + sep / 2.0), QPointF(W * 0.475, H), QPointF(0, H)])
+            poly3 = QPolygonF([QPointF(W * 0.525 + sep, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.475 + sep, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.525, 0), QPointF(W * 0.475, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.50), QPointF(W * 0.50, H * 0.50), sep)
+
+        # --- 3. Triangle / Pyramid & V-Split ---
+        elif real_id == "3_pyramid":
+            poly1 = QPolygonF([QPointF(W * 0.5, 0), QPointF(W * 0.85 - sep / 2.0, H), QPointF(W * 0.15 + sep / 2.0, H)])
+            poly2 = QPolygonF([QPointF(0, 0), QPointF(W * 0.5 - sep, 0), QPointF(W * 0.15 - sep / 2.0, H), QPointF(0, H)])
+            poly3 = QPolygonF([QPointF(W * 0.5 + sep, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.85 + sep / 2.0, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.5, 0), QPointF(W * 0.15, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.5, 0), QPointF(W * 0.85, H), sep)
+
+        elif real_id == "3_inverted_v":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.35 - sep / 2.0, 0), QPointF(W * 0.5 - sep, H), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(W * 0.35 + sep / 2.0, 0), QPointF(W * 0.65 - sep / 2.0, 0), QPointF(W * 0.5, H - sep)])
+            poly3 = QPolygonF([QPointF(W * 0.65 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.5 + sep, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.35, 0), QPointF(W * 0.5, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.65, 0), QPointF(W * 0.5, H), sep)
+
+        # --- 4. Slanted Columns & Rows ---
+        elif real_id == "3_slanted_cols_r":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.40 - sep / 2.0, 0), QPointF(W * 0.25 - sep / 2.0, H), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(W * 0.40 + sep / 2.0, 0), QPointF(W * 0.75 - sep / 2.0, 0), QPointF(W * 0.60 - sep / 2.0, H), QPointF(W * 0.25 + sep / 2.0, H)])
+            poly3 = QPolygonF([QPointF(W * 0.75 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.60 + sep / 2.0, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.40, 0), QPointF(W * 0.25, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.75, 0), QPointF(W * 0.60, H), sep)
+
+        elif real_id == "3_slanted_cols_l":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.25 - sep / 2.0, 0), QPointF(W * 0.40 - sep / 2.0, H), QPointF(0, H)])
+            poly2 = QPolygonF([QPointF(W * 0.25 + sep / 2.0, 0), QPointF(W * 0.60 - sep / 2.0, 0), QPointF(W * 0.75 - sep / 2.0, H), QPointF(W * 0.40 + sep / 2.0, H)])
+            poly3 = QPolygonF([QPointF(W * 0.60 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.75 + sep / 2.0, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.25, 0), QPointF(W * 0.40, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.60, 0), QPointF(W * 0.75, H), sep)
+
+        elif real_id == "3_slanted_rows_up":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.25 - sep / 2.0), QPointF(0, H * 0.40 - sep / 2.0)])
+            poly2 = QPolygonF([QPointF(0, H * 0.40 + sep / 2.0), QPointF(W, H * 0.25 + sep / 2.0), QPointF(W, H * 0.60 - sep / 2.0), QPointF(0, H * 0.75 - sep / 2.0)])
+            poly3 = QPolygonF([QPointF(0, H * 0.75 + sep / 2.0), QPointF(W, H * 0.60 + sep / 2.0), QPointF(W, H), QPointF(0, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.40), QPointF(W, H * 0.25), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.75), QPointF(W, H * 0.60), sep)
+
+        elif real_id == "3_slanted_rows_down":
+            poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.40 - sep / 2.0), QPointF(0, H * 0.25 - sep / 2.0)])
+            poly2 = QPolygonF([QPointF(0, H * 0.25 + sep / 2.0), QPointF(W, H * 0.40 + sep / 2.0), QPointF(W, H * 0.75 - sep / 2.0), QPointF(0, H * 0.60 - sep / 2.0)])
+            poly3 = QPolygonF([QPointF(0, H * 0.60 + sep / 2.0), QPointF(W, H * 0.75 + sep / 2.0), QPointF(W, H), QPointF(0, H)])
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.25), QPointF(W, H * 0.40), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.60), QPointF(W, H * 0.75), sep)
+
+        # --- 5. Linear Columns & Rows ---
+        elif real_id == "3_vert_cols":
+            col_w = (W - 2 * sep) / 3.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, col_w, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(col_w + sep, 0, col_w, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF((col_w + sep) * 2, 0, col_w, H))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(col_w + sep / 2.0, 0), QPointF(col_w + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(col_w * 2 + sep * 1.5, 0), QPointF(col_w * 2 + sep * 1.5, H), sep)
+
+        elif real_id == "3_horiz_rows":
+            row_h = (H - 2 * sep) / 3.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, row_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, row_h + sep, W, row_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, (row_h + sep) * 2, W, row_h))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, row_h + sep / 2.0), QPointF(W, row_h + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, row_h * 2 + sep * 1.5), QPointF(W, row_h * 2 + sep * 1.5), sep)
+
+        elif real_id == "3_wide_col_left":
+            w1 = W * 0.50 - sep / 2.0
+            w2 = W * 0.25 - sep / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, w2, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w1 + w2 + 2 * sep, 0, W - (w1 + w2 + 2 * sep), H))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(w1 + sep / 2.0, 0), QPointF(w1 + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(w1 + w2 + 1.5 * sep, 0), QPointF(w1 + w2 + 1.5 * sep, H), sep)
+
+        elif real_id == "3_wide_col_right":
+            w1 = W * 0.25 - sep / 2.0
+            w2 = W * 0.25 - sep / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, w2, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w1 + w2 + 2 * sep, 0, W - (w1 + w2 + 2 * sep), H))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(w1 + sep / 2.0, 0), QPointF(w1 + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(w1 + w2 + 1.5 * sep, 0), QPointF(w1 + w2 + 1.5 * sep, H), sep)
+
+        elif real_id == "3_wide_row_top":
+            h1 = H * 0.50 - sep / 2.0
+            h2 = H * 0.25 - sep / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, h2))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, h1 + h2 + 2 * sep, W, H - (h1 + h2 + 2 * sep)))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h1 + sep / 2.0), QPointF(W, h1 + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h1 + h2 + 1.5 * sep), QPointF(W, h1 + h2 + 1.5 * sep), sep)
+
+        elif real_id == "3_wide_row_bottom":
+            h1 = H * 0.25 - sep / 2.0
+            h2 = H * 0.25 - sep / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, h2))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, h1 + h2 + 2 * sep, W, H - (h1 + h2 + 2 * sep)))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h1 + sep / 2.0), QPointF(W, h1 + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h1 + h2 + 1.5 * sep), QPointF(W, h1 + h2 + 1.5 * sep), sep)
+
+        # --- 6. Inset Picture-in-Picture ---
+        elif real_id == "3_inset_stack_r":
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
+            CollageEngineCategory2._draw_inset(painter, p2, QRectF(W * 0.52, H * 0.06, W * 0.42, H * 0.42), radius=6.0)
+            CollageEngineCategory2._draw_inset(painter, p3, QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42), radius=6.0)
+
+        elif real_id == "3_inset_bottom_h":
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
+            CollageEngineCategory2._draw_inset(painter, p2, QRectF(W * 0.06, H * 0.52, W * 0.42, H * 0.42), radius=6.0)
+            CollageEngineCategory2._draw_inset(painter, p3, QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42), radius=6.0)
+
+        # --- 7. Signature 3D Styles ---
+        elif real_id == "3_vinyl_stack":
+            cls._draw_triple_vinyl(painter, p1, p2, p3, W, H, corner_radius)
+
+        elif real_id == "3_ambient_stack":
+            cls._draw_ambient_trio(painter, p1, p2, p3, W, H, corner_radius)
+
+        else:
+            half_w = (W - sep) / 2.0
+            half_h = (H - sep) / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
+
+        painter.restore()
+
+    @classmethod
+    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float):
+        import math
+        margin = W * 0.02
+        circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
+        c = circle_rect.center()
+        radius = circle_rect.width() / 2.0
+        sep = 3.0
+
+        painter.save()
+        outer_circle = QPainterPath()
+        outer_circle.addEllipse(circle_rect)
+        painter.setClipPath(outer_circle)
+
+        # 3 Pie Wedges @ 120 degrees:
+        # Wedge 1: Top (30 to 150 deg)
+        # Wedge 2: Bottom-Left (150 to 270 deg)
+        # Wedge 3: Bottom-Right (270 to 390 deg)
+        angles = [(30.0, 120.0), (150.0, 120.0), (270.0, 120.0)]
+        photos = [p1, p2, p3]
+
+        for i, (start_a, span_a) in enumerate(angles):
+            wedge_path = QPainterPath()
+            wedge_path.moveTo(c)
+            wedge_path.arcTo(circle_rect, start_a, span_a)
+            wedge_path.closeSubpath()
+
+            painter.save()
+            painter.setClipPath(wedge_path)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], QRectF(0, 0, W, H))
+            painter.restore()
+
+        # Radial Seams
+        for a_deg in [30.0, 150.0, 270.0]:
+            rad = math.radians(a_deg)
+            p_end = QPointF(c.x() + radius * math.cos(rad), c.y() - radius * math.sin(rad))
+            CollageEngineCategory2._draw_seam_line(painter, c, p_end, sep)
+
+        for r_factor in [0.88, 0.76, 0.64]:
+            painter.setPen(QPen(QColor(255, 255, 255, 14), 0.8))
+            painter.drawEllipse(c, radius * r_factor, radius * r_factor)
+
+        painter.setPen(QPen(QColor(255, 255, 255, 40), 1.0))
+        painter.drawEllipse(circle_rect)
+
+        # Center Spindle Hole
+        hole_r = radius * 0.12
+        painter.setBrush(QBrush(QColor("#060608")))
+        painter.setPen(QPen(QColor(255, 255, 255, 80), 1.5))
+        painter.drawEllipse(c, hole_r, hole_r)
+        painter.restore()
+
+    @classmethod
+    def _draw_triple_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float, R: float):
+        sleeve_w = W * 0.48
+        sleeve_h = H * 0.48
+        sleeve_r = 7.0
+
+        # Sleeve 3 (Back Top)
+        sleeve3_rect = QRectF(W * 0.26, H * 0.05, sleeve_w, sleeve_h)
+        disc3_rect = QRectF(W * 0.38, H * 0.02, sleeve_h * 0.90, sleeve_h * 0.90)
+        CollageEngineCategory2._draw_mini_vinyl(painter, disc3_rect, p3)
+        CollageEngineCategory2._draw_inset(painter, p3, sleeve3_rect, sleeve_r)
+
+        # Sleeve 2 (Back Right)
+        sleeve2_rect = QRectF(W * 0.45, H * 0.45, sleeve_w, sleeve_h)
+        disc2_rect = QRectF(W * 0.52, H * 0.42, sleeve_h * 0.90, sleeve_h * 0.90)
+        CollageEngineCategory2._draw_mini_vinyl(painter, disc2_rect, p2)
+        CollageEngineCategory2._draw_inset(painter, p2, sleeve2_rect, sleeve_r)
+
+        # Sleeve 1 (Front Left with shadow)
+        sleeve1_rect = QRectF(W * 0.06, H * 0.38, sleeve_w, sleeve_h)
+        disc1_rect = QRectF(W * 0.18, H * 0.35, sleeve_h * 0.90, sleeve_h * 0.90)
+        CollageEngineCategory2._draw_mini_vinyl(painter, disc1_rect, p1)
+        CollageEngineCategory2._draw_inset(painter, p1, sleeve1_rect, sleeve_r)
+
+    @classmethod
+    def _draw_ambient_trio(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float, R: float):
+        small = p1.scaled(24, 24, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        blurred_bg = small.scaled(int(W), int(H), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        painter.drawPixmap(0, 0, blurred_bg)
+
+        dark_grad = QLinearGradient(0, 0, 0, H)
+        dark_grad.setColorAt(0.0, QColor(14, 15, 20, 130))
+        dark_grad.setColorAt(1.0, QColor(6, 6, 10, 185))
+        painter.fillRect(QRectF(0, 0, W, H), dark_grad)
+
+        card_w = W * 0.45
+        card_h = H * 0.55
+        card_r = 8.0
+
+        # Card 2 (Left)
+        c2_rect = QRectF(W * 0.06, H * 0.22, card_w, card_h)
+        CollageEngineCategory2._draw_inset(painter, p2, c2_rect, card_r)
+
+        # Card 3 (Right)
+        c3_rect = QRectF(W * 0.49, H * 0.22, card_w, card_h)
+        CollageEngineCategory2._draw_inset(painter, p3, c3_rect, card_r)
+
+
+class CollageEngineCategory4:
+    """
+    Pure Mathematical Vector Rendering Engine for Category 4 (4-Photo Collage Layouts).
+    
+    Component Name: CollageEngineCategory4
+    """
+    TEMPLATES = [
+        {
+            "id": "4_circle_split",
+            "name": "Circular Quad Disc",
+            "desc": "Circular vinyl disc split into 4 quadrants with center spindle hole",
+            "category": 4
+        },
+        {
+            "id": "4_quad_grid",
+            "name": "2x2 Quad Grid",
+            "desc": "Classic 4-quadrant square matrix with cyber neon crosshair divider",
+            "category": 4
+        },
+        {
+            "id": "4_hero_left_3_stack",
+            "name": "Hero Left + 3 Right Stack",
+            "desc": "Prominent 50% left hero with 3 equal vertical stacked right cards",
+            "category": 4
+        },
+        {
+            "id": "4_hero_top_3_cols",
+            "name": "Hero Top + 3 Bottom Columns",
+            "desc": "Wide 50% top hero banner with 3 bottom vertical columns",
+            "category": 4
+        },
+        {
+            "id": "4_pinwheel",
+            "name": "Pinwheel Matrix",
+            "desc": "Interlocking 4-segment pinwheel arrangement",
+            "category": 4
+        },
+        {
+            "id": "4_vert_stripes",
+            "name": "4 Vertical Stripes",
+            "desc": "Four equal 25% vertical columns with neon separators",
+            "category": 4
+        },
+        {
+            "id": "4_horiz_stripes",
+            "name": "4 Horizontal Stripes",
+            "desc": "Four equal 25% horizontal rows with sleek separators",
+            "category": 4
+        },
+        {
+            "id": "4_quad_vinyl",
+            "name": "Quad Vinyl Sleeves",
+            "desc": "Four layered vinyl album sleeves at each quadrant",
+            "category": 4
+        },
+        {
+            "id": "4_ambient_quad",
+            "name": "Ambient Quad Inset",
+            "desc": "Blurred ambient backdrop of Photo 1 with 3 floating overlapping cards",
+            "category": 4
+        },
+    ]
+
+    @classmethod
+    def get_all_templates(cls):
+        return cls.TEMPLATES
+
+    @classmethod
+    def get_template_info(cls, template_id: str) -> dict:
+        for t in cls.TEMPLATES:
+            if t["id"] == template_id:
+                return t
+        return cls.TEMPLATES[0]
+
+    @classmethod
+    def render_pixmap(
+        cls, p1: Optional[QPixmap], p2: Optional[QPixmap], p3: Optional[QPixmap], p4: Optional[QPixmap],
+        template_id: str = "4_quad_grid", size: int = 240
+    ) -> QPixmap:
+        canvas = QPixmap(size, size)
+        canvas.fill(Qt.transparent)
+
+        painter = QPainter(canvas)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        img1 = p1 if (p1 and not p1.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 1", "HELXAIC")
+        img2 = p2 if (p2 and not p2.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 2", "HELXAIC")
+        img3 = p3 if (p3 and not p3.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 3", "HELXAIC")
+        img4 = p4 if (p4 and not p4.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 4", "HELXAIC")
+
+        try:
+            cls.draw_template(painter, img1, img2, img3, img4, template_id, float(size), float(size), corner_radius=12.0)
+        except Exception as e:
+            print(f"[CollageEngineCategory4] Error rendering template '{template_id}': {e}")
+        finally:
+            painter.end()
+
+        return canvas
+
+    @classmethod
+    def draw_template(
+        cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap,
+        template_id: str, W: float, H: float, corner_radius: float = 12.0
+    ):
+        if template_id == "4_circle_split":
+            cls._draw_circle_split(painter, p1, p2, p3, p4, W, H)
+            return
+
+        painter.save()
+        outer_path = QPainterPath()
+        outer_path.addRoundedRect(QRectF(0, 0, W, H), corner_radius, corner_radius)
+        painter.setClipPath(outer_path)
+
+        sep = 3.0
+
+        if template_id == "4_quad_grid":
+            half_w = (W - sep) / 2.0
+            half_h = (H - sep) / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
+
+        elif template_id == "4_hero_left_3_stack":
+            half_w = (W - sep) / 2.0
+            row_h = (H - 2 * sep) / 3.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, row_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, row_h + sep, half_w, row_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, (row_h + sep) * 2, half_w, row_h))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep, row_h + sep / 2.0), QPointF(W, row_h + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep, row_h * 2 + sep * 1.5), QPointF(W, row_h * 2 + sep * 1.5), sep)
+
+        elif template_id == "4_hero_top_3_cols":
+            half_h = (H - sep) / 2.0
+            col_w = (W - 2 * sep) / 3.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, col_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(col_w + sep, half_h + sep, col_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF((col_w + sep) * 2, half_h + sep, col_w, half_h))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(col_w + sep / 2.0, half_h + sep), QPointF(col_w + sep / 2.0, H), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(col_w * 2 + sep * 1.5, half_h + sep), QPointF(col_w * 2 + sep * 1.5, H), sep)
+
+        elif template_id == "4_pinwheel":
+            # 4 interlocking rectangular sections
+            w60 = W * 0.60
+            w40 = W * 0.40
+            h60 = H * 0.60
+            h40 = H * 0.40
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w60, h40))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w60 + sep, 0, w40 - sep, h60))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w40 + sep, h60 + sep, w60 - sep, h40 - sep))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(0, h40 + sep, w40, h60 - sep))
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h40 + sep / 2.0), QPointF(w60, h40 + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(w60 + sep / 2.0, 0), QPointF(w60 + sep / 2.0, h60), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(w40 + sep, h60 + sep / 2.0), QPointF(W, h60 + sep / 2.0), sep)
+            CollageEngineCategory2._draw_seam_line(painter, QPointF(w40 + sep / 2.0, h40 + sep), QPointF(w40 + sep / 2.0, H), sep)
+
+        elif template_id == "4_vert_stripes":
+            col_w = (W - 3 * sep) / 4.0
+            for i, pix in enumerate([p1, p2, p3, p4]):
+                x = i * (col_w + sep)
+                CollageEngineCategory2._draw_fitted_pixmap(painter, pix, QRectF(x, 0, col_w, H))
+                if i > 0:
+                    CollageEngineCategory2._draw_seam_line(painter, QPointF(x - sep / 2.0, 0), QPointF(x - sep / 2.0, H), sep)
+
+        elif template_id == "4_horiz_stripes":
+            row_h = (H - 3 * sep) / 4.0
+            for i, pix in enumerate([p1, p2, p3, p4]):
+                y = i * (row_h + sep)
+                CollageEngineCategory2._draw_fitted_pixmap(painter, pix, QRectF(0, y, W, row_h))
+                if i > 0:
+                    CollageEngineCategory2._draw_seam_line(painter, QPointF(0, y - sep / 2.0), QPointF(W, y - sep / 2.0), sep)
+
+        elif template_id == "4_quad_vinyl":
+            cls._draw_quad_vinyl(painter, p1, p2, p3, p4, W, H, corner_radius)
+
+        elif template_id == "4_ambient_quad":
+            cls._draw_ambient_quad(painter, p1, p2, p3, p4, W, H, corner_radius)
+
+        else:
+            half_w = (W - sep) / 2.0
+            half_h = (H - sep) / 2.0
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+
+        painter.restore()
+
+    @classmethod
+    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float):
+        margin = W * 0.02
+        circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
+        c = circle_rect.center()
+        radius = circle_rect.width() / 2.0
+        sep = 3.0
+
+        painter.save()
+        outer_circle = QPainterPath()
+        outer_circle.addEllipse(circle_rect)
+        painter.setClipPath(outer_circle)
+
+        # 4 Quadrants @ 90 degrees:
+        # Q1: Top-Left (90 to 180 deg)
+        # Q2: Top-Right (0 to 90 deg)
+        # Q3: Bottom-Left (180 to 270 deg)
+        # Q4: Bottom-Right (270 to 360 deg)
+        angles = [(90.0, 90.0), (0.0, 90.0), (180.0, 90.0), (270.0, 90.0)]
+        photos = [p1, p2, p3, p4]
+
+        for i, (start_a, span_a) in enumerate(angles):
+            wedge_path = QPainterPath()
+            wedge_path.moveTo(c)
+            wedge_path.arcTo(circle_rect, start_a, span_a)
+            wedge_path.closeSubpath()
+
+            painter.save()
+            painter.setClipPath(wedge_path)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], QRectF(0, 0, W, H))
+            painter.restore()
+
+        # Crosshair Seam Lines
+        CollageEngineCategory2._draw_seam_line(painter, QPointF(c.x(), margin), QPointF(c.x(), H - margin), sep)
+        CollageEngineCategory2._draw_seam_line(painter, QPointF(margin, c.y()), QPointF(W - margin, c.y()), sep)
+
+        for r_factor in [0.88, 0.76, 0.64]:
+            painter.setPen(QPen(QColor(255, 255, 255, 14), 0.8))
+            painter.drawEllipse(c, radius * r_factor, radius * r_factor)
+
+        painter.setPen(QPen(QColor(255, 255, 255, 40), 1.0))
+        painter.drawEllipse(circle_rect)
+
+        # Center Spindle Hole
+        hole_r = radius * 0.12
+        painter.setBrush(QBrush(QColor("#060608")))
+        painter.setPen(QPen(QColor(255, 255, 255, 80), 1.5))
+        painter.drawEllipse(c, hole_r, hole_r)
+        painter.restore()
+
+    @classmethod
+    def _draw_quad_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float, R: float):
+        sw = W * 0.44
+        sh = H * 0.44
+        sr = 6.0
+
+        # 4 Mini Vinyl Sleeves in 4 corners
+        positions = [
+            (W * 0.04, H * 0.04),
+            (W * 0.52, H * 0.04),
+            (W * 0.04, H * 0.52),
+            (W * 0.52, H * 0.52)
+        ]
+        photos = [p1, p2, p3, p4]
+
+        for i, (px, py) in enumerate(positions):
+            s_rect = QRectF(px, py, sw, sh)
+            disc_rect = QRectF(px + sw * 0.25, py + sh * 0.05, sh * 0.85, sh * 0.85)
+            CollageEngineCategory2._draw_mini_vinyl(painter, disc_rect, photos[i])
+            CollageEngineCategory2._draw_inset(painter, photos[i], s_rect, sr)
+
+    @classmethod
+    def _draw_ambient_quad(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float, R: float):
+        small = p1.scaled(24, 24, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        blurred_bg = small.scaled(int(W), int(H), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        painter.drawPixmap(0, 0, blurred_bg)
+
+        dark_grad = QLinearGradient(0, 0, 0, H)
+        dark_grad.setColorAt(0.0, QColor(14, 15, 20, 130))
+        dark_grad.setColorAt(1.0, QColor(6, 6, 10, 185))
+        painter.fillRect(QRectF(0, 0, W, H), dark_grad)
+
+        card_w = W * 0.38
+        card_h = H * 0.52
+        card_r = 7.0
+
+        # 3 Floating Cards (P2, P3, P4)
+        c2 = QRectF(W * 0.04, H * 0.24, card_w, card_h)
+        c3 = QRectF(W * 0.31, H * 0.18, card_w, card_h)
+        c4 = QRectF(W * 0.58, H * 0.24, card_w, card_h)
+
+        CollageEngineCategory2._draw_inset(painter, p2, c2, card_r)
+        CollageEngineCategory2._draw_inset(painter, p4, c4, card_r)
+        CollageEngineCategory2._draw_inset(painter, p3, c3, card_r)
+
+
+class CollageMasterDispatcher:
+    """
+    Central Template Registry and Dispatcher for Multi-Photo Collages.
+    Automatically routes based on len(photos) across Category 1, 2, 3, and 4.
+    
+    Component Name: CollageMasterDispatcher
+    """
+    @classmethod
+    def get_category_for_count(cls, count: int) -> int:
+        if count <= 1:
+            return 1
+        if count == 2:
+            return 2
+        if count == 3:
+            return 3
+        return 4
+
+    @classmethod
+    def get_templates_for_count(cls, count: int) -> list:
+        cat = cls.get_category_for_count(count)
+        if cat == 1:
+            return CollageEngineCategory1.get_all_templates()
+        elif cat == 2:
+            return CollageEngineCategory2.get_all_templates()
+        elif cat == 3:
+            return CollageEngineCategory3.get_all_templates()
+        elif cat == 4:
+            return CollageEngineCategory4.get_all_templates()
+        return CollageEngineCategory1.get_all_templates()
+
+    @classmethod
+    def get_default_template_id(cls, count: int) -> str:
+        cat = cls.get_category_for_count(count)
+        if cat == 1:
+            return "1_circle_disc"
+        elif cat == 2:
+            return "2_circle_split"
+        elif cat == 3:
+            return "3_circle_split"
+        elif cat == 4:
+            return "4_circle_split"
+        return "1_circle_disc"
+
+    @classmethod
+    def render_cover(cls, photos: Any, template_id: str = "", size: int = 240) -> QPixmap:
+        """
+        Unified entrypoint to render playlist covers for any photo count and template.
+        """
+        photo_list = []
+        if isinstance(photos, list):
+            photo_list = [p for p in photos if p and not (isinstance(p, QPixmap) and p.isNull())]
+        elif isinstance(photos, QPixmap) and not photos.isNull():
+            photo_list = [photos]
+        elif photos:
+            photo_list = [photos]
+
+        count = len(photo_list)
+        cat = cls.get_category_for_count(count)
+
+        if cat == 1:
+            p1 = photo_list[0] if count > 0 else None
+            valid_ids = [t["id"] for t in CollageEngineCategory1.get_all_templates()]
+            t_id = template_id if template_id in valid_ids else "1_circle_disc"
+            return CollageEngineCategory1.render_pixmap(p1, t_id, size=size)
+            
+        elif cat == 2:
+            p1 = photo_list[0] if count > 0 else None
+            p2 = photo_list[1] if count > 1 else None
+            valid_ids = [t["id"] for t in CollageEngineCategory2.get_all_templates()] + list(CollageEngineCategory2.ALIASES.keys())
+            t_id = template_id if template_id in valid_ids else "2_circle_split"
+            return CollageEngineCategory2.render_pixmap(p1, p2, t_id, size=size)
+
+        elif cat == 3:
+            p1 = photo_list[0] if count > 0 else None
+            p2 = photo_list[1] if count > 1 else None
+            p3 = photo_list[2] if count > 2 else None
+            valid_ids = [t["id"] for t in CollageEngineCategory3.get_all_templates()] + list(CollageEngineCategory3.ALIASES.keys())
+            t_id = template_id if template_id in valid_ids else "3_circle_split"
+            return CollageEngineCategory3.render_pixmap(p1, p2, p3, t_id, size=size)
+
+        elif cat == 4:
+            p1 = photo_list[0] if count > 0 else None
+            p2 = photo_list[1] if count > 1 else None
+            p3 = photo_list[2] if count > 2 else None
+            p4 = photo_list[3] if count > 3 else None
+            valid_ids = [t["id"] for t in CollageEngineCategory4.get_all_templates()]
+            t_id = template_id if template_id in valid_ids else "4_circle_split"
+            return CollageEngineCategory4.render_pixmap(p1, p2, p3, p4, t_id, size=size)
+
+        return CollageEngineCategory1.render_pixmap(None, "1_circle_disc", size=size)
+
+    @classmethod
+    def generate_ambient_aura(
+        cls, 
+        source: Any, 
+        aura_size: int = 160, 
+        intensity: float = 0.60,
+        mode: str = "adaptive",
+        enabled: bool = True
+    ) -> QPixmap:
+        """
+        Public dispatcher method for generating YouTube-style cinematic ambient glow.
+        """
+        return CinematicGlowEngine.generate_ambient_aura(
+            source, aura_size=aura_size, intensity=intensity, mode=mode, enabled=enabled
+        )
+
+
+class CinematicLightingManager:
+    """
+    Centralized persistent configuration manager for Cinematic Lighting.
+    
+    Component Name: CinematicLightingManager
+    """
+    DEFAULT_CONFIG = {
+        "enabled": True,
+        "intensity": 0.60,
+        "spread": 160,
+        "mode": "adaptive",  # "adaptive", "breathing", "vibrant", "orange", "cyan", "magenta"
+    }
+
+    @classmethod
+    def get_settings_path(cls) -> str:
+        return os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json')
+
+    @classmethod
+    def load_config(cls) -> dict:
+        cfg = dict(cls.DEFAULT_CONFIG)
+        path = cls.get_settings_path()
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data.get('cinematic_lighting'), dict):
+                        cfg.update(data['cinematic_lighting'])
+        except Exception:
+            pass
+        return cfg
+
+    @classmethod
+    def save_config(cls, config: dict):
+        path = cls.get_settings_path()
+        try:
+            data = {}
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            data['cinematic_lighting'] = config
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+
+class AmbientAuraCache:
+    """
+    High-speed Least-Recently-Used (LRU) cache for generated ambient lighting pixmaps.
+    Indexed by (pixmap_cache_key, target_size, int(intensity * 100), mode).
+    """
+    def __init__(self, max_entries: int = 32):
+        self._cache: dict = {}
+        self._order: list = []
+        self._max = max_entries
+
+    def get(self, key: tuple) -> Optional[QPixmap]:
+        if key in self._cache:
+            self._order.remove(key)
+            self._order.append(key)
+            return self._cache[key]
+        return None
+
+    def put(self, key: tuple, pixmap: QPixmap):
+        if key in self._cache:
+            self._order.remove(key)
+        elif len(self._cache) >= self._max:
+            oldest = self._order.pop(0)
+            del self._cache[oldest]
+        self._cache[key] = pixmap
+        self._order.append(key)
+
+
+class CinematicGlowEngine:
+    """
+    Pure Vector High-Performance Ambient Lighting Engine (YouTube Ambient Mode).
+    Generates realistic, dynamic color-bleed auras from any source pixmap.
+    
+    Component Name: CinematicGlowEngine
+    """
+    _CACHE = AmbientAuraCache(max_entries=32)
+
+    @classmethod
+    def generate_ambient_aura(
+        cls,
+        source: Optional[QPixmap],
+        aura_size: int = 160,
+        cover_size: int = 120,
+        intensity: float = 0.60,
+        mode: str = "adaptive",
+        enabled: bool = True,
+        downsample_res: int = 16
+    ) -> QPixmap:
+        """
+        Processes source QPixmap into an expanded, multi-mode diffused ambient lighting aura.
+        """
+        if not enabled:
+            empty = QPixmap(aura_size, aura_size)
+            empty.fill(Qt.transparent)
+            return empty
+
+        if source is None or source.isNull():
+            return cls._generate_fallback_aura(aura_size, intensity, mode)
+
+        cache_key = (source.cacheKey(), aura_size, cover_size, int(intensity * 100), mode)
+        cached = cls._CACHE.get(cache_key)
+        if cached is not None and not cached.isNull():
+            return cached
+
+        # Step 1: True Cinematic Gaussian Bokeh Diffusion
+        intermediate_size = 80
+        scaled_src = source.scaled(
+            intermediate_size, intermediate_size,
+            Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+        )
+
+        from PySide6.QtWidgets import QGraphicsScene, QGraphicsPixmapItem, QGraphicsBlurEffect
+        scene = QGraphicsScene()
+        item = QGraphicsPixmapItem(scaled_src)
+        blur = QGraphicsBlurEffect()
+        blur.setBlurRadius(26.0)
+        blur.setBlurHints(QGraphicsBlurEffect.QualityHint)
+        item.setGraphicsEffect(blur)
+        scene.addItem(item)
+
+        diffused_intermediate = QPixmap(intermediate_size, intermediate_size)
+        diffused_intermediate.fill(Qt.transparent)
+        p_blur = QPainter(diffused_intermediate)
+        p_blur.setRenderHint(QPainter.Antialiasing, True)
+        p_blur.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        scene.render(
+            p_blur,
+            QRectF(0, 0, intermediate_size, intermediate_size),
+            QRectF(0, 0, intermediate_size, intermediate_size)
+        )
+        p_blur.end()
+
+        # Step 2: Smooth Bilinear Upscale to Target Aura Size
+        diffused = diffused_intermediate.scaled(
+            aura_size, aura_size,
+            Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+        )
+
+        # Step 3: Composite on Alpha Canvas with Edge-Anchored Hermite Radial Falloff
+        result = QPixmap(aura_size, aura_size)
+        result.fill(Qt.transparent)
+
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        # Draw base diffused color bloom
+        painter.drawPixmap(0, 0, diffused)
+
+        # Mode-specific modifiers
+        if mode == "vibrant":
+            painter.setCompositionMode(QPainter.CompositionMode_ColorDodge)
+            painter.setOpacity(0.35)
+            painter.drawPixmap(0, 0, diffused)
+            painter.setOpacity(1.0)
+        elif mode in ("orange", "cyan", "magenta"):
+            painter.setCompositionMode(QPainter.CompositionMode_Screen)
+            c = aura_size / 2.0
+            tint_grad = QRadialGradient(c, c, c)
+            if mode == "orange":
+                tint_grad.setColorAt(0.0, QColor(255, 91, 6, 170))
+                tint_grad.setColorAt(1.0, QColor(255, 123, 36, 40))
+            elif mode == "cyan":
+                tint_grad.setColorAt(0.0, QColor(0, 223, 216, 170))
+                tint_grad.setColorAt(1.0, QColor(0, 124, 240, 40))
+            elif mode == "magenta":
+                tint_grad.setColorAt(0.0, QColor(255, 0, 122, 170))
+                tint_grad.setColorAt(1.0, QColor(121, 40, 202, 40))
+            painter.fillRect(0, 0, aura_size, aura_size, tint_grad)
+
+        # Apply Smooth Cosine/Hermite Radial Alpha Feathering anchored at the cover edge
+        painter.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        
+        center_f = aura_size / 2.0
+        radial_mask = QRadialGradient(center_f, center_f, center_f)
+        
+        # Calculate proportional boundary where the front cover ends
+        cover_r = cover_size / 2.0
+        u_cover = min(0.85, max(0.15, cover_r / center_f)) if center_f > 0 else 0.5
+
+        # Inner Core (Full brightness under artwork and at its perimeter)
+        radial_mask.setColorAt(0.00, QColor(0, 0, 0, int(255 * intensity)))
+        radial_mask.setColorAt(u_cover, QColor(0, 0, 0, int(255 * intensity)))
+        
+        # Outer Falloff Zone beyond the cover edge
+        u_mid1 = u_cover + 0.35 * (1.0 - u_cover)
+        u_mid2 = u_cover + 0.70 * (1.0 - u_cover)
+        radial_mask.setColorAt(u_mid1, QColor(0, 0, 0, int(175 * intensity)))
+        radial_mask.setColorAt(u_mid2, QColor(0, 0, 0, int(75 * intensity)))
+        radial_mask.setColorAt(1.00, QColor(0, 0, 0, 0))
+
+        painter.fillRect(0, 0, aura_size, aura_size, radial_mask)
+        painter.end()
+
+        cls._CACHE.put(cache_key, result)
+        return result
+
+    @classmethod
+    def _generate_fallback_aura(cls, aura_size: int, intensity: float, mode: str = "adaptive") -> QPixmap:
+        """Fallback ambient aura for empty/uninitialized playlist states."""
+        result = QPixmap(aura_size, aura_size)
+        result.fill(Qt.transparent)
+        p = QPainter(result)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        
+        c = aura_size / 2.0
+        grad = QRadialGradient(c, c, c)
+        if mode == "cyan":
+            core = QColor(0, 223, 216, int(60 * intensity))
+        elif mode == "magenta":
+            core = QColor(255, 0, 122, int(60 * intensity))
+        else:
+            core = QColor(255, 91, 6, int(60 * intensity))
+
+        grad.setColorAt(0.0, core)
+        grad.setColorAt(0.5, QColor(20, 22, 34, int(40 * intensity)))
+        grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        
+        p.fillRect(0, 0, aura_size, aura_size, grad)
+        p.end()
+        return result
+
+
+class TemplatePickerHorizontalScrollArea(QScrollArea):
+    """
+    Smooth Horizontal Scroll Area with proper mouse wheel direction mapping:
+    - Wheel UP / Trackpad Left: Scroll LEFT (decrease scrollbar value)
+    - Wheel DOWN / Trackpad Right: Scroll RIGHT (increase scrollbar value)
+    """
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setObjectName("interactiveCoverCard")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.action_text = action_text
-        self._current_pixmap = None
-
+        self.setObjectName("TemplatePickerHorizontalScrollArea")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.setStyleSheet("""
-            QFrame#interactiveCoverCard {
-                background: rgba(255, 255, 255, 0.03);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 12px;
+            QScrollArea#TemplatePickerHorizontalScrollArea,
+            QScrollArea#coverTemplatePickerScrollArea {
+                background: transparent;
+                border: none;
             }
-            QLabel#coverTitleLabel {
+            QScrollBar:horizontal {
+                height: 8px;
+                background: rgba(255, 255, 255, 0.08);
+                border-radius: 4px;
+                margin: 0px;
+            }
+            QScrollBar::handle:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FF7B24);
+                min-width: 60px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7B24, stop:1 #FFA050);
+            }
+            QScrollBar::handle:horizontal:pressed {
+                background: #FFA050;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+                height: 0px;
+                border: none;
+                background: transparent;
+            }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: transparent;
+            }
+        """)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.angleDelta().x()
+        if delta != 0:
+            # delta > 0 is scroll UP -> move LEFT (decrease scroll value)
+            # delta < 0 is scroll DOWN -> move RIGHT (increase scroll value)
+            step = -int(delta * 0.9)
+            h_bar = self.horizontalScrollBar()
+            h_bar.setValue(h_bar.value() + step)
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+
+class CoverTemplateCard(QFrame):
+    """
+    Card Widget for a Single Collage Layout Template.
+    Displays a thumbnail preview, title, and layout style description.
+    
+    Component Name: CoverTemplateCard
+    """
+    selected_signal = Signal(str)
+
+    def __init__(self, template_id: str, title: str, desc: str, preview_pixmap: Optional[QPixmap] = None, is_selected: bool = False, parent=None):
+        super().__init__(parent)
+        self.template_id = template_id
+        self._is_selected = is_selected
+        self.setObjectName(f"templateCard_{template_id}")
+        self.setProperty("class", "templateCard")
+        self.setProperty("selected", "true" if is_selected else "false")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFixedSize(148, 215)
+
+        self._setup_ui(title, desc, preview_pixmap)
+
+    def _setup_ui(self, title: str, desc: str, preview_pixmap: QPixmap):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+
+        # Thumbnail Label
+        self.preview_lbl = QLabel()
+        self.preview_lbl.setObjectName(f"templatePreview_{self.template_id}")
+        self.preview_lbl.setProperty("class", "templatePreview")
+        self.preview_lbl.setFixedSize(92, 92)
+        self.preview_lbl.setAlignment(Qt.AlignCenter)
+        if preview_pixmap and not preview_pixmap.isNull():
+            if preview_pixmap.width() == 92 and preview_pixmap.height() == 92:
+                self.preview_lbl.setPixmap(preview_pixmap)
+            else:
+                self.preview_lbl.setPixmap(preview_pixmap.scaled(92, 92, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        layout.addWidget(self.preview_lbl, alignment=Qt.AlignCenter)
+
+        # Title Label
+        self.title_lbl = QLabel(title)
+        self.title_lbl.setObjectName(f"templateTitle_{self.template_id}")
+        self.title_lbl.setProperty("class", "templateTitle")
+        self.title_lbl.setAlignment(Qt.AlignCenter)
+        self.title_lbl.setWordWrap(True)
+        self.title_lbl.setFixedHeight(30)
+        layout.addWidget(self.title_lbl)
+
+        # Desc Label
+        self.desc_lbl = QLabel(desc)
+        self.desc_lbl.setObjectName(f"templateDesc_{self.template_id}")
+        self.desc_lbl.setProperty("class", "templateDesc")
+        self.desc_lbl.setAlignment(Qt.AlignCenter)
+        self.desc_lbl.setWordWrap(True)
+        self.desc_lbl.setFixedHeight(44)
+        layout.addWidget(self.desc_lbl)
+
+    def set_selected(self, selected: bool):
+        self._is_selected = selected
+        self.setProperty("selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.selected_signal.emit(self.template_id)
+        super().mousePressEvent(event)
+
+
+def _trigger_modal_inspector(event) -> bool:
+    """Helper to trigger Component Inspector (F12) from active modal dialogs."""
+    if event.key() == Qt.Key_F12:
+        from PySide6.QtWidgets import QApplication
+        for w in QApplication.topLevelWidgets():
+            if hasattr(w, "_trigger_inspector"):
+                w._trigger_inspector()
+                return True
+    return False
+
+
+class CoverTemplatePickerFloatingPanel(QFrame):
+    """
+    In-App Floating Tool Panel (QFrame overlay on MainWindow) for Selecting Playlist Artwork Layout Templates.
+    Dynamically adapts based on photo count (Category 1, 2, 3, 4).
+    
+    Component Name: CoverTemplatePickerFloatingPanel
+    """
+    def __init__(self, photos: Any = None, active_template_id: str = "", on_applied=None, on_cancelled=None, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CoverTemplatePickerFloatingPanel")
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setFixedSize(880, 460)
+
+        # Normalize photos into a list of QPixmaps
+        self._photos = []
+        if isinstance(photos, list):
+            self._photos = [p for p in photos if p and not (isinstance(p, QPixmap) and p.isNull())]
+        elif isinstance(photos, QPixmap) and not photos.isNull():
+            self._photos = [photos]
+
+        self.photo_count = max(1, len(self._photos))
+        self.selected_template_id = active_template_id or CollageMasterDispatcher.get_default_template_id(self.photo_count)
+        self._cards = {}
+        self.on_applied = on_applied
+        self.on_cancelled = on_cancelled
+
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+
+        # Smooth Open & Close Opacity Animation
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity", self)
+        self.anim.setDuration(200)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim.finished.connect(self._on_anim_finished)
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setStyleSheet("""
+            QFrame#CoverTemplatePickerFloatingPanel {
+                background-color: rgba(14, 15, 20, 0.97);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#coverTemplatePickerTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#coverTemplatePickerTitleLabel {
                 color: #FFFFFF;
-                font-family: 'Orbitron', sans-serif;
                 font-size: 13px;
                 font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
                 background: transparent;
                 letter-spacing: 0.5px;
             }
-            QLabel#coverDirLabel {
-                color: #8a8d98;
+            QLabel#coverTemplatePickerSubtitle {
+                color: #8A8D98;
                 font-family: 'Orbitron', sans-serif;
-                font-size: 10px;
-                font-weight: bold;
+                font-size: 11px;
                 background: transparent;
             }
-            QLineEdit#coverPathEdit {
-                background: rgba(0, 0, 0, 0.4);
-                color: #d0d0d0;
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 4px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 10px;
-                padding: 2px 6px;
-            }
-            QToolButton#coverFolderBtn {
-                background: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 4px;
-                min-width: 22px;
-                max-width: 22px;
-                min-height: 22px;
-                max-height: 22px;
+            QPushButton#coverTemplatePickerCloseBtn {
+                background: transparent;
+                border: none;
+                border-radius: 6px;
                 padding: 0px;
                 margin: 0px;
             }
-            QToolButton#coverFolderBtn:hover {
-                background: rgba(255, 91, 6, 0.35);
-                border: 1px solid rgba(255, 91, 6, 0.8);
+            QPushButton#coverTemplatePickerCloseBtn:hover {
+                background: rgba(255, 255, 255, 0.08);
             }
-            QToolButton#coverFolderBtn:disabled {
-                background: rgba(255, 255, 255, 0.02);
-                border: 1px solid rgba(255, 255, 255, 0.04);
+            QPushButton#coverTemplatePickerCloseBtn:pressed {
+                background: rgba(255, 91, 6, 0.2);
             }
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
-
-        title_lbl = QLabel(title)
-        title_lbl.setObjectName("coverTitleLabel")
-        title_lbl.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title_lbl)
-
-        # Image Container
-        self.img_container = QWidget()
-        self.img_container.setObjectName("coverImgContainer")
-        self.img_container.setFixedSize(170, 170)
-
-        self.img_lbl = RoundedImageLabel(radius=10, parent=self.img_container)
-        self.img_lbl.setObjectName("coverRoundedImg")
-        self.img_lbl.setGeometry(0, 0, 170, 170)
-
-        self.overlay = QLabel(self.img_container)
-        self.overlay.setObjectName("coverActionOverlay")
-        self.overlay.setGeometry(0, 0, 170, 170)
-        self.overlay.setAlignment(Qt.AlignCenter)
-        self.overlay.setText(self.action_text)
-        self.overlay.hide()
-        self.overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.overlay.setStyleSheet("""
-            QLabel#coverActionOverlay {
-                background: rgba(8, 8, 12, 0.78);
-                color: #FFFFFF;
-                font-family: 'Orbitron', sans-serif;
-                font-weight: bold;
-                font-size: 11px;
+            QFrame.templateCard {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 10px;
+            }
+            QFrame.templateCard:hover {
+                background: rgba(255, 255, 255, 0.08);
                 border: 1px solid rgba(255, 91, 6, 0.6);
             }
+            QFrame.templateCard[selected="true"] {
+                background: rgba(255, 91, 6, 0.16);
+                border: 1.5px solid #FF5B06;
+            }
+            QLabel.templateTitle {
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                background: transparent;
+            }
+            QFrame.templateCard[selected="true"] QLabel.templateTitle {
+                color: #FF7B24;
+            }
+            QLabel.templateDesc {
+                color: #8A8D98;
+                font-size: 9.5px;
+                background: transparent;
+            }
+            QFrame.templateCard[selected="true"] QLabel.templateDesc {
+                color: #B0B3C0;
+            }
         """)
 
-        if self.action_text:
-            self.img_container.setCursor(Qt.PointingHandCursor)
-            self.img_container.mousePressEvent = self._on_press
-            self.img_container.installEventFilter(self)
+        container_layout = QVBoxLayout(self)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
 
-        layout.addWidget(self.img_container, alignment=Qt.AlignCenter)
-
-        # Directory row
-        dir_layout = QHBoxLayout()
-        dir_layout.setContentsMargins(0, 0, 0, 0)
-        dir_layout.setSpacing(6)
-        dir_lbl = QLabel("Directory:")
-        dir_lbl.setObjectName("coverDirLabel")
-        dir_lbl.setFixedHeight(24)
-
-        self.path_edit = QLineEdit()
-        self.path_edit.setObjectName("coverPathEdit")
-        self.path_edit.setReadOnly(True)
-        self.path_edit.setFixedHeight(24)
-        self.path_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.path_edit.setCursor(Qt.ArrowCursor)
+        # Title Bar
+        self.title_bar = QWidget()
+        self.title_bar.setObjectName("coverTemplatePickerTitleBar")
+        self.title_bar.setFixedHeight(44)
+        title_layout = QHBoxLayout(self.title_bar)
+        title_layout.setContentsMargins(14, 0, 10, 0)
+        title_layout.setSpacing(10)
+        title_layout.setAlignment(Qt.AlignVCenter)
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        folder_icon_path = os.path.join(script_dir, "UI Icons", "folder-icon-white.svg").replace("\\", "/")
+        panel_icon_path = os.path.join(script_dir, "UI Icons", "display-icon.svg").replace('\\', '/')
+        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon-white.svg").replace('\\', '/')
 
-        self.folder_btn = QToolButton()
-        self.folder_btn.setObjectName("coverFolderBtn")
-        self.folder_btn.setFixedSize(24, 24)
-        self.folder_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.folder_btn.setIcon(QIcon(folder_icon_path))
-        self.folder_btn.setIconSize(QSize(14, 14))
-        self.folder_btn.setCursor(Qt.PointingHandCursor)
-        self.folder_btn.setToolTip("Pick File" if action_text == "Edit" else "Open Folder in Explorer")
-        self.folder_btn.clicked.connect(self.folder_clicked_signal.emit)
-        self.folder_btn.setEnabled(False)
+        icon_lbl = QLabel()
+        icon_lbl.setObjectName("coverTemplatePickerIcon")
+        icon_lbl.setFixedSize(18, 18)
+        icon_lbl.setScaledContents(True)
+        if os.path.exists(panel_icon_path):
+            icon_lbl.setPixmap(QPixmap(panel_icon_path))
+        title_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
 
-        dir_layout.addWidget(dir_lbl, 0)
-        dir_layout.addWidget(self.path_edit, 1)
-        dir_layout.addWidget(self.folder_btn, 0)
+        count_str = f"{self.photo_count} {'PHOTO' if self.photo_count == 1 else 'PHOTOS COLLAGE'}"
+        title_lbl = QLabel(f"COVER TEMPLATES — {count_str}")
+        title_lbl.setObjectName("coverTemplatePickerTitleLabel")
+        title_layout.addWidget(title_lbl, alignment=Qt.AlignVCenter)
 
-        layout.addLayout(dir_layout)
+        title_layout.addStretch()
 
-    def _on_press(self, event):
+        close_btn = QPushButton()
+        close_btn.setObjectName("coverTemplatePickerCloseBtn")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        if os.path.exists(close_icon_path):
+            close_btn.setIcon(QIcon(close_icon_path))
+            close_btn.setIconSize(QSize(14, 14))
+        close_btn.clicked.connect(self.cancel_and_close)
+        title_layout.addWidget(close_btn, alignment=Qt.AlignVCenter)
+
+        container_layout.addWidget(self.title_bar)
+
+        # Content Area
+        content_widget = QWidget()
+        content_widget.setObjectName("coverTemplatePickerContent")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(16, 14, 16, 16)
+        content_layout.setSpacing(12)
+
+        subtitle_text = f"{self.photo_count} image{'s' if self.photo_count > 1 else ''} selected • Choose layout presentation style"
+        subtitle_lbl = QLabel(subtitle_text)
+        subtitle_lbl.setObjectName("coverTemplatePickerSubtitle")
+        content_layout.addWidget(subtitle_lbl)
+
+        # Horizontal Scroll Area for Cards with Natural Wheel Direction
+        scroll_area = TemplatePickerHorizontalScrollArea()
+        scroll_area.setObjectName("coverTemplatePickerScrollArea")
+
+        cards_container = QWidget()
+        cards_container.setObjectName("coverTemplateCardsContainer")
+        cards_container.setStyleSheet("background: transparent;")
+        cards_layout = QHBoxLayout(cards_container)
+        cards_layout.setContentsMargins(0, 4, 0, 8)
+        cards_layout.setSpacing(10)
+
+        # Pre-scale thumbnail cache once for high performance (zero framedrop)
+        thumb_photos = []
+        for p in self._photos:
+            if isinstance(p, QPixmap) and not p.isNull():
+                thumb_photos.append(p.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        # Populate cards via CollageMasterDispatcher
+        templates = CollageMasterDispatcher.get_templates_for_count(self.photo_count)
+        for t in templates:
+            t_id = t["id"]
+            preview_pix = CollageMasterDispatcher.render_cover(thumb_photos, t_id, size=92)
+            is_selected = (t_id == self.selected_template_id)
+            card = CoverTemplateCard(
+                t_id, t["name"], t["desc"], preview_pix, is_selected=is_selected, parent=cards_container
+            )
+            card.selected_signal.connect(self._on_template_selected)
+            self._cards[t_id] = card
+            cards_layout.addWidget(card)
+
+        cards_layout.addStretch()
+        scroll_area.setWidget(cards_container)
+        content_layout.addWidget(scroll_area, stretch=1)
+
+        # Bottom Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch()
+
+        self.cancel_btn = FadeHoverButton("Cancel", border_radius=6.0, is_secondary=True)
+        self.cancel_btn.setObjectName("coverTemplatePickerCancelBtn")
+        self.cancel_btn.setFixedSize(100, 36)
+        self.cancel_btn.clicked.connect(self.cancel_and_close)
+        btn_layout.addWidget(self.cancel_btn)
+
+        self.apply_btn = FadeHoverButton("Save & Apply", border_radius=6.0, is_secondary=False)
+        self.apply_btn.setObjectName("coverTemplatePickerApplyBtn")
+        self.apply_btn.setFixedSize(140, 36)
+        self.apply_btn.clicked.connect(self.save_and_close)
+        btn_layout.addWidget(self.apply_btn)
+
+        content_layout.addLayout(btn_layout)
+        container_layout.addWidget(content_widget)
+
+    def _on_template_selected(self, template_id: str):
+        self.selected_template_id = template_id
+        for t_id, card in self._cards.items():
+            card.set_selected(t_id == template_id)
+
+    def show_panel(self):
+        """Position centered in parent and display with smooth fade in."""
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = max(20, (parent_rect.width() - self.width()) // 2)
+            y = max(45, (parent_rect.height() - self.height()) // 2)
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        self.anim.setDirection(QPropertyAnimation.Forward)
+        self.anim.start()
+
+    def close_panel(self):
+        """Close panel with smooth fade-out and cleanup."""
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.start()
+
+    def save_and_close(self):
+        """Commit selected template and notify callback."""
+        if callable(self.on_applied):
+            self.on_applied(self.selected_template_id)
+        self.close_panel()
+
+    def cancel_and_close(self):
+        """Cancel selection and notify callback."""
+        if callable(self.on_cancelled):
+            self.on_cancelled()
+        self.close_panel()
+
+    def _on_anim_finished(self):
+        if self.anim.direction() == QPropertyAnimation.Backward:
+            self.deleteLater()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and hasattr(self, 'title_bar') and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and (event.buttons() & Qt.LeftButton):
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(25, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.overlay.hide()
-            if self._current_pixmap and not self._current_pixmap.isNull() and self.action_text == "Edit":
-                if event.pos().y() > self.img_container.height() / 2:
-                    self.remove_clicked_signal.emit()
-                else:
-                    self.clicked_signal.emit()
-            else:
-                self.clicked_signal.emit()
+            self._is_dragging = False
 
-    def eventFilter(self, obj, event):
-        if obj == self.img_container and self.action_text:
-            if event.type() == QEvent.Enter:
-                self.overlay.show()
-            elif event.type() == QEvent.Leave:
-                self.overlay.hide()
-        return super().eventFilter(obj, event)
-
-    def set_content(self, pixmap, source_path):
-        self._current_pixmap = pixmap
-        if pixmap and not pixmap.isNull():
-            self.img_lbl.setPixmap(pixmap)
-            if self.action_text == "Edit":
-                self.overlay.setText("Edit\n\n\nRemove")
-        else:
-            self.img_lbl.clear()
-            self.img_lbl.setText("No Cover")
-            self.img_lbl.setAlignment(Qt.AlignCenter)
-            if self.action_text == "Edit":
-                self.overlay.setText("Add")
-
-        self.path_edit.setText(source_path)
-        self.path_edit.setCursorPosition(0)  # Reset scroll
-        self.folder_btn.setEnabled(bool(source_path))
-
-    def _open_folder(self):
-        """Review Mode only action. Opens the file's containing folder."""
-        path = self.path_edit.text()
-        if path and os.path.exists(path):
-            try:
-                subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
-            except Exception as e:
-                print(f"[Cover] Error opening explorer: {e}")
-
-    @property
-    def current_path(self):
-        return self.path_edit.text()
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.cancel_and_close()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
-class CoverManagerDialog(QDialog):
+# Alias for backward compatibility
+CoverTemplatePickerModal = CoverTemplatePickerFloatingPanel
+
+
+class CoverManagerFloatingPanel(QFrame):
     """
-    Glassmorphism Floating Panel Dialog for Reviewing and Editing Album/Track Covers.
+    Glassmorphism In-App Floating Panel (QFrame overlay on MainWindow) for Reviewing and Editing Playlist Cover & Photos.
+    Supports dynamic multi-photo uploading, category switching, and template selection.
     
-    Component Name: CoverManagerDialog
+    Component Name: CoverManagerFloatingPanel
     """
-    def __init__(self, mode, front_path, back_path, front_source='', back_source='', parent=None):
+    def __init__(self, mode: str, photos: list = None, sources: list = None, template_id: str = '', on_applied=None, on_cancelled=None, parent=None):
         super().__init__(parent)
+        self.setObjectName("CoverManagerFloatingPanel")
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setFixedSize(450, 500)
+
         self.mode = mode
-        self.front_path = front_path
-        self.back_path = back_path
-        self.front_source = front_source
-        self.back_source = back_source
+        self.on_applied = on_applied
+        self.on_cancelled = on_cancelled
         
-        self.new_front_pixmap = None
-        self.new_back_pixmap = None
-        self.new_front_source = front_source
-        self.new_back_source = back_source
+        # Normalize in-memory photos
+        self.photos = []
+        if isinstance(photos, list):
+            for p in photos:
+                if isinstance(p, QPixmap) and not p.isNull():
+                    self.photos.append(p)
+                elif isinstance(p, str) and os.path.exists(p):
+                    pix = QPixmap(p)
+                    if not pix.isNull():
+                        self.photos.append(pix)
+        elif isinstance(photos, QPixmap) and not photos.isNull():
+            self.photos.append(photos)
+        elif isinstance(photos, str) and os.path.exists(photos):
+            pix = QPixmap(photos)
+            if not pix.isNull():
+                self.photos.append(pix)
+
+        self.sources = list(sources) if isinstance(sources, list) else ([sources] if sources else [])
+        self.active_template_id = template_id or CollageMasterDispatcher.get_default_template_id(len(self.photos))
         self.reset_all = False
 
         self._is_dragging = False
         self._drag_start_pos = QPoint()
 
-        self.setObjectName("CoverManagerDialog")
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setFixedSize(560, 430)
-
         # Smooth Open & Close Window Opacity Animation
-        self._fade_anim = QPropertyAnimation(self, b"windowOpacity", self)
-        self._fade_anim.finished.connect(self._on_fade_finished)
-        self._is_closing = False
-        self._close_action = "reject"
-        self.setWindowOpacity(0.0)
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity", self)
+        self.anim.setDuration(200)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim.finished.connect(self._on_anim_finished)
 
-        # Outer Layout
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(10, 10, 10, 10)
+        self._setup_ui()
 
-        # Glass Container
-        self.container = QFrame(self)
-        self.container.setObjectName("coverManagerContainer")
-        self.container.setStyleSheet("""
-            QFrame#coverManagerContainer {
+    def _setup_ui(self):
+        self.setStyleSheet("""
+            QFrame#CoverManagerFloatingPanel {
                 background-color: rgba(14, 15, 20, 0.97);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 14px;
@@ -2706,22 +5075,22 @@ class CoverManagerDialog(QDialog):
                 background: transparent;
                 border: none;
                 border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
             }
             QPushButton#coverManagerCloseBtn:hover {
                 background: rgba(255, 255, 255, 0.08);
             }
+            QPushButton#coverManagerCloseBtn:pressed {
+                background: rgba(255, 91, 6, 0.2);
+            }
+            QLabel#coverPreviewBox {
+                background: transparent;
+                border: none;
+            }
         """)
 
-        # Drop Shadow
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(24)
-        shadow.setColor(QColor(0, 0, 0, 180))
-        shadow.setOffset(0, 8)
-        self.container.setGraphicsEffect(shadow)
-
-        outer_layout.addWidget(self.container)
-
-        container_layout = QVBoxLayout(self.container)
+        container_layout = QVBoxLayout(self)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
 
@@ -2732,6 +5101,7 @@ class CoverManagerDialog(QDialog):
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(14, 0, 10, 0)
         title_layout.setSpacing(10)
+        title_layout.setAlignment(Qt.AlignVCenter)
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         panel_icon_path = os.path.join(script_dir, "UI Icons", "display-icon.svg").replace('\\', '/')
@@ -2743,13 +5113,24 @@ class CoverManagerDialog(QDialog):
         icon_lbl.setScaledContents(True)
         if os.path.exists(panel_icon_path):
             icon_lbl.setPixmap(QPixmap(panel_icon_path))
-        title_layout.addWidget(icon_lbl)
+        title_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
 
-        dialog_title = "REVIEW IMAGES" if mode == 'review' else "EDIT COVERS"
+        dialog_title = "REVIEW PLAYLIST COVER" if self.mode == 'review' else "EDIT PLAYLIST COVER"
         title_lbl = QLabel(dialog_title)
         title_lbl.setObjectName("coverManagerTitleLabel")
-        title_layout.addWidget(title_lbl)
+        title_layout.addWidget(title_lbl, alignment=Qt.AlignVCenter)
+
         title_layout.addStretch()
+
+        close_btn = QPushButton()
+        close_btn.setObjectName("coverManagerCloseBtn")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        if os.path.exists(close_icon_path):
+            close_btn.setIcon(QIcon(close_icon_path))
+            close_btn.setIconSize(QSize(14, 14))
+        close_btn.clicked.connect(self.cancel_and_close)
+        title_layout.addWidget(close_btn, alignment=Qt.AlignVCenter)
 
         container_layout.addWidget(self.title_bar)
 
@@ -2758,34 +5139,35 @@ class CoverManagerDialog(QDialog):
         content_widget.setObjectName("coverManagerContentWidget")
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(16, 16, 16, 16)
-        content_layout.setSpacing(16)
+        content_layout.setSpacing(14)
 
-        # Covers Layout
-        covers_layout = QHBoxLayout()
-        covers_layout.setSpacing(14)
-        is_edit = (self.mode == 'edit')
-        action_text = "Edit" if is_edit else "Show at Fullscreen"
+        # Center Composite Live Preview Stage with Cinematic Ambient Lighting
+        self.preview_stage = QWidget()
+        self.preview_stage.setObjectName("coverManagerPreviewStage")
+        self.preview_stage.setFixedSize(240, 240)
 
-        self.front_lbl = InteractiveCoverLabel("Front Cover", action_text=action_text)
-        self.front_lbl.setObjectName("frontCoverCard")
-        self.front_lbl.clicked_signal.connect(lambda: self._handle_click('front'))
-        self.front_lbl.remove_clicked_signal.connect(lambda: self._handle_remove('front'))
-        self.front_lbl.folder_clicked_signal.connect(lambda: self._handle_folder_click('front'))
+        self.preview_ambient_glow = QLabel(self.preview_stage)
+        self.preview_ambient_glow.setObjectName("coverManagerPreviewAmbientGlow")
+        self.preview_ambient_glow.setGeometry(0, 0, 240, 240)
+        self.preview_ambient_glow.setAlignment(Qt.AlignCenter)
+        self.preview_ambient_glow.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.preview_ambient_glow.setAttribute(Qt.WA_TranslucentBackground, True)
 
-        self.back_lbl = InteractiveCoverLabel("Back Cover", action_text=action_text)
-        self.back_lbl.setObjectName("backCoverCard")
-        self.back_lbl.clicked_signal.connect(lambda: self._handle_click('back'))
-        self.back_lbl.remove_clicked_signal.connect(lambda: self._handle_remove('back'))
-        self.back_lbl.folder_clicked_signal.connect(lambda: self._handle_folder_click('back'))
+        self.preview_lbl = QLabel(self.preview_stage)
+        self.preview_lbl.setObjectName("coverPreviewBox")
+        self.preview_lbl.setGeometry(20, 20, 200, 200)
+        self.preview_lbl.setAlignment(Qt.AlignCenter)
+        self.preview_lbl.setAttribute(Qt.WA_TranslucentBackground, True)
+        content_layout.addWidget(self.preview_stage, alignment=Qt.AlignCenter)
 
-        covers_layout.addWidget(self.front_lbl)
-        covers_layout.addWidget(self.back_lbl)
-        content_layout.addLayout(covers_layout)
+        # Info row
+        self.info_lbl = QLabel()
+        self.info_lbl.setObjectName("coverManagerInfoLabel")
+        self.info_lbl.setStyleSheet("color: #8A8D98; font-family: 'Orbitron', sans-serif; font-size: 11px;")
+        self.info_lbl.setAlignment(Qt.AlignCenter)
+        content_layout.addWidget(self.info_lbl)
 
-        # Initial content loading
-        self._load_initial_contents()
-
-        # Bottom Buttons
+        # Bottom Action Bar
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
@@ -2794,218 +5176,56 @@ class CoverManagerDialog(QDialog):
             self.close_action_btn = FadeHoverButton("Close", border_radius=6.0, is_secondary=True)
             self.close_action_btn.setObjectName("coverManagerReviewCloseBtn")
             self.close_action_btn.setFixedSize(110, 36)
-            self.close_action_btn.clicked.connect(self.reject)
+            self.close_action_btn.clicked.connect(self.cancel_and_close)
             btn_layout.addWidget(self.close_action_btn)
         else:
-            self.reset_btn = FadeHoverButton("Reset to Defaults", border_radius=6.0, color_mode="red")
+            self.upload_btn = FadeHoverButton("Upload Photos", border_radius=6.0, is_secondary=True)
+            self.upload_btn.setObjectName("coverManagerUploadBtn")
+            self.upload_btn.setFixedSize(130, 36)
+            self.upload_btn.clicked.connect(self._open_file_picker)
+            btn_layout.addWidget(self.upload_btn)
+
+            self.template_btn = FadeHoverButton("Template", border_radius=6.0, is_secondary=True)
+            self.template_btn.setObjectName("coverManagerTemplateBtn")
+            self.template_btn.setFixedSize(100, 36)
+            self.template_btn.clicked.connect(self._open_template_picker_dialog)
+            btn_layout.addWidget(self.template_btn)
+
+            self.reset_btn = FadeHoverButton("Reset", border_radius=6.0, color_mode="red")
             self.reset_btn.setObjectName("coverManagerResetBtn")
-            self.reset_btn.setFixedSize(170, 36)
+            self.reset_btn.setFixedSize(70, 36)
             self.reset_btn.clicked.connect(self._reset_covers)
             btn_layout.addWidget(self.reset_btn)
 
             btn_layout.addStretch()
 
-            self.cancel_btn = FadeHoverButton("Cancel", border_radius=6.0, is_secondary=True)
-            self.cancel_btn.setObjectName("coverManagerCancelBtn")
-            self.cancel_btn.setFixedSize(100, 36)
-            self.cancel_btn.clicked.connect(self.reject)
-            btn_layout.addWidget(self.cancel_btn)
-
-            self.apply_btn = FadeHoverButton("Save & Apply", border_radius=6.0, is_secondary=False)
+            self.apply_btn = FadeHoverButton("Save", border_radius=6.0, is_secondary=False)
             self.apply_btn.setObjectName("coverManagerApplyBtn")
-            self.apply_btn.setFixedSize(140, 36)
-            self.apply_btn.clicked.connect(self.accept)
+            self.apply_btn.setFixedSize(75, 36)
+            self.apply_btn.clicked.connect(self.save_and_close)
             btn_layout.addWidget(self.apply_btn)
 
         content_layout.addLayout(btn_layout)
         container_layout.addWidget(content_widget)
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._is_closing = False
-        self._fade_anim.stop()
-        self._fade_anim.setDuration(180)
-        self._fade_anim.setStartValue(0.0)
-        self._fade_anim.setEndValue(1.0)
-        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._fade_anim.start()
+        self._update_display()
 
-    def accept(self):
-        self._start_close_animation("accept")
-
-    def reject(self):
-        self._start_close_animation("reject")
-
-    def _start_close_animation(self, action="reject"):
-        if self._is_closing:
-            return
-        self._is_closing = True
-        self._close_action = action
-        self._fade_anim.stop()
-        self._fade_anim.setDuration(140)
-        self._fade_anim.setStartValue(self.windowOpacity())
-        self._fade_anim.setEndValue(0.0)
-        self._fade_anim.setEasingCurve(QEasingCurve.InCubic)
-        self._fade_anim.start()
-
-    def _on_fade_finished(self):
-        if self._is_closing:
-            if self._close_action == "accept":
-                super().accept()
-            else:
-                super().reject()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            title_rect = self.title_bar.rect()
-            title_mapped = self.title_bar.mapTo(self, title_rect.topLeft())
-            drag_area = QRect(title_mapped, self.title_bar.size())
-            click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
-            if drag_area.contains(click_pos):
-                self._is_dragging = True
-                global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
-                self._drag_start_pos = global_pos - self.frameGeometry().topLeft()
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._is_dragging and event.buttons() & Qt.LeftButton:
-            global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
-            self.move(global_pos - self._drag_start_pos)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._is_dragging = False
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_F12:
-            main_window = self.parent()
-            while main_window and not hasattr(main_window, '_trigger_inspector'):
-                main_window = main_window.parent()
-            if main_window and hasattr(main_window, '_trigger_inspector'):
-                main_window._trigger_inspector()
-            else:
-                self._trigger_dialog_inspector()
-            event.accept()
-            return
-        elif event.key() == Qt.Key_Escape:
-            self.reject()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def _trigger_dialog_inspector(self):
-        """Component Inspector handler inside modal CoverManagerDialog."""
-        cursor_pos = QCursor.pos()
-        widget = QApplication.widgetAt(cursor_pos)
-        if not widget:
-            pos = self.mapFromGlobal(cursor_pos)
-            widget = self.childAt(pos)
-        if widget:
-            hierarchy = []
-            w = widget
-            while w:
-                name = w.objectName() or "(no name)"
-                hierarchy.append(f"{w.__class__.__name__}#{name}")
-                w = w.parent()
-
-            widget_type = widget.__class__.__name__
-            component_name = widget.objectName() or widget_type
-            selector_text = f"{widget_type}#{widget.objectName()}" if widget.objectName() else f"<{widget_type}: set objectName first>"
-            info = f"""Component Inspector
-
-Component: {component_name}
-Widget Type: {widget_type}
-Object Name: {widget.objectName() or '(not set)'}
-Size: {widget.width()} x {widget.height()}
-
-Hierarchy (child \u2192 parent):
-{chr(10).join(f"  {i}. {h}" for i, h in enumerate(hierarchy[:6]))}
-
-Stylesheet Selector:
-  {selector_text}
-"""
-            from PySide6.QtWidgets import QMessageBox
-            msg = QMessageBox(self)
-            msg.setIcon(QMessageBox.Information)
-            msg.setWindowTitle("Component Inspector (F12) - HELXAID")
-            msg.setText(info)
-            msg.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
-            QApplication.clipboard().setText(info)
-            msg.addButton("Copy Info", QMessageBox.ActionRole)
-            msg.addButton(QMessageBox.Ok)
-            msg.exec()
-
-
-    def _load_initial_contents(self):
-        f_pix = QPixmap(self.front_path) if self.front_path else None
-        b_pix = QPixmap(self.back_path) if self.back_path else None
-        self.front_lbl.set_content(f_pix, self.front_path)
-        self.back_lbl.set_content(b_pix, self.back_path)
-
-    def _reset_covers(self):
-        self.reset_all = True
-        self.new_front_pixmap = None
-        self.new_back_pixmap = None
-        self.new_front_source = ''
-        self.new_back_source = ''
-        self.front_lbl.set_content(None, "")
-        self.back_lbl.set_content(None, "")
-
-    def _handle_remove(self, target):
-        self.reset_all = False
-        if target == 'front':
-            self.new_front_pixmap = "REMOVED"
-            self.new_front_source = ''
-            self.front_lbl.set_content(None, "")
+    def _update_display(self):
+        count = len(self.photos)
+        
+        if count == 0:
+            rendered = CollageMasterDispatcher.render_cover([], size=240)
+            self.preview_lbl.setPixmap(rendered.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.info_lbl.setText("Default clean playlist placeholder")
         else:
-            self.new_back_pixmap = "REMOVED"
-            self.new_back_source = ''
-            self.back_lbl.set_content(None, "")
+            rendered = CollageMasterDispatcher.render_cover(self.photos, self.active_template_id, size=240)
+            self.preview_lbl.setPixmap(rendered.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.info_lbl.setText(f"Template: {self.active_template_id} • {count} active photo{'s' if count > 1 else ''}")
 
-    def _handle_click(self, target):
-        if self.mode == 'edit':
-            # CLICK IMAGE (Edit) = CROP current source (Priority: High-Res Source)
-            lbl = self.front_lbl if target == 'front' else self.back_lbl
-            source = self.new_front_source if target == 'front' else self.new_back_source
-            
-            # Use high-res source if available and exists, else fallback to current display path (cropped)
-            path = source if source and os.path.exists(source) else lbl.current_path
-            
-            if path and os.path.exists(path):
-                self._pick_and_crop(target, path)
-            else:
-                # Fallback to picker if no image is present (default cover)
-                self._handle_folder_click(target)
-        else:
-            # Mode review: Show Fullscreen Overlay
-            lbl = self.front_lbl if target == 'front' else self.back_lbl
-            lbl.overlay.hide()
-            pixmap = lbl._current_pixmap
-            if pixmap and not pixmap.isNull():
-                overlay = FullscreenImageOverlay(pixmap, self)
-                overlay.showFullScreen()
-                overlay.exec()
-                self.activateWindow()
-                self.raise_()
-                self.setFocus()
+        aura_pix = CinematicGlowEngine.generate_ambient_aura(rendered, aura_size=240, intensity=0.60)
+        self.preview_ambient_glow.setPixmap(aura_pix)
 
-    def _handle_folder_click(self, target):
-        if self.mode == 'edit':
-            # CLICK FOLDER BUTTON = PICK NEW SOURCE
-            path = self._open_file_picker(target)
-            if path:
-                self._pick_and_crop(target, path)
-        else:
-            # Mode review: Open explorer location
-            lbl = self.front_lbl if target == 'front' else self.back_lbl
-            lbl._open_folder()
-
-    def _open_file_picker(self, target):
+    def _open_file_picker(self):
         from PySide6.QtWidgets import QFileDialog
 
         IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.webp *.tiff *.tif *.ico);;All Files (*)"
@@ -3018,63 +5238,955 @@ Stylesheet Selector:
         except Exception:
             pass
 
-        path, _ = QFileDialog.getOpenFileName(self, f"Select {target.capitalize()} Cover Source", last_dir, IMAGE_FILTER)
-        if not path or not os.path.exists(path):
-            return ""
-            
-        # Save new directory memory
+        paths, _ = QFileDialog.getOpenFileNames(self, "Select Cover Artwork(s)", last_dir, IMAGE_FILTER)
+        if not paths:
+            return
+
+        # Save last directory
         try:
             d = {}
             if os.path.exists(settings_path):
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     d = json.load(f)
-            d['last_cover_dir'] = os.path.dirname(path)
+            d['last_cover_dir'] = os.path.dirname(paths[0])
             with open(settings_path, 'w', encoding='utf-8') as f:
                 json.dump(d, f, indent=2, ensure_ascii=False)
         except Exception:
             pass
-            
-        return path
 
-    def _pick_and_crop(self, target, path):
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
+        new_pixmaps = []
+        for p in paths:
+            pix = QPixmap(p)
+            if not pix.isNull():
+                new_pixmaps.append(pix)
+
+        if new_pixmaps:
+            old_photos = list(self.photos)
+            old_sources = list(self.sources)
+            old_reset_all = self.reset_all
+            old_template_id = self.active_template_id
+
+            candidate_template_id = CollageMasterDispatcher.get_default_template_id(len(new_pixmaps))
+
+            parent_target = self.window() or self
+            if hasattr(self, '_template_floating_panel') and self._template_floating_panel:
+                try:
+                    self._template_floating_panel.close_panel()
+                except Exception:
+                    pass
+
+            def _on_upload_applied(t_id):
+                self.photos = new_pixmaps
+                self.sources = paths
+                self.reset_all = False
+                self.active_template_id = t_id
+                self._update_display()
+
+            def _on_upload_cancelled():
+                self.photos = old_photos
+                self.sources = old_sources
+                self.reset_all = old_reset_all
+                self.active_template_id = old_template_id
+                self._update_display()
+
+            self._template_floating_panel = CoverTemplatePickerFloatingPanel(
+                photos=new_pixmaps,
+                active_template_id=candidate_template_id,
+                on_applied=_on_upload_applied,
+                on_cancelled=_on_upload_cancelled,
+                parent=parent_target
+            )
+            self._template_floating_panel.show_panel()
+
+    def _open_template_picker_dialog(self):
+        """Open CoverTemplatePickerFloatingPanel matching current photos."""
+        if not self.photos:
             return
-            
-        max_size = 2048
-        if pixmap.width() > max_size or pixmap.height() > max_size:
-            pixmap = pixmap.scaled(max_size, max_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        parent_target = self.window() or self
+        if hasattr(self, '_template_floating_panel') and self._template_floating_panel:
+            try:
+                self._template_floating_panel.close_panel()
+            except Exception:
+                pass
 
-        # Show Crop Dialog
-        dialog = CoverCropDialog(pixmap, self)
-        if dialog.exec() == QDialog.Accepted:
-            cropped = dialog.get_cropped_pixmap()
-            if not cropped or cropped.isNull():
-                return
-            
-            self.reset_all = False
-            if target == 'front':
-                self.new_front_pixmap = cropped
-                self.new_front_source = path
-                self.front_lbl.set_content(cropped, path)
-            else:
-                self.new_back_pixmap = cropped
-                self.new_back_source = path
-                self.back_lbl.set_content(cropped, path)
+        def _on_applied(t_id):
+            self.active_template_id = t_id
+            self._update_display()
+
+        self._template_floating_panel = CoverTemplatePickerFloatingPanel(
+            photos=self.photos,
+            active_template_id=self.active_template_id,
+            on_applied=_on_applied,
+            parent=parent_target
+        )
+        self._template_floating_panel.show_panel()
+
+    def _reset_covers(self):
+        self.reset_all = True
+        self.photos = []
+        self.sources = []
+        self.active_template_id = "1_full"
+        self._update_display()
 
     def get_changes(self):
         return {
             'reset': self.reset_all,
-            'front': self.new_front_pixmap,
-            'back': self.new_back_pixmap,
-            'front_source': self.new_front_source,
-            'back_source': self.new_back_source
+            'photos': self.photos,
+            'sources': self.sources,
+            'template_id': self.active_template_id
         }
+
+    def show_panel(self):
+        """Position centered in parent and display with smooth fade in."""
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = max(20, (parent_rect.width() - self.width()) // 2)
+            y = max(45, (parent_rect.height() - self.height()) // 2)
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        self.anim.setDirection(QPropertyAnimation.Forward)
+        self.anim.start()
+
+    def close_panel(self):
+        """Close panel with smooth fade-out and cleanup."""
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.start()
+
+    def save_and_close(self):
+        """Commit changes and notify callback."""
+        if callable(self.on_applied):
+            self.on_applied(self.get_changes())
+        self.close_panel()
+
+    def cancel_and_close(self):
+        """Cancel changes and notify callback."""
+        if callable(self.on_cancelled):
+            self.on_cancelled()
+        self.close_panel()
+
+    def _on_anim_finished(self):
+        if self.anim.direction() == QPropertyAnimation.Backward:
+            self.deleteLater()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and hasattr(self, 'title_bar') and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and (event.buttons() & Qt.LeftButton):
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(25, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.cancel_and_close()
+            event.accept()
+            return
+        if _trigger_modal_inspector(event):
+            return
+        super().keyPressEvent(event)
+
+
+# Alias for backward compatibility
+CoverManagerDialog = CoverManagerFloatingPanel
+
+
+class CoverReviewLightboxOverlay(QFrame):
+    """
+    Full-Screen Semi-Transparent Lightbox Overlay (QFrame) for Immersive Playlist Cover Review & Showcase.
+    Covers the entire active monitor screen display (100% display area over desktop/taskbar) with a soft
+    translucent dark veil (rgba(8, 10, 16, 0.72)), large centered high-res collage stage with dramatic
+    cinematic ambient glow, subtle left/right dismissal hints, and zero-friction click-outside/ESC dismissal.
+    
+    Component Name: CoverReviewLightboxOverlay
+    """
+    def __init__(self, photos: list = None, template_id: str = '', parent=None):
+        super().__init__(parent)
+        self.setObjectName("CoverReviewLightboxOverlay")
+        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setCursor(Qt.PointingHandCursor)
+        
+        # Normalize in-memory photos
+        self.photos = []
+        if isinstance(photos, list):
+            for p in photos:
+                if isinstance(p, QPixmap) and not p.isNull():
+                    self.photos.append(p)
+                elif isinstance(p, str) and os.path.exists(p):
+                    pix = QPixmap(p)
+                    if not pix.isNull():
+                        self.photos.append(pix)
+        elif isinstance(photos, QPixmap) and not photos.isNull():
+            self.photos.append(photos)
+        elif isinstance(photos, str) and os.path.exists(photos):
+            pix = QPixmap(photos)
+            if not pix.isNull():
+                self.photos.append(pix)
+
+        self.active_template_id = template_id or CollageMasterDispatcher.get_default_template_id(len(self.photos))
+
+        # Initial geometry set to active monitor
+        self.setGeometry(self._get_target_screen_geometry())
+
+        # Opacity Fade Animation (0.0 -> 1.0)
+        self._opacity_val = 0.0
+        self._fade_anim = QVariantAnimation(self)
+        self._fade_anim.setDuration(220)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_anim.valueChanged.connect(self._on_opacity_changed)
+        self._fade_anim.finished.connect(self._on_anim_finished)
+
+        self._setup_ui()
+
+    def _get_target_screen_geometry(self) -> QRect:
+        """Find the screen geometry of the active display where parent is located."""
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QApplication
+        screen = None
+        if self.parent() and hasattr(self.parent(), 'window'):
+            pw = self.parent().window()
+            if pw and hasattr(pw, 'screen'):
+                screen = pw.screen()
+        if not screen:
+            screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        
+        if screen:
+            return screen.geometry()
+        return QRect(0, 0, 1920, 1080)
+
+    def _setup_ui(self):
+        self.setStyleSheet("""
+            QLabel.lightboxSideHint {
+                color: rgba(255, 255, 255, 0.30);
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                letter-spacing: 2px;
+            }
+            QLabel#lightboxHeaderTitle {
+                color: #FFFFFF;
+                font-size: 15px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 1px;
+            }
+            QLabel#lightboxHeaderSubtitle {
+                color: #8A8D98;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                background: transparent;
+            }
+            QLabel#lightboxMetaBadge {
+                background-color: rgba(18, 20, 28, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+                color: #A0A5B5;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                padding: 6px 18px;
+            }
+        """)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(40, 30, 40, 30)
+        main_layout.setSpacing(12)
+
+        # Top Bar (Header Title & Subtitle without Close Button)
+        top_bar = QWidget()
+        top_bar.setObjectName("lightboxTopBar")
+        top_bar.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        top_bar_layout = QHBoxLayout(top_bar)
+        top_bar_layout.setContentsMargins(0, 0, 0, 0)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        panel_icon_path = os.path.join(script_dir, "UI Icons", "display-icon.svg").replace('\\', '/')
+
+        icon_lbl = QLabel()
+        icon_lbl.setObjectName("lightboxHeaderIcon")
+        icon_lbl.setFixedSize(22, 22)
+        icon_lbl.setScaledContents(True)
+        icon_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        if os.path.exists(panel_icon_path):
+            icon_lbl.setPixmap(QPixmap(panel_icon_path))
+        top_bar_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        title_lbl = QLabel("PLAYLIST ARTWORK SHOWCASE")
+        title_lbl.setObjectName("lightboxHeaderTitle")
+        title_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        title_col.addWidget(title_lbl)
+
+        count = len(self.photos)
+        sub_text = f"{count} {'photo' if count == 1 else 'photos collage'} • Full display master fidelity"
+        sub_lbl = QLabel(sub_text)
+        sub_lbl.setObjectName("lightboxHeaderSubtitle")
+        sub_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        title_col.addWidget(sub_lbl)
+
+        top_bar_layout.addLayout(title_col)
+        top_bar_layout.addStretch()
+
+        main_layout.addWidget(top_bar)
+
+        # Center Section (Left Dismiss Hint | Massive Stage Center | Right Dismiss Hint)
+        center_section = QWidget()
+        center_section.setObjectName("lightboxCenterSection")
+        center_section.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        center_layout = QHBoxLayout(center_section)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(24)
+
+        # Left Dismiss Text
+        left_hint = QLabel("•  CLICK ANYWHERE TO CLOSE  •")
+        left_hint.setObjectName("lightboxLeftHint")
+        left_hint.setProperty("class", "lightboxSideHint")
+        left_hint.setAlignment(Qt.AlignCenter)
+        left_hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        center_layout.addWidget(left_hint, stretch=1)
+
+        # Center Stage Widget
+        stage_size = 500
+        cover_size = 380
+        self.stage_widget = QWidget()
+        self.stage_widget.setObjectName("lightboxStageWidget")
+        self.stage_widget.setFixedSize(stage_size, stage_size)
+        self.stage_widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        self.ambient_glow_lbl = QLabel(self.stage_widget)
+        self.ambient_glow_lbl.setObjectName("lightboxAmbientGlowLabel")
+        self.ambient_glow_lbl.setGeometry(0, 0, stage_size, stage_size)
+        self.ambient_glow_lbl.setAlignment(Qt.AlignCenter)
+        self.ambient_glow_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        self.front_cover_lbl = QLabel(self.stage_widget)
+        self.front_cover_lbl.setObjectName("lightboxFrontCoverLabel")
+        c_offset = (stage_size - cover_size) // 2
+        self.front_cover_lbl.setGeometry(c_offset, c_offset, cover_size, cover_size)
+        self.front_cover_lbl.setAlignment(Qt.AlignCenter)
+        self.front_cover_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        center_layout.addWidget(self.stage_widget, stretch=0, alignment=Qt.AlignCenter)
+
+        # Right Dismiss Text
+        right_hint = QLabel("•  CLICK ANYWHERE TO CLOSE  •")
+        right_hint.setObjectName("lightboxRightHint")
+        right_hint.setProperty("class", "lightboxSideHint")
+        right_hint.setAlignment(Qt.AlignCenter)
+        right_hint.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        center_layout.addWidget(right_hint, stretch=1)
+
+        main_layout.addWidget(center_section, stretch=1)
+
+        # Bottom Info Badge
+        bottom_bar = QHBoxLayout()
+        bottom_bar.addStretch()
+
+        meta_badge = QLabel(f"TEMPLATE: {self.active_template_id.upper()}  •  {count} IMAGES  •  [ ESC ] TO DISMISS")
+        meta_badge.setObjectName("lightboxMetaBadge")
+        meta_badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        bottom_bar.addWidget(meta_badge)
+
+        bottom_bar.addStretch()
+        main_layout.addLayout(bottom_bar)
+
+        self._render_showcase()
+
+    def _render_showcase(self):
+        stage_size = 500
+        cover_size = 380
+
+        if not self.photos:
+            rendered = CollageMasterDispatcher.render_cover([], size=512)
+        else:
+            rendered = CollageMasterDispatcher.render_cover(self.photos, self.active_template_id, size=512)
+
+        scaled_front = rendered.scaled(cover_size, cover_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.front_cover_lbl.setPixmap(scaled_front)
+
+        # Generate vibrant ambient aura for the showcase stage
+        aura_pix = CinematicGlowEngine.generate_ambient_aura(
+            rendered, aura_size=stage_size, cover_size=cover_size, intensity=0.75, mode="adaptive", enabled=True
+        )
+        self.ambient_glow_lbl.setPixmap(aura_pix)
+
+    def paintEvent(self, event):
+        """Paint soft translucent dark veil across the entire screen."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+        alpha = int(185 * self._opacity_val)
+        if alpha > 0:
+            painter.fillRect(self.rect(), QColor(8, 10, 16, alpha))
+
+    def _on_opacity_changed(self, value):
+        self._opacity_val = float(value)
+        self.update()
+
+    def show_panel(self):
+        """Cover the entire active monitor display and display with smooth fade in."""
+        geom = self._get_target_screen_geometry()
+        self.setGeometry(geom)
+        self._opacity_val = 0.0
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self._fade_anim.stop()
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.start()
+
+    def close_panel(self):
+        """Close overlay with smooth fade-out and cleanup."""
+        self._fade_anim.stop()
+        self._fade_anim.setStartValue(self._opacity_val)
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.start()
+
+    def _on_anim_finished(self):
+        if self._opacity_val <= 0.01:
+            self.deleteLater()
+
+    def mousePressEvent(self, event):
+        # Any click anywhere on the entire screen immediately closes the lightbox
+        if event.button() in (Qt.LeftButton, Qt.RightButton, Qt.MiddleButton):
+            self.close_panel()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Escape, Qt.Key_Space, Qt.Key_Return):
+            self.close_panel()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class StepSlider(QSlider):
+    """
+    QSlider with custom singleStep handling for mouse wheel scroll snapping (multiples of step).
+    
+    Component Name: StepSlider
+    """
+    def __init__(self, orientation=Qt.Horizontal, step: int = 5, parent=None):
+        super().__init__(orientation, parent)
+        self.setObjectName("StepSlider")
+        self._step = max(1, step)
+        self.setSingleStep(self._step)
+        self.setPageStep(self._step)
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta > 0:
+            new_val = min(self.maximum(), ((self.value() + self._step) // self._step) * self._step)
+        elif delta < 0:
+            new_val = max(self.minimum(), ((self.value() - 1) // self._step) * self._step)
+        else:
+            return
+        self.setValue(new_val)
+        event.accept()
+
+
+class CinematicLightingFloatingPanel(QFrame):
+    """
+    In-App Floating Tool Panel (QFrame overlay on MainWindow) for Cinematic Lighting configuration.
+    Provides real-time interactive preview, intensity/spread sliders, and multi-mode selection.
+    
+    Component Name: CinematicLightingFloatingPanel
+    """
+    def __init__(self, current_cover: Optional[QPixmap] = None, on_applied=None, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CinematicLightingFloatingPanel")
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setFixedSize(460, 560)
+
+        self.source_cover = current_cover
+        self.on_applied = on_applied
+        self.config = CinematicLightingManager.load_config()
+
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+
+        # Fade In/Out Animation
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity", self)
+        self.anim.setDuration(200)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim.finished.connect(self._on_anim_finished)
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setStyleSheet("""
+            QFrame#CinematicLightingFloatingPanel {
+                background-color: rgba(10, 11, 16, 0.96);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#cinematicTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#cinematicTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 0.5px;
+            }
+            QPushButton#cinematicCloseBtn {
+                background: transparent;
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QPushButton#cinematicCloseBtn:hover {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QPushButton#cinematicCloseBtn:pressed {
+                background: rgba(255, 91, 6, 0.2);
+            }
+            QLabel.cinematicHeader {
+                color: #A0A5B5;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                letter-spacing: 1px;
+            }
+            QLabel.cinematicValue {
+                color: #FF7B24;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QSlider::groove:horizontal {
+                height: 6px;
+                background: rgba(255, 255, 255, 0.10);
+                border-radius: 3px;
+            }
+            QSlider::sub-page:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FF7B24);
+                border-radius: 3px;
+            }
+            QSlider::handle:horizontal {
+                background: #FFFFFF;
+                width: 16px;
+                margin-top: -5px;
+                margin-bottom: -5px;
+                border-radius: 8px;
+            }
+            QSlider::handle:horizontal:hover {
+                background: #FF7B24;
+            }
+            QComboBox#cinematicModeCombo {
+                background-color: rgba(255, 255, 255, 0.06);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 6px;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                padding: 6px 12px;
+            }
+            QComboBox#cinematicModeCombo:hover {
+                background-color: rgba(255, 255, 255, 0.10);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+            QComboBox#cinematicModeCombo::drop-down {
+                border: none;
+                width: 24px;
+            }
+            QComboBox#cinematicModeCombo QAbstractItemView {
+                background-color: #12131A;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                selection-background-color: rgba(255, 91, 6, 0.25);
+                selection-color: #FF7B24;
+                padding: 4px;
+                outline: none;
+            }
+            QComboBox#cinematicModeCombo QAbstractItemView::item {
+                min-height: 28px;
+                padding: 4px 8px;
+                border-radius: 4px;
+            }
+        """)
+
+        container_layout = QVBoxLayout(self)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
+        # Title Bar
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("cinematicTitleBar")
+        self.title_bar.setFixedHeight(44)
+        title_layout = QHBoxLayout(self.title_bar)
+        title_layout.setContentsMargins(14, 0, 10, 0)
+        title_layout.setSpacing(10)
+        title_layout.setAlignment(Qt.AlignVCenter)
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        icons_dir = os.path.join(script_dir, "UI Icons")
+        panel_icon_path = os.path.join(icons_dir, "display-icon.svg").replace('\\', '/')
+        close_icon_path = os.path.join(icons_dir, "close-icon-white.svg").replace('\\', '/')
+
+        icon_lbl = QLabel()
+        icon_lbl.setObjectName("cinematicIconLabel")
+        icon_lbl.setFixedSize(18, 18)
+        icon_lbl.setScaledContents(True)
+        if os.path.exists(panel_icon_path):
+            icon_lbl.setPixmap(QPixmap(panel_icon_path))
+        title_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
+
+        title_lbl = QLabel("CINEMATIC LIGHTING SETTINGS")
+        title_lbl.setObjectName("cinematicTitleLabel")
+        title_layout.addWidget(title_lbl, alignment=Qt.AlignVCenter)
+
+        title_layout.addStretch()
+
+        close_btn = QPushButton()
+        close_btn.setObjectName("cinematicCloseBtn")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        if os.path.exists(close_icon_path):
+            close_btn.setIcon(QIcon(close_icon_path))
+            close_btn.setIconSize(QSize(14, 14))
+        close_btn.clicked.connect(self.close_panel)
+        title_layout.addWidget(close_btn, alignment=Qt.AlignVCenter)
+
+        container_layout.addWidget(self.title_bar)
+
+        # Content Area
+        content_widget = QWidget(self)
+        content_widget.setObjectName("cinematicContentWidget")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(20, 12, 20, 14)
+        content_layout.setSpacing(10)
+
+        # 1. Live Interactive Preview Stage (Composited Live Canvas)
+        self.preview_stage_lbl = QLabel()
+        self.preview_stage_lbl.setObjectName("cinematicPreviewStage")
+        self.preview_stage_lbl.setFixedSize(260, 150)
+        self.preview_stage_lbl.setAlignment(Qt.AlignCenter)
+        self.preview_stage_lbl.setStyleSheet("background: #08090D; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.06);")
+        content_layout.addWidget(self.preview_stage_lbl, alignment=Qt.AlignCenter)
+
+        # Add vertical breathing space below preview stage
+        content_layout.addSpacing(4)
+
+        # 2. Master Toggle (Main Settings AnimatedCheckBox)
+        self.enable_cb = AnimatedCheckBox("Enable Cinematic Ambient Glow")
+        self.enable_cb.setObjectName("cinematicEnableCheck")
+        self.enable_cb.setFont(QFont("Orbitron", 9, QFont.Bold))
+        self.enable_cb.setChecked(self.config.get("enabled", True))
+        self.enable_cb.toggled.connect(self._on_values_changed)
+        content_layout.addWidget(self.enable_cb)
+
+        # 3. Sliders Group (Multiples of 5)
+        # Intensity Slider
+        int_header_layout = QHBoxLayout()
+        int_title = QLabel("INTENSITY / BRIGHTNESS")
+        int_title.setProperty("class", "cinematicHeader")
+        init_int = int(round(self.config.get('intensity', 0.60) * 100 / 5.0) * 5)
+        self.int_val_lbl = QLabel(f"{init_int}%")
+        self.int_val_lbl.setProperty("class", "cinematicValue")
+        int_header_layout.addWidget(int_title)
+        int_header_layout.addStretch()
+        int_header_layout.addWidget(self.int_val_lbl)
+        content_layout.addLayout(int_header_layout)
+
+        self.intensity_slider = StepSlider(Qt.Horizontal, step=5)
+        self.intensity_slider.setObjectName("cinematicIntensitySlider")
+        self.intensity_slider.setRange(10, 100)
+        self.intensity_slider.setValue(init_int)
+        self.intensity_slider.valueChanged.connect(self._on_intensity_changed)
+        content_layout.addWidget(self.intensity_slider)
+
+        # Spread Slider
+        spread_header_layout = QHBoxLayout()
+        spread_title = QLabel("AURA SPREAD (RADIUS)")
+        spread_title.setProperty("class", "cinematicHeader")
+        init_spread = int(round(self.config.get('spread', 160) / 5.0) * 5)
+        self.spread_val_lbl = QLabel(f"{init_spread} px")
+        self.spread_val_lbl.setProperty("class", "cinematicValue")
+        spread_header_layout.addWidget(spread_title)
+        spread_header_layout.addStretch()
+        spread_header_layout.addWidget(self.spread_val_lbl)
+        content_layout.addLayout(spread_header_layout)
+
+        self.spread_slider = StepSlider(Qt.Horizontal, step=5)
+        self.spread_slider.setObjectName("cinematicSpreadSlider")
+        self.spread_slider.setRange(130, 200)
+        self.spread_slider.setValue(init_spread)
+        self.spread_slider.valueChanged.connect(self._on_spread_changed)
+        content_layout.addWidget(self.spread_slider)
+
+        # 4. Mode Selection Combo (Vector SVG Icons)
+        mode_header = QLabel("LIGHTING PROFILE")
+        mode_header.setProperty("class", "cinematicHeader")
+        content_layout.addWidget(mode_header)
+
+        self.mode_combo = QComboBox()
+        self.mode_combo.setObjectName("cinematicModeCombo")
+        self.mode_combo.setIconSize(QSize(16, 16))
+
+        def make_icon(svg_name: str) -> QIcon:
+            p = os.path.join(icons_dir, svg_name).replace('\\', '/')
+            return QIcon(p) if os.path.exists(p) else QIcon()
+
+        self.mode_combo.addItem(make_icon("lighting-adaptive.svg"), "Adaptive YouTube (Color Bleed)", "adaptive")
+        self.mode_combo.addItem(make_icon("lighting-breathing.svg"), "Living Breathing Pulse", "breathing")
+        self.mode_combo.addItem(make_icon("lighting-vibrant.svg"), "Vibrant Cyber HDR (+40%)", "vibrant")
+        self.mode_combo.addItem(make_icon("lighting-orange.svg"), "HELXAID Signature Orange", "orange")
+        self.mode_combo.addItem(make_icon("lighting-cyan.svg"), "Cyberpunk Cyan Accent", "cyan")
+        self.mode_combo.addItem(make_icon("lighting-magenta.svg"), "Synthwave Magenta Accent", "magenta")
+
+        # Set initial combo index
+        cur_mode = self.config.get("mode", "adaptive")
+        idx = self.mode_combo.findData(cur_mode)
+        if idx >= 0:
+            self.mode_combo.setCurrentIndex(idx)
+        self.mode_combo.currentIndexChanged.connect(self._on_values_changed)
+        content_layout.addWidget(self.mode_combo)
+
+        # 5. Quick Presets Row
+        presets_header = QLabel("QUICK PRESETS")
+        presets_header.setProperty("class", "cinematicHeader")
+        content_layout.addWidget(presets_header)
+
+        preset_layout = QHBoxLayout()
+        preset_layout.setSpacing(8)
+
+        self.subtle_btn = FadeHoverButton("Subtle", border_radius=5.0, is_secondary=True)
+        self.subtle_btn.setObjectName("cinematicPresetSubtle")
+        self.subtle_btn.setFixedHeight(28)
+        self.subtle_btn.clicked.connect(lambda: self._apply_preset("subtle"))
+        preset_layout.addWidget(self.subtle_btn)
+
+        self.cinema_btn = FadeHoverButton("Cinema", border_radius=5.0, is_secondary=True)
+        self.cinema_btn.setObjectName("cinematicPresetCinema")
+        self.cinema_btn.setFixedHeight(28)
+        self.cinema_btn.clicked.connect(lambda: self._apply_preset("cinema"))
+        preset_layout.addWidget(self.cinema_btn)
+
+        self.overdrive_btn = FadeHoverButton("Overdrive", border_radius=5.0, is_secondary=True)
+        self.overdrive_btn.setObjectName("cinematicPresetOverdrive")
+        self.overdrive_btn.setFixedHeight(28)
+        self.overdrive_btn.clicked.connect(lambda: self._apply_preset("overdrive"))
+        preset_layout.addWidget(self.overdrive_btn)
+
+        content_layout.addLayout(preset_layout)
+
+        # 6. Bottom Action Bar (Apply Button)
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 4, 0, 0)
+        btn_layout.addStretch()
+
+        self.apply_btn = FadeHoverButton("Save Settings", border_radius=6.0, is_secondary=False)
+        self.apply_btn.setObjectName("cinematicApplyBtn")
+        self.apply_btn.setFixedSize(125, 36)
+        self.apply_btn.clicked.connect(self.save_and_close)
+        btn_layout.addWidget(self.apply_btn)
+
+        content_layout.addLayout(btn_layout)
+        container_layout.addWidget(content_widget)
+
+        self._update_live_preview()
+
+    def _on_intensity_changed(self, val: int):
+        val = int(round(val / 5.0) * 5)
+        if self.intensity_slider.value() != val:
+            self.intensity_slider.blockSignals(True)
+            self.intensity_slider.setValue(val)
+            self.intensity_slider.blockSignals(False)
+        self.int_val_lbl.setText(f"{val}%")
+        self._update_live_preview()
+
+    def _on_spread_changed(self, val: int):
+        val = int(round(val / 5.0) * 5)
+        if self.spread_slider.value() != val:
+            self.spread_slider.blockSignals(True)
+            self.spread_slider.setValue(val)
+            self.spread_slider.blockSignals(False)
+        self.spread_val_lbl.setText(f"{val} px")
+        self._update_live_preview()
+
+    def _on_values_changed(self):
+        self._update_live_preview()
+
+    def _apply_preset(self, preset_name: str):
+        if preset_name == "subtle":
+            self.enable_cb.setChecked(True)
+            self.intensity_slider.setValue(35)
+            self.spread_slider.setValue(145)
+            idx = self.mode_combo.findData("adaptive")
+            if idx >= 0:
+                self.mode_combo.setCurrentIndex(idx)
+        elif preset_name == "cinema":
+            self.enable_cb.setChecked(True)
+            self.intensity_slider.setValue(60)
+            self.spread_slider.setValue(160)
+            idx = self.mode_combo.findData("adaptive")
+            if idx >= 0:
+                self.mode_combo.setCurrentIndex(idx)
+        elif preset_name == "overdrive":
+            self.enable_cb.setChecked(True)
+            self.intensity_slider.setValue(90)
+            self.spread_slider.setValue(185)
+            idx = self.mode_combo.findData("vibrant")
+            if idx >= 0:
+                self.mode_combo.setCurrentIndex(idx)
+        self._update_live_preview()
+
+    def _reset_defaults(self):
+        self.enable_cb.setChecked(True)
+        self.intensity_slider.setValue(60)
+        self.spread_slider.setValue(160)
+        idx = self.mode_combo.findData("adaptive")
+        if idx >= 0:
+            self.mode_combo.setCurrentIndex(idx)
+        self._update_live_preview()
+
+    def _update_live_preview(self):
+        enabled = self.enable_cb.isChecked()
+        intensity = self.intensity_slider.value() / 100.0
+        spread = self.spread_slider.value()
+        mode = self.mode_combo.currentData() or "adaptive"
+
+        # Update cover preview
+        if self.source_cover and not self.source_cover.isNull():
+            cover_pix = self.source_cover
+        else:
+            cover_pix = CollageMasterDispatcher.render_cover([], size=240)
+
+        stage_w, stage_h = 260, 150
+        stage_pix = QPixmap(stage_w, stage_h)
+        stage_pix.fill(QColor("#08090D"))
+
+        p = QPainter(stage_pix)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        cx, cy = stage_w / 2.0, stage_h / 2.0
+        cover_size = 90.0
+
+        if enabled:
+            # Scale spread from [130, 200] down to preview scale (cover is 90px in preview vs 120px in header)
+            preview_spread = int(spread * (cover_size / 120.0))
+            aura_pix = CinematicGlowEngine.generate_ambient_aura(
+                cover_pix, aura_size=preview_spread, cover_size=int(cover_size), intensity=intensity, mode=mode, enabled=True
+            )
+            gx = cx - (preview_spread / 2.0)
+            gy = cy - (preview_spread / 2.0)
+            p.drawPixmap(int(gx), int(gy), aura_pix)
+
+        # Draw front cover
+        scaled_cover = cover_pix.scaled(int(cover_size), int(cover_size), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        px = cx - (cover_size / 2.0)
+        py = cy - (cover_size / 2.0)
+        p.drawPixmap(int(px), int(py), scaled_cover)
+        p.end()
+
+        self.preview_stage_lbl.setPixmap(stage_pix)
+
+    def get_config(self) -> dict:
+        return {
+            "enabled": self.enable_cb.isChecked(),
+            "intensity": round(self.intensity_slider.value() / 100.0, 2),
+            "spread": self.spread_slider.value(),
+            "mode": self.mode_combo.currentData() or "adaptive"
+        }
+
+    def show_panel(self):
+        """Position centered in parent and display with smooth fade in."""
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = max(20, (parent_rect.width() - self.width()) // 2)
+            y = max(45, (parent_rect.height() - self.height()) // 2)
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        self.anim.setDirection(QPropertyAnimation.Forward)
+        self.anim.start()
+
+    def close_panel(self):
+        """Close panel with smooth fade-out and cleanup."""
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.start()
+
+    def save_and_close(self):
+        """Save active config to persistent storage and notify caller."""
+        cfg = self.get_config()
+        CinematicLightingManager.save_config(cfg)
+        if callable(self.on_applied):
+            self.on_applied()
+        self.close_panel()
+
+    def _on_anim_finished(self):
+        if self.anim.direction() == QPropertyAnimation.Backward:
+            self.deleteLater()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and (event.buttons() & Qt.LeftButton):
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(25, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close_panel()
+            return
+        super().keyPressEvent(event)
+
+
+# Alias for backward compatibility
+CinematicLightingSettingsModal = CinematicLightingFloatingPanel
 
 
 class PlaylistHeader(QFrame):
     """
-    Playlist header matching HTML5 design.
+    Playlist header matching HTML5 design with dynamic multi-photo category vector rendering.
     
     Component Name: PlaylistHeader
     """
@@ -3083,21 +6195,20 @@ class PlaylistHeader(QFrame):
         super().__init__(parent)
         self.setObjectName("playlistHeader")
 
-        # Per-playlist cover paths (populated by _pick_cover / load_saved_cover)
-        self._cover_front_path = ''
-        self._cover_back_path = ''
-        self._cover_front_source = ''
-        self._cover_back_source = ''
+        # Per-playlist cover photo paths and active template
+        self._cover_photos = []
+        self._cover_sources = []
+        self._active_template_id = "1_full"
 
         self._setup_ui()
         self._apply_style()
     
     def _setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(25, 25, 25, 20)
-        layout.setSpacing(20)
+        layout.setContentsMargins(15, 10, 25, 10)
+        layout.setSpacing(10)
 
-        # Build the 120x120 cover container using the dedicated helper
+        # Build the 200x200 cover container (supports dynamic aura spread)
         cover_container = self._setup_cover_container()
         layout.addWidget(cover_container)
 
@@ -3122,64 +6233,60 @@ class PlaylistHeader(QFrame):
 
         layout.addLayout(info_layout, stretch=1)
 
-        # No settings button here - moved to menu bar
-
     def _setup_cover_container(self) -> QWidget:
         """
-        Build and return the 120x120 cover-art container widget.
-
-        Contains:
-          - cover_back   (QLabel, 90x90, offset to top-right)
-          - cover_front  (QLabel, 100x100, overlaps back)
-          - _cover_edit_overlay  (QLabel, full-size, hidden by default)
-            Shown on mouse-enter; displays a semi-transparent tint with
-            'Edit' text to signal that the covers are clickable/editable.
-
-        Mouse routing:
-          - Left  button  -> _pick_cover('front')  (most common action)
-          - Right button  -> context menu: Change Front / Change Back / Reset
-
-        An event filter is installed on the container so we can detect
-        QEvent.Enter / QEvent.Leave for the hover overlay without
-        subclassing QWidget.
+        Build and return the 200x200 cover-art container widget with dynamic ambient glow.
         """
         container = QWidget()
         container.setObjectName("coverContainer")
-        container.setFixedSize(120, 120)
+        container.setFixedSize(200, 200)
 
-        # Back cover (moved right and up to clearly look like a vinyl sleeve/back album)
-        self.cover_back = RoundedImageLabel(radius=6, parent=container)
-        self.cover_back.setObjectName("coverBack")
-        self.cover_back.setGeometry(25, 5, 85, 85)
-        self.cover_back.setCursor(Qt.PointingHandCursor)
-        self.cover_back.setToolTip("Left-click: Edit Covers")
+        # 1. Background Layer: YouTube-Style Cinematic Ambient Lighting Aura (supports up to 200px)
+        self.cover_ambient_glow = QLabel(container)
+        self.cover_ambient_glow.setObjectName("coverAmbientGlow")
+        self.cover_ambient_glow.setGeometry(0, 0, 200, 200)
+        self.cover_ambient_glow.setAlignment(Qt.AlignCenter)
+        self.cover_ambient_glow.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.cover_ambient_glow.setAttribute(Qt.WA_TranslucentBackground, True)
 
-        # Front cover (slightly smaller so back cover is heavily visible)
-        self.cover_front = RoundedImageLabel(radius=6, parent=container)
+        # Pulse animation for breathing mode
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+        self._glow_opacity_effect = QGraphicsOpacityEffect(self.cover_ambient_glow)
+        self._glow_opacity_effect.setOpacity(1.0)
+        self.cover_ambient_glow.setGraphicsEffect(self._glow_opacity_effect)
+
+        self._glow_pulse_anim = QPropertyAnimation(self._glow_opacity_effect, b"opacity", self)
+        self._glow_pulse_anim.setDuration(3500)
+        self._glow_pulse_anim.setStartValue(1.0)
+        self._glow_pulse_anim.setKeyValueAt(0.5, 0.62)
+        self._glow_pulse_anim.setEndValue(1.0)
+        self._glow_pulse_anim.setLoopCount(-1)
+        self._glow_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
+
+        # 2. Foreground Layer: 120x120 Pixel-Crisp Cover Artwork (centered at 40, 40)
+        self.cover_front = QLabel(container)
         self.cover_front.setObjectName("coverFront")
-        self.cover_front.setGeometry(0, 20, 95, 95)
+        self.cover_front.setGeometry(40, 40, 120, 120)
+        self.cover_front.setAlignment(Qt.AlignCenter)
+        self.cover_front.setAttribute(Qt.WA_TranslucentBackground, True)
         self.cover_front.setCursor(Qt.PointingHandCursor)
-        self.cover_front.setToolTip("Left-click: Edit Covers")
+        self.cover_front.setToolTip("Right-click: Cover Options")
         
-        # Add a subtle drop shadow to ground the front cover and make layers pop
+        # Add a subtle drop shadow
         from PySide6.QtWidgets import QGraphicsDropShadowEffect
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(15)
-        shadow.setOffset(3, 3)
+        shadow.setOffset(2, 3)
         shadow.setColor(Qt.black)
         self.cover_front.setGraphicsEffect(shadow)
 
-        # Edit overlay (shown on hover over container)
+        # 3. Interactive Edit overlay (shown on hover over container, conforms to active template shape)
         self._cover_edit_overlay = QLabel(container)
         self._cover_edit_overlay.setObjectName("coverEditOverlay")
-        self._cover_edit_overlay.setGeometry(0, 0, 120, 120)
-        self._cover_edit_overlay.setStyleSheet("background: rgba(0, 0, 0, 0.7); border-radius: 8px; border: none;")
+        self._cover_edit_overlay.setGeometry(40, 40, 120, 120)
+        self._cover_edit_overlay.setStyleSheet("background: transparent; border: none;")
         self._cover_edit_overlay.setAlignment(Qt.AlignCenter)
         self._cover_edit_overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
-        
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        edit_icon_path = os.path.join(script_dir, "UI Icons", "edit.svg").replace("\\", "/")
-        self._cover_edit_overlay.setPixmap(QIcon(edit_icon_path).pixmap(28, 28))
         self._cover_edit_overlay.show()
         
         # Setup opacity effect for fade in/out
@@ -3200,7 +6307,6 @@ class PlaylistHeader(QFrame):
         container.installEventFilter(self)
 
         # Route mouse button presses to _on_cover_mousepress
-        self.cover_back.mousePressEvent = self._on_cover_mousepress
         self.cover_front.mousePressEvent = self._on_cover_mousepress
 
         self._cover_container = container
@@ -3219,26 +6325,25 @@ class PlaylistHeader(QFrame):
                 self._cover_fade_out.setStartValue(self._cover_edit_effect.opacity())
                 self._cover_fade_out.start()
         return super().eventFilter(obj, event)
+
     def _apply_style(self):
         self.setStyleSheet("""
             QWidget#coverContainer {
                 background: transparent;
             }
             
+            QLabel#coverAmbientGlow {
+                background: transparent;
+                border: none;
+            }
+            
             QFrame#playlistHeader {
                 background: transparent;
             }
             
-            QLabel#coverBack {
-                background: #2a2a3a;
-                border-radius: 8px;
-                border: 1px solid #444444;
-            }
-            
             QLabel#coverFront {
-                background: #3a3a4a;
-                border-radius: 8px;
-                border: 1px solid #FF5B06;
+                background: transparent;
+                border: none;
             }
             
             QLabel#playlistLabel {
@@ -3271,136 +6376,319 @@ class PlaylistHeader(QFrame):
         """)
     
     def set_info(self, name: str, track_count: int, total_duration: str):
-        self._name = name # Store name for metadata refresh callbacks
+        self._name = name
         self.playlist_title.setText(name)
         self.playlist_stats.setText(f"{track_count} Media · {total_duration}")
     
-    def set_covers(self, cover1_path: str, cover2_path: str):
-        """Set cover art images. cover1 = back cover, cover2 = front cover."""
-        # Guard against identical path updates to prevent heavy pixmap reloads/stutters
-        if getattr(self, '_last_cover1', None) == cover1_path and \
-           getattr(self, '_last_cover2', None) == cover2_path:
-            return
-            
-        self._last_cover1 = cover1_path
-        self._last_cover2 = cover2_path
+    def _generate_hover_overlay(self, scaled_cover: QPixmap) -> QPixmap:
+        """
+        Generate a template-conforming dark hover scrim with centered edit icon,
+        strictly respecting the alpha mask/silhouette of the active cover template.
+        """
+        w, h = scaled_cover.width(), scaled_cover.height()
+        overlay_pix = QPixmap(w, h)
+        overlay_pix.fill(Qt.transparent)
 
-        if cover1_path and os.path.exists(cover1_path):
-            pixmap = QPixmap(cover1_path)
-            self.cover_back.setPixmap(pixmap)
-        
-        if cover2_path and os.path.exists(cover2_path):
-            pixmap = QPixmap(cover2_path)
-            self.cover_front.setPixmap(pixmap)
+        p = QPainter(overlay_pix)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        # Step 1: Draw cover silhouette to establish alpha mask
+        p.drawPixmap(0, 0, scaled_cover)
+
+        # Step 2: Fill opaque areas with semi-transparent dark scrim
+        p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        p.fillRect(0, 0, w, h, QColor(0, 0, 0, 180))
+
+        # Step 3: Draw centered Edit SVG icon on top
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        edit_icon_path = os.path.join(script_dir, "UI Icons", "edit.svg").replace("\\", "/")
+        if os.path.exists(edit_icon_path):
+            icon_pix = QIcon(edit_icon_path).pixmap(28, 28)
+            ix = (w - icon_pix.width()) // 2
+            iy = (h - icon_pix.height()) // 2
+            p.drawPixmap(ix, iy, icon_pix)
+
+        p.end()
+        return overlay_pix
+
+    def refresh_cover_display(self):
+        """
+        Re-composite and update cover art display according to active template, photos, and cinematic lighting settings.
+        """
+        valid_pixmaps = []
+        for path in self._cover_photos:
+            if path and os.path.exists(path):
+                pix = QPixmap(path)
+                if not pix.isNull():
+                    valid_pixmaps.append(pix)
+
+        if valid_pixmaps:
+            rendered = CollageMasterDispatcher.render_cover(valid_pixmaps, self._active_template_id, size=240)
+        else:
+            rendered = CollageMasterDispatcher.render_cover([], size=240)
+
+        # 1. Update Sharp Foreground Cover (120x120 centered at 40, 40)
+        scaled_cover = rendered.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.cover_front.setPixmap(scaled_cover)
+        self._cover_edit_overlay.setPixmap(self._generate_hover_overlay(scaled_cover))
+
+        # 2. Update Dynamic Cinematic Ambient Lighting Aura with user configuration
+        cfg = CinematicLightingManager.load_config()
+        enabled = cfg.get("enabled", True)
+        intensity = cfg.get("intensity", 0.60)
+        spread = cfg.get("spread", 160)
+        mode = cfg.get("mode", "adaptive")
+
+        aura_pix = CinematicGlowEngine.generate_ambient_aura(
+            rendered, aura_size=spread, cover_size=120, intensity=intensity, mode=mode, enabled=enabled
+        )
+        glow_x = max(0, (200 - spread) // 2)
+        glow_y = max(0, (200 - spread) // 2)
+        self.cover_ambient_glow.setGeometry(glow_x, glow_y, spread, spread)
+        self.cover_ambient_glow.setPixmap(aura_pix)
+
+        # 3. Handle Breathing Mode Animation
+        if enabled and mode == "breathing":
+            if self._glow_pulse_anim.state() != QPropertyAnimation.Running:
+                self._glow_pulse_anim.start()
+        else:
+            self._glow_pulse_anim.stop()
+            self._glow_opacity_effect.setOpacity(1.0)
+
+    def set_covers(self, cover_path: str = '', *args):
+        """Set cover art image (backwards compatibility)."""
+        target_path = cover_path or (args[0] if args else '')
+        if target_path and os.path.exists(target_path):
+            self._cover_photos = [target_path]
+        else:
+            self._cover_photos = []
+        self.refresh_cover_display()
+
+    def _pause_resume_timer(self):
+        """Pause the last-time-played resume countdown timer while cover menus or dialogs are active."""
+        p = self.parent()
+        while p:
+            if hasattr(p, 'resume_banner') and p.resume_banner:
+                if hasattr(p.resume_banner, 'pause_timer'):
+                    p.resume_banner.pause_timer()
+                break
+            p = p.parent()
+
+    def _resume_resume_timer(self):
+        """Resume the last-time-played resume countdown timer when cover menus or dialogs close."""
+        p = self.parent()
+        while p:
+            if hasattr(p, 'resume_banner') and p.resume_banner:
+                if hasattr(p.resume_banner, 'resume_timer'):
+                    p.resume_banner.resume_timer()
+                break
+            p = p.parent()
     
+    def _open_template_picker(self):
+        """
+        Instantiate and show CoverTemplatePickerFloatingPanel (In-App QFrame) matching active photos.
+        """
+        self._pause_resume_timer()
+        valid_pixmaps = []
+        for p in self._cover_photos:
+            if isinstance(p, QPixmap) and not p.isNull():
+                valid_pixmaps.append(p)
+            elif isinstance(p, str) and os.path.exists(p):
+                pix = QPixmap(p)
+                if not pix.isNull():
+                    valid_pixmaps.append(pix)
+
+        if not valid_pixmaps and hasattr(self, '_current_track_cover') and self._current_track_cover:
+            valid_pixmaps = [self._current_track_cover]
+
+        parent_target = self.window() or self
+        if hasattr(self, '_template_floating_panel') and self._template_floating_panel:
+            try:
+                self._template_floating_panel.close_panel()
+            except Exception:
+                pass
+
+        def _on_applied(selected_t_id):
+            self._active_template_id = selected_t_id
+            playlist_name = getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or 'My Playlist'
+            self._save_cover_setting(playlist_name, self._cover_photos, self._cover_sources, self._active_template_id)
+            self.refresh_cover_display()
+            self._resume_resume_timer()
+
+        def _on_cancelled():
+            self._resume_resume_timer()
+
+        self._template_floating_panel = CoverTemplatePickerFloatingPanel(
+            photos=valid_pixmaps,
+            active_template_id=self._active_template_id,
+            on_applied=_on_applied,
+            on_cancelled=_on_cancelled,
+            parent=parent_target
+        )
+        self._template_floating_panel.destroyed.connect(self._resume_resume_timer)
+        self._template_floating_panel.show_panel()
+
     def _on_cover_mousepress(self, event):
         """
         Route mouse button events on the cover container:
-          - Left button  → Show context menu for managing covers.
-          - Right button → Ignored.
+          - Right button → If empty, directly open file picker & template modal. If existing, show context menu.
         """
         from PySide6.QtWidgets import QMenu
         from PySide6.QtGui import QCursor
         
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.RightButton:
+            # If cover is currently empty, directly open file picker & template flow
+            has_existing = any(p and os.path.exists(p) for p in self._cover_photos)
+            if not has_existing:
+                self._open_cover_manager('edit')
+                return
+
             menu = QMenu(self)
-            menu.addAction("Review Images", lambda: self._open_cover_manager('review'))
-            menu.addAction("Edit images", lambda: self._open_cover_manager('edit'))
+            menu.setObjectName("playlistCoverMenu")
+            menu.setStyleSheet("""
+                QMenu#playlistCoverMenu {
+                    background: rgba(25, 25, 35, 0.98);
+                    color: #e0e0e0;
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 8px;
+                    padding: 5px;
+                    font-family: 'Orbitron', sans-serif;
+                }
+                QMenu#playlistCoverMenu::item {
+                    color: #e0e0e0;
+                    padding: 8px 25px;
+                    border-radius: 4px;
+                }
+                QMenu#playlistCoverMenu::item:selected {
+                    background: rgba(255, 255, 255, 0.12);
+                    color: #ffffff;
+                }
+                QMenu#playlistCoverMenu::separator {
+                    height: 1px;
+                    background: rgba(255, 255, 255, 0.1);
+                    margin: 5px 10px;
+                }
+            """)
+            menu.aboutToShow.connect(self._pause_resume_timer)
+            menu.aboutToHide.connect(self._resume_resume_timer)
+
+            menu.addAction("Choose Cover Template...", self._open_template_picker)
+            menu.addSeparator()
+            menu.addAction("Review Cover", lambda: self._open_cover_manager('review'))
+            menu.addAction("Edit Cover", lambda: self._open_cover_manager('edit'))
+            menu.addSeparator()
+            menu.addAction("Cinematic Lighting...", self._open_lighting_settings)
             menu.exec(QCursor.pos())
+
+    def _open_lighting_settings(self):
+        """
+        Open CinematicLightingFloatingPanel (In-App QFrame) to adjust ambient glow brightness, spread, and modes.
+        """
+        self._pause_resume_timer()
+        parent_target = self.window() or self
+        if hasattr(self, '_lighting_floating_panel') and self._lighting_floating_panel:
+            try:
+                self._lighting_floating_panel.close_panel()
+            except Exception:
+                pass
+
+        def _on_applied():
+            self.refresh_cover_display()
+            self._resume_resume_timer()
+
+        current_cover = self.cover_front.pixmap()
+        self._lighting_floating_panel = CinematicLightingFloatingPanel(
+            current_cover=current_cover,
+            on_applied=_on_applied,
+            parent=parent_target
+        )
+        self._lighting_floating_panel.destroyed.connect(self._resume_resume_timer)
+        self._lighting_floating_panel.show_panel()
 
     def _open_cover_manager(self, mode: str):
         """
-        Instantiate and show the CoverManagerDialog. Handle its result.
+        Open either the immersive CoverReviewLightboxOverlay (for 'review') or CoverManagerFloatingPanel (for 'edit').
         """
-        dialog = CoverManagerDialog(
-            mode, 
-            self._cover_front_path, self._cover_back_path,
-            self._cover_front_source, self._cover_back_source,
-            self
-        )
-        from PySide6.QtWidgets import QDialog
-        if dialog.exec() == QDialog.Accepted:
-            changes = dialog.get_changes()
+        self._pause_resume_timer()
+        parent_target = self.window() or self
+        
+        if mode == 'review':
+            if hasattr(self, '_review_lightbox') and self._review_lightbox:
+                try:
+                    self._review_lightbox.close_panel()
+                except Exception:
+                    pass
+
+            self._review_lightbox = CoverReviewLightboxOverlay(
+                photos=self._cover_photos,
+                template_id=self._active_template_id,
+                parent=parent_target
+            )
+            self._review_lightbox.destroyed.connect(self._resume_resume_timer)
+            self._review_lightbox.show_panel()
+            return
+
+        # Edit Mode -> Floating Editor Panel
+        if hasattr(self, '_cover_manager_floating_panel') and self._cover_manager_floating_panel:
+            try:
+                self._cover_manager_floating_panel.close_panel()
+            except Exception:
+                pass
+
+        def _on_manager_applied(changes):
             playlist_name = getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or 'My Playlist'
             if not playlist_name:
                 playlist_name = 'My Playlist'
 
             if changes.get('reset'):
                 self._reset_covers()
+                self._resume_resume_timer()
                 return
 
-            changed = False
-            
-            # Apply Front Cover changes
-            f_pix = changes.get('front')
-            if f_pix == "REMOVED":
-                if os.path.exists(self._cover_front_path):
-                    try: os.remove(self._cover_front_path)
-                    except Exception: pass
-                self._cover_front_path = ''
-                self._cover_front_source = ''
-                self.cover_front.clear()
-                changed = True
-            elif f_pix is not None:
-                saved_path = self._save_cropped_cover(f_pix, 'front')
-                if saved_path:
-                    self._cover_front_path = saved_path
-                    self._cover_front_source = changes.get('front_source', '')
-                    self.cover_front.setPixmap(
-                        f_pix.scaled(95, 95, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    )
-                    changed = True
-                    
-            # Apply Back Cover changes
-            b_pix = changes.get('back')
-            if b_pix == "REMOVED":
-                if os.path.exists(self._cover_back_path):
-                    try: os.remove(self._cover_back_path)
-                    except Exception: pass
-                self._cover_back_path = ''
-                self._cover_back_source = ''
-                self.cover_back.clear()
-                changed = True
-            elif b_pix is not None:
-                saved_path = self._save_cropped_cover(b_pix, 'back')
-                if saved_path:
-                    self._cover_back_path = saved_path
-                    self._cover_back_source = changes.get('back_source', '')
-                    self.cover_back.setPixmap(
-                        b_pix.scaled(85, 85, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    )
-                    changed = True
+            new_photos = changes.get('photos', [])
+            new_sources = changes.get('sources', [])
+            self._active_template_id = changes.get('template_id', self._active_template_id)
 
-            # If edits were made, persist the UI setting
-            if changed:
-                self._save_cover_setting(
-                    playlist_name,
-                    self._cover_front_path,
-                    self._cover_back_path,
-                    self._cover_front_source,
-                    self._cover_back_source
-                )
+            # Save cropped PNGs
+            saved_paths = []
+            for i, pix in enumerate(new_photos):
+                sp = self._save_cropped_cover(pix, f"photo_{i+1}")
+                if sp:
+                    saved_paths.append(sp)
 
-    def _save_cropped_cover(self, pixmap: "QPixmap", target: str) -> str:
+            self._cover_photos = saved_paths
+            self._cover_sources = new_sources
+
+            self._save_cover_setting(
+                playlist_name,
+                self._cover_photos,
+                self._cover_sources,
+                self._active_template_id
+            )
+            self.refresh_cover_display()
+            self._resume_resume_timer()
+
+        def _on_manager_cancelled():
+            self._resume_resume_timer()
+
+        self._cover_manager_floating_panel = CoverManagerFloatingPanel(
+            mode=mode, 
+            photos=self._cover_photos,
+            sources=self._cover_sources,
+            template_id=self._active_template_id,
+            on_applied=_on_manager_applied,
+            on_cancelled=_on_manager_cancelled,
+            parent=parent_target
+        )
+        self._cover_manager_floating_panel.destroyed.connect(self._resume_resume_timer)
+        self._cover_manager_floating_panel.show_panel()
+
+    def _save_cropped_cover(self, pixmap: "QPixmap", target: str = 'photo_1') -> str:
         """
         Save a square QPixmap to APPDATA/HELXAID/covers/{slug}_{target}.png
         at a fixed 512x512 resolution.
-
-        512x512 provides sufficient quality for the 90-100 px display labels
-        without excessive disk usage.  Re-picking an image overwrites the
-        previous file for the same playlist and target.
-
-        Parameters
-        ----------
-        pixmap : QPixmap
-            Square pixmap as returned by CoverCropDialog.get_cropped_pixmap().
-        target : str
-            'front' or 'back' — used as the filename suffix.
-
-        Returns
-        -------
-        str
-            Absolute path of the saved PNG file, or '' on failure.
         """
         import re
         covers_dir = os.path.join(
@@ -3409,8 +6697,6 @@ class PlaylistHeader(QFrame):
         os.makedirs(covers_dir, exist_ok=True)
 
         name = getattr(self, '_name', 'playlist')
-        # Sanitize playlist name so it is safe to use as part of a filename.
-        # Replace any character that is not alphanumeric, underscore, or dash.
         slug = re.sub(r'[^a-zA-Z0-9_\-]', '_', name)[:40] or 'playlist'
 
         out_path = os.path.join(covers_dir, f"{slug}_{target}.png")
@@ -3425,50 +6711,24 @@ class PlaylistHeader(QFrame):
 
     def _reset_covers(self):
         """
-        Clear both cover labels back to the default blank placeholder state
-        and remove the persisted paths from settings.json for this playlist.
+        Clear cover label back to the default blank placeholder state
+        and remove the persisted path from settings.json for this playlist.
         """
-        self._cover_front_path = ''
-        self._cover_back_path = ''
-        self._cover_front_source = ''
-        self._cover_back_source = ''
-        self.cover_front.clear()
-        self.cover_back.clear()
+        self._cover_photos = []
+        self._cover_sources = []
+        self._active_template_id = "1_full"
+        self.refresh_cover_display()
         playlist_name = getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or 'My Playlist'
         if playlist_name:
-            self._save_cover_setting(playlist_name, '', '', '', '')
+            self._save_cover_setting(playlist_name, [], [], "1_full")
             if playlist_name == 'My Playlist':
-                self._save_cover_setting('__default__', '', '', '', '')
+                self._save_cover_setting('__default__', [], [], "1_full")
 
     def _save_cover_setting(
-        self, playlist_name: str, front_path: str, back_path: str, 
-        front_source: str = '', back_source: str = ''
+        self, playlist_name: str, photos: list, sources: list = None, template_id: str = "1_full"
     ):
         """
-        Persist the front and back cover paths to APPDATA/HELXAID/settings.json.
-        Also syncs __default__ fallback so custom covers persist seamlessly.
-
-        Storage schema::
-
-            settings['playlist_covers'][playlist_name] = {
-                'front': '/absolute/path/to/front.png',
-                'back':  '/absolute/path/to/back.png',
-                'front_source': '/path/to/original.jpg',
-                'back_source':  '/path/to/original.png'
-            }
-
-        Parameters
-        ----------
-        playlist_name : str
-            Playlist display name used as the dictionary key.
-        front_path : str
-            Absolute path to the front cover PNG, or '' to clear.
-        back_path : str
-            Absolute path to the back cover PNG, or '' to clear.
-        front_source : str
-            Absolute path to original source file for front cover.
-        back_source : str
-            Absolute path to original source file for back cover.
+        Persist cover photos, sources, and template_id to APPDATA/HELXAID/settings.json.
         """
         import json
         settings_path = os.path.join(
@@ -3481,15 +6741,14 @@ class PlaylistHeader(QFrame):
                     settings = json.load(f)
             covers = settings.setdefault('playlist_covers', {})
             cover_entry = {
-                'front': front_path, 
-                'back': back_path,
-                'front_source': front_source,
-                'back_source': back_source
+                'photos': photos if isinstance(photos, list) else ([photos] if photos else []), 
+                'sources': sources if isinstance(sources, list) else ([sources] if sources else []),
+                'template_id': template_id,
+                'front': photos[0] if (isinstance(photos, list) and photos) else (photos if isinstance(photos, str) else '')
             }
             covers[playlist_name] = cover_entry
             
-            # Sync to __default__ fallback if on 'My Playlist' or if __default__ has no front/back
-            if playlist_name == 'My Playlist' or '__default__' not in covers or not (covers['__default__'].get('front') or covers['__default__'].get('back')):
+            if playlist_name == 'My Playlist' or '__default__' not in covers or not covers['__default__'].get('photos'):
                 covers['__default__'] = dict(cover_entry)
 
             with open(settings_path, 'w', encoding='utf-8') as f:
@@ -3500,107 +6759,77 @@ class PlaylistHeader(QFrame):
     def load_saved_cover(self, playlist_name: str = ''):
         """
         Restore previously saved cover images for this playlist on load with hierarchical fallback.
-
-        Resolution Order:
-          1. Exact match for `playlist_name` in settings['playlist_covers'].
-          2. Global fallback key `__default__` or `My Playlist`.
-          3. Any first valid custom cover entry in settings['playlist_covers'].
-          4. Default placeholder (clear labels).
-
-        Parameters
-        ----------
-        playlist_name : str, optional
-            Playlist display name used to look up the saved entry. If empty,
-            uses current title or 'My Playlist'.
         """
         import json
         settings_path = os.path.join(
             os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json'
         )
 
-        # Reset in-memory paths before loading
-        self._cover_front_path = ''
-        self._cover_back_path = ''
-        self._cover_front_source = ''
-        self._cover_back_source = ''
+        self._cover_photos = []
+        self._cover_sources = []
+        self._active_template_id = "1_full"
 
         try:
             if not os.path.exists(settings_path):
-                self.cover_front.clear()
-                self.cover_back.clear()
+                self.refresh_cover_display()
                 return
             with open(settings_path, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
 
             covers_map = settings.get('playlist_covers', {})
-            if not isinstance(covers_map, dict) or not covers_map:
-                self.cover_front.clear()
-                self.cover_back.clear()
-                return
-
             lookup_name = playlist_name or getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or 'My Playlist'
 
-            def _extract_paths(entry):
-                if not entry:
-                    return None, None, '', ''
-                if isinstance(entry, str):
-                    if os.path.exists(entry):
-                        return entry, entry, '', ''
-                    return None, None, '', ''
-                elif isinstance(entry, dict):
-                    f_p = entry.get('front', '')
-                    b_p = entry.get('back', '')
-                    f_src = entry.get('front_source', '')
-                    b_src = entry.get('back_source', '')
-                    f_valid = f_p if (f_p and os.path.exists(f_p)) else None
-                    b_valid = b_p if (b_p and os.path.exists(b_p)) else None
-                    if f_valid or b_valid:
-                        return f_valid, b_valid, f_src, b_src
-                return None, None, '', ''
-
-            # Tier 1: Exact match
-            front_path, back_path, front_source, back_source = _extract_paths(covers_map.get(lookup_name))
-
-            # Tier 2: Global default / fallback ('__default__', 'My Playlist')
-            if not front_path and not back_path:
-                front_path, back_path, front_source, back_source = _extract_paths(covers_map.get('__default__'))
-            if not front_path and not back_path:
-                front_path, back_path, front_source, back_source = _extract_paths(covers_map.get('My Playlist'))
-
-            # Tier 3: First available valid custom cover entry
-            if not front_path and not back_path:
-                for k, entry in covers_map.items():
-                    fp, bp, fs, bs = _extract_paths(entry)
-                    if fp or bp:
-                        front_path, back_path, front_source, back_source = fp, bp, fs, bs
-                        break
-
-            # Tier 4: No valid covers anywhere
-            if not front_path and not back_path:
-                self.cover_front.clear()
-                self.cover_back.clear()
+            if not isinstance(covers_map, dict) or not covers_map:
+                self.refresh_cover_display()
                 return
 
-            self._cover_front_path = front_path or ''
-            self._cover_back_path  = back_path or ''
-            self._cover_front_source = front_source or ''
-            self._cover_back_source = back_source or ''
+            def _extract_entry(entry):
+                if not entry:
+                    return [], [], "1_full"
+                if isinstance(entry, str):
+                    if os.path.exists(entry):
+                        return [entry], [], "1_full"
+                    return [], [], "1_full"
+                elif isinstance(entry, dict):
+                    t_id = entry.get('template_id', '1_full')
+                    p_list = entry.get('photos', [])
+                    s_list = entry.get('sources', [])
+                    if isinstance(p_list, list) and p_list:
+                        valid_p = [p for p in p_list if p and os.path.exists(p)]
+                        if valid_p:
+                            return valid_p, s_list, t_id
+                    # Fallback to legacy 'front' / 'back'
+                    f_p = entry.get('front', '')
+                    b_p = entry.get('back', '')
+                    valid_legacy = []
+                    if f_p and os.path.exists(f_p): valid_legacy.append(f_p)
+                    if b_p and os.path.exists(b_p): valid_legacy.append(b_p)
+                    if valid_legacy:
+                        return valid_legacy, [entry.get('front_source', ''), entry.get('back_source', '')], t_id
+                return [], [], "1_full"
 
-            if front_path:
-                pix = QPixmap(front_path)
-                self.cover_front.setPixmap(
-                    pix.scaled(95, 95, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
-            else:
-                self.cover_front.clear()
+            # Tier 1: Exact match
+            photos, sources, t_id = _extract_entry(covers_map.get(lookup_name))
 
-            if back_path:
-                pix = QPixmap(back_path)
-                self.cover_back.setPixmap(
-                    pix.scaled(85, 85, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
-            else:
-                self.cover_back.clear()
+            # Tier 2: Global default / fallback ('__default__', 'My Playlist')
+            if not photos:
+                photos, sources, t_id = _extract_entry(covers_map.get('__default__'))
+            if not photos:
+                photos, sources, t_id = _extract_entry(covers_map.get('My Playlist'))
+
+            # Tier 3: First available valid entry
+            if not photos:
+                for k, entry in covers_map.items():
+                    p, s, t = _extract_entry(entry)
+                    if p:
+                        photos, sources, t_id = p, s, t
+                        break
+
+            self._cover_photos = photos
+            self._cover_sources = sources
+            self._active_template_id = t_id or CollageMasterDispatcher.get_default_template_id(len(photos))
+
+            self.refresh_cover_display()
 
         except Exception as e:
             print(f"[Cover] Failed to load saved cover: {e}")
@@ -4106,6 +7335,26 @@ class PlaylistTable(QWidget):
             if orig_idx is not None and isinstance(orig_idx, int):
                 self.trackDoubleClicked.emit(orig_idx)
 
+    def _pause_resume_timer(self):
+        """Pause the last-time-played resume countdown timer while menus/modals are active."""
+        p = self.parent()
+        while p:
+            if hasattr(p, 'resume_banner') and p.resume_banner:
+                if hasattr(p.resume_banner, 'pause_timer'):
+                    p.resume_banner.pause_timer()
+                break
+            p = p.parent()
+
+    def _resume_resume_timer(self):
+        """Resume the last-time-played resume countdown timer when menus/modals close."""
+        p = self.parent()
+        while p:
+            if hasattr(p, 'resume_banner') and p.resume_banner:
+                if hasattr(p.resume_banner, 'resume_timer'):
+                    p.resume_banner.resume_timer()
+                break
+            p = p.parent()
+
     def _show_context_menu(self, pos):
         from PySide6.QtWidgets import QMenu
         from PySide6.QtGui import QAction
@@ -4117,6 +7366,8 @@ class PlaylistTable(QWidget):
             QMenu::item:selected { background-color: #FF5B06; }
             QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 4px 6px; }
         """)
+        menu.aboutToShow.connect(self._pause_resume_timer)
+        menu.aboutToHide.connect(self._resume_resume_timer)
         
         item = self.tree.itemAt(pos)
         selected = self.tree.selectedItems()
@@ -5257,11 +8508,20 @@ class ResumeNotificationWidget(QFrame):
         self.btn_resume.resume_menu.aboutToHide.connect(self._on_menu_hidden)
         
     def _on_menu_shown(self):
-        self._timer.stop()
+        self.pause_timer()
 
     def _on_menu_hidden(self):
         # Resume auto-dismiss countdown when dropdown closes
-        if self.isVisible() and hasattr(self, '_timer') and self._elapsed_ms < self._timeout_ms:
+        self.resume_timer()
+
+    def pause_timer(self):
+        """Pause auto-dismiss countdown timer while external menus/modals are open."""
+        if hasattr(self, '_timer'):
+            self._timer.stop()
+
+    def resume_timer(self):
+        """Resume auto-dismiss countdown timer if banner is still visible."""
+        if not self.isHidden() and hasattr(self, '_timer') and self._elapsed_ms < self._timeout_ms:
             self._timer.start()
 
     def _on_main_button_clicked(self):
@@ -7979,6 +11239,18 @@ class MusicPanelWidget(QWidget):
             else:
                 self._discord.set_paused(title, artist)
     
+    def _pause_resume_timer(self):
+        """Pause the last-time-played resume countdown timer while menus/modals are active."""
+        if hasattr(self, 'resume_banner') and self.resume_banner:
+            if hasattr(self.resume_banner, 'pause_timer'):
+                self.resume_banner.pause_timer()
+
+    def _resume_resume_timer(self):
+        """Resume the last-time-played resume countdown timer when menus/modals close."""
+        if hasattr(self, 'resume_banner') and self.resume_banner:
+            if hasattr(self.resume_banner, 'resume_timer'):
+                self.resume_banner.resume_timer()
+
     def _create_menu_bar(self, layout):
         """Create the menu bar with Audio, Video, and Tools menus."""
         from PySide6.QtWidgets import QMenuBar, QMenu
@@ -8191,6 +11463,15 @@ class MusicPanelWidget(QWidget):
             self._taskbar_pos_group.addAction(pos_act)
             self.taskbar_media_menu.addAction(pos_act)
             self._taskbar_pos_actions[mode_key] = pos_act
+        
+        # Connect pause and resume timer across all menus and submenus
+        for m in [
+            media_menu, audio_menu, tools_menu,
+            self.recent_media_menu, self._device_menu,
+            speed_menu, crossfade_menu, self.taskbar_media_menu
+        ]:
+            m.aboutToShow.connect(self._pause_resume_timer)
+            m.aboutToHide.connect(self._resume_resume_timer)
         
         # Apply menu bar styling
         menu_bar.setStyleSheet("""

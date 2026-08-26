@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Outer Vinyl Gradient -->
+    <radialGradient id="vinylBody" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0e0f13" />
+      <stop offset="60%" stop-color="#14151a" />
+      <stop offset="85%" stop-color="#181a20" />
+      <stop offset="96%" stop-color="#0b0c0f" />
+      <stop offset="100%" stop-color="#1f2229" />
+    </radialGradient>
+
+    <!-- Center Label Metallic / Dark Tech Gradient -->
+    <radialGradient id="centerLabelGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1a1c24" />
+      <stop offset="65%" stop-color="#121318" />
+      <stop offset="90%" stop-color="#0e0f13" />
+      <stop offset="100%" stop-color="#08080a" />
+    </radialGradient>
+
+    <!-- Brushed Metal Ring for Label Rim -->
+    <linearGradient id="metalRim" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF7B24" />
+      <stop offset="50%" stop-color="#FF5B06" />
+      <stop offset="100%" stop-color="#D94600" />
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Vinyl Disc Body -->
+  <circle cx="256" cy="256" r="250" fill="url(#vinylBody)" stroke="#2b2e38" stroke-width="2" />
+
+  <!-- Concentric Sound Grooves (Micro-tracks 360-deg Uniform) -->
+  <g fill="none" stroke-linecap="round" opacity="0.42">
+    <circle cx="256" cy="256" r="240" stroke="#3b3f4d" stroke-width="0.75" />
+    <circle cx="256" cy="256" r="232" stroke="#1f222b" stroke-width="1.2" />
+    <circle cx="256" cy="256" r="224" stroke="#484d5c" stroke-width="0.6" />
+    <circle cx="256" cy="256" r="216" stroke="#22252f" stroke-width="1.0" />
+    <circle cx="256" cy="256" r="208" stroke="#3e4352" stroke-width="0.8" />
+    <circle cx="256" cy="256" r="200" stroke="#181a21" stroke-width="1.4" />
+    <circle cx="256" cy="256" r="192" stroke="#4a5063" stroke-width="0.7" />
+    <circle cx="256" cy="256" r="184" stroke="#222631" stroke-width="1.1" />
+    <circle cx="256" cy="256" r="176" stroke="#3f4556" stroke-width="0.85" />
+    <circle cx="256" cy="256" r="168" stroke="#1b1d25" stroke-width="1.3" />
+    <circle cx="256" cy="256" r="160" stroke="#4d5367" stroke-width="0.6" />
+    <circle cx="256" cy="256" r="152" stroke="#20232c" stroke-width="1.0" />
+    <circle cx="256" cy="256" r="144" stroke="#383d4c" stroke-width="0.8" />
+    <circle cx="256" cy="256" r="136" stroke="#16181f" stroke-width="1.5" />
+    <circle cx="256" cy="256" r="128" stroke="#464b5c" stroke-width="0.7" />
+    <circle cx="256" cy="256" r="120" stroke="#1f222a" stroke-width="1.1" />
+    <circle cx="256" cy="256" r="112" stroke="#3d4251" stroke-width="0.75" />
+  </g>
+
+  <!-- Run-out Lead Groove Band -->
+  <circle cx="256" cy="256" r="102" fill="none" stroke="#101115" stroke-width="10" opacity="0.95" />
+  <circle cx="256" cy="256" r="98" fill="none" stroke="#2c303c" stroke-width="0.8" opacity="0.6" />
+
+  <!-- Center Label Outer Ring (HELXAID Neon Accent) -->
+  <circle cx="256" cy="256" r="90" fill="url(#centerLabelGrad)" stroke="url(#metalRim)" stroke-width="2.5" />
+
+  <!-- Turntable Strobe Calibrated Speed Marks (Dashed Track Rings) -->
+  <circle cx="256" cy="256" r="82" fill="none" stroke="#FF5B06" stroke-width="1" stroke-opacity="0.4" stroke-dasharray="6,4" />
+  <circle cx="256" cy="256" r="74" fill="none" stroke="#ffffff" stroke-width="0.75" stroke-opacity="0.15" stroke-dasharray="3,3" />
+
+  <!-- Center Label Inner Geometric Ring -->
+  <circle cx="256" cy="256" r="54" fill="#15171e" stroke="#333845" stroke-width="1" />
+  <circle cx="256" cy="256" r="44" fill="none" stroke="#FF7B24" stroke-width="1" stroke-opacity="0.5" />
+
+  <!-- Spindle Outer Metallic Bezel -->
+  <circle cx="256" cy="256" r="26" fill="#1e2028" stroke="#505668" stroke-width="1.5" />
+
+  <!-- Center Spindle Hole -->
+  <circle cx="256" cy="256" r="16" fill="#060608" stroke="#8890a5" stroke-width="1.5" />
+</svg>
