@@ -2511,9 +2511,10 @@ class CollageEngineCategory1:
         template_id: str = "1_full",
         size: int = 240,
         corner_radius: float = 12.0,
+        offsets: dict = None
     ) -> QPixmap:
         """
-        Renders a Category 1 template onto a transparent QPixmap of given size.
+        Renders a Category 1 template onto a transparent QPixmap of given size with optional framing offsets.
         """
         if p1 is None or p1.isNull():
             p1 = cls._create_placeholder_pixmap(size)
@@ -2526,7 +2527,7 @@ class CollageEngineCategory1:
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
         cls.draw_template(
-            painter, p1, template_id, float(size), float(size), corner_radius
+            painter, p1, template_id, float(size), float(size), corner_radius, offsets=offsets
         )
         painter.end()
         return output
@@ -2540,6 +2541,7 @@ class CollageEngineCategory1:
         W: float = 240.0,
         H: float = 240.0,
         corner_radius: float = 12.0,
+        offsets: dict = None
     ):
         """
         Draws the Category 1 template onto the provided QPainter canvas within (W, H).
@@ -2547,17 +2549,27 @@ class CollageEngineCategory1:
         if p1 is None or p1.isNull():
             p1 = cls._create_placeholder_pixmap(int(W))
 
+        off1 = (offsets or {}).get(0, (0.0, 0.0))
+        off_x = off1[0] if (off1 and len(off1) > 0) else 0.0
+        off_y = off1[1] if (off1 and len(off1) > 1) else 0.0
+        zoom = off1[2] if (off1 and len(off1) > 2) else 1.20
+        zoom = max(1.0, min(4.0, float(zoom)))
+
         # 1. Full Single (Standard 1:1 Rounded Square)
         if template_id == "1_full" or not template_id:
             path = QPainterPath()
             path.addRoundedRect(0, 0, W, H, corner_radius, corner_radius)
             painter.save()
             painter.setClipPath(path)
+            scale_w = max(int(W), int(W * zoom))
+            scale_h = max(int(H), int(H * zoom))
             scaled = p1.scaled(
-                int(W), int(H), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+                scale_w, scale_h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
             )
-            sx = int((scaled.width() - W) / 2)
-            sy = int((scaled.height() - H) / 2)
+            pan_range_x = max(20.0, float(scaled.width() - W))
+            pan_range_y = max(20.0, float(scaled.height() - H))
+            sx = int(max(0, min(scaled.width() - W, (scaled.width() - W) / 2.0 - off_x * (pan_range_x / 2.0))))
+            sy = int(max(0, min(scaled.height() - H, (scaled.height() - H) / 2.0 - off_y * (pan_range_y / 2.0))))
             painter.drawPixmap(0, 0, scaled, sx, sy, int(W), int(H))
             painter.restore()
 
@@ -2585,20 +2597,22 @@ class CollageEngineCategory1:
             label_path = QPainterPath()
             label_path.addEllipse(label_rect)
             painter.setClipPath(label_path)
+            scale_l = max(int(label_rect.width()), int(label_rect.width() * zoom))
             scaled_label = p1.scaled(
-                int(label_rect.width()),
-                int(label_rect.height()),
+                scale_l,
+                scale_l,
                 Qt.KeepAspectRatioByExpanding,
                 Qt.SmoothTransformation,
             )
-            sx = int((scaled_label.width() - label_rect.width()) / 2)
-            sy = int((scaled_label.height() - label_rect.height()) / 2)
+            pan_range_l = max(10.0, float(scaled_label.width() - label_rect.width()))
+            lsx = int(max(0, min(scaled_label.width() - int(label_rect.width()), (scaled_label.width() - label_rect.width()) / 2.0 - off_x * (pan_range_l / 2.0))))
+            lsy = int(max(0, min(scaled_label.height() - int(label_rect.height()), (scaled_label.height() - label_rect.height()) / 2.0 - off_y * (pan_range_l / 2.0))))
             painter.drawPixmap(
                 int(label_rect.x()),
                 int(label_rect.y()),
                 scaled_label,
-                sx,
-                sy,
+                lsx,
+                lsy,
                 int(label_rect.width()),
                 int(label_rect.height()),
             )
@@ -2633,20 +2647,24 @@ class CollageEngineCategory1:
 
             # Sleeve artwork
             painter.setClipPath(sleeve_path)
+            scale_s = max(int(sleeve_rect.width()), int(sleeve_rect.width() * zoom))
+            scale_sh = max(int(sleeve_rect.height()), int(sleeve_rect.height() * zoom))
             scaled_sleeve = p1.scaled(
-                int(sleeve_rect.width()),
-                int(sleeve_rect.height()),
+                scale_s,
+                scale_sh,
                 Qt.KeepAspectRatioByExpanding,
                 Qt.SmoothTransformation,
             )
-            sx = int((scaled_sleeve.width() - sleeve_rect.width()) / 2)
-            sy = int((scaled_sleeve.height() - sleeve_rect.height()) / 2)
+            pan_range_s = max(20.0, float(scaled_sleeve.width() - sleeve_rect.width()))
+            pan_range_sh = max(20.0, float(scaled_sleeve.height() - sleeve_rect.height()))
+            ssx = int(max(0, min(scaled_sleeve.width() - int(sleeve_rect.width()), (scaled_sleeve.width() - sleeve_rect.width()) / 2.0 - off_x * (pan_range_s / 2.0))))
+            ssy = int(max(0, min(scaled_sleeve.height() - int(sleeve_rect.height()), (scaled_sleeve.height() - sleeve_rect.height()) / 2.0 - off_y * (pan_range_sh / 2.0))))
             painter.drawPixmap(
                 int(sleeve_rect.x()),
                 int(sleeve_rect.y()),
                 scaled_sleeve,
-                sx,
-                sy,
+                ssx,
+                ssy,
                 int(sleeve_rect.width()),
                 int(sleeve_rect.height()),
             )
@@ -2689,20 +2707,24 @@ class CollageEngineCategory1:
             )
             # Front image
             painter.setClipPath(card_path)
+            scale_card_w = max(int(card_rect.width()), int(card_rect.width() * zoom))
+            scale_card_h = max(int(card_rect.height()), int(card_rect.height() * zoom))
             scaled_card = p1.scaled(
-                int(card_rect.width()),
-                int(card_rect.height()),
+                scale_card_w,
+                scale_card_h,
                 Qt.KeepAspectRatioByExpanding,
                 Qt.SmoothTransformation,
             )
-            sx = int((scaled_card.width() - card_rect.width()) / 2)
-            sy = int((scaled_card.height() - card_rect.height()) / 2)
+            pan_range_card_x = max(20.0, float(scaled_card.width() - card_rect.width()))
+            pan_range_card_y = max(20.0, float(scaled_card.height() - card_rect.height()))
+            csx = int(max(0, min(scaled_card.width() - int(card_rect.width()), (scaled_card.width() - card_rect.width()) / 2.0 - off_x * (pan_range_card_x / 2.0))))
+            csy = int(max(0, min(scaled_card.height() - int(card_rect.height()), (scaled_card.height() - card_rect.height()) / 2.0 - off_y * (pan_range_card_y / 2.0))))
             painter.drawPixmap(
                 int(card_rect.x()),
                 int(card_rect.y()),
                 scaled_card,
-                sx,
-                sy,
+                csx,
+                csy,
                 int(card_rect.width()),
                 int(card_rect.height()),
             )
@@ -2723,20 +2745,24 @@ class CollageEngineCategory1:
             inset_path = QPainterPath()
             inset_path.addRoundedRect(inset_rect, 6.0, 6.0)
             painter.setClipPath(inset_path)
+            scale_ins_w = max(int(inset_rect.width()), int(inset_rect.width() * zoom))
+            scale_ins_h = max(int(inset_rect.height()), int(inset_rect.height() * zoom))
             scaled_inset = p1.scaled(
-                int(inset_rect.width()),
-                int(inset_rect.height()),
+                scale_ins_w,
+                scale_ins_h,
                 Qt.KeepAspectRatioByExpanding,
                 Qt.SmoothTransformation,
             )
-            sx = int((scaled_inset.width() - inset_rect.width()) / 2)
-            sy = int((scaled_inset.height() - inset_rect.height()) / 2)
+            pan_range_ins_x = max(20.0, float(scaled_inset.width() - inset_rect.width()))
+            pan_range_ins_y = max(20.0, float(scaled_inset.height() - inset_rect.height()))
+            isx = int(max(0, min(scaled_inset.width() - int(inset_rect.width()), (scaled_inset.width() - inset_rect.width()) / 2.0 - off_x * (pan_range_ins_x / 2.0))))
+            isy = int(max(0, min(scaled_inset.height() - int(inset_rect.height()), (scaled_inset.height() - inset_rect.height()) / 2.0 - off_y * (pan_range_ins_y / 2.0))))
             painter.drawPixmap(
                 int(inset_rect.x()),
                 int(inset_rect.y()),
                 scaled_inset,
-                sx,
-                sy,
+                isx,
+                isy,
                 int(inset_rect.width()),
                 int(inset_rect.height()),
             )
@@ -2750,20 +2776,23 @@ class CollageEngineCategory1:
 
             painter.save()
             painter.setClipPath(circle_path)
+            scale_c = max(int(circle_rect.width()), int(circle_rect.width() * zoom))
             scaled_circle = p1.scaled(
-                int(circle_rect.width()),
-                int(circle_rect.height()),
+                scale_c,
+                scale_c,
                 Qt.KeepAspectRatioByExpanding,
                 Qt.SmoothTransformation,
             )
-            sx = int((scaled_circle.width() - circle_rect.width()) / 2)
-            sy = int((scaled_circle.height() - circle_rect.height()) / 2)
+            pan_range_c = max(20.0, float(scaled_circle.width() - circle_rect.width()))
+            pan_range_cy = max(20.0, float(scaled_circle.height() - circle_rect.height()))
+            csx = int(max(0, min(scaled_circle.width() - int(circle_rect.width()), (scaled_circle.width() - circle_rect.width()) / 2.0 - off_x * (pan_range_c / 2.0))))
+            csy = int(max(0, min(scaled_circle.height() - int(circle_rect.height()), (scaled_circle.height() - circle_rect.height()) / 2.0 - off_y * (pan_range_cy / 2.0))))
             painter.drawPixmap(
                 int(circle_rect.x()),
                 int(circle_rect.y()),
                 scaled_circle,
-                sx,
-                sy,
+                csx,
+                csy,
                 int(circle_rect.width()),
                 int(circle_rect.height()),
             )
@@ -2774,6 +2803,24 @@ class CollageEngineCategory1:
             painter.setPen(QPen(QColor(255, 255, 255, 80), 1.5))
             painter.drawEllipse(circle_rect.center(), W * 0.08, H * 0.08)
             painter.restore()
+
+    @classmethod
+    def _create_placeholder_pixmap(cls, size: int) -> QPixmap:
+        """Create a default minimalist blank placeholder pixmap."""
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        grad = QLinearGradient(0, 0, size, size)
+        grad.setColorAt(0.0, QColor(40, 42, 54))
+        grad.setColorAt(1.0, QColor(20, 22, 30))
+        painter.fillRect(0, 0, size, size, grad)
+
+        painter.end()
+        return pixmap
+
 
 class CollageEngineCategory2:
     """
@@ -2970,26 +3017,39 @@ class CollageEngineCategory2:
         return pix
 
     @classmethod
-    def _draw_fitted_pixmap(cls, painter: QPainter, pixmap: QPixmap, target_rect: QRectF):
-        """Draw pixmap into target_rect with center-crop Qt.KeepAspectRatioByExpanding."""
+    def _draw_fitted_pixmap(cls, painter: QPainter, pixmap: QPixmap, target_rect: QRectF, offset: tuple = (0.0, 0.0)):
+        """Draw pixmap into target_rect with center-crop, zoom support, and pan offset."""
         if not pixmap or pixmap.isNull():
             return
         w = max(1, int(target_rect.width()))
         h = max(1, int(target_rect.height()))
-        scaled = pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        src_x = max(0, (scaled.width() - w) // 2)
-        src_y = max(0, (scaled.height() - h) // 2)
+        
+        off_x = offset[0] if (offset and len(offset) > 0) else 0.0
+        off_y = offset[1] if (offset and len(offset) > 1) else 0.0
+        zoom = offset[2] if (offset and len(offset) > 2) else 1.20
+        zoom = max(1.0, min(4.0, float(zoom)))
+
+        scale_w = max(w, int(w * zoom))
+        scale_h = max(h, int(h * zoom))
+        scaled = pixmap.scaled(scale_w, scale_h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        
+        pan_range_x = max(20.0, float(scaled.width() - w))
+        pan_range_y = max(20.0, float(scaled.height() - h))
+        
+        src_x = int(max(0, min(scaled.width() - w, (scaled.width() - w) / 2.0 - off_x * (pan_range_x / 2.0))))
+        src_y = int(max(0, min(scaled.height() - h, (scaled.height() - h) / 2.0 - off_y * (pan_range_y / 2.0))))
+        
         painter.drawPixmap(target_rect.toRect(), scaled, QRect(src_x, src_y, w, h))
 
     @classmethod
-    def _draw_poly(cls, painter: QPainter, pixmap: QPixmap, poly: QPolygonF, W: float, H: float):
+    def _draw_poly(cls, painter: QPainter, pixmap: QPixmap, poly: QPolygonF, W: float, H: float, offset: tuple = (0.0, 0.0)):
         """Draw pixmap clipped inside a vector polygon."""
         painter.save()
         path = QPainterPath()
         path.addPolygon(poly)
         path.closeSubpath()
         painter.setClipPath(path)
-        cls._draw_fitted_pixmap(painter, pixmap, QRectF(0, 0, W, H))
+        cls._draw_fitted_pixmap(painter, pixmap, QRectF(0, 0, W, H), offset)
         painter.restore()
 
     @classmethod
@@ -3001,7 +3061,7 @@ class CollageEngineCategory2:
         painter.restore()
 
     @classmethod
-    def _draw_inset(cls, painter: QPainter, pixmap: QPixmap, inset_rect: QRectF, radius: float = 8.0):
+    def _draw_inset(cls, painter: QPainter, pixmap: QPixmap, inset_rect: QRectF, radius: float = 8.0, offset: tuple = (0.0, 0.0)):
         """Draw floating inset picture-in-picture card with shadow without colored border."""
         # Drop shadow
         shadow_rect = inset_rect.translated(2, 4)
@@ -3014,15 +3074,16 @@ class CollageEngineCategory2:
         inset_path = QPainterPath()
         inset_path.addRoundedRect(inset_rect, radius, radius)
         painter.setClipPath(inset_path)
-        cls._draw_fitted_pixmap(painter, pixmap, inset_rect)
+        cls._draw_fitted_pixmap(painter, pixmap, inset_rect, offset)
         painter.restore()
 
     @classmethod
     def render_pixmap(
         cls, p1: Optional[QPixmap], p2: Optional[QPixmap], 
-        template_id: str = "2_vert_50", size: int = 240
+        template_id: str = "2_vert_50", size: int = 240,
+        offsets: dict = None
     ) -> QPixmap:
-        """Render a 2-photo collage into a transparent square QPixmap."""
+        """Render a 2-photo collage into a transparent square QPixmap with optional framing offsets."""
         canvas = QPixmap(size, size)
         canvas.fill(Qt.transparent)
 
@@ -3034,7 +3095,7 @@ class CollageEngineCategory2:
         img2 = p2 if (p2 and not p2.isNull()) else cls._create_placeholder(size, size, "PHOTO 2", "HELXAIC")
 
         try:
-            cls.draw_template(painter, img1, img2, template_id, float(size), float(size), corner_radius=12.0)
+            cls.draw_template(painter, img1, img2, template_id, float(size), float(size), corner_radius=12.0, offsets=offsets)
         except Exception as e:
             print(f"[CollageEngineCategory2] Error rendering template '{template_id}': {e}")
         finally:
@@ -3045,12 +3106,15 @@ class CollageEngineCategory2:
     @classmethod
     def draw_template(
         cls, painter: QPainter, p1: QPixmap, p2: QPixmap, 
-        template_id: str, W: float, H: float, corner_radius: float = 12.0
+        template_id: str, W: float, H: float, corner_radius: float = 12.0,
+        offsets: dict = None
     ):
         real_id = cls.ALIASES.get(template_id, template_id)
+        off1 = (offsets or {}).get(0, (0.0, 0.0))
+        off2 = (offsets or {}).get(1, (0.0, 0.0))
 
         if real_id == "2_circle_split":
-            cls._draw_circle_split(painter, p1, p2, W, H)
+            cls._draw_circle_split(painter, p1, p2, W, H, offsets=offsets)
             return
         
         painter.save()
@@ -3063,125 +3127,127 @@ class CollageEngineCategory2:
 
         if real_id == "2_vert_50":
             half_w = (W - sep) / 2.0
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
-            cls._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, H))
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H), off1)
+            cls._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, H), off2)
             cls._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
 
         elif real_id == "2_vert_30_70":
             w1 = W * 0.35 - sep / 2.0
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H))
-            cls._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, W - w1 - sep, H))
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H), off1)
+            cls._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, W - w1 - sep, H), off2)
             cls._draw_seam_line(painter, QPointF(w1 + sep / 2.0, 0), QPointF(w1 + sep / 2.0, H), sep)
 
         elif real_id == "2_vert_70_30":
             w1 = W * 0.65 - sep / 2.0
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H))
-            cls._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, W - w1 - sep, H))
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H), off1)
+            cls._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, W - w1 - sep, H), off2)
             cls._draw_seam_line(painter, QPointF(w1 + sep / 2.0, 0), QPointF(w1 + sep / 2.0, H), sep)
 
         elif real_id == "2_horiz_50":
             half_h = (H - sep) / 2.0
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h))
-            cls._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, W, half_h))
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h), off1)
+            cls._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, W, half_h), off2)
             cls._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
 
         elif real_id == "2_horiz_30_70":
             h1 = H * 0.35 - sep / 2.0
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1))
-            cls._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, H - h1 - sep))
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1), off1)
+            cls._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, H - h1 - sep), off2)
             cls._draw_seam_line(painter, QPointF(0, h1 + sep / 2.0), QPointF(W, h1 + sep / 2.0), sep)
 
         elif real_id == "2_horiz_70_30":
             h1 = H * 0.65 - sep / 2.0
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1))
-            cls._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, H - h1 - sep))
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1), off1)
+            cls._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, H - h1 - sep), off2)
             cls._draw_seam_line(painter, QPointF(0, h1 + sep / 2.0), QPointF(W, h1 + sep / 2.0), sep)
 
         elif real_id == "2_diag_tl_br":
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(W, 0), QPointF(W, H), QPointF(0, H)])
-            cls._draw_poly(painter, p1, poly1, W, H)
-            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_poly(painter, p1, poly1, W, H, off1)
+            cls._draw_poly(painter, p2, poly2, W, H, off2)
             cls._draw_seam_line(painter, QPointF(W, 0), QPointF(0, H), sep)
 
         elif real_id == "2_diag_tr_bl":
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W, H), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H)])
-            cls._draw_poly(painter, p1, poly1, W, H)
-            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_poly(painter, p1, poly1, W, H, off1)
+            cls._draw_poly(painter, p2, poly2, W, H, off2)
             cls._draw_seam_line(painter, QPointF(0, 0), QPointF(W, H), sep)
 
         elif real_id == "2_slant_v_left":
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.62, 0), QPointF(W * 0.38, H), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(W * 0.62, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.38, H)])
-            cls._draw_poly(painter, p1, poly1, W, H)
-            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_poly(painter, p1, poly1, W, H, off1)
+            cls._draw_poly(painter, p2, poly2, W, H, off2)
             cls._draw_seam_line(painter, QPointF(W * 0.62, 0), QPointF(W * 0.38, H), sep)
 
         elif real_id == "2_slant_v_right":
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.38, 0), QPointF(W * 0.62, H), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(W * 0.38, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.62, H)])
-            cls._draw_poly(painter, p1, poly1, W, H)
-            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_poly(painter, p1, poly1, W, H, off1)
+            cls._draw_poly(painter, p2, poly2, W, H, off2)
             cls._draw_seam_line(painter, QPointF(W * 0.38, 0), QPointF(W * 0.62, H), sep)
 
         elif real_id == "2_slant_h_up":
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.38), QPointF(0, H * 0.62)])
             poly2 = QPolygonF([QPointF(0, H * 0.62), QPointF(W, H * 0.38), QPointF(W, H), QPointF(0, H)])
-            cls._draw_poly(painter, p1, poly1, W, H)
-            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_poly(painter, p1, poly1, W, H, off1)
+            cls._draw_poly(painter, p2, poly2, W, H, off2)
             cls._draw_seam_line(painter, QPointF(0, H * 0.62), QPointF(W, H * 0.38), sep)
 
         elif real_id == "2_slant_h_down":
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.62), QPointF(0, H * 0.38)])
             poly2 = QPolygonF([QPointF(0, H * 0.38), QPointF(W, H * 0.62), QPointF(W, H), QPointF(0, H)])
-            cls._draw_poly(painter, p1, poly1, W, H)
-            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_poly(painter, p1, poly1, W, H, off1)
+            cls._draw_poly(painter, p2, poly2, W, H, off2)
             cls._draw_seam_line(painter, QPointF(0, H * 0.38), QPointF(W, H * 0.62), sep)
 
         elif real_id == "2_chevron_right":
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.52, 0), QPointF(W * 0.78, H * 0.5), QPointF(W * 0.52, H), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(W * 0.52, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.52, H), QPointF(W * 0.78, H * 0.5)])
-            cls._draw_poly(painter, p1, poly1, W, H)
-            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_poly(painter, p1, poly1, W, H, off1)
+            cls._draw_poly(painter, p2, poly2, W, H, off2)
             cls._draw_seam_line(painter, QPointF(W * 0.52, 0), QPointF(W * 0.78, H * 0.5), sep)
             cls._draw_seam_line(painter, QPointF(W * 0.78, H * 0.5), QPointF(W * 0.52, H), sep)
 
         elif real_id == "2_chevron_left":
             poly1 = QPolygonF([QPointF(W * 0.48, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.48, H), QPointF(W * 0.22, H * 0.5)])
             poly2 = QPolygonF([QPointF(0, 0), QPointF(W * 0.48, 0), QPointF(W * 0.22, H * 0.5), QPointF(W * 0.48, H), QPointF(0, H)])
-            cls._draw_poly(painter, p1, poly1, W, H)
-            cls._draw_poly(painter, p2, poly2, W, H)
+            cls._draw_poly(painter, p1, poly1, W, H, off1)
+            cls._draw_poly(painter, p2, poly2, W, H, off2)
             cls._draw_seam_line(painter, QPointF(W * 0.48, 0), QPointF(W * 0.22, H * 0.5), sep)
             cls._draw_seam_line(painter, QPointF(W * 0.22, H * 0.5), QPointF(W * 0.48, H), sep)
 
         elif real_id == "2_inset_br":
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
-            cls._draw_inset(painter, p2, QRectF(W * 0.48, H * 0.48, W * 0.48, H * 0.48), radius=8.0)
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H), off1)
+            cls._draw_inset(painter, p2, QRectF(W * 0.48, H * 0.48, W * 0.48, H * 0.48), radius=8.0, offset=off2)
 
         elif real_id == "2_inset_bl":
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
-            cls._draw_inset(painter, p2, QRectF(W * 0.04, H * 0.48, W * 0.48, H * 0.48), radius=8.0)
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H), off1)
+            cls._draw_inset(painter, p2, QRectF(W * 0.04, H * 0.48, W * 0.48, H * 0.48), radius=8.0, offset=off2)
 
         elif real_id == "2_vinyl_stack":
-            cls._draw_dual_vinyl(painter, p1, p2, W, H, corner_radius)
+            cls._draw_dual_vinyl(painter, p1, p2, W, H, corner_radius, offsets=offsets)
 
         elif real_id == "2_polaroid_stack":
-            cls._draw_polaroid_stack(painter, p1, p2, W, H, corner_radius)
+            cls._draw_polaroid_stack(painter, p1, p2, W, H, corner_radius, offsets=offsets)
 
         elif real_id == "2_hero_inset":
-            cls._draw_hero_inset(painter, p1, p2, W, H, corner_radius)
+            cls._draw_hero_inset(painter, p1, p2, W, H, corner_radius, offsets=offsets)
 
         else:
             half_w = (W - sep) / 2.0
-            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
-            cls._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, H))
+            cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H), off1)
+            cls._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, H), off2)
             cls._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
 
         painter.restore()
 
     @classmethod
-    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float):
+    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
         margin = W * 0.02
         circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
         c = circle_rect.center()
@@ -3201,7 +3267,7 @@ class CollageEngineCategory2:
 
         painter.save()
         painter.setClipPath(path_left)
-        cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
+        cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H), off1)
         painter.restore()
 
         # Right Semicircle (270 to 450/90 deg)
@@ -3212,7 +3278,7 @@ class CollageEngineCategory2:
 
         painter.save()
         painter.setClipPath(path_right)
-        cls._draw_fitted_pixmap(painter, p2, QRectF(0, 0, W, H))
+        cls._draw_fitted_pixmap(painter, p2, QRectF(0, 0, W, H), off2)
         painter.restore()
 
         # Center Seam Line
@@ -3231,7 +3297,10 @@ class CollageEngineCategory2:
         painter.restore()
 
     @classmethod
-    def _draw_dual_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float):
+    def _draw_dual_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
+
         # Sleeve sizes
         sleeve_w = W * 0.54
         sleeve_h = H * 0.54
@@ -3247,7 +3316,7 @@ class CollageEngineCategory2:
         sleeve2_path = QPainterPath()
         sleeve2_path.addRoundedRect(sleeve2_rect, sleeve_r, sleeve_r)
         painter.setClipPath(sleeve2_path)
-        cls._draw_fitted_pixmap(painter, p2, sleeve2_rect)
+        cls._draw_fitted_pixmap(painter, p2, sleeve2_rect, off2)
         painter.restore()
 
         # Disc 1 (Peeking out to bottom-right behind Sleeve 1)
@@ -3268,7 +3337,7 @@ class CollageEngineCategory2:
         sleeve1_path = QPainterPath()
         sleeve1_path.addRoundedRect(sleeve1_rect, sleeve_r, sleeve_r)
         painter.setClipPath(sleeve1_path)
-        cls._draw_fitted_pixmap(painter, p1, sleeve1_rect)
+        cls._draw_fitted_pixmap(painter, p1, sleeve1_rect, off1)
         painter.restore()
 
     @classmethod
@@ -3301,7 +3370,9 @@ class CollageEngineCategory2:
         painter.restore()
 
     @classmethod
-    def _draw_polaroid_stack(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float):
+    def _draw_polaroid_stack(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
         card_size = W * 0.62
         card_r = 8.0
 
@@ -3316,7 +3387,7 @@ class CollageEngineCategory2:
         card2_path = QPainterPath()
         card2_path.addRoundedRect(card2_rect, card_r, card_r)
         painter.setClipPath(card2_path)
-        cls._draw_fitted_pixmap(painter, p2, card2_rect)
+        cls._draw_fitted_pixmap(painter, p2, card2_rect, off2)
         painter.restore()
 
         # Front Card (P1, angled +4 deg)
@@ -3330,11 +3401,14 @@ class CollageEngineCategory2:
         card1_path = QPainterPath()
         card1_path.addRoundedRect(card1_rect, card_r, card_r)
         painter.setClipPath(card1_path)
-        cls._draw_fitted_pixmap(painter, p1, card1_rect)
+        cls._draw_fitted_pixmap(painter, p1, card1_rect, off1)
         painter.restore()
 
     @classmethod
-    def _draw_hero_inset(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float):
+    def _draw_hero_inset(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, W: float, H: float, R: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
+
         # 1. Background: Blurred downsampled P1
         small = p1.scaled(24, 24, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         blurred_bg = small.scaled(int(W), int(H), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
@@ -3362,7 +3436,7 @@ class CollageEngineCategory2:
         inset_path = QPainterPath()
         inset_path.addRoundedRect(inset_rect, inset_r, inset_r)
         painter.setClipPath(inset_path)
-        cls._draw_fitted_pixmap(painter, p2, inset_rect)
+        cls._draw_fitted_pixmap(painter, p2, inset_rect, off2)
         painter.restore()
 
 
@@ -3564,7 +3638,8 @@ class CollageEngineCategory3:
     @classmethod
     def render_pixmap(
         cls, p1: Optional[QPixmap], p2: Optional[QPixmap], p3: Optional[QPixmap],
-        template_id: str = "3_hero_left", size: int = 240
+        template_id: str = "3_hero_left", size: int = 240,
+        offsets: dict = None
     ) -> QPixmap:
         canvas = QPixmap(size, size)
         canvas.fill(Qt.transparent)
@@ -3578,7 +3653,7 @@ class CollageEngineCategory3:
         img3 = p3 if (p3 and not p3.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 3", "HELXAIC")
 
         try:
-            cls.draw_template(painter, img1, img2, img3, template_id, float(size), float(size), corner_radius=12.0)
+            cls.draw_template(painter, img1, img2, img3, template_id, float(size), float(size), corner_radius=12.0, offsets=offsets)
         except Exception as e:
             print(f"[CollageEngineCategory3] Error rendering template '{template_id}': {e}")
         finally:
@@ -3589,12 +3664,16 @@ class CollageEngineCategory3:
     @classmethod
     def draw_template(
         cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap,
-        template_id: str, W: float, H: float, corner_radius: float = 12.0
+        template_id: str, W: float, H: float, corner_radius: float = 12.0,
+        offsets: dict = None
     ):
         real_id = cls.ALIASES.get(template_id, template_id)
+        off1 = (offsets or {}).get(0, (0.0, 0.0))
+        off2 = (offsets or {}).get(1, (0.0, 0.0))
+        off3 = (offsets or {}).get(2, (0.0, 0.0))
 
         if real_id == "3_circle_split":
-            cls._draw_circle_split(painter, p1, p2, p3, W, H)
+            cls._draw_circle_split(painter, p1, p2, p3, W, H, offsets=offsets)
             return
 
         painter.save()
@@ -3608,36 +3687,36 @@ class CollageEngineCategory3:
         if real_id == "3_hero_left":
             half_w = (W - sep) / 2.0
             half_h = (H - sep) / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
 
         elif real_id == "3_hero_right":
             half_w = (W - sep) / 2.0
             half_h = (H - sep) / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, 0, half_w, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, half_w, half_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, 0, half_w, H), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(half_w, half_h + sep / 2.0), sep)
 
         elif real_id == "3_hero_top":
             half_w = (W - sep) / 2.0
             half_h = (H - sep) / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, half_w, half_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, half_h + sep), QPointF(half_w + sep / 2.0, H), sep)
 
         elif real_id == "3_hero_bottom":
             half_w = (W - sep) / 2.0
             half_h = (H - sep) / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, W, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, W, half_h), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, half_h), sep)
 
@@ -3646,9 +3725,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.40 - sep / 2.0), QPointF(0, H * 0.55 - sep / 2.0)])
             poly2 = QPolygonF([QPointF(0, H * 0.55 + sep / 2.0), QPointF(W * 0.5 - sep / 2.0, H * 0.475), QPointF(W * 0.5 - sep / 2.0, H), QPointF(0, H)])
             poly3 = QPolygonF([QPointF(W * 0.5 + sep / 2.0, H * 0.475), QPointF(W, H * 0.40 + sep / 2.0), QPointF(W, H), QPointF(W * 0.5 + sep / 2.0, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.55), QPointF(W, H * 0.40), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.5, H * 0.475), QPointF(W * 0.5, H), sep)
 
@@ -3656,9 +3735,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.5 - sep / 2.0, 0), QPointF(W * 0.5 - sep / 2.0, H * 0.525), QPointF(0, H * 0.45 - sep / 2.0)])
             poly2 = QPolygonF([QPointF(W * 0.5 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H * 0.60 - sep / 2.0), QPointF(W * 0.5 + sep / 2.0, H * 0.525)])
             poly3 = QPolygonF([QPointF(0, H * 0.45 + sep / 2.0), QPointF(W, H * 0.60 + sep / 2.0), QPointF(W, H), QPointF(0, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.5, 0), QPointF(W * 0.5, H * 0.525), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.45), QPointF(W, H * 0.60), sep)
 
@@ -3666,9 +3745,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.55 - sep / 2.0, 0), QPointF(W * 0.40 - sep / 2.0, H), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(W * 0.55 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H * 0.50 - sep / 2.0), QPointF(W * 0.475, H * 0.50 - sep / 2.0)])
             poly3 = QPolygonF([QPointF(W * 0.475, H * 0.50 + sep / 2.0), QPointF(W, H * 0.50 + sep / 2.0), QPointF(W, H), QPointF(W * 0.40 + sep / 2.0, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.55, 0), QPointF(W * 0.40, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.475, H * 0.50), QPointF(W, H * 0.50), sep)
 
@@ -3676,9 +3755,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.525, 0), QPointF(W * 0.525, H * 0.50 - sep / 2.0), QPointF(0, H * 0.50 - sep / 2.0)])
             poly2 = QPolygonF([QPointF(0, H * 0.50 + sep / 2.0), QPointF(W * 0.475, H * 0.50 + sep / 2.0), QPointF(W * 0.475, H), QPointF(0, H)])
             poly3 = QPolygonF([QPointF(W * 0.525 + sep, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.475 + sep, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.525, 0), QPointF(W * 0.475, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.50), QPointF(W * 0.50, H * 0.50), sep)
 
@@ -3687,9 +3766,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(W * 0.5, 0), QPointF(W * 0.85 - sep / 2.0, H), QPointF(W * 0.15 + sep / 2.0, H)])
             poly2 = QPolygonF([QPointF(0, 0), QPointF(W * 0.5 - sep, 0), QPointF(W * 0.15 - sep / 2.0, H), QPointF(0, H)])
             poly3 = QPolygonF([QPointF(W * 0.5 + sep, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.85 + sep / 2.0, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.5, 0), QPointF(W * 0.15, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.5, 0), QPointF(W * 0.85, H), sep)
 
@@ -3697,9 +3776,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.35 - sep / 2.0, 0), QPointF(W * 0.5 - sep, H), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(W * 0.35 + sep / 2.0, 0), QPointF(W * 0.65 - sep / 2.0, 0), QPointF(W * 0.5, H - sep)])
             poly3 = QPolygonF([QPointF(W * 0.65 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.5 + sep, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.35, 0), QPointF(W * 0.5, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.65, 0), QPointF(W * 0.5, H), sep)
 
@@ -3708,9 +3787,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.40 - sep / 2.0, 0), QPointF(W * 0.25 - sep / 2.0, H), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(W * 0.40 + sep / 2.0, 0), QPointF(W * 0.75 - sep / 2.0, 0), QPointF(W * 0.60 - sep / 2.0, H), QPointF(W * 0.25 + sep / 2.0, H)])
             poly3 = QPolygonF([QPointF(W * 0.75 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.60 + sep / 2.0, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.40, 0), QPointF(W * 0.25, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.75, 0), QPointF(W * 0.60, H), sep)
 
@@ -3718,9 +3797,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W * 0.25 - sep / 2.0, 0), QPointF(W * 0.40 - sep / 2.0, H), QPointF(0, H)])
             poly2 = QPolygonF([QPointF(W * 0.25 + sep / 2.0, 0), QPointF(W * 0.60 - sep / 2.0, 0), QPointF(W * 0.75 - sep / 2.0, H), QPointF(W * 0.40 + sep / 2.0, H)])
             poly3 = QPolygonF([QPointF(W * 0.60 + sep / 2.0, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.75 + sep / 2.0, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.25, 0), QPointF(W * 0.40, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(W * 0.60, 0), QPointF(W * 0.75, H), sep)
 
@@ -3728,9 +3807,9 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.25 - sep / 2.0), QPointF(0, H * 0.40 - sep / 2.0)])
             poly2 = QPolygonF([QPointF(0, H * 0.40 + sep / 2.0), QPointF(W, H * 0.25 + sep / 2.0), QPointF(W, H * 0.60 - sep / 2.0), QPointF(0, H * 0.75 - sep / 2.0)])
             poly3 = QPolygonF([QPointF(0, H * 0.75 + sep / 2.0), QPointF(W, H * 0.60 + sep / 2.0), QPointF(W, H), QPointF(0, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.40), QPointF(W, H * 0.25), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.75), QPointF(W, H * 0.60), sep)
 
@@ -3738,97 +3817,101 @@ class CollageEngineCategory3:
             poly1 = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.40 - sep / 2.0), QPointF(0, H * 0.25 - sep / 2.0)])
             poly2 = QPolygonF([QPointF(0, H * 0.25 + sep / 2.0), QPointF(W, H * 0.40 + sep / 2.0), QPointF(W, H * 0.75 - sep / 2.0), QPointF(0, H * 0.60 - sep / 2.0)])
             poly3 = QPolygonF([QPointF(0, H * 0.60 + sep / 2.0), QPointF(W, H * 0.75 + sep / 2.0), QPointF(W, H), QPointF(0, H)])
-            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H)
-            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H)
-            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H)
+            CollageEngineCategory2._draw_poly(painter, p1, poly1, W, H, off1)
+            CollageEngineCategory2._draw_poly(painter, p2, poly2, W, H, off2)
+            CollageEngineCategory2._draw_poly(painter, p3, poly3, W, H, off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.25), QPointF(W, H * 0.40), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, H * 0.60), QPointF(W, H * 0.75), sep)
 
         # --- 5. Linear Columns & Rows ---
         elif real_id == "3_vert_cols":
             col_w = (W - 2 * sep) / 3.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, col_w, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(col_w + sep, 0, col_w, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF((col_w + sep) * 2, 0, col_w, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, col_w, H), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(col_w + sep, 0, col_w, H), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF((col_w + sep) * 2, 0, col_w, H), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(col_w + sep / 2.0, 0), QPointF(col_w + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(col_w * 2 + sep * 1.5, 0), QPointF(col_w * 2 + sep * 1.5, H), sep)
 
         elif real_id == "3_horiz_rows":
             row_h = (H - 2 * sep) / 3.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, row_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, row_h + sep, W, row_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, (row_h + sep) * 2, W, row_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, row_h), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, row_h + sep, W, row_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, (row_h + sep) * 2, W, row_h), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, row_h + sep / 2.0), QPointF(W, row_h + sep / 2.0), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, row_h * 2 + sep * 1.5), QPointF(W, row_h * 2 + sep * 1.5), sep)
 
         elif real_id == "3_wide_col_left":
             w1 = W * 0.50 - sep / 2.0
             w2 = W * 0.25 - sep / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, w2, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w1 + w2 + 2 * sep, 0, W - (w1 + w2 + 2 * sep), H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, w2, H), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w1 + w2 + 2 * sep, 0, W - (w1 + w2 + 2 * sep), H), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(w1 + sep / 2.0, 0), QPointF(w1 + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(w1 + w2 + 1.5 * sep, 0), QPointF(w1 + w2 + 1.5 * sep, H), sep)
 
         elif real_id == "3_wide_col_right":
             w1 = W * 0.25 - sep / 2.0
             w2 = W * 0.25 - sep / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, w2, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w1 + w2 + 2 * sep, 0, W - (w1 + w2 + 2 * sep), H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w1, H), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w1 + sep, 0, w2, H), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w1 + w2 + 2 * sep, 0, W - (w1 + w2 + 2 * sep), H), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(w1 + sep / 2.0, 0), QPointF(w1 + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(w1 + w2 + 1.5 * sep, 0), QPointF(w1 + w2 + 1.5 * sep, H), sep)
 
         elif real_id == "3_wide_row_top":
             h1 = H * 0.50 - sep / 2.0
             h2 = H * 0.25 - sep / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, h2))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, h1 + h2 + 2 * sep, W, H - (h1 + h2 + 2 * sep)))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, h2), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, h1 + h2 + 2 * sep, W, H - (h1 + h2 + 2 * sep)), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h1 + sep / 2.0), QPointF(W, h1 + sep / 2.0), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h1 + h2 + 1.5 * sep), QPointF(W, h1 + h2 + 1.5 * sep), sep)
 
         elif real_id == "3_wide_row_bottom":
             h1 = H * 0.25 - sep / 2.0
             h2 = H * 0.25 - sep / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, h2))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, h1 + h2 + 2 * sep, W, H - (h1 + h2 + 2 * sep)))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, h1), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, h1 + sep, W, h2), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, h1 + h2 + 2 * sep, W, H - (h1 + h2 + 2 * sep)), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h1 + sep / 2.0), QPointF(W, h1 + sep / 2.0), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h1 + h2 + 1.5 * sep), QPointF(W, h1 + h2 + 1.5 * sep), sep)
 
         # --- 6. Inset Picture-in-Picture ---
         elif real_id == "3_inset_stack_r":
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
-            CollageEngineCategory2._draw_inset(painter, p2, QRectF(W * 0.52, H * 0.06, W * 0.42, H * 0.42), radius=6.0)
-            CollageEngineCategory2._draw_inset(painter, p3, QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42), radius=6.0)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H), off1)
+            CollageEngineCategory2._draw_inset(painter, p2, QRectF(W * 0.52, H * 0.06, W * 0.42, H * 0.42), radius=6.0, offset=off2)
+            CollageEngineCategory2._draw_inset(painter, p3, QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42), radius=6.0, offset=off3)
 
         elif real_id == "3_inset_bottom_h":
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H))
-            CollageEngineCategory2._draw_inset(painter, p2, QRectF(W * 0.06, H * 0.52, W * 0.42, H * 0.42), radius=6.0)
-            CollageEngineCategory2._draw_inset(painter, p3, QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42), radius=6.0)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H), off1)
+            CollageEngineCategory2._draw_inset(painter, p2, QRectF(W * 0.06, H * 0.52, W * 0.42, H * 0.42), radius=6.0, offset=off2)
+            CollageEngineCategory2._draw_inset(painter, p3, QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42), radius=6.0, offset=off3)
 
         # --- 7. Signature 3D Styles ---
         elif real_id == "3_vinyl_stack":
-            cls._draw_triple_vinyl(painter, p1, p2, p3, W, H, corner_radius)
+            cls._draw_triple_vinyl(painter, p1, p2, p3, W, H, corner_radius, offsets=offsets)
 
         elif real_id == "3_ambient_stack":
-            cls._draw_ambient_trio(painter, p1, p2, p3, W, H, corner_radius)
+            cls._draw_ambient_trio(painter, p1, p2, p3, W, H, corner_radius, offsets=offsets)
 
         else:
             half_w = (W - sep) / 2.0
             half_h = (H - sep) / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, half_h + sep, half_w, half_h), off3)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
 
         painter.restore()
 
     @classmethod
-    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float):
+    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float, offsets: dict = None):
         import math
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
+        off3 = (offsets or {}).get(2, (0.0, 0.0, 1.20))
+        offs = [off1, off2, off3]
         margin = W * 0.02
         circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
         c = circle_rect.center()
@@ -3855,7 +3938,7 @@ class CollageEngineCategory3:
 
             painter.save()
             painter.setClipPath(wedge_path)
-            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], QRectF(0, 0, W, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], QRectF(0, 0, W, H), offs[i])
             painter.restore()
 
         # Radial Seams
@@ -3879,7 +3962,11 @@ class CollageEngineCategory3:
         painter.restore()
 
     @classmethod
-    def _draw_triple_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float, R: float):
+    def _draw_triple_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float, R: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
+        off3 = (offsets or {}).get(2, (0.0, 0.0, 1.20))
+
         sleeve_w = W * 0.48
         sleeve_h = H * 0.48
         sleeve_r = 7.0
@@ -3888,22 +3975,26 @@ class CollageEngineCategory3:
         sleeve3_rect = QRectF(W * 0.26, H * 0.05, sleeve_w, sleeve_h)
         disc3_rect = QRectF(W * 0.38, H * 0.02, sleeve_h * 0.90, sleeve_h * 0.90)
         CollageEngineCategory2._draw_mini_vinyl(painter, disc3_rect, p3)
-        CollageEngineCategory2._draw_inset(painter, p3, sleeve3_rect, sleeve_r)
+        CollageEngineCategory2._draw_inset(painter, p3, sleeve3_rect, sleeve_r, offset=off3)
 
         # Sleeve 2 (Back Right)
         sleeve2_rect = QRectF(W * 0.45, H * 0.45, sleeve_w, sleeve_h)
         disc2_rect = QRectF(W * 0.52, H * 0.42, sleeve_h * 0.90, sleeve_h * 0.90)
         CollageEngineCategory2._draw_mini_vinyl(painter, disc2_rect, p2)
-        CollageEngineCategory2._draw_inset(painter, p2, sleeve2_rect, sleeve_r)
+        CollageEngineCategory2._draw_inset(painter, p2, sleeve2_rect, sleeve_r, offset=off2)
 
         # Sleeve 1 (Front Left with shadow)
         sleeve1_rect = QRectF(W * 0.06, H * 0.38, sleeve_w, sleeve_h)
         disc1_rect = QRectF(W * 0.18, H * 0.35, sleeve_h * 0.90, sleeve_h * 0.90)
         CollageEngineCategory2._draw_mini_vinyl(painter, disc1_rect, p1)
-        CollageEngineCategory2._draw_inset(painter, p1, sleeve1_rect, sleeve_r)
+        CollageEngineCategory2._draw_inset(painter, p1, sleeve1_rect, sleeve_r, offset=off1)
 
     @classmethod
-    def _draw_ambient_trio(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float, R: float):
+    def _draw_ambient_trio(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, W: float, H: float, R: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
+        off3 = (offsets or {}).get(2, (0.0, 0.0, 1.20))
+
         small = p1.scaled(24, 24, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         blurred_bg = small.scaled(int(W), int(H), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         painter.drawPixmap(0, 0, blurred_bg)
@@ -3919,11 +4010,11 @@ class CollageEngineCategory3:
 
         # Card 2 (Left)
         c2_rect = QRectF(W * 0.06, H * 0.22, card_w, card_h)
-        CollageEngineCategory2._draw_inset(painter, p2, c2_rect, card_r)
+        CollageEngineCategory2._draw_inset(painter, p2, c2_rect, card_r, offset=off2)
 
         # Card 3 (Right)
         c3_rect = QRectF(W * 0.49, H * 0.22, card_w, card_h)
-        CollageEngineCategory2._draw_inset(painter, p3, c3_rect, card_r)
+        CollageEngineCategory2._draw_inset(painter, p3, c3_rect, card_r, offset=off3)
 
 
 class CollageEngineCategory4:
@@ -4003,7 +4094,8 @@ class CollageEngineCategory4:
     @classmethod
     def render_pixmap(
         cls, p1: Optional[QPixmap], p2: Optional[QPixmap], p3: Optional[QPixmap], p4: Optional[QPixmap],
-        template_id: str = "4_quad_grid", size: int = 240
+        template_id: str = "4_circle_split", size: int = 240,
+        offsets: dict = None
     ) -> QPixmap:
         canvas = QPixmap(size, size)
         canvas.fill(Qt.transparent)
@@ -4018,7 +4110,7 @@ class CollageEngineCategory4:
         img4 = p4 if (p4 and not p4.isNull()) else CollageEngineCategory2._create_placeholder(size, size, "PHOTO 4", "HELXAIC")
 
         try:
-            cls.draw_template(painter, img1, img2, img3, img4, template_id, float(size), float(size), corner_radius=12.0)
+            cls.draw_template(painter, img1, img2, img3, img4, template_id, float(size), float(size), corner_radius=12.0, offsets=offsets)
         except Exception as e:
             print(f"[CollageEngineCategory4] Error rendering template '{template_id}': {e}")
         finally:
@@ -4029,10 +4121,16 @@ class CollageEngineCategory4:
     @classmethod
     def draw_template(
         cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap,
-        template_id: str, W: float, H: float, corner_radius: float = 12.0
+        template_id: str, W: float, H: float, corner_radius: float = 12.0,
+        offsets: dict = None
     ):
+        off1 = (offsets or {}).get(0, (0.0, 0.0))
+        off2 = (offsets or {}).get(1, (0.0, 0.0))
+        off3 = (offsets or {}).get(2, (0.0, 0.0))
+        off4 = (offsets or {}).get(3, (0.0, 0.0))
+
         if template_id == "4_circle_split":
-            cls._draw_circle_split(painter, p1, p2, p3, p4, W, H)
+            cls._draw_circle_split(painter, p1, p2, p3, p4, W, H, offsets=offsets)
             return
 
         painter.save()
@@ -4045,20 +4143,20 @@ class CollageEngineCategory4:
         if template_id == "4_quad_grid":
             half_w = (W - sep) / 2.0
             half_h = (H - sep) / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, half_w, half_h), off3)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, half_h + sep, half_w, half_h), off4)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
 
         elif template_id == "4_hero_left_3_stack":
             half_w = (W - sep) / 2.0
             row_h = (H - 2 * sep) / 3.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, row_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, row_h + sep, half_w, row_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, (row_h + sep) * 2, half_w, row_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, H), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, row_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(half_w + sep, row_h + sep, half_w, row_h), off3)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, (row_h + sep) * 2, half_w, row_h), off4)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep / 2.0, 0), QPointF(half_w + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep, row_h + sep / 2.0), QPointF(W, row_h + sep / 2.0), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(half_w + sep, row_h * 2 + sep * 1.5), QPointF(W, row_h * 2 + sep * 1.5), sep)
@@ -4066,10 +4164,10 @@ class CollageEngineCategory4:
         elif template_id == "4_hero_top_3_cols":
             half_h = (H - sep) / 2.0
             col_w = (W - 2 * sep) / 3.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, col_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(col_w + sep, half_h + sep, col_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF((col_w + sep) * 2, half_h + sep, col_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, half_h), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(0, half_h + sep, col_w, half_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(col_w + sep, half_h + sep, col_w, half_h), off3)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF((col_w + sep) * 2, half_h + sep, col_w, half_h), off4)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, half_h + sep / 2.0), QPointF(W, half_h + sep / 2.0), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(col_w + sep / 2.0, half_h + sep), QPointF(col_w + sep / 2.0, H), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(col_w * 2 + sep * 1.5, half_h + sep), QPointF(col_w * 2 + sep * 1.5, H), sep)
@@ -4080,10 +4178,10 @@ class CollageEngineCategory4:
             w40 = W * 0.40
             h60 = H * 0.60
             h40 = H * 0.40
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w60, h40))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w60 + sep, 0, w40 - sep, h60))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w40 + sep, h60 + sep, w60 - sep, h40 - sep))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(0, h40 + sep, w40, h60 - sep))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, w60, h40), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(w60 + sep, 0, w40 - sep, h60), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(w40 + sep, h60 + sep, w60 - sep, h40 - sep), off3)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(0, h40 + sep, w40, h60 - sep), off4)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(0, h40 + sep / 2.0), QPointF(w60, h40 + sep / 2.0), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(w60 + sep / 2.0, 0), QPointF(w60 + sep / 2.0, h60), sep)
             CollageEngineCategory2._draw_seam_line(painter, QPointF(w40 + sep, h60 + sep / 2.0), QPointF(W, h60 + sep / 2.0), sep)
@@ -4091,38 +4189,45 @@ class CollageEngineCategory4:
 
         elif template_id == "4_vert_stripes":
             col_w = (W - 3 * sep) / 4.0
+            offs = [off1, off2, off3, off4]
             for i, pix in enumerate([p1, p2, p3, p4]):
                 x = i * (col_w + sep)
-                CollageEngineCategory2._draw_fitted_pixmap(painter, pix, QRectF(x, 0, col_w, H))
+                CollageEngineCategory2._draw_fitted_pixmap(painter, pix, QRectF(x, 0, col_w, H), offs[i])
                 if i > 0:
                     CollageEngineCategory2._draw_seam_line(painter, QPointF(x - sep / 2.0, 0), QPointF(x - sep / 2.0, H), sep)
 
         elif template_id == "4_horiz_stripes":
             row_h = (H - 3 * sep) / 4.0
+            offs = [off1, off2, off3, off4]
             for i, pix in enumerate([p1, p2, p3, p4]):
                 y = i * (row_h + sep)
-                CollageEngineCategory2._draw_fitted_pixmap(painter, pix, QRectF(0, y, W, row_h))
+                CollageEngineCategory2._draw_fitted_pixmap(painter, pix, QRectF(0, y, W, row_h), offs[i])
                 if i > 0:
                     CollageEngineCategory2._draw_seam_line(painter, QPointF(0, y - sep / 2.0), QPointF(W, y - sep / 2.0), sep)
 
         elif template_id == "4_quad_vinyl":
-            cls._draw_quad_vinyl(painter, p1, p2, p3, p4, W, H, corner_radius)
+            cls._draw_quad_vinyl(painter, p1, p2, p3, p4, W, H, corner_radius, offsets=offsets)
 
         elif template_id == "4_ambient_quad":
-            cls._draw_ambient_quad(painter, p1, p2, p3, p4, W, H, corner_radius)
+            cls._draw_ambient_quad(painter, p1, p2, p3, p4, W, H, corner_radius, offsets=offsets)
 
         else:
             half_w = (W - sep) / 2.0
             half_h = (H - sep) / 2.0
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, half_w, half_h))
-            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, half_h + sep, half_w, half_h))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p1, QRectF(0, 0, half_w, half_h), off1)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p2, QRectF(half_w + sep, 0, half_w, half_h), off2)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p3, QRectF(0, half_h + sep, half_w, half_h), off3)
+            CollageEngineCategory2._draw_fitted_pixmap(painter, p4, QRectF(half_w + sep, half_h + sep, half_w, half_h), off4)
 
         painter.restore()
 
     @classmethod
-    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float):
+    def _draw_circle_split(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
+        off3 = (offsets or {}).get(2, (0.0, 0.0, 1.20))
+        off4 = (offsets or {}).get(3, (0.0, 0.0, 1.20))
+        offs = [off1, off2, off3, off4]
         margin = W * 0.02
         circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
         c = circle_rect.center()
@@ -4150,7 +4255,7 @@ class CollageEngineCategory4:
 
             painter.save()
             painter.setClipPath(wedge_path)
-            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], QRectF(0, 0, W, H))
+            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], QRectF(0, 0, W, H), offs[i])
             painter.restore()
 
         # Crosshair Seam Lines
@@ -4172,7 +4277,13 @@ class CollageEngineCategory4:
         painter.restore()
 
     @classmethod
-    def _draw_quad_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float, R: float):
+    def _draw_quad_vinyl(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float, R: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
+        off3 = (offsets or {}).get(2, (0.0, 0.0, 1.20))
+        off4 = (offsets or {}).get(3, (0.0, 0.0, 1.20))
+        offs = [off1, off2, off3, off4]
+
         sw = W * 0.44
         sh = H * 0.44
         sr = 6.0
@@ -4190,10 +4301,15 @@ class CollageEngineCategory4:
             s_rect = QRectF(px, py, sw, sh)
             disc_rect = QRectF(px + sw * 0.25, py + sh * 0.05, sh * 0.85, sh * 0.85)
             CollageEngineCategory2._draw_mini_vinyl(painter, disc_rect, photos[i])
-            CollageEngineCategory2._draw_inset(painter, photos[i], s_rect, sr)
+            CollageEngineCategory2._draw_inset(painter, photos[i], s_rect, sr, offset=offs[i])
 
     @classmethod
-    def _draw_ambient_quad(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float, R: float):
+    def _draw_ambient_quad(cls, painter: QPainter, p1: QPixmap, p2: QPixmap, p3: QPixmap, p4: QPixmap, W: float, H: float, R: float, offsets: dict = None):
+        off1 = (offsets or {}).get(0, (0.0, 0.0, 1.20))
+        off2 = (offsets or {}).get(1, (0.0, 0.0, 1.20))
+        off3 = (offsets or {}).get(2, (0.0, 0.0, 1.20))
+        off4 = (offsets or {}).get(3, (0.0, 0.0, 1.20))
+
         small = p1.scaled(24, 24, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         blurred_bg = small.scaled(int(W), int(H), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         painter.drawPixmap(0, 0, blurred_bg)
@@ -4212,9 +4328,9 @@ class CollageEngineCategory4:
         c3 = QRectF(W * 0.31, H * 0.18, card_w, card_h)
         c4 = QRectF(W * 0.58, H * 0.24, card_w, card_h)
 
-        CollageEngineCategory2._draw_inset(painter, p2, c2, card_r)
-        CollageEngineCategory2._draw_inset(painter, p4, c4, card_r)
-        CollageEngineCategory2._draw_inset(painter, p3, c3, card_r)
+        CollageEngineCategory2._draw_inset(painter, p2, c2, card_r, offset=off2)
+        CollageEngineCategory2._draw_inset(painter, p4, c4, card_r, offset=off4)
+        CollageEngineCategory2._draw_inset(painter, p3, c3, card_r, offset=off3)
 
 
 class CollageMasterDispatcher:
@@ -4261,7 +4377,7 @@ class CollageMasterDispatcher:
         return "1_circle_disc"
 
     @classmethod
-    def render_cover(cls, photos: Any, template_id: str = "", size: int = 240) -> QPixmap:
+    def render_cover(cls, photos: Any, template_id: str = "", size: int = 240, offsets: dict = None) -> QPixmap:
         """
         Unified entrypoint to render playlist covers for any photo count and template.
         """
@@ -4280,14 +4396,14 @@ class CollageMasterDispatcher:
             p1 = photo_list[0] if count > 0 else None
             valid_ids = [t["id"] for t in CollageEngineCategory1.get_all_templates()]
             t_id = template_id if template_id in valid_ids else "1_circle_disc"
-            return CollageEngineCategory1.render_pixmap(p1, t_id, size=size)
+            return CollageEngineCategory1.render_pixmap(p1, t_id, size=size, offsets=offsets)
             
         elif cat == 2:
             p1 = photo_list[0] if count > 0 else None
             p2 = photo_list[1] if count > 1 else None
             valid_ids = [t["id"] for t in CollageEngineCategory2.get_all_templates()] + list(CollageEngineCategory2.ALIASES.keys())
             t_id = template_id if template_id in valid_ids else "2_circle_split"
-            return CollageEngineCategory2.render_pixmap(p1, p2, t_id, size=size)
+            return CollageEngineCategory2.render_pixmap(p1, p2, t_id, size=size, offsets=offsets)
 
         elif cat == 3:
             p1 = photo_list[0] if count > 0 else None
@@ -4295,7 +4411,7 @@ class CollageMasterDispatcher:
             p3 = photo_list[2] if count > 2 else None
             valid_ids = [t["id"] for t in CollageEngineCategory3.get_all_templates()] + list(CollageEngineCategory3.ALIASES.keys())
             t_id = template_id if template_id in valid_ids else "3_circle_split"
-            return CollageEngineCategory3.render_pixmap(p1, p2, p3, t_id, size=size)
+            return CollageEngineCategory3.render_pixmap(p1, p2, p3, t_id, size=size, offsets=offsets)
 
         elif cat == 4:
             p1 = photo_list[0] if count > 0 else None
@@ -4304,9 +4420,986 @@ class CollageMasterDispatcher:
             p4 = photo_list[3] if count > 3 else None
             valid_ids = [t["id"] for t in CollageEngineCategory4.get_all_templates()]
             t_id = template_id if template_id in valid_ids else "4_circle_split"
-            return CollageEngineCategory4.render_pixmap(p1, p2, p3, p4, t_id, size=size)
+            return CollageEngineCategory4.render_pixmap(p1, p2, p3, p4, t_id, size=size, offsets=offsets)
 
-        return CollageEngineCategory1.render_pixmap(None, "1_circle_disc", size=size)
+        return CollageEngineCategory1.render_pixmap(None, "1_circle_disc", size=size, offsets=offsets)
+
+    @classmethod
+    def get_slot_at_pos(cls, template_id: str, point: Union[QPointF, QPoint], size: int = 200, photo_count: int = 1) -> int:
+        """
+        Resolve the 0-indexed slot index (0..photo_count-1) at the given (x,y) point.
+        Component Name: CollageMasterDispatcher
+        """
+        if photo_count <= 1:
+            return 0
+            
+        x = float(point.x())
+        y = float(point.y())
+        W = float(size)
+        H = float(size)
+        cx = W / 2.0
+        cy = H / 2.0
+        
+        # 1. Two-Photo Templates (Category 2)
+        if photo_count == 2:
+            t = CollageEngineCategory2.ALIASES.get(template_id, template_id) or "2_circle_split"
+            
+            if t == "2_circle_split":
+                return 0 if x < cx else 1
+
+            elif t == "2_vert_50":
+                return 0 if x < cx else 1
+
+            elif t == "2_vert_30_70":
+                return 0 if x < W * 0.35 else 1
+
+            elif t == "2_vert_70_30":
+                return 0 if x < W * 0.65 else 1
+
+            elif t == "2_horiz_50":
+                return 0 if y < cy else 1
+
+            elif t == "2_horiz_30_70":
+                return 0 if y < H * 0.35 else 1
+
+            elif t == "2_horiz_70_30":
+                return 0 if y < H * 0.65 else 1
+
+            elif t == "2_diag_tl_br":
+                # Top-Left vs Bottom-Right: seam is from (W,0) to (0,H), so x + y < W is Top-Left (slot 0)
+                return 0 if (x + y) < W else 1
+
+            elif t == "2_diag_tr_bl":
+                # Bottom-Left vs Top-Right: seam is from (0,0) to (W,H), so y > x is Bottom-Left (slot 0)
+                return 0 if y > x else 1
+
+            elif t == "2_slant_v_left":
+                # Seam from (W*0.62, 0) to (W*0.38, H)
+                x_seam = W * (0.62 - 0.24 * (y / H))
+                return 0 if x < x_seam else 1
+
+            elif t == "2_slant_v_right":
+                # Seam from (W*0.38, 0) to (W*0.62, H)
+                x_seam = W * (0.38 + 0.24 * (y / H))
+                return 0 if x < x_seam else 1
+
+            elif t == "2_slant_h_up":
+                # Seam from (0, H*0.62) to (W, H*0.38)
+                y_seam = H * (0.62 - 0.24 * (x / W))
+                return 0 if y < y_seam else 1
+
+            elif t == "2_slant_h_down":
+                # Seam from (0, H*0.38) to (W, H*0.62)
+                y_seam = H * (0.38 + 0.24 * (x / W))
+                return 0 if y < y_seam else 1
+
+            elif t == "2_chevron_right":
+                # Apex at (W*0.78, H*0.5)
+                if y <= H * 0.5:
+                    x_seam = W * (0.52 + 0.26 * (y / (H * 0.5)))
+                else:
+                    x_seam = W * (0.78 - 0.26 * ((y - H * 0.5) / (H * 0.5)))
+                return 0 if x < x_seam else 1
+
+            elif t == "2_chevron_left":
+                # Apex at (W*0.22, H*0.5). Poly1 is Right (slot 0), Poly2 is Left (slot 1)
+                if y <= H * 0.5:
+                    x_seam = W * (0.48 - 0.26 * (y / (H * 0.5)))
+                else:
+                    x_seam = W * (0.22 + 0.26 * ((y - H * 0.5) / (H * 0.5)))
+                return 0 if x >= x_seam else 1
+
+            elif t == "2_inset_br":
+                if x >= W * 0.48 and y >= H * 0.48:
+                    return 1
+                return 0
+
+            elif t == "2_inset_bl":
+                if x <= W * 0.52 and y >= H * 0.48:
+                    return 1
+                return 0
+
+            elif t == "2_vinyl_stack":
+                # Sleeve 1 (Front Left) is QRectF(W*0.08, H*0.38, W*0.54, H*0.54)
+                # Sleeve 2 (Back Right) is QRectF(W*0.28, H*0.08, W*0.54, H*0.54)
+                sleeve1 = QRectF(W * 0.08, H * 0.38, W * 0.54, H * 0.54)
+                sleeve2 = QRectF(W * 0.28, H * 0.08, W * 0.54, H * 0.54)
+                if sleeve1.contains(x, y):
+                    return 0
+                if sleeve2.contains(x, y):
+                    return 1
+                return 0 if (x + y < W) else 1
+
+            elif t == "2_polaroid_stack":
+                # Card 1 (Front): (W*0.56, H*0.56) angled +4 deg
+                # Card 2 (Back): (W*0.44, H*0.44) angled -7 deg
+                if x > W * 0.45 and y > H * 0.45:
+                    return 0
+                return 1 if (x < W * 0.6 and y < W * 0.6) else 0
+
+            elif t == "2_hero_inset":
+                inset_size = W * 0.65
+                inset_rect = QRectF((W - inset_size) / 2.0, (H - inset_size) / 2.0, inset_size, inset_size)
+                return 1 if inset_rect.contains(x, y) else 0
+
+            return 0 if x < cx else 1
+
+        # 2. Three-Photo Templates (Category 3)
+        elif photo_count == 3:
+            t = CollageEngineCategory3.ALIASES.get(template_id, template_id) or "3_circle_split"
+            
+            if t == "3_circle_split":
+                import math
+                # Standard counter-clockwise angle from 3 o'clock
+                dx = x - cx
+                dy = -(y - cy)  # Invert Qt y-down to standard Cartesian
+                alpha = (math.atan2(dy, dx) * 180.0 / math.pi + 360.0) % 360.0
+                if 30.0 <= alpha < 150.0:
+                    return 0  # Top
+                elif 150.0 <= alpha < 270.0:
+                    return 1  # Bottom-Left
+                else:
+                    return 2  # Bottom-Right
+
+            elif t == "3_hero_left":
+                if x < cx:
+                    return 0
+                return 1 if y < cy else 2
+
+            elif t == "3_hero_right":
+                if x >= cx:
+                    return 2
+                return 0 if y < cy else 1
+
+            elif t == "3_hero_top":
+                if y < cy:
+                    return 0
+                return 1 if x < cx else 2
+
+            elif t == "3_hero_bottom":
+                if y >= cy:
+                    return 2
+                return 0 if x < cx else 1
+
+            elif t == "3_slanted_hero_top":
+                y_seam = H * (0.55 - 0.15 * (x / W))
+                if y < y_seam:
+                    return 0
+                return 1 if x < cx else 2
+
+            elif t == "3_slanted_hero_bottom":
+                y_seam = H * (0.45 + 0.15 * (x / W))
+                if y >= y_seam:
+                    return 2
+                return 0 if x < cx else 1
+
+            elif t == "3_slanted_hero_left":
+                x_seam = W * (0.55 - 0.15 * (y / H))
+                if x < x_seam:
+                    return 0
+                return 1 if y < cy else 2
+
+            elif t == "3_slanted_hero_right":
+                x_seam = W * (0.525 - 0.05 * (y / H))
+                if x >= x_seam:
+                    return 2
+                return 0 if y < cy else 1
+
+            elif t == "3_pyramid":
+                x_left = W * (0.5 - 0.35 * (y / H))
+                x_right = W * (0.5 + 0.35 * (y / H))
+                if x < x_left:
+                    return 1
+                elif x > x_right:
+                    return 2
+                else:
+                    return 0
+
+            elif t == "3_inverted_v":
+                x_left = W * (0.35 + 0.15 * (y / H))
+                x_right = W * (0.65 - 0.15 * (y / H))
+                if x < x_left:
+                    return 0
+                elif x > x_right:
+                    return 2
+                else:
+                    return 1
+
+            elif t == "3_slanted_cols_r":
+                x1 = W * (0.40 - 0.15 * (y / H))
+                x2 = W * (0.75 - 0.15 * (y / H))
+                if x < x1:
+                    return 0
+                elif x < x2:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_slanted_cols_l":
+                x1 = W * (0.25 + 0.15 * (y / H))
+                x2 = W * (0.60 + 0.15 * (y / H))
+                if x < x1:
+                    return 0
+                elif x < x2:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_slanted_rows_up":
+                y1 = H * (0.40 - 0.15 * (x / W))
+                y2 = H * (0.75 - 0.15 * (x / W))
+                if y < y1:
+                    return 0
+                elif y < y2:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_slanted_rows_down":
+                y1 = H * (0.25 + 0.15 * (x / W))
+                y2 = H * (0.60 + 0.15 * (x / W))
+                if y < y1:
+                    return 0
+                elif y < y2:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_vert_cols":
+                if x < W / 3.0:
+                    return 0
+                elif x < 2.0 * W / 3.0:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_horiz_rows":
+                if y < H / 3.0:
+                    return 0
+                elif y < 2.0 * H / 3.0:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_wide_col_left":
+                if x < W * 0.50:
+                    return 0
+                elif x < W * 0.75:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_wide_col_right":
+                if x < W * 0.25:
+                    return 0
+                elif x < W * 0.50:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_wide_row_top":
+                if y < H * 0.50:
+                    return 0
+                elif y < H * 0.75:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_wide_row_bottom":
+                if y < H * 0.25:
+                    return 0
+                elif y < H * 0.50:
+                    return 1
+                else:
+                    return 2
+
+            elif t == "3_inset_stack_r":
+                c2 = QRectF(W * 0.52, H * 0.06, W * 0.42, H * 0.42)
+                c3 = QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42)
+                if c2.contains(x, y):
+                    return 1
+                if c3.contains(x, y):
+                    return 2
+                return 0
+
+            elif t == "3_inset_bottom_h":
+                c2 = QRectF(W * 0.06, H * 0.52, W * 0.42, H * 0.42)
+                c3 = QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42)
+                if c2.contains(x, y):
+                    return 1
+                if c3.contains(x, y):
+                    return 2
+                return 0
+
+            elif t == "3_vinyl_stack":
+                s1 = QRectF(W * 0.06, H * 0.38, W * 0.48, H * 0.48)
+                s2 = QRectF(W * 0.45, H * 0.45, W * 0.48, H * 0.48)
+                s3 = QRectF(W * 0.26, H * 0.05, W * 0.48, H * 0.48)
+                if s1.contains(x, y):
+                    return 0
+                if s2.contains(x, y):
+                    return 1
+                if s3.contains(x, y):
+                    return 2
+                return 0 if x < cx else (1 if y > cy else 2)
+
+            elif t == "3_ambient_stack":
+                c2 = QRectF(W * 0.06, H * 0.22, W * 0.45, H * 0.55)
+                c3 = QRectF(W * 0.49, H * 0.22, W * 0.45, H * 0.55)
+                if c2.contains(x, y):
+                    return 1
+                if c3.contains(x, y):
+                    return 2
+                return 0
+
+            return 0 if x < cx else (1 if y < cy else 2)
+
+        # 3. Four-Photo Templates (Category 4)
+        elif photo_count >= 4:
+            t = template_id or "4_circle_split"
+            
+            if t == "4_circle_split":
+                top = y < cy
+                left = x < cx
+                if top and left:
+                    return 0  # Top-Left
+                elif top and not left:
+                    return 1  # Top-Right
+                elif not top and left:
+                    return 2  # Bottom-Left
+                else:
+                    return 3  # Bottom-Right
+
+            elif t == "4_quad_grid":
+                top = y < cy
+                left = x < cx
+                if top and left:
+                    return 0
+                elif top and not left:
+                    return 1
+                elif not top and left:
+                    return 2
+                else:
+                    return 3
+
+            elif t == "4_hero_left_3_stack":
+                if x < cx:
+                    return 0
+                if y < H / 3.0:
+                    return 1
+                elif y < 2.0 * H / 3.0:
+                    return 2
+                else:
+                    return 3
+
+            elif t == "4_hero_top_3_cols":
+                if y < cy:
+                    return 0
+                if x < W / 3.0:
+                    return 1
+                elif x < 2.0 * W / 3.0:
+                    return 2
+                else:
+                    return 3
+
+            elif t == "4_pinwheel":
+                # P1: (0, 0, 0.6W, 0.4H), P2: (0.6W, 0, 0.4W, 0.6H)
+                # P3: (0.4W, 0.6H, 0.6W, 0.4H), P4: (0, 0.4H, 0.4W, 0.6H)
+                if x < W * 0.40 and y >= H * 0.40:
+                    return 3
+                elif x >= W * 0.60 and y < H * 0.60:
+                    return 1
+                elif y < H * 0.40:
+                    return 0
+                elif y >= H * 0.60:
+                    return 2
+                else:
+                    # Center junction (0.4W..0.6W, 0.4H..0.6H)
+                    if y < cy and x < W * 0.60:
+                        return 0
+                    elif x >= cx and y < H * 0.60:
+                        return 1
+                    elif y >= cy and x >= W * 0.40:
+                        return 2
+                    else:
+                        return 3
+
+            elif t == "4_vert_stripes":
+                idx = int(x / (W / 4.0))
+                return max(0, min(3, idx))
+
+            elif t == "4_horiz_stripes":
+                idx = int(y / (H / 4.0))
+                return max(0, min(3, idx))
+
+            elif t == "4_quad_vinyl":
+                top = y < cy
+                left = x < cx
+                if top and left:
+                    return 0
+                elif top and not left:
+                    return 1
+                elif not top and left:
+                    return 2
+                else:
+                    return 3
+
+            elif t == "4_ambient_quad":
+                c2 = QRectF(W * 0.04, H * 0.24, W * 0.38, H * 0.52)
+                c3 = QRectF(W * 0.31, H * 0.18, W * 0.38, H * 0.52)
+                c4 = QRectF(W * 0.58, H * 0.24, W * 0.38, H * 0.52)
+                if c3.contains(x, y):
+                    return 2  # Center card in front
+                if c2.contains(x, y):
+                    return 1  # Left
+                if c4.contains(x, y):
+                    return 3  # Right
+                return 0      # Backdrop
+
+            else:
+                top = y < cy
+                left = x < cx
+                if top and left:
+                    return 0
+                elif top and not left:
+                    return 1
+                elif not top and left:
+                    return 2
+                else:
+                    return 3
+
+        return 0
+
+    @classmethod
+    def get_slot_path(cls, template_id: str, slot_idx: int, size: int = 200, photo_count: int = 1) -> QPainterPath:
+        """
+        Get exact QPainterPath outline for a specific slot, used for drawing swap highlight overlays.
+        Component Name: CollageMasterDispatcher
+        """
+        path = QPainterPath()
+        W = float(size)
+        H = float(size)
+        cx = W / 2.0
+        cy = H / 2.0
+        
+        if photo_count <= 1:
+            t = template_id or "1_circle_disc"
+            if t == "1_circle_disc":
+                path.addEllipse(6, 6, W - 12, H - 12)
+            elif t == "1_cyber_frame":
+                margin = W * 0.06
+                path.addRoundedRect(QRectF(margin, margin, W - 2 * margin, H - 2 * margin), 6, 6)
+            elif t == "1_ambient_blur":
+                path.addRoundedRect(QRectF(W * 0.12, H * 0.12, W * 0.76, H * 0.76), 8, 8)
+            else:
+                path.addRoundedRect(0, 0, W, H, 12, 12)
+            return path
+            
+        # 1. Two-Photo Templates (Category 2)
+        if photo_count == 2:
+            t = CollageEngineCategory2.ALIASES.get(template_id, template_id) or "2_circle_split"
+            
+            if t == "2_circle_split":
+                margin = W * 0.02
+                circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
+                c = circle_rect.center()
+                path.moveTo(c)
+                if slot_idx == 0:
+                    path.arcTo(circle_rect, 90.0, 180.0)
+                else:
+                    path.arcTo(circle_rect, 270.0, 180.0)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_vert_50":
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, H)
+                else:
+                    path.addRect(cx, 0, cx, H)
+                return path
+
+            elif t == "2_vert_30_70":
+                split_x = W * 0.35
+                if slot_idx == 0:
+                    path.addRect(0, 0, split_x, H)
+                else:
+                    path.addRect(split_x, 0, W - split_x, H)
+                return path
+
+            elif t == "2_vert_70_30":
+                split_x = W * 0.65
+                if slot_idx == 0:
+                    path.addRect(0, 0, split_x, H)
+                else:
+                    path.addRect(split_x, 0, W - split_x, H)
+                return path
+
+            elif t == "2_horiz_50":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, cy)
+                else:
+                    path.addRect(0, cy, W, cy)
+                return path
+
+            elif t == "2_horiz_30_70":
+                split_y = H * 0.35
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, split_y)
+                else:
+                    path.addRect(0, split_y, W, H - split_y)
+                return path
+
+            elif t == "2_horiz_70_30":
+                split_y = H * 0.65
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, split_y)
+                else:
+                    path.addRect(0, split_y, W, H - split_y)
+                return path
+
+            elif t == "2_diag_tl_br":
+                poly = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(0, H)]) if slot_idx == 0 else QPolygonF([QPointF(W, 0), QPointF(W, H), QPointF(0, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_diag_tr_bl":
+                poly = QPolygonF([QPointF(0, 0), QPointF(W, H), QPointF(0, H)]) if slot_idx == 0 else QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_slant_v_left":
+                poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.62, 0), QPointF(W * 0.38, H), QPointF(0, H)]) if slot_idx == 0 else QPolygonF([QPointF(W * 0.62, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.38, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_slant_v_right":
+                poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.38, 0), QPointF(W * 0.62, H), QPointF(0, H)]) if slot_idx == 0 else QPolygonF([QPointF(W * 0.38, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.62, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_slant_h_up":
+                poly = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.38), QPointF(0, H * 0.62)]) if slot_idx == 0 else QPolygonF([QPointF(0, H * 0.62), QPointF(W, H * 0.38), QPointF(W, H), QPointF(0, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_slant_h_down":
+                poly = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.62), QPointF(0, H * 0.38)]) if slot_idx == 0 else QPolygonF([QPointF(0, H * 0.38), QPointF(W, H * 0.62), QPointF(W, H), QPointF(0, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_chevron_right":
+                poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.52, 0), QPointF(W * 0.78, H * 0.5), QPointF(W * 0.52, H), QPointF(0, H)]) if slot_idx == 0 else QPolygonF([QPointF(W * 0.52, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.52, H), QPointF(W * 0.78, H * 0.5)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_chevron_left":
+                poly = QPolygonF([QPointF(W * 0.48, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.48, H), QPointF(W * 0.22, H * 0.5)]) if slot_idx == 0 else QPolygonF([QPointF(0, 0), QPointF(W * 0.48, 0), QPointF(W * 0.22, H * 0.5), QPointF(W * 0.48, H), QPointF(0, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "2_inset_br":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.48, H * 0.48, W * 0.48, H * 0.48), 8, 8)
+                return path
+
+            elif t == "2_inset_bl":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.04, H * 0.48, W * 0.48, H * 0.48), 8, 8)
+                return path
+
+            elif t == "2_vinyl_stack":
+                if slot_idx == 0:
+                    path.addRoundedRect(QRectF(W * 0.08, H * 0.38, W * 0.54, H * 0.54), 8, 8)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.28, H * 0.08, W * 0.54, H * 0.54), 8, 8)
+                return path
+
+            elif t == "2_polaroid_stack":
+                if slot_idx == 0:
+                    path.addRoundedRect(QRectF(W * 0.25, H * 0.25, W * 0.62, H * 0.62), 8, 8)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.13, H * 0.13, W * 0.62, H * 0.62), 8, 8)
+                return path
+
+            elif t == "2_hero_inset":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H)
+                else:
+                    inset_size = W * 0.65
+                    path.addRoundedRect(QRectF((W - inset_size) / 2.0, (H - inset_size) / 2.0, inset_size, inset_size), 8, 8)
+                return path
+
+            else:
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, H)
+                else:
+                    path.addRect(cx, 0, cx, H)
+                return path
+
+        # 2. Three-Photo Templates (Category 3)
+        elif photo_count == 3:
+            t = CollageEngineCategory3.ALIASES.get(template_id, template_id) or "3_circle_split"
+            
+            if t == "3_circle_split":
+                margin = W * 0.02
+                circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
+                c = circle_rect.center()
+                path.moveTo(c)
+                angles = [30.0, 150.0, 270.0]
+                start_a = angles[slot_idx % 3]
+                path.arcTo(circle_rect, start_a, 120.0)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_hero_left":
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, H)
+                elif slot_idx == 1:
+                    path.addRect(cx, 0, cx, cy)
+                else:
+                    path.addRect(cx, cy, cx, cy)
+                return path
+
+            elif t == "3_hero_right":
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, cy)
+                elif slot_idx == 1:
+                    path.addRect(0, cy, cx, cy)
+                else:
+                    path.addRect(cx, 0, cx, H)
+                return path
+
+            elif t == "3_hero_top":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, cy)
+                elif slot_idx == 1:
+                    path.addRect(0, cy, cx, cy)
+                else:
+                    path.addRect(cx, cy, cx, cy)
+                return path
+
+            elif t == "3_hero_bottom":
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, cy)
+                elif slot_idx == 1:
+                    path.addRect(cx, 0, cx, cy)
+                else:
+                    path.addRect(0, cy, W, cy)
+                return path
+
+            elif t == "3_slanted_hero_top":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.40), QPointF(0, H * 0.55)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(0, H * 0.55), QPointF(W * 0.5, H * 0.475), QPointF(W * 0.5, H), QPointF(0, H)])
+                else:
+                    poly = QPolygonF([QPointF(W * 0.5, H * 0.475), QPointF(W, H * 0.40), QPointF(W, H), QPointF(W * 0.5, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_slanted_hero_bottom":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.5, 0), QPointF(W * 0.5, H * 0.525), QPointF(0, H * 0.45)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(W * 0.5, 0), QPointF(W, 0), QPointF(W, H * 0.60), QPointF(W * 0.5, H * 0.525)])
+                else:
+                    poly = QPolygonF([QPointF(0, H * 0.45), QPointF(W, H * 0.60), QPointF(W, H), QPointF(0, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_slanted_hero_left":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.55, 0), QPointF(W * 0.40, H), QPointF(0, H)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(W * 0.55, 0), QPointF(W, 0), QPointF(W, H * 0.50), QPointF(W * 0.475, H * 0.50)])
+                else:
+                    poly = QPolygonF([QPointF(W * 0.475, H * 0.50), QPointF(W, H * 0.50), QPointF(W, H), QPointF(W * 0.40, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_slanted_hero_right":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.525, 0), QPointF(W * 0.525, H * 0.50), QPointF(0, H * 0.50)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(0, H * 0.50), QPointF(W * 0.475, H * 0.50), QPointF(W * 0.475, H), QPointF(0, H)])
+                else:
+                    poly = QPolygonF([QPointF(W * 0.525, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.475, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_pyramid":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(W * 0.5, 0), QPointF(W * 0.85, H), QPointF(W * 0.15, H)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.5, 0), QPointF(W * 0.15, H), QPointF(0, H)])
+                else:
+                    poly = QPolygonF([QPointF(W * 0.5, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.85, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_inverted_v":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.35, 0), QPointF(W * 0.5, H), QPointF(0, H)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(W * 0.35, 0), QPointF(W * 0.65, 0), QPointF(W * 0.5, H)])
+                else:
+                    poly = QPolygonF([QPointF(W * 0.65, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.5, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_slanted_cols_r":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.40, 0), QPointF(W * 0.25, H), QPointF(0, H)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(W * 0.40, 0), QPointF(W * 0.75, 0), QPointF(W * 0.60, H), QPointF(W * 0.25, H)])
+                else:
+                    poly = QPolygonF([QPointF(W * 0.75, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.60, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_slanted_cols_l":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W * 0.25, 0), QPointF(W * 0.40, H), QPointF(0, H)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(W * 0.25, 0), QPointF(W * 0.60, 0), QPointF(W * 0.75, H), QPointF(W * 0.40, H)])
+                else:
+                    poly = QPolygonF([QPointF(W * 0.60, 0), QPointF(W, 0), QPointF(W, H), QPointF(W * 0.75, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_slanted_rows_up":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.25), QPointF(0, H * 0.40)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(0, H * 0.40), QPointF(W, H * 0.25), QPointF(W, H * 0.60), QPointF(0, H * 0.75)])
+                else:
+                    poly = QPolygonF([QPointF(0, H * 0.75), QPointF(W, H * 0.60), QPointF(W, H), QPointF(0, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_slanted_rows_down":
+                if slot_idx == 0:
+                    poly = QPolygonF([QPointF(0, 0), QPointF(W, 0), QPointF(W, H * 0.40), QPointF(0, H * 0.25)])
+                elif slot_idx == 1:
+                    poly = QPolygonF([QPointF(0, H * 0.25), QPointF(W, H * 0.40), QPointF(W, H * 0.75), QPointF(0, H * 0.60)])
+                else:
+                    poly = QPolygonF([QPointF(0, H * 0.60), QPointF(W, H * 0.75), QPointF(W, H), QPointF(0, H)])
+                path.addPolygon(poly)
+                path.closeSubpath()
+                return path
+
+            elif t == "3_vert_cols":
+                sw = W / 3.0
+                path.addRect(slot_idx * sw, 0, sw, H)
+                return path
+
+            elif t == "3_horiz_rows":
+                sh = H / 3.0
+                path.addRect(0, slot_idx * sh, W, sh)
+                return path
+
+            elif t == "3_wide_col_left":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W * 0.50, H)
+                elif slot_idx == 1:
+                    path.addRect(W * 0.50, 0, W * 0.25, H)
+                else:
+                    path.addRect(W * 0.75, 0, W * 0.25, H)
+                return path
+
+            elif t == "3_wide_col_right":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W * 0.25, H)
+                elif slot_idx == 1:
+                    path.addRect(W * 0.25, 0, W * 0.25, H)
+                else:
+                    path.addRect(W * 0.50, 0, W * 0.50, H)
+                return path
+
+            elif t == "3_wide_row_top":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H * 0.50)
+                elif slot_idx == 1:
+                    path.addRect(0, H * 0.50, W, H * 0.25)
+                else:
+                    path.addRect(0, H * 0.75, W, H * 0.25)
+                return path
+
+            elif t == "3_wide_row_bottom":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H * 0.25)
+                elif slot_idx == 1:
+                    path.addRect(0, H * 0.25, W, H * 0.25)
+                else:
+                    path.addRect(0, H * 0.50, W, H * 0.50)
+                return path
+
+            elif t == "3_inset_stack_r":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H)
+                elif slot_idx == 1:
+                    path.addRoundedRect(QRectF(W * 0.52, H * 0.06, W * 0.42, H * 0.42), 6, 6)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42), 6, 6)
+                return path
+
+            elif t == "3_inset_bottom_h":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H)
+                elif slot_idx == 1:
+                    path.addRoundedRect(QRectF(W * 0.06, H * 0.52, W * 0.42, H * 0.42), 6, 6)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.52, H * 0.52, W * 0.42, H * 0.42), 6, 6)
+                return path
+
+            elif t == "3_vinyl_stack":
+                if slot_idx == 0:
+                    path.addRoundedRect(QRectF(W * 0.06, H * 0.38, W * 0.48, H * 0.48), 7, 7)
+                elif slot_idx == 1:
+                    path.addRoundedRect(QRectF(W * 0.45, H * 0.45, W * 0.48, H * 0.48), 7, 7)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.26, H * 0.05, W * 0.48, H * 0.48), 7, 7)
+                return path
+
+            elif t == "3_ambient_stack":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H)
+                elif slot_idx == 1:
+                    path.addRoundedRect(QRectF(W * 0.06, H * 0.22, W * 0.45, H * 0.55), 8, 8)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.49, H * 0.22, W * 0.45, H * 0.55), 8, 8)
+                return path
+
+            else:
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, H)
+                elif slot_idx == 1:
+                    path.addRect(cx, 0, cx, cy)
+                else:
+                    path.addRect(cx, cy, cx, cy)
+                return path
+
+        # 3. Four-Photo Templates (Category 4)
+        elif photo_count >= 4:
+            t = template_id or "4_circle_split"
+            
+            if t == "4_circle_split":
+                margin = W * 0.02
+                circle_rect = QRectF(margin, margin, W - 2 * margin, H - 2 * margin)
+                c = circle_rect.center()
+                path.moveTo(c)
+                angles = [90.0, 0.0, 180.0, 270.0]
+                start_a = angles[slot_idx % 4]
+                path.arcTo(circle_rect, start_a, 90.0)
+                path.closeSubpath()
+                return path
+
+            elif t == "4_quad_grid":
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, cy)
+                elif slot_idx == 1:
+                    path.addRect(cx, 0, cx, cy)
+                elif slot_idx == 2:
+                    path.addRect(0, cy, cx, cy)
+                else:
+                    path.addRect(cx, cy, cx, cy)
+                return path
+
+            elif t == "4_hero_left_3_stack":
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, H)
+                else:
+                    sh = H / 3.0
+                    path.addRect(cx, (slot_idx - 1) * sh, cx, sh)
+                return path
+
+            elif t == "4_hero_top_3_cols":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, cy)
+                else:
+                    sw = W / 3.0
+                    path.addRect((slot_idx - 1) * sw, cy, sw, cy)
+                return path
+
+            elif t == "4_pinwheel":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W * 0.60, H * 0.40)
+                elif slot_idx == 1:
+                    path.addRect(W * 0.60, 0, W * 0.40, H * 0.60)
+                elif slot_idx == 2:
+                    path.addRect(W * 0.40, H * 0.60, W * 0.60, H * 0.40)
+                else:
+                    path.addRect(0, H * 0.40, W * 0.40, H * 0.60)
+                return path
+
+            elif t == "4_vert_stripes":
+                sw = W / 4.0
+                path.addRect(slot_idx * sw, 0, sw, H)
+                return path
+
+            elif t == "4_horiz_stripes":
+                sh = H / 4.0
+                path.addRect(0, slot_idx * sh, W, sh)
+                return path
+
+            elif t == "4_quad_vinyl":
+                sw = W * 0.44
+                sh = H * 0.44
+                positions = [
+                    (W * 0.04, H * 0.04),
+                    (W * 0.52, H * 0.04),
+                    (W * 0.04, H * 0.52),
+                    (W * 0.52, H * 0.52)
+                ]
+                px, py = positions[slot_idx % 4]
+                path.addRoundedRect(QRectF(px, py, sw, sh), 6, 6)
+                return path
+
+            elif t == "4_ambient_quad":
+                if slot_idx == 0:
+                    path.addRect(0, 0, W, H)
+                elif slot_idx == 1:
+                    path.addRoundedRect(QRectF(W * 0.04, H * 0.24, W * 0.38, H * 0.52), 7, 7)
+                elif slot_idx == 2:
+                    path.addRoundedRect(QRectF(W * 0.31, H * 0.18, W * 0.38, H * 0.52), 7, 7)
+                else:
+                    path.addRoundedRect(QRectF(W * 0.58, H * 0.24, W * 0.38, H * 0.52), 7, 7)
+                return path
+
+            else:
+                if slot_idx == 0:
+                    path.addRect(0, 0, cx, cy)
+                elif slot_idx == 1:
+                    path.addRect(cx, 0, cx, cy)
+                elif slot_idx == 2:
+                    path.addRect(0, cy, cx, cy)
+                else:
+                    path.addRect(cx, cy, cx, cy)
+                return path
+
+        path.addRect(0, 0, W, H)
+        return path
 
     @classmethod
     def generate_ambient_aura(
@@ -4995,43 +6088,382 @@ class CoverTemplatePickerFloatingPanel(QFrame):
 CoverTemplatePickerModal = CoverTemplatePickerFloatingPanel
 
 
+class CollageModeToggleFrame(QWidget):
+    """
+    Smooth 2-segment animated sliding pill switcher for Collage Interaction Mode:
+    Modes: Swap Mode | Pan & Crop
+    Component Name: CollageModeToggleFrame
+    """
+    modeChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("CollageModeToggleFrame")
+        self.setFixedHeight(30)
+        self.setFixedWidth(270)
+        self.setCursor(Qt.PointingHandCursor)
+        self._modes = ["swap", "pan_crop"]
+        self._labels = ["Swap Mode", "Pan & Crop"]
+        self._current_mode = "swap"
+        self._slide_progress = 0.0  # 0.0=swap, 1.0=pan_crop
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_mode(self, mode: str, animate: bool = True):
+        if mode not in self._modes:
+            mode = "swap"
+        target = float(self._modes.index(mode))
+        if mode == self._current_mode and self._slide_progress == target:
+            return
+        self._current_mode = mode
+
+        if not animate:
+            if self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._slide_progress = target
+            self.update()
+            self.modeChanged.emit(self._current_mode)
+            return
+
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+        self.modeChanged.emit(self._current_mode)
+
+    def get_mode(self) -> str:
+        return self._current_mode
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            segment_w = max(1.0, w / 2.0)
+            idx = max(0, min(1, int(click_x / segment_w)))
+            self.set_mode(self._modes[idx])
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Dark container track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 14)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 6, 6)
+
+        # 2. Calculate sliding pill geometry
+        pad = 2.5
+        pill_w = (w - (pad * 3.0)) / 2.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * (pill_w + pad)
+        pill_y = pad
+
+        # 3. Draw sliding orange gradient pill
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 4.5, 4.5)
+
+        # 4. Draw Tab Texts with smooth color interpolation
+        p.setFont(QFont("Orbitron", 9, QFont.Bold))
+        for i, lbl in enumerate(self._labels):
+            seg_x = pad + i * (pill_w + pad)
+            rect = QRectF(seg_x, 0, pill_w, h)
+            dist = abs(self._slide_progress - float(i))
+            weight = max(0.0, min(1.0, 1.0 - dist))
+            r = int(138 + (0 - 138) * weight)
+            g = int(141 + (0 - 141) * weight)
+            b = int(152 + (0 - 152) * weight)
+            p.setPen(QColor(r, g, b))
+            p.drawText(rect, Qt.AlignCenter, lbl)
+        p.end()
+
+
+class InteractiveCollageCanvas(QWidget):
+    """
+    Interactive Live Collage Preview Canvas:
+    - Mode 'swap': Cross-slot drag-and-drop to Swap photo positions (Pixlr / Canva style).
+    - Mode 'pan_crop': Dedicated in-slot pan / framing adjustment on drag & mouse wheel zoom.
+    - Glowing neon orange swap target highlight + SWAP badge indicators.
+    
+    Component Name: InteractiveCollageCanvas
+    """
+    photoSwapped = Signal(int, int)
+    offsetChanged = Signal(int, float, float)
+
+    def __init__(self, parent=None, size: int = 200):
+        super().__init__(parent)
+        self.setObjectName("InteractiveCollageCanvas")
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
+
+        self._mode = "swap"
+        self._photos = []
+        self._template_id = ""
+        self._offsets = {}
+        self._current_pixmap = None
+
+        self._drag_slot = None
+        self._drag_start_pos = QPointF()
+        self._start_offset = (0.0, 0.0, 1.20)
+        self._hover_target_slot = None
+        self._is_drag_active = False
+        self._drag_threshold = 10.0
+
+    def set_mode(self, mode: str):
+        self._mode = mode
+        self._is_drag_active = False
+        self._drag_slot = None
+        self._hover_target_slot = None
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    def set_data(self, photos: list, template_id: str, offsets: dict = None):
+        self._photos = list(photos) if photos else []
+        self._template_id = template_id or ""
+        self._offsets = dict(offsets) if offsets else {}
+        self._re_render()
+        self.update()
+
+    def _re_render(self):
+        if not self._photos:
+            self._current_pixmap = CollageMasterDispatcher.render_cover([], size=self.width())
+        else:
+            self._current_pixmap = CollageMasterDispatcher.render_cover(
+                self._photos, self._template_id, size=self.width(), offsets=self._offsets
+            )
+
+    def wheelEvent(self, event):
+        if not self._photos:
+            super().wheelEvent(event)
+            return
+        pos = event.position()
+        slot = CollageMasterDispatcher.get_slot_at_pos(
+            self._template_id, pos, self.width(), len(self._photos)
+        )
+        if slot is not None and slot < len(self._photos):
+            delta_y = event.angleDelta().y()
+            curr = self._offsets.get(slot, (0.0, 0.0, 1.20))
+            off_x = curr[0] if len(curr) > 0 else 0.0
+            off_y = curr[1] if len(curr) > 1 else 0.0
+            curr_zoom = curr[2] if len(curr) > 2 else 1.20
+            
+            step = 0.10 if delta_y > 0 else -0.10
+            new_zoom = max(1.0, min(3.5, curr_zoom + step))
+            self._offsets[slot] = (off_x, off_y, new_zoom)
+            self.offsetChanged.emit(slot, off_x, off_y)
+            self._re_render()
+            self.update()
+            event.accept()
+            return
+        super().wheelEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self._photos:
+            pos = event.position()
+            slot = CollageMasterDispatcher.get_slot_at_pos(
+                self._template_id, pos, self.width(), len(self._photos)
+            )
+            if slot is not None and slot < len(self._photos):
+                self._drag_slot = slot
+                self._drag_start_pos = pos
+                raw_off = self._offsets.get(slot, (0.0, 0.0, 1.20))
+                rx = raw_off[0] if len(raw_off) > 0 else 0.0
+                ry = raw_off[1] if len(raw_off) > 1 else 0.0
+                rz = raw_off[2] if len(raw_off) > 2 else 1.20
+                self._start_offset = (rx, ry, rz)
+                self._hover_target_slot = None
+                self._is_drag_active = True
+                if self._mode == "pan_crop" or len(self._photos) <= 1:
+                    self.setCursor(Qt.ClosedHandCursor)
+                else:
+                    self.setCursor(Qt.DragMoveCursor)
+                self.update()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        pos = event.position()
+        if not self._is_drag_active or self._drag_slot is None:
+            if self._photos:
+                slot = CollageMasterDispatcher.get_slot_at_pos(
+                    self._template_id, pos, self.width(), len(self._photos)
+                )
+                if slot is not None and slot < len(self._photos):
+                    if self._mode == "pan_crop" or len(self._photos) <= 1:
+                        self.setCursor(Qt.SizeAllCursor)
+                    else:
+                        self.setCursor(Qt.OpenHandCursor)
+                else:
+                    self.setCursor(Qt.ArrowCursor)
+            else:
+                self.setCursor(Qt.ArrowCursor)
+            super().mouseMoveEvent(event)
+            return
+
+        delta = pos - self._drag_start_pos
+
+        if self._mode == "pan_crop" or len(self._photos) <= 1:
+            # Direct In-slot Panning & Crop adjustment
+            sensitivity = 0.012
+            curr_zoom = self._start_offset[2] if len(self._start_offset) > 2 else 1.20
+            new_off_x = max(-1.0, min(1.0, self._start_offset[0] + delta.x() * sensitivity))
+            new_off_y = max(-1.0, min(1.0, self._start_offset[1] + delta.y() * sensitivity))
+            self._offsets[self._drag_slot] = (new_off_x, new_off_y, curr_zoom)
+            self.offsetChanged.emit(self._drag_slot, new_off_x, new_off_y)
+            self._re_render()
+            self.update()
+        else:
+            # Swap Mode
+            curr_slot = CollageMasterDispatcher.get_slot_at_pos(
+                self._template_id, pos, self.width(), len(self._photos)
+            )
+            if len(self._photos) > 1 and curr_slot is not None and curr_slot != self._drag_slot:
+                if self._hover_target_slot != curr_slot:
+                    self._hover_target_slot = curr_slot
+                    self.update()
+            else:
+                if self._hover_target_slot is not None:
+                    self._hover_target_slot = None
+                    self.update()
+
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._is_drag_active:
+            if self._mode == "swap" and len(self._photos) > 1 and self._hover_target_slot is not None and self._hover_target_slot != self._drag_slot:
+                source = self._drag_slot
+                target = self._hover_target_slot
+                self.photoSwapped.emit(source, target)
+            self._is_drag_active = False
+            self._drag_slot = None
+            self._hover_target_slot = None
+            self.setCursor(Qt.OpenHandCursor if (self._mode == "swap" and len(self._photos) > 1) else Qt.SizeAllCursor)
+            self.update()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._is_drag_active:
+            self._hover_target_slot = None
+            self.setCursor(Qt.ArrowCursor)
+            self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
+        if self._current_pixmap and not self._current_pixmap.isNull():
+            painter.drawPixmap(0, 0, self._current_pixmap)
+
+        if (self._mode == "pan_crop" or len(self._photos) <= 1) and self._is_drag_active and self._drag_slot is not None and len(self._photos) > 0:
+            # Subtle glowing active slot framing border in Pan & Crop mode
+            path = CollageMasterDispatcher.get_slot_path(
+                self._template_id, self._drag_slot, self.width(), len(self._photos)
+            )
+            painter.setPen(QPen(QColor("#FDA903"), 2.0))
+            painter.drawPath(path)
+
+        elif self._mode == "swap" and len(self._photos) > 1:
+            # 1. Source slot dragging indicator (dashed accent outline)
+            if self._is_drag_active and self._drag_slot is not None:
+                src_path = CollageMasterDispatcher.get_slot_path(
+                    self._template_id, self._drag_slot, self.width(), len(self._photos)
+                )
+                painter.setPen(QPen(QColor("#FDA903"), 1.8, Qt.DashLine))
+                painter.drawPath(src_path)
+
+            # 2. Target slot hover indicator (glowing orange overlay + SWAP badge)
+            if self._hover_target_slot is not None and self._hover_target_slot != self._drag_slot:
+                tgt_path = CollageMasterDispatcher.get_slot_path(
+                    self._template_id, self._hover_target_slot, self.width(), len(self._photos)
+                )
+                painter.fillPath(tgt_path, QColor(255, 91, 6, 85))
+                painter.setPen(QPen(QColor("#FF5B06"), 2.5))
+                painter.drawPath(tgt_path)
+                
+                # High-contrast SWAP badge with pill background
+                bounds = tgt_path.boundingRect()
+                center = bounds.center()
+                badge_w = 64.0
+                badge_h = 24.0
+                badge_rect = QRectF(center.x() - badge_w / 2.0, center.y() - badge_h / 2.0, badge_w, badge_h)
+                
+                painter.setPen(Qt.NoPen)
+                painter.setBrush(QBrush(QColor(10, 12, 18, 220)))
+                painter.drawRoundedRect(badge_rect, 5.0, 5.0)
+                
+                painter.setPen(QPen(QColor("#FF5B06"), 1.2))
+                painter.drawRoundedRect(badge_rect, 5.0, 5.0)
+                
+                painter.setPen(QColor("#FFFFFF"))
+                painter.setFont(QFont("Orbitron", 9, QFont.Bold))
+                painter.drawText(badge_rect, Qt.AlignCenter, "SWAP")
+
+        painter.end()
+
+
 class CoverManagerFloatingPanel(QFrame):
     """
     Glassmorphism In-App Floating Panel (QFrame overlay on MainWindow) for Reviewing and Editing Playlist Cover & Photos.
-    Supports dynamic multi-photo uploading, category switching, and template selection.
+    Supports dynamic multi-photo uploading, category switching, interactive photo panning and drag-to-swap.
     
     Component Name: CoverManagerFloatingPanel
     """
-    def __init__(self, mode: str, photos: list = None, sources: list = None, template_id: str = '', on_applied=None, on_cancelled=None, parent=None):
+    def __init__(self, mode: str, photos: list = None, sources: list = None, template_id: str = '', offsets: dict = None, on_applied=None, on_cancelled=None, parent=None):
         super().__init__(parent)
         self.setObjectName("CoverManagerFloatingPanel")
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.setFixedSize(450, 500)
+        self.setFixedSize(450, 520)
 
         self.mode = mode
         self.on_applied = on_applied
         self.on_cancelled = on_cancelled
         
         # Normalize in-memory photos
+        # Normalize in-memory photos (prefer raw original source files to avoid any squished cached covers)
         self.photos = []
-        if isinstance(photos, list):
-            for p in photos:
-                if isinstance(p, QPixmap) and not p.isNull():
-                    self.photos.append(p)
-                elif isinstance(p, str) and os.path.exists(p):
-                    pix = QPixmap(p)
-                    if not pix.isNull():
-                        self.photos.append(pix)
-        elif isinstance(photos, QPixmap) and not photos.isNull():
-            self.photos.append(photos)
-        elif isinstance(photos, str) and os.path.exists(photos):
-            pix = QPixmap(photos)
-            if not pix.isNull():
-                self.photos.append(pix)
+        valid_inputs = []
+        if sources and isinstance(sources, list):
+            for s in sources:
+                if s and isinstance(s, str) and os.path.exists(s):
+                    valid_inputs.append(s)
+        if not valid_inputs and photos:
+            valid_inputs = photos if isinstance(photos, list) else [photos]
+
+        for p in valid_inputs:
+            if isinstance(p, QPixmap) and not p.isNull():
+                self.photos.append(p)
+            elif isinstance(p, str) and os.path.exists(p):
+                pix = QPixmap(p)
+                if not pix.isNull():
+                    self.photos.append(pix)
 
         self.sources = list(sources) if isinstance(sources, list) else ([sources] if sources else [])
+        self.photo_offsets = dict(offsets) if offsets else {}
         self.active_template_id = template_id or CollageMasterDispatcher.get_default_template_id(len(self.photos))
         self.reset_all = False
 
@@ -5084,7 +6516,7 @@ class CoverManagerFloatingPanel(QFrame):
             QPushButton#coverManagerCloseBtn:pressed {
                 background: rgba(255, 91, 6, 0.2);
             }
-            QLabel#coverPreviewBox {
+            QWidget#InteractiveCollageCanvas {
                 background: transparent;
                 border: none;
             }
@@ -5138,8 +6570,8 @@ class CoverManagerFloatingPanel(QFrame):
         content_widget = QWidget()
         content_widget.setObjectName("coverManagerContentWidget")
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(16, 16, 16, 16)
-        content_layout.setSpacing(14)
+        content_layout.setContentsMargins(16, 14, 16, 14)
+        content_layout.setSpacing(12)
 
         # Center Composite Live Preview Stage with Cinematic Ambient Lighting
         self.preview_stage = QWidget()
@@ -5153,12 +6585,16 @@ class CoverManagerFloatingPanel(QFrame):
         self.preview_ambient_glow.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.preview_ambient_glow.setAttribute(Qt.WA_TranslucentBackground, True)
 
-        self.preview_lbl = QLabel(self.preview_stage)
-        self.preview_lbl.setObjectName("coverPreviewBox")
-        self.preview_lbl.setGeometry(20, 20, 200, 200)
-        self.preview_lbl.setAlignment(Qt.AlignCenter)
-        self.preview_lbl.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.canvas = InteractiveCollageCanvas(self.preview_stage, size=200)
+        self.canvas.setGeometry(20, 20, 200, 200)
+        self.canvas.photoSwapped.connect(self._on_photos_swapped)
+        self.canvas.offsetChanged.connect(self._on_offset_changed)
         content_layout.addWidget(self.preview_stage, alignment=Qt.AlignCenter)
+
+        # Segmented Mode Switcher (Swap Mode | Pan & Crop)
+        self.mode_switcher = CollageModeToggleFrame()
+        self.mode_switcher.modeChanged.connect(self._on_mode_changed)
+        content_layout.addWidget(self.mode_switcher, alignment=Qt.AlignCenter)
 
         # Info row
         self.info_lbl = QLabel()
@@ -5185,12 +6621,6 @@ class CoverManagerFloatingPanel(QFrame):
             self.upload_btn.clicked.connect(self._open_file_picker)
             btn_layout.addWidget(self.upload_btn)
 
-            self.template_btn = FadeHoverButton("Template", border_radius=6.0, is_secondary=True)
-            self.template_btn.setObjectName("coverManagerTemplateBtn")
-            self.template_btn.setFixedSize(100, 36)
-            self.template_btn.clicked.connect(self._open_template_picker_dialog)
-            btn_layout.addWidget(self.template_btn)
-
             self.reset_btn = FadeHoverButton("Reset", border_radius=6.0, color_mode="red")
             self.reset_btn.setObjectName("coverManagerResetBtn")
             self.reset_btn.setFixedSize(70, 36)
@@ -5210,20 +6640,59 @@ class CoverManagerFloatingPanel(QFrame):
 
         self._update_display()
 
-    def _update_display(self):
-        count = len(self.photos)
-        
-        if count == 0:
-            rendered = CollageMasterDispatcher.render_cover([], size=240)
-            self.preview_lbl.setPixmap(rendered.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            self.info_lbl.setText("Default clean playlist placeholder")
-        else:
-            rendered = CollageMasterDispatcher.render_cover(self.photos, self.active_template_id, size=240)
-            self.preview_lbl.setPixmap(rendered.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            self.info_lbl.setText(f"Template: {self.active_template_id} • {count} active photo{'s' if count > 1 else ''}")
+    def _on_mode_changed(self, mode: str):
+        self.canvas.set_mode(mode)
+        self._update_info_text()
 
-        aura_pix = CinematicGlowEngine.generate_ambient_aura(rendered, aura_size=240, intensity=0.60)
-        self.preview_ambient_glow.setPixmap(aura_pix)
+    def _on_photos_swapped(self, src: int, dst: int):
+        if src < len(self.photos) and dst < len(self.photos):
+            self.photos[src], self.photos[dst] = self.photos[dst], self.photos[src]
+            if src < len(self.sources) and dst < len(self.sources):
+                self.sources[src], self.sources[dst] = self.sources[dst], self.sources[src]
+            raw_src = self.photo_offsets.get(src, (0.0, 0.0, 1.20))
+            raw_dst = self.photo_offsets.get(dst, (0.0, 0.0, 1.20))
+            off_src = (raw_src[0] if len(raw_src) > 0 else 0.0, raw_src[1] if len(raw_src) > 1 else 0.0, raw_src[2] if len(raw_src) > 2 else 1.20)
+            off_dst = (raw_dst[0] if len(raw_dst) > 0 else 0.0, raw_dst[1] if len(raw_dst) > 1 else 0.0, raw_dst[2] if len(raw_dst) > 2 else 1.20)
+            self.photo_offsets[src] = off_dst
+            self.photo_offsets[dst] = off_src
+            self._update_display()
+
+    def _on_offset_changed(self, slot_idx: int, off_x: float, off_y: float):
+        curr = self.photo_offsets.get(slot_idx, (0.0, 0.0, 1.20))
+        curr_zoom = curr[2] if len(curr) > 2 else 1.20
+        self.photo_offsets[slot_idx] = (off_x, off_y, curr_zoom)
+        if hasattr(self, 'preview_ambient_glow') and self.canvas._current_pixmap:
+            aura_pix = CinematicGlowEngine.generate_ambient_aura(self.canvas._current_pixmap, aura_size=240, intensity=0.60)
+            self.preview_ambient_glow.setPixmap(aura_pix)
+
+    def _update_info_text(self):
+        count = len(self.photos)
+        if count <= 1:
+            if hasattr(self, 'mode_switcher'):
+                self.mode_switcher.setVisible(False)
+            self.canvas.set_mode("pan_crop")
+            if count == 0:
+                self.info_lbl.setText("Default clean playlist placeholder")
+            else:
+                self.info_lbl.setText(f"Template: {self.active_template_id} • 1 active photo\nDrag inside photo or scroll wheel to zoom & frame crop")
+        else:
+            if hasattr(self, 'mode_switcher'):
+                self.mode_switcher.setVisible(True)
+            mode = self.mode_switcher.get_mode() if hasattr(self, 'mode_switcher') else "swap"
+            self.canvas.set_mode(mode)
+            if mode == "pan_crop":
+                action_hint = "Pan & Crop Mode: Drag inside photo to frame • Scroll wheel to zoom"
+            else:
+                action_hint = "Swap Mode: Drag photo onto another slot to swap positions"
+            self.info_lbl.setText(f"Template: {self.active_template_id} • {count} active photos\n{action_hint}")
+
+    def _update_display(self):
+        self.canvas.set_data(self.photos, self.active_template_id, self.photo_offsets)
+        self._update_info_text()
+
+        if self.canvas._current_pixmap:
+            aura_pix = CinematicGlowEngine.generate_ambient_aura(self.canvas._current_pixmap, aura_size=240, intensity=0.60)
+            self.preview_ambient_glow.setPixmap(aura_pix)
 
     def _open_file_picker(self):
         from PySide6.QtWidgets import QFileDialog
@@ -5280,6 +6749,8 @@ class CoverManagerFloatingPanel(QFrame):
                 self.sources = paths
                 self.reset_all = False
                 self.active_template_id = t_id
+                if hasattr(self, 'mode_switcher') and len(self.photos) > 1:
+                    self.mode_switcher.set_mode("swap", animate=False)
                 self._update_display()
 
             def _on_upload_cancelled():
@@ -5298,33 +6769,11 @@ class CoverManagerFloatingPanel(QFrame):
             )
             self._template_floating_panel.show_panel()
 
-    def _open_template_picker_dialog(self):
-        """Open CoverTemplatePickerFloatingPanel matching current photos."""
-        if not self.photos:
-            return
-        parent_target = self.window() or self
-        if hasattr(self, '_template_floating_panel') and self._template_floating_panel:
-            try:
-                self._template_floating_panel.close_panel()
-            except Exception:
-                pass
-
-        def _on_applied(t_id):
-            self.active_template_id = t_id
-            self._update_display()
-
-        self._template_floating_panel = CoverTemplatePickerFloatingPanel(
-            photos=self.photos,
-            active_template_id=self.active_template_id,
-            on_applied=_on_applied,
-            parent=parent_target
-        )
-        self._template_floating_panel.show_panel()
-
     def _reset_covers(self):
         self.reset_all = True
         self.photos = []
         self.sources = []
+        self.photo_offsets = {}
         self.active_template_id = "1_full"
         self._update_display()
 
@@ -5333,7 +6782,8 @@ class CoverManagerFloatingPanel(QFrame):
             'reset': self.reset_all,
             'photos': self.photos,
             'sources': self.sources,
-            'template_id': self.active_template_id
+            'template_id': self.active_template_id,
+            'offsets': self.photo_offsets
         }
 
     def show_panel(self):
@@ -5738,104 +7188,109 @@ class CinematicLightingFloatingPanel(QFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        self.setStyleSheet("""
-            QFrame#CinematicLightingFloatingPanel {
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        icons_dir = os.path.join(script_dir, "UI Icons")
+        panel_icon_path = os.path.join(icons_dir, "display-icon.svg").replace('\\', '/')
+        down_arrow_path = os.path.join(icons_dir, "down-arrow-triangle.svg").replace('\\', '/')
+
+        self.setStyleSheet(f"""
+            QFrame#CinematicLightingFloatingPanel {{
                 background-color: rgba(10, 11, 16, 0.96);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 14px;
-            }
-            QWidget#cinematicTitleBar {
+            }}
+            QWidget#cinematicTitleBar {{
                 background-color: rgba(6, 6, 8, 0.85);
                 border-top-left-radius: 13px;
                 border-top-right-radius: 13px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            }
-            QLabel#cinematicTitleLabel {
+            }}
+            QLabel#cinematicTitleLabel {{
                 color: #FFFFFF;
                 font-size: 13px;
                 font-weight: bold;
                 font-family: 'Orbitron', sans-serif;
                 background: transparent;
                 letter-spacing: 0.5px;
-            }
-            QPushButton#cinematicCloseBtn {
-                background: transparent;
-                border: none;
-                border-radius: 6px;
-                padding: 0px;
-                margin: 0px;
-            }
-            QPushButton#cinematicCloseBtn:hover {
-                background: rgba(255, 255, 255, 0.08);
-            }
-            QPushButton#cinematicCloseBtn:pressed {
-                background: rgba(255, 91, 6, 0.2);
-            }
-            QLabel.cinematicHeader {
+            }}
+            QLabel.cinematicHeader {{
                 color: #A0A5B5;
                 font-family: 'Orbitron', sans-serif;
                 font-size: 10px;
                 font-weight: bold;
                 letter-spacing: 1px;
-            }
-            QLabel.cinematicValue {
+            }}
+            QLabel.cinematicValue {{
                 color: #FF7B24;
                 font-family: 'Orbitron', sans-serif;
                 font-size: 11px;
                 font-weight: bold;
-            }
-            QSlider::groove:horizontal {
+            }}
+            QSlider::groove:horizontal {{
                 height: 6px;
                 background: rgba(255, 255, 255, 0.10);
                 border-radius: 3px;
-            }
-            QSlider::sub-page:horizontal {
+            }}
+            QSlider::sub-page:horizontal {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FF7B24);
                 border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
+            }}
+            QSlider::handle:horizontal {{
                 background: #FFFFFF;
                 width: 16px;
                 margin-top: -5px;
                 margin-bottom: -5px;
                 border-radius: 8px;
-            }
-            QSlider::handle:horizontal:hover {
+            }}
+            QSlider::handle:horizontal:hover {{
                 background: #FF7B24;
-            }
-            QComboBox#cinematicModeCombo {
-                background-color: rgba(255, 255, 255, 0.06);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 6px;
-                color: #FFFFFF;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
-                padding: 6px 12px;
-            }
-            QComboBox#cinematicModeCombo:hover {
-                background-color: rgba(255, 255, 255, 0.10);
-                border-color: rgba(255, 91, 6, 0.5);
-            }
-            QComboBox#cinematicModeCombo::drop-down {
+            }}
+            QComboBox#cinematicModeCombo {{
+                background: rgba(255, 255, 255, 0.1);
                 border: none;
+                border-radius: 8px;
+                padding: 3px 26px 3px 10px;
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11.5px;
+                font-weight: 500;
+            }}
+            QComboBox#cinematicModeCombo:hover {{
+                background: rgba(255, 255, 255, 0.2);
+            }}
+            QComboBox#cinematicModeCombo::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
                 width: 24px;
-            }
-            QComboBox#cinematicModeCombo QAbstractItemView {
-                background-color: #12131A;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox#cinematicModeCombo::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox#cinematicModeCombo QAbstractItemView {{
+                background: #1e2128;
                 border: 1px solid rgba(255, 255, 255, 0.12);
-                color: #FFFFFF;
+                border-radius: 8px;
+                padding: 4px;
+                outline: 0px;
                 font-family: 'Orbitron', sans-serif;
                 font-size: 11px;
-                selection-background-color: rgba(255, 91, 6, 0.25);
-                selection-color: #FF7B24;
-                padding: 4px;
-                outline: none;
-            }
-            QComboBox#cinematicModeCombo QAbstractItemView::item {
+            }}
+            QComboBox#cinematicModeCombo QAbstractItemView::item {{
                 min-height: 28px;
                 padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
                 border-radius: 4px;
-            }
+            }}
+            QComboBox#cinematicModeCombo QAbstractItemView::item:hover,
+            QComboBox#cinematicModeCombo QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }}
         """)
 
         container_layout = QVBoxLayout(self)
@@ -5851,11 +7306,6 @@ class CinematicLightingFloatingPanel(QFrame):
         title_layout.setSpacing(10)
         title_layout.setAlignment(Qt.AlignVCenter)
 
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        icons_dir = os.path.join(script_dir, "UI Icons")
-        panel_icon_path = os.path.join(icons_dir, "display-icon.svg").replace('\\', '/')
-        close_icon_path = os.path.join(icons_dir, "close-icon-white.svg").replace('\\', '/')
-
         icon_lbl = QLabel()
         icon_lbl.setObjectName("cinematicIconLabel")
         icon_lbl.setFixedSize(18, 18)
@@ -5869,16 +7319,6 @@ class CinematicLightingFloatingPanel(QFrame):
         title_layout.addWidget(title_lbl, alignment=Qt.AlignVCenter)
 
         title_layout.addStretch()
-
-        close_btn = QPushButton()
-        close_btn.setObjectName("cinematicCloseBtn")
-        close_btn.setFixedSize(28, 28)
-        close_btn.setCursor(Qt.PointingHandCursor)
-        if os.path.exists(close_icon_path):
-            close_btn.setIcon(QIcon(close_icon_path))
-            close_btn.setIconSize(QSize(14, 14))
-        close_btn.clicked.connect(self.close_panel)
-        title_layout.addWidget(close_btn, alignment=Qt.AlignVCenter)
 
         container_layout.addWidget(self.title_bar)
 
@@ -5954,6 +7394,7 @@ class CinematicLightingFloatingPanel(QFrame):
 
         self.mode_combo = QComboBox()
         self.mode_combo.setObjectName("cinematicModeCombo")
+        self.mode_combo.setFixedHeight(30)
         self.mode_combo.setIconSize(QSize(16, 16))
 
         def make_icon(svg_name: str) -> QIcon:
@@ -6003,14 +7444,22 @@ class CinematicLightingFloatingPanel(QFrame):
 
         content_layout.addLayout(preset_layout)
 
-        # 6. Bottom Action Bar (Apply Button)
+        # 6. Bottom Action Bar (Cancel & Apply Buttons)
         btn_layout = QHBoxLayout()
         btn_layout.setContentsMargins(0, 4, 0, 0)
+        btn_layout.setSpacing(10)
+
+        self.cancel_btn = FadeHoverButton("Cancel", border_radius=6.0, is_secondary=True)
+        self.cancel_btn.setObjectName("cinematicCancelBtn")
+        self.cancel_btn.setFixedSize(100, 36)
+        self.cancel_btn.clicked.connect(self.close_panel)
+        btn_layout.addWidget(self.cancel_btn)
+
         btn_layout.addStretch()
 
         self.apply_btn = FadeHoverButton("Save Settings", border_radius=6.0, is_secondary=False)
         self.apply_btn.setObjectName("cinematicApplyBtn")
-        self.apply_btn.setFixedSize(125, 36)
+        self.apply_btn.setFixedSize(130, 36)
         self.apply_btn.clicked.connect(self.save_and_close)
         btn_layout.addWidget(self.apply_btn)
 
@@ -6195,9 +7644,10 @@ class PlaylistHeader(QFrame):
         super().__init__(parent)
         self.setObjectName("playlistHeader")
 
-        # Per-playlist cover photo paths and active template
+        # Per-playlist cover photo paths, offsets, and active template
         self._cover_photos = []
         self._cover_sources = []
+        self._cover_offsets = {}
         self._active_template_id = "1_full"
 
         self._setup_ui()
@@ -6418,14 +7868,22 @@ class PlaylistHeader(QFrame):
         Re-composite and update cover art display according to active template, photos, and cinematic lighting settings.
         """
         valid_pixmaps = []
-        for path in self._cover_photos:
-            if path and os.path.exists(path):
-                pix = QPixmap(path)
-                if not pix.isNull():
-                    valid_pixmaps.append(pix)
+        if hasattr(self, '_cover_sources') and self._cover_sources:
+            for s in self._cover_sources:
+                if s and os.path.exists(s):
+                    pix = QPixmap(s)
+                    if not pix.isNull():
+                        valid_pixmaps.append(pix)
+
+        if not valid_pixmaps:
+            for path in self._cover_photos:
+                if path and os.path.exists(path):
+                    pix = QPixmap(path)
+                    if not pix.isNull():
+                        valid_pixmaps.append(pix)
 
         if valid_pixmaps:
-            rendered = CollageMasterDispatcher.render_cover(valid_pixmaps, self._active_template_id, size=240)
+            rendered = CollageMasterDispatcher.render_cover(valid_pixmaps, self._active_template_id, size=240, offsets=getattr(self, '_cover_offsets', None))
         else:
             rendered = CollageMasterDispatcher.render_cover([], size=240)
 
@@ -6492,13 +7950,21 @@ class PlaylistHeader(QFrame):
         """
         self._pause_resume_timer()
         valid_pixmaps = []
-        for p in self._cover_photos:
-            if isinstance(p, QPixmap) and not p.isNull():
-                valid_pixmaps.append(p)
-            elif isinstance(p, str) and os.path.exists(p):
-                pix = QPixmap(p)
-                if not pix.isNull():
-                    valid_pixmaps.append(pix)
+        if hasattr(self, '_cover_sources') and self._cover_sources:
+            for s in self._cover_sources:
+                if s and os.path.exists(s):
+                    pix = QPixmap(s)
+                    if not pix.isNull():
+                        valid_pixmaps.append(pix)
+
+        if not valid_pixmaps:
+            for p in self._cover_photos:
+                if isinstance(p, QPixmap) and not p.isNull():
+                    valid_pixmaps.append(p)
+                elif isinstance(p, str) and os.path.exists(p):
+                    pix = QPixmap(p)
+                    if not pix.isNull():
+                        valid_pixmaps.append(pix)
 
         if not valid_pixmaps and hasattr(self, '_current_track_cover') and self._current_track_cover:
             valid_pixmaps = [self._current_track_cover]
@@ -6650,6 +8116,7 @@ class PlaylistHeader(QFrame):
             new_photos = changes.get('photos', [])
             new_sources = changes.get('sources', [])
             self._active_template_id = changes.get('template_id', self._active_template_id)
+            self._cover_offsets = changes.get('offsets', {})
 
             # Save cropped PNGs
             saved_paths = []
@@ -6665,7 +8132,8 @@ class PlaylistHeader(QFrame):
                 playlist_name,
                 self._cover_photos,
                 self._cover_sources,
-                self._active_template_id
+                self._active_template_id,
+                self._cover_offsets
             )
             self.refresh_cover_display()
             self._resume_resume_timer()
@@ -6678,6 +8146,7 @@ class PlaylistHeader(QFrame):
             photos=self._cover_photos,
             sources=self._cover_sources,
             template_id=self._active_template_id,
+            offsets=getattr(self, '_cover_offsets', {}),
             on_applied=_on_manager_applied,
             on_cancelled=_on_manager_cancelled,
             parent=parent_target
@@ -6701,7 +8170,7 @@ class PlaylistHeader(QFrame):
 
         out_path = os.path.join(covers_dir, f"{slug}_{target}.png")
         scaled = pixmap.scaled(
-            512, 512, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+            1024, 1024, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
         if scaled.save(out_path, "PNG"):
             return out_path
@@ -6716,19 +8185,20 @@ class PlaylistHeader(QFrame):
         """
         self._cover_photos = []
         self._cover_sources = []
+        self._cover_offsets = {}
         self._active_template_id = "1_full"
         self.refresh_cover_display()
         playlist_name = getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or 'My Playlist'
         if playlist_name:
-            self._save_cover_setting(playlist_name, [], [], "1_full")
+            self._save_cover_setting(playlist_name, [], [], "1_full", {})
             if playlist_name == 'My Playlist':
-                self._save_cover_setting('__default__', [], [], "1_full")
+                self._save_cover_setting('__default__', [], [], "1_full", {})
 
     def _save_cover_setting(
-        self, playlist_name: str, photos: list, sources: list = None, template_id: str = "1_full"
+        self, playlist_name: str, photos: list, sources: list = None, template_id: str = "1_full", offsets: dict = None
     ):
         """
-        Persist cover photos, sources, and template_id to APPDATA/HELXAID/settings.json.
+        Persist cover photos, sources, template_id, and offsets to APPDATA/HELXAID/settings.json.
         """
         import json
         settings_path = os.path.join(
@@ -6744,6 +8214,7 @@ class PlaylistHeader(QFrame):
                 'photos': photos if isinstance(photos, list) else ([photos] if photos else []), 
                 'sources': sources if isinstance(sources, list) else ([sources] if sources else []),
                 'template_id': template_id,
+                'offsets': offsets or {},
                 'front': photos[0] if (isinstance(photos, list) and photos) else (photos if isinstance(photos, str) else '')
             }
             covers[playlist_name] = cover_entry
@@ -6767,6 +8238,7 @@ class PlaylistHeader(QFrame):
 
         self._cover_photos = []
         self._cover_sources = []
+        self._cover_offsets = {}
         self._active_template_id = "1_full"
 
         try:
@@ -6785,19 +8257,24 @@ class PlaylistHeader(QFrame):
 
             def _extract_entry(entry):
                 if not entry:
-                    return [], [], "1_full"
+                    return [], [], "1_full", {}
                 if isinstance(entry, str):
                     if os.path.exists(entry):
-                        return [entry], [], "1_full"
-                    return [], [], "1_full"
+                        return [entry], [], "1_full", {}
+                    return [], [], "1_full", {}
                 elif isinstance(entry, dict):
                     t_id = entry.get('template_id', '1_full')
+                    offs = entry.get('offsets', {})
                     p_list = entry.get('photos', [])
                     s_list = entry.get('sources', [])
+                    if isinstance(s_list, list) and s_list:
+                        valid_sources = [s for s in s_list if s and os.path.exists(s)]
+                        if valid_sources:
+                            return valid_sources, s_list, t_id, offs
                     if isinstance(p_list, list) and p_list:
                         valid_p = [p for p in p_list if p and os.path.exists(p)]
                         if valid_p:
-                            return valid_p, s_list, t_id
+                            return valid_p, s_list, t_id, offs
                     # Fallback to legacy 'front' / 'back'
                     f_p = entry.get('front', '')
                     b_p = entry.get('back', '')
@@ -6805,28 +8282,29 @@ class PlaylistHeader(QFrame):
                     if f_p and os.path.exists(f_p): valid_legacy.append(f_p)
                     if b_p and os.path.exists(b_p): valid_legacy.append(b_p)
                     if valid_legacy:
-                        return valid_legacy, [entry.get('front_source', ''), entry.get('back_source', '')], t_id
-                return [], [], "1_full"
+                        return valid_legacy, [entry.get('front_source', ''), entry.get('back_source', '')], t_id, offs
+                return [], [], "1_full", {}
 
             # Tier 1: Exact match
-            photos, sources, t_id = _extract_entry(covers_map.get(lookup_name))
+            photos, sources, t_id, offsets = _extract_entry(covers_map.get(lookup_name))
 
             # Tier 2: Global default / fallback ('__default__', 'My Playlist')
             if not photos:
-                photos, sources, t_id = _extract_entry(covers_map.get('__default__'))
+                photos, sources, t_id, offsets = _extract_entry(covers_map.get('__default__'))
             if not photos:
-                photos, sources, t_id = _extract_entry(covers_map.get('My Playlist'))
+                photos, sources, t_id, offsets = _extract_entry(covers_map.get('My Playlist'))
 
             # Tier 3: First available valid entry
             if not photos:
                 for k, entry in covers_map.items():
-                    p, s, t = _extract_entry(entry)
+                    p, s, t, o = _extract_entry(entry)
                     if p:
-                        photos, sources, t_id = p, s, t
+                        photos, sources, t_id, offsets = p, s, t, o
                         break
 
             self._cover_photos = photos
             self._cover_sources = sources
+            self._cover_offsets = offsets or {}
             self._active_template_id = t_id or CollageMasterDispatcher.get_default_template_id(len(photos))
 
             self.refresh_cover_display()
