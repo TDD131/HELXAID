@@ -29,10 +29,12 @@ from PySide6.QtGui import (
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from MediaLibraryPage import MediaLibraryPage
+from AmbientVisualizerWidget import AmbientVisualizerWidget
 
 import os
 import sys
 import json
+import math
 import subprocess
 import tempfile
 import urllib.request
@@ -5465,6 +5467,56 @@ class CinematicLightingManager:
             pass
 
 
+class VisualizerConfigManager:
+    """
+    Centralized persistent configuration manager for Audio Visualizer.
+    
+    Component Name: VisualizerConfigManager
+    """
+    DEFAULT_CONFIG = {
+        "enabled": True,
+        "opacity": 0.30,
+        "bar_count": 32,
+        "peak_dots": True,
+        "color_mode": "adaptive",  # "adaptive", "cyber_orange", "cyber_cyan", "neon_magenta", "synthwave"
+        "sensitivity": 1.0,
+    }
+
+    @classmethod
+    def get_settings_path(cls) -> str:
+        return os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json')
+
+    @classmethod
+    def load_config(cls) -> dict:
+        cfg = dict(cls.DEFAULT_CONFIG)
+        path = cls.get_settings_path()
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data.get('visualizer'), dict):
+                        cfg.update(data['visualizer'])
+        except Exception:
+            pass
+        return cfg
+
+    @classmethod
+    def save_config(cls, config: dict):
+        path = cls.get_settings_path()
+        try:
+            data = {}
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            data['visualizer'] = config
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+
+
 class AmbientAuraCache:
     """
     High-speed Least-Recently-Used (LRU) cache for generated ambient lighting pixmaps.
@@ -5809,9 +5861,14 @@ class CoverTemplatePickerFloatingPanel(QFrame):
         # Normalize photos into a list of QPixmaps
         self._photos = []
         if isinstance(photos, list):
-            self._photos = [p for p in photos if p and not (isinstance(p, QPixmap) and p.isNull())]
-        elif isinstance(photos, QPixmap) and not photos.isNull():
-            self._photos = [photos]
+            for p in photos:
+                pix = VideoCoverExtractor.resolve_to_pixmap(p)
+                if pix and not pix.isNull():
+                    self._photos.append(pix)
+        elif photos:
+            pix = VideoCoverExtractor.resolve_to_pixmap(photos)
+            if pix and not pix.isNull():
+                self._photos.append(pix)
 
         self.photo_count = max(1, len(self._photos))
         self.selected_template_id = active_template_id or CollageMasterDispatcher.get_default_template_id(self.photo_count)
@@ -6251,7 +6308,8 @@ class InteractiveCollageCanvas(QWidget):
             )
 
     def wheelEvent(self, event):
-        if not self._photos:
+        # Scroll-wheel zooming is restricted to Pan & Crop mode (or when only 1 photo is present)
+        if not self._photos or (self._mode != "pan_crop" and len(self._photos) > 1):
             super().wheelEvent(event)
             return
         pos = event.position()
@@ -6424,6 +6482,221 @@ class InteractiveCollageCanvas(QWidget):
         painter.end()
 
 
+class VideoCoverExtractor:
+    """
+    Multi-Tier Video Cover & Frame Extraction Engine for HELXAIC.
+    Supports FFmpeg pipe streaming, Windows Shell COM thumbnail extraction, 
+    Mutagen MP4/MKV container cover tags, and QFileIconProvider fallbacks.
+    
+    Component Name: VideoCoverExtractor
+    """
+    _COVER_CACHE: dict = {}
+
+    @staticmethod
+    def get_ffmpeg_path() -> Optional[str]:
+        """Find bundled or system FFmpeg binary."""
+        appdata = os.environ.get('APPDATA', '')
+        if appdata:
+            candidate1 = os.path.join(appdata, 'HELXAID', 'tools', 'ffmpeg', 'bin', 'ffmpeg.exe')
+            if os.path.isfile(candidate1):
+                return candidate1
+            candidate2 = os.path.join(appdata, 'HELXAID', 'tools', 'ffmpeg', 'ffmpeg.exe')
+            if os.path.isfile(candidate2):
+                return candidate2
+        
+        import shutil
+        sys_ffmpeg = shutil.which('ffmpeg')
+        if sys_ffmpeg:
+            return sys_ffmpeg
+        return None
+
+    @staticmethod
+    def extract_from_ffmpeg(video_path: str, timestamp_sec: float = 1.0, max_size: int = 1024) -> Optional[QPixmap]:
+        """
+        Extract high-resolution video frame directly into memory via FFmpeg stdout pipe.
+        Zero disk I/O, sub-40ms latency, automatic downscale bounding.
+        """
+        ffmpeg_bin = VideoCoverExtractor.get_ffmpeg_path()
+        if not ffmpeg_bin or not os.path.isfile(video_path):
+            return None
+
+        seek_str = f"{max(0.0, timestamp_sec):.2f}"
+        vf_filter = f"scale='min({max_size},iw)':-2"
+        cmd = [
+            ffmpeg_bin,
+            "-nostats",
+            "-loglevel", "error",
+            "-ss", seek_str,
+            "-i", os.path.abspath(video_path),
+            "-vframes", "1",
+            "-vf", vf_filter,
+            "-f", "image2",
+            "-c:v", "png",
+            "-"
+        ]
+
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = 0x08000000  # CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+                creationflags=creationflags
+            )
+            stdout_data, _ = proc.communicate(timeout=1.5)
+            if proc.returncode == 0 and stdout_data:
+                pix = QPixmap()
+                if pix.loadFromData(stdout_data) and not pix.isNull():
+                    return pix
+        except Exception:
+            pass
+
+        # Fallback seek at 0.0s (first keyframe) for very short clips
+        try:
+            cmd[4] = "0.00"
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                startupinfo=startupinfo,
+                creationflags=creationflags
+            )
+            stdout_data, _ = proc.communicate(timeout=1.0)
+            if proc.returncode == 0 and stdout_data:
+                pix = QPixmap()
+                if pix.loadFromData(stdout_data) and not pix.isNull():
+                    return pix
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def extract_from_windows_shell(video_path: str, size: int = 600) -> Optional[QPixmap]:
+        """Extract native Windows thumbnail using Shell API IShellItemImageFactory."""
+        try:
+            from launcher import get_video_thumbnail
+            hbitmap = get_video_thumbnail(video_path)
+            if isinstance(hbitmap, QPixmap) and not hbitmap.isNull():
+                return hbitmap
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def extract_from_mutagen(video_path: str) -> Optional[QPixmap]:
+        """Extract embedded poster artwork from MP4 / MKV / MOV / MP3 / FLAC metadata."""
+        try:
+            from mutagen import File as MutagenFile
+            m = MutagenFile(video_path)
+            if m is not None:
+                # MP3 ID3
+                if hasattr(m, 'tags') and m.tags:
+                    for key in list(m.tags.keys()):
+                        if key.startswith('APIC'):
+                            apic = m.tags[key]
+                            pix = QPixmap()
+                            if hasattr(apic, 'data') and pix.loadFromData(apic.data) and not pix.isNull():
+                                return pix
+                # FLAC pictures
+                if hasattr(m, 'pictures') and m.pictures:
+                    for pic in m.pictures:
+                        pix = QPixmap()
+                        if hasattr(pic, 'data') and pix.loadFromData(pic.data) and not pix.isNull():
+                            return pix
+                # MP4 / M4V covr
+                if hasattr(m, 'tags') and m.tags and 'covr' in m.tags:
+                    covers = m.tags['covr']
+                    if covers and len(covers) > 0:
+                        pix = QPixmap()
+                        if pix.loadFromData(bytes(covers[0])) and not pix.isNull():
+                            return pix
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def extract_single_cover(video_path: str, timestamp_sec: float = 1.0, max_size: int = 1024) -> Optional[QPixmap]:
+        """
+        Execute multi-tier extraction pipeline to acquire the highest quality cover artwork.
+        """
+        if not video_path or not os.path.isfile(video_path):
+            return None
+
+        if video_path in VideoCoverExtractor._COVER_CACHE:
+            cached = VideoCoverExtractor._COVER_CACHE[video_path]
+            if cached and not cached.isNull():
+                return cached
+
+        # Fast Tier 1: Windows Shell COM Decoder (< 5ms, native Windows thumbnail cache)
+        pix = VideoCoverExtractor.extract_from_windows_shell(video_path)
+        if pix and not pix.isNull():
+            VideoCoverExtractor._COVER_CACHE[video_path] = pix
+            return pix
+
+        # Fast Tier 2: Mutagen embedded container artwork (< 5ms, in-process tag parser)
+        pix = VideoCoverExtractor.extract_from_mutagen(video_path)
+        if pix and not pix.isNull():
+            VideoCoverExtractor._COVER_CACHE[video_path] = pix
+            return pix
+
+        # Tier 3: FFmpeg direct in-memory stream pipe
+        pix = VideoCoverExtractor.extract_from_ffmpeg(video_path, timestamp_sec, max_size)
+        if pix and not pix.isNull():
+            VideoCoverExtractor._COVER_CACHE[video_path] = pix
+            return pix
+
+        # Tier 4: PySide6 QFileIconProvider
+        try:
+            from PySide6.QtWidgets import QFileIconProvider
+            from PySide6.QtCore import QFileInfo, QSize
+            provider = QFileIconProvider()
+            icon = provider.icon(QFileInfo(video_path))
+            if not icon.isNull():
+                pix = icon.pixmap(QSize(512, 512))
+                if not pix.isNull():
+                    VideoCoverExtractor._COVER_CACHE[video_path] = pix
+                    return pix
+        except Exception:
+            pass
+
+        return None
+
+    @staticmethod
+    def resolve_to_pixmap(item: Any) -> Optional[QPixmap]:
+        """
+        Robustly convert any input (QPixmap, image filepath, video filepath, audio filepath)
+        into a valid high-resolution QPixmap with in-memory caching.
+        """
+        if item is None:
+            return None
+        if isinstance(item, QPixmap):
+            return item if not item.isNull() else None
+        if isinstance(item, str) and item:
+            if item in VideoCoverExtractor._COVER_CACHE:
+                cached = VideoCoverExtractor._COVER_CACHE[item]
+                if cached and not cached.isNull():
+                    return cached
+            if os.path.exists(item):
+                pix = QPixmap(item)
+                if not pix.isNull():
+                    VideoCoverExtractor._COVER_CACHE[item] = pix
+                    return pix
+                # If QPixmap directly failed, extract via multi-tier extractor
+                vpix = VideoCoverExtractor.extract_single_cover(item)
+                if vpix and not vpix.isNull():
+                    VideoCoverExtractor._COVER_CACHE[item] = vpix
+                    return vpix
+        return None
+
+
 class CoverManagerFloatingPanel(QFrame):
     """
     Glassmorphism In-App Floating Panel (QFrame overlay on MainWindow) for Reviewing and Editing Playlist Cover & Photos.
@@ -6431,7 +6704,7 @@ class CoverManagerFloatingPanel(QFrame):
     
     Component Name: CoverManagerFloatingPanel
     """
-    def __init__(self, mode: str, photos: list = None, sources: list = None, template_id: str = '', offsets: dict = None, on_applied=None, on_cancelled=None, parent=None):
+    def __init__(self, mode: str = 'edit', photos: list = None, sources: list = None, template_id: str = '', offsets: dict = None, on_applied=None, on_cancelled=None, parent=None):
         super().__init__(parent)
         self.setObjectName("CoverManagerFloatingPanel")
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
@@ -6443,26 +6716,28 @@ class CoverManagerFloatingPanel(QFrame):
         self.on_applied = on_applied
         self.on_cancelled = on_cancelled
         
-        # Normalize in-memory photos
-        # Normalize in-memory photos (prefer raw original source files to avoid any squished cached covers)
+        # Robust in-memory photos resolution from photos and sources
         self.photos = []
-        valid_inputs = []
-        if sources and isinstance(sources, list):
-            for s in sources:
-                if s and isinstance(s, str) and os.path.exists(s):
-                    valid_inputs.append(s)
-        if not valid_inputs and photos:
-            valid_inputs = photos if isinstance(photos, list) else [photos]
+        raw_photos = photos if isinstance(photos, list) else ([photos] if photos else [])
+        raw_sources = sources if isinstance(sources, list) else ([sources] if sources else [])
+        
+        max_count = max(len(raw_photos), len(raw_sources))
+        for i in range(max_count):
+            pix = None
+            if i < len(raw_photos):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_photos[i])
+            if (pix is None or pix.isNull()) and i < len(raw_sources):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_sources[i])
+            if pix and not pix.isNull():
+                self.photos.append(pix)
 
-        for p in valid_inputs:
-            if isinstance(p, QPixmap) and not p.isNull():
-                self.photos.append(p)
-            elif isinstance(p, str) and os.path.exists(p):
-                pix = QPixmap(p)
-                if not pix.isNull():
-                    self.photos.append(pix)
+        if raw_sources:
+            self.sources = list(raw_sources)
+        elif raw_photos and all(isinstance(x, str) for x in raw_photos):
+            self.sources = list(raw_photos)
+        else:
+            self.sources = []
 
-        self.sources = list(sources) if isinstance(sources, list) else ([sources] if sources else [])
         self.photo_offsets = dict(offsets) if offsets else {}
         self.active_template_id = template_id or CollageMasterDispatcher.get_default_template_id(len(self.photos))
         self.reset_all = False
@@ -6577,6 +6852,8 @@ class CoverManagerFloatingPanel(QFrame):
         self.preview_stage = QWidget()
         self.preview_stage.setObjectName("coverManagerPreviewStage")
         self.preview_stage.setFixedSize(240, 240)
+        self.preview_stage.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.preview_stage.customContextMenuRequested.connect(self._show_preview_context_menu)
 
         self.preview_ambient_glow = QLabel(self.preview_stage)
         self.preview_ambient_glow.setObjectName("coverManagerPreviewAmbientGlow")
@@ -6589,6 +6866,8 @@ class CoverManagerFloatingPanel(QFrame):
         self.canvas.setGeometry(20, 20, 200, 200)
         self.canvas.photoSwapped.connect(self._on_photos_swapped)
         self.canvas.offsetChanged.connect(self._on_offset_changed)
+        self.canvas.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.canvas.customContextMenuRequested.connect(self._show_preview_context_menu)
         content_layout.addWidget(self.preview_stage, alignment=Qt.AlignCenter)
 
         # Segmented Mode Switcher (Swap Mode | Pan & Crop)
@@ -6605,25 +6884,38 @@ class CoverManagerFloatingPanel(QFrame):
 
         # Bottom Action Bar
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(8)
 
         if self.mode == 'review':
             btn_layout.addStretch()
+            self.export_action_btn = FadeHoverButton("Export Image", border_radius=6.0, is_secondary=True)
+            self.export_action_btn.setObjectName("coverManagerReviewExportBtn")
+            self.export_action_btn.setFixedSize(120, 36)
+            self.export_action_btn.clicked.connect(self._export_cover_image)
+            btn_layout.addWidget(self.export_action_btn)
+
             self.close_action_btn = FadeHoverButton("Close", border_radius=6.0, is_secondary=True)
             self.close_action_btn.setObjectName("coverManagerReviewCloseBtn")
-            self.close_action_btn.setFixedSize(110, 36)
+            self.close_action_btn.setFixedSize(90, 36)
             self.close_action_btn.clicked.connect(self.cancel_and_close)
             btn_layout.addWidget(self.close_action_btn)
         else:
             self.upload_btn = FadeHoverButton("Upload Photos", border_radius=6.0, is_secondary=True)
             self.upload_btn.setObjectName("coverManagerUploadBtn")
-            self.upload_btn.setFixedSize(130, 36)
+            self.upload_btn.setFixedSize(115, 36)
             self.upload_btn.clicked.connect(self._open_file_picker)
             btn_layout.addWidget(self.upload_btn)
 
+            self.from_video_btn = FadeHoverButton("From Video", border_radius=6.0, is_secondary=True)
+            self.from_video_btn.setObjectName("coverManagerFromVideoBtn")
+            self.from_video_btn.setFixedSize(100, 36)
+            self.from_video_btn.setToolTip("Extract high-res cover artwork from local video file(s)")
+            self.from_video_btn.clicked.connect(self._open_video_picker)
+            btn_layout.addWidget(self.from_video_btn)
+
             self.reset_btn = FadeHoverButton("Reset", border_radius=6.0, color_mode="red")
             self.reset_btn.setObjectName("coverManagerResetBtn")
-            self.reset_btn.setFixedSize(70, 36)
+            self.reset_btn.setFixedSize(65, 36)
             self.reset_btn.clicked.connect(self._reset_covers)
             btn_layout.addWidget(self.reset_btn)
 
@@ -6639,6 +6931,40 @@ class CoverManagerFloatingPanel(QFrame):
         container_layout.addWidget(content_widget)
 
         self._update_display()
+
+    def _show_preview_context_menu(self, pos):
+        """Show context menu on canvas / preview stage for exporting and options."""
+        menu = QMenu(self)
+        menu.setObjectName("coverManagerContextMenu")
+        menu.setStyleSheet("""
+            QMenu#coverManagerContextMenu {
+                background: rgba(25, 25, 35, 0.98);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
+                padding: 5px;
+                font-family: 'Orbitron', sans-serif;
+            }
+            QMenu#coverManagerContextMenu::item {
+                color: #e0e0e0;
+                padding: 8px 25px;
+                border-radius: 4px;
+            }
+            QMenu#coverManagerContextMenu::item:selected {
+                background: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }
+            QMenu#coverManagerContextMenu::separator {
+                height: 1px;
+                background: rgba(255, 255, 255, 0.1);
+                margin: 5px 10px;
+            }
+        """)
+        menu.addAction("Extract Cover from Local Video...", self._open_video_picker)
+        menu.addAction("Upload Photo Artwork...", self._open_file_picker)
+        menu.addSeparator()
+        menu.addAction("Export Cover Image to File...", self._export_cover_image)
+        menu.exec(QCursor.pos())
 
     def _on_mode_changed(self, mode: str):
         self.canvas.set_mode(mode)
@@ -6769,6 +7095,140 @@ class CoverManagerFloatingPanel(QFrame):
             )
             self._template_floating_panel.show_panel()
 
+    def _open_video_picker(self):
+        """
+        Open video file picker, extract high-res frame thumbnails from chosen local video file(s),
+        and open the CoverTemplatePickerFloatingPanel or apply directly.
+        """
+        from PySide6.QtWidgets import QFileDialog
+
+        VIDEO_FILTER = "Video Files (*.mp4 *.mkv *.avi *.mov *.webm *.wmv *.flv *.ts *.m4v *.3gp *.ogv);;All Files (*)"
+        last_dir = ""
+        settings_path = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json')
+        try:
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    last_dir = data.get('last_video_cover_dir', data.get('last_cover_dir', ''))
+        except Exception:
+            pass
+
+        paths, _ = QFileDialog.getOpenFileNames(self, "Select Local Video File(s) for Cover Artwork", last_dir, VIDEO_FILTER)
+        if not paths:
+            return
+
+        # Save last directory
+        try:
+            d = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    d = json.load(f)
+            d['last_video_cover_dir'] = os.path.dirname(paths[0])
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(d, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+        new_pixmaps = []
+        valid_paths = []
+        for p in paths:
+            pix = VideoCoverExtractor.extract_single_cover(p)
+            if pix and not pix.isNull():
+                new_pixmaps.append(pix)
+                valid_paths.append(p)
+
+        if not new_pixmaps:
+            print(f"[CoverManager] No valid video cover frames could be extracted from: {paths}")
+            return
+
+        old_photos = list(self.photos)
+        old_sources = list(self.sources)
+        old_reset_all = self.reset_all
+        old_template_id = self.active_template_id
+
+        candidate_template_id = CollageMasterDispatcher.get_default_template_id(len(new_pixmaps))
+
+        parent_target = self.window() or self
+        if hasattr(self, '_template_floating_panel') and self._template_floating_panel:
+            try:
+                self._template_floating_panel.close_panel()
+            except Exception:
+                pass
+
+        def _on_video_applied(t_id):
+            self.photos = new_pixmaps
+            self.sources = valid_paths
+            self.reset_all = False
+            self.active_template_id = t_id
+            if hasattr(self, 'mode_switcher') and len(self.photos) > 1:
+                self.mode_switcher.set_mode("swap", animate=False)
+            self._update_display()
+
+        def _on_video_cancelled():
+            self.photos = old_photos
+            self.sources = old_sources
+            self.reset_all = old_reset_all
+            self.active_template_id = old_template_id
+            self._update_display()
+
+        self._template_floating_panel = CoverTemplatePickerFloatingPanel(
+            photos=new_pixmaps,
+            active_template_id=candidate_template_id,
+            on_applied=_on_video_applied,
+            on_cancelled=_on_video_cancelled,
+            parent=parent_target
+        )
+        self._template_floating_panel.show_panel()
+
+    def _export_cover_image(self):
+        """Export current rendered collage/cover image to a file on local disk."""
+        from PySide6.QtWidgets import QFileDialog
+
+        rendered = None
+        if self.photos:
+            rendered = CollageMasterDispatcher.render_cover(self.photos, self.active_template_id, size=1024, offsets=self.photo_offsets)
+        else:
+            rendered = CollageMasterDispatcher.render_cover([], size=1024)
+
+        if not rendered or rendered.isNull():
+            return
+
+        last_dir = ""
+        settings_path = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json')
+        try:
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    last_dir = json.load(f).get('last_cover_export_dir', '')
+        except Exception:
+            pass
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Playlist Cover Image",
+            os.path.join(last_dir, "playlist_cover.png"),
+            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;WebP Image (*.webp);;All Files (*)"
+        )
+        if save_path:
+            try:
+                d = {}
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        d = json.load(f)
+                d['last_cover_export_dir'] = os.path.dirname(save_path)
+                with open(settings_path, 'w', encoding='utf-8') as f:
+                    json.dump(d, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+
+            fmt = "PNG"
+            if save_path.lower().endswith(('.jpg', '.jpeg')):
+                fmt = "JPG"
+            elif save_path.lower().endswith('.webp'):
+                fmt = "WEBP"
+
+            if rendered.save(save_path, fmt):
+                print(f"[CoverManager] Cover image exported successfully to: {save_path}")
+
     def _reset_covers(self):
         self.reset_all = True
         self.photos = []
@@ -6863,7 +7323,7 @@ class CoverReviewLightboxOverlay(QFrame):
     
     Component Name: CoverReviewLightboxOverlay
     """
-    def __init__(self, photos: list = None, template_id: str = '', parent=None):
+    def __init__(self, photos: list = None, sources: list = None, template_id: str = '', offsets: dict = None, parent=None):
         super().__init__(parent)
         self.setObjectName("CoverReviewLightboxOverlay")
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint)
@@ -6871,23 +7331,22 @@ class CoverReviewLightboxOverlay(QFrame):
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setCursor(Qt.PointingHandCursor)
         
-        # Normalize in-memory photos
+        # Robust in-memory photos resolution from photos and sources
         self.photos = []
-        if isinstance(photos, list):
-            for p in photos:
-                if isinstance(p, QPixmap) and not p.isNull():
-                    self.photos.append(p)
-                elif isinstance(p, str) and os.path.exists(p):
-                    pix = QPixmap(p)
-                    if not pix.isNull():
-                        self.photos.append(pix)
-        elif isinstance(photos, QPixmap) and not photos.isNull():
-            self.photos.append(photos)
-        elif isinstance(photos, str) and os.path.exists(photos):
-            pix = QPixmap(photos)
-            if not pix.isNull():
+        raw_photos = photos if isinstance(photos, list) else ([photos] if photos else [])
+        raw_sources = sources if isinstance(sources, list) else ([sources] if sources else [])
+        
+        max_count = max(len(raw_photos), len(raw_sources))
+        for i in range(max_count):
+            pix = None
+            if i < len(raw_photos):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_photos[i])
+            if (pix is None or pix.isNull()) and i < len(raw_sources):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_sources[i])
+            if pix and not pix.isNull():
                 self.photos.append(pix)
 
+        self.photo_offsets = dict(offsets) if offsets else {}
         self.active_template_id = template_id or CollageMasterDispatcher.get_default_template_id(len(self.photos))
 
         # Initial geometry set to active monitor
@@ -7065,7 +7524,7 @@ class CoverReviewLightboxOverlay(QFrame):
         if not self.photos:
             rendered = CollageMasterDispatcher.render_cover([], size=512)
         else:
-            rendered = CollageMasterDispatcher.render_cover(self.photos, self.active_template_id, size=512)
+            rendered = CollageMasterDispatcher.render_cover(self.photos, self.active_template_id, size=512, offsets=self.photo_offsets)
 
         scaled_front = rendered.scaled(cover_size, cover_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.front_cover_lbl.setPixmap(scaled_front)
@@ -7153,6 +7612,109 @@ class StepSlider(QSlider):
         event.accept()
 
 
+class CinematicLightingTabSwitcher(QWidget):
+    """
+    Smooth 2-segment animated sliding pill switcher for Cinematic Lighting vs Audio Visualizer.
+    Component Name: BossKeyDecoyTabFrame
+    """
+    modeChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("BossKeyDecoyTabFrame")
+        self.setFixedHeight(30)
+        self.setCursor(Qt.PointingHandCursor)
+        self._modes = ["glow", "visualizer"]
+        self._labels = ["Ambient Cover Glow", "Background Visualizer"]
+        self._current_mode = "glow"
+        self._slide_progress = 0.0  # 0.0=glow, 1.0=visualizer
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def set_mode(self, mode: str, animate: bool = True):
+        if mode not in self._modes:
+            mode = "glow"
+        target = float(self._modes.index(mode))
+        if mode == self._current_mode and self._slide_progress == target:
+            return
+        self._current_mode = mode
+
+        if not animate:
+            if self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._slide_progress = target
+            self.update()
+            self.modeChanged.emit(self._current_mode)
+            return
+
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+        self.modeChanged.emit(self._current_mode)
+
+    def get_mode(self) -> str:
+        return self._current_mode
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            segment_w = max(1.0, w / 2.0)
+            idx = max(0, min(1, int(click_x / segment_w)))
+            self.set_mode(self._modes[idx])
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = self.width()
+        h = self.height()
+
+        # 1. Dark container track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor(255, 255, 255, 14)))
+        p.drawRoundedRect(QRectF(0, 0, w, h), 7, 7)
+
+        # 2. Calculate sliding pill geometry
+        pad = 2.0
+        pill_w = (w - (pad * 3.0)) / 2.0
+        pill_h = h - (pad * 2.0)
+        pill_x = pad + self._slide_progress * (pill_w + pad)
+        pill_y = pad
+
+        # 3. Draw sliding orange gradient pill
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 5, 5)
+
+        # 4. Draw Tab Texts with smooth color interpolation
+        p.setFont(QFont("Orbitron", 8, QFont.Bold))
+        for i, lbl in enumerate(self._labels):
+            seg_x = pad + i * (pill_w + pad)
+            rect = QRectF(seg_x, 0, pill_w, h)
+            dist = abs(self._slide_progress - float(i))
+            weight = max(0.0, min(1.0, 1.0 - dist))
+            r = int(142 + (255 - 142) * weight)
+            g = int(146 + (255 - 146) * weight)
+            b = int(160 + (255 - 160) * weight)
+            p.setPen(QColor(r, g, b))
+            p.drawText(rect, Qt.AlignCenter, lbl)
+
+
 class CinematicLightingFloatingPanel(QFrame):
     """
     In-App Floating Tool Panel (QFrame overlay on MainWindow) for Cinematic Lighting configuration.
@@ -7166,11 +7728,12 @@ class CinematicLightingFloatingPanel(QFrame):
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.setFixedSize(460, 560)
+        self.setFixedSize(470, 515)
 
         self.source_cover = current_cover
         self.on_applied = on_applied
         self.config = CinematicLightingManager.load_config()
+        self.viz_config = VisualizerConfigManager.load_config()
 
         self._is_dragging = False
         self._drag_start_pos = QPoint()
@@ -7184,6 +7747,12 @@ class CinematicLightingFloatingPanel(QFrame):
         self.anim.setEndValue(1.0)
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
         self.anim.finished.connect(self._on_anim_finished)
+
+        # Real-time interactive preview animation timer (30 FPS)
+        self._anim_time = 0.0
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setInterval(33)
+        self._preview_timer.timeout.connect(self._on_preview_tick)
 
         self._setup_ui()
 
@@ -7245,8 +7814,8 @@ class CinematicLightingFloatingPanel(QFrame):
             QSlider::handle:horizontal:hover {{
                 background: #FF7B24;
             }}
-            QComboBox#cinematicModeCombo {{
-                background: rgba(255, 255, 255, 0.1);
+            QComboBox {{
+                background: rgba(255, 255, 255, 0.10);
                 border: none;
                 border-radius: 8px;
                 padding: 3px 26px 3px 10px;
@@ -7255,39 +7824,39 @@ class CinematicLightingFloatingPanel(QFrame):
                 font-size: 11.5px;
                 font-weight: 500;
             }}
-            QComboBox#cinematicModeCombo:hover {{
-                background: rgba(255, 255, 255, 0.2);
+            QComboBox:hover {{
+                background: rgba(255, 255, 255, 0.20);
             }}
-            QComboBox#cinematicModeCombo::drop-down {{
+            QComboBox::drop-down {{
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
                 width: 24px;
                 border: none;
                 background: transparent;
             }}
-            QComboBox#cinematicModeCombo::down-arrow {{
+            QComboBox::down-arrow {{
                 image: url('{down_arrow_path}');
                 width: 10px;
                 height: 10px;
             }}
-            QComboBox#cinematicModeCombo QAbstractItemView {{
+            QComboBox QAbstractItemView {{
                 background: #1e2128;
                 border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
                 padding: 4px;
                 outline: 0px;
                 font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
+                font-size: 11.5px;
             }}
-            QComboBox#cinematicModeCombo QAbstractItemView::item {{
-                min-height: 28px;
+            QComboBox QAbstractItemView::item {{
+                min-height: 26px;
                 padding: 4px 8px;
                 background: transparent;
                 color: #e0e0e0;
                 border-radius: 4px;
             }}
-            QComboBox#cinematicModeCombo QAbstractItemView::item:hover,
-            QComboBox#cinematicModeCombo QAbstractItemView::item:selected {{
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {{
                 background-color: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
             }}
@@ -7300,7 +7869,7 @@ class CinematicLightingFloatingPanel(QFrame):
         # Title Bar
         self.title_bar = QWidget(self)
         self.title_bar.setObjectName("cinematicTitleBar")
-        self.title_bar.setFixedHeight(44)
+        self.title_bar.setFixedHeight(42)
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(14, 0, 10, 0)
         title_layout.setSpacing(10)
@@ -7322,33 +7891,74 @@ class CinematicLightingFloatingPanel(QFrame):
 
         container_layout.addWidget(self.title_bar)
 
-        # Content Area
-        content_widget = QWidget(self)
+        # Scrollable Middle Content Area
+        self.scroll_area = SmoothScrollArea(self)
+        self.scroll_area.setObjectName("cinematicScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setStyleSheet("""
+            QScrollArea#cinematicScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                width: 5px;
+                background: transparent;
+                margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.20);
+                border-radius: 2px;
+                min-height: 25px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 123, 36, 0.6);
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+
+        content_widget = QWidget()
         content_widget.setObjectName("cinematicContentWidget")
+        content_widget.setStyleSheet("QWidget#cinematicContentWidget { background: transparent; }")
         content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(20, 12, 20, 14)
+        content_layout.setContentsMargins(18, 10, 18, 14)
         content_layout.setSpacing(10)
+
+        # 0. BossKeyDecoyTabFrame Style Mode Switcher (Above Preview Stage)
+        self.tab_switcher = CinematicLightingTabSwitcher(self)
+        self.tab_switcher.modeChanged.connect(self._on_tab_changed)
+        content_layout.addWidget(self.tab_switcher)
 
         # 1. Live Interactive Preview Stage (Composited Live Canvas)
         self.preview_stage_lbl = QLabel()
         self.preview_stage_lbl.setObjectName("cinematicPreviewStage")
-        self.preview_stage_lbl.setFixedSize(260, 150)
+        self.preview_stage_lbl.setFixedSize(260, 135)
         self.preview_stage_lbl.setAlignment(Qt.AlignCenter)
-        self.preview_stage_lbl.setStyleSheet("background: #08090D; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.06);")
+        self.preview_stage_lbl.setStyleSheet("background: #08090D; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.08);")
         content_layout.addWidget(self.preview_stage_lbl, alignment=Qt.AlignCenter)
 
-        # Add vertical breathing space below preview stage
-        content_layout.addSpacing(4)
+        # 2. Stacked Settings Area (Glow Tab vs Visualizer Tab)
+        self.settings_stack = QStackedWidget(self)
+        self.settings_stack.setObjectName("cinematicSettingsStack")
+        self.settings_stack.setStyleSheet("QStackedWidget#cinematicSettingsStack { background: transparent; }")
 
-        # 2. Master Toggle (Main Settings AnimatedCheckBox)
+        # --- PAGE 0: Ambient Cover Glow Settings ---
+        glow_page = QWidget()
+        glow_page.setObjectName("cinematicGlowPage")
+        glow_page_layout = QVBoxLayout(glow_page)
+        glow_page_layout.setContentsMargins(0, 4, 0, 16)
+        glow_page_layout.setSpacing(10)
+
         self.enable_cb = AnimatedCheckBox("Enable Cinematic Ambient Glow")
         self.enable_cb.setObjectName("cinematicEnableCheck")
         self.enable_cb.setFont(QFont("Orbitron", 9, QFont.Bold))
         self.enable_cb.setChecked(self.config.get("enabled", True))
         self.enable_cb.toggled.connect(self._on_values_changed)
-        content_layout.addWidget(self.enable_cb)
+        glow_page_layout.addWidget(self.enable_cb)
 
-        # 3. Sliders Group (Multiples of 5)
         # Intensity Slider
         int_header_layout = QHBoxLayout()
         int_title = QLabel("INTENSITY / BRIGHTNESS")
@@ -7359,14 +7969,14 @@ class CinematicLightingFloatingPanel(QFrame):
         int_header_layout.addWidget(int_title)
         int_header_layout.addStretch()
         int_header_layout.addWidget(self.int_val_lbl)
-        content_layout.addLayout(int_header_layout)
+        glow_page_layout.addLayout(int_header_layout)
 
         self.intensity_slider = StepSlider(Qt.Horizontal, step=5)
         self.intensity_slider.setObjectName("cinematicIntensitySlider")
         self.intensity_slider.setRange(10, 100)
         self.intensity_slider.setValue(init_int)
         self.intensity_slider.valueChanged.connect(self._on_intensity_changed)
-        content_layout.addWidget(self.intensity_slider)
+        glow_page_layout.addWidget(self.intensity_slider)
 
         # Spread Slider
         spread_header_layout = QHBoxLayout()
@@ -7378,19 +7988,19 @@ class CinematicLightingFloatingPanel(QFrame):
         spread_header_layout.addWidget(spread_title)
         spread_header_layout.addStretch()
         spread_header_layout.addWidget(self.spread_val_lbl)
-        content_layout.addLayout(spread_header_layout)
+        glow_page_layout.addLayout(spread_header_layout)
 
         self.spread_slider = StepSlider(Qt.Horizontal, step=5)
         self.spread_slider.setObjectName("cinematicSpreadSlider")
         self.spread_slider.setRange(130, 200)
         self.spread_slider.setValue(init_spread)
         self.spread_slider.valueChanged.connect(self._on_spread_changed)
-        content_layout.addWidget(self.spread_slider)
+        glow_page_layout.addWidget(self.spread_slider)
 
-        # 4. Mode Selection Combo (Vector SVG Icons)
+        # Lighting Profile Combo
         mode_header = QLabel("LIGHTING PROFILE")
         mode_header.setProperty("class", "cinematicHeader")
-        content_layout.addWidget(mode_header)
+        glow_page_layout.addWidget(mode_header)
 
         self.mode_combo = QComboBox()
         self.mode_combo.setObjectName("cinematicModeCombo")
@@ -7408,50 +8018,251 @@ class CinematicLightingFloatingPanel(QFrame):
         self.mode_combo.addItem(make_icon("lighting-cyan.svg"), "Cyberpunk Cyan Accent", "cyan")
         self.mode_combo.addItem(make_icon("lighting-magenta.svg"), "Synthwave Magenta Accent", "magenta")
 
-        # Set initial combo index
         cur_mode = self.config.get("mode", "adaptive")
         idx = self.mode_combo.findData(cur_mode)
         if idx >= 0:
             self.mode_combo.setCurrentIndex(idx)
         self.mode_combo.currentIndexChanged.connect(self._on_values_changed)
-        content_layout.addWidget(self.mode_combo)
+        glow_page_layout.addWidget(self.mode_combo)
 
-        # 5. Quick Presets Row
+        # Quick Presets
         presets_header = QLabel("QUICK PRESETS")
         presets_header.setProperty("class", "cinematicHeader")
-        content_layout.addWidget(presets_header)
+        glow_page_layout.addWidget(presets_header)
 
         preset_layout = QHBoxLayout()
         preset_layout.setSpacing(8)
 
         self.subtle_btn = FadeHoverButton("Subtle", border_radius=5.0, is_secondary=True)
         self.subtle_btn.setObjectName("cinematicPresetSubtle")
-        self.subtle_btn.setFixedHeight(28)
+        self.subtle_btn.setFixedHeight(30)
         self.subtle_btn.clicked.connect(lambda: self._apply_preset("subtle"))
         preset_layout.addWidget(self.subtle_btn)
 
         self.cinema_btn = FadeHoverButton("Cinema", border_radius=5.0, is_secondary=True)
         self.cinema_btn.setObjectName("cinematicPresetCinema")
-        self.cinema_btn.setFixedHeight(28)
+        self.cinema_btn.setFixedHeight(30)
         self.cinema_btn.clicked.connect(lambda: self._apply_preset("cinema"))
         preset_layout.addWidget(self.cinema_btn)
 
         self.overdrive_btn = FadeHoverButton("Overdrive", border_radius=5.0, is_secondary=True)
         self.overdrive_btn.setObjectName("cinematicPresetOverdrive")
-        self.overdrive_btn.setFixedHeight(28)
+        self.overdrive_btn.setFixedHeight(30)
         self.overdrive_btn.clicked.connect(lambda: self._apply_preset("overdrive"))
         preset_layout.addWidget(self.overdrive_btn)
 
-        content_layout.addLayout(preset_layout)
+        glow_page_layout.addLayout(preset_layout)
+        glow_page_layout.addSpacing(10)
+        self.settings_stack.addWidget(glow_page)
 
-        # 6. Bottom Action Bar (Cancel & Apply Buttons)
-        btn_layout = QHBoxLayout()
-        btn_layout.setContentsMargins(0, 4, 0, 0)
-        btn_layout.setSpacing(10)
+        # --- PAGE 1: Audio Visualizer Background Settings ---
+        viz_page = QWidget()
+        viz_page.setObjectName("cinematicVizPage")
+        viz_page_layout = QVBoxLayout(viz_page)
+        viz_page_layout.setContentsMargins(0, 4, 0, 16)
+        viz_page_layout.setSpacing(10)
+
+        self.viz_enable_cb = AnimatedCheckBox("Enable Audio Visualizer Background")
+        self.viz_enable_cb.setObjectName("vizEnableCheck")
+        self.viz_enable_cb.setFont(QFont("Orbitron", 9, QFont.Bold))
+        self.viz_enable_cb.setChecked(self.viz_config.get("enabled", True))
+        self.viz_enable_cb.toggled.connect(self._on_values_changed)
+        viz_page_layout.addWidget(self.viz_enable_cb)
+
+        # Visualizer Style Selector
+        style_box = QVBoxLayout()
+        style_title = QLabel("VISUALIZER STYLE")
+        style_title.setProperty("class", "cinematicHeader")
+        style_box.addWidget(style_title)
+        self.viz_style_combo = QComboBox()
+        self.viz_style_combo.setObjectName("vizStyleCombo")
+        self.viz_style_combo.setFixedHeight(30)
+        self.viz_style_combo.setIconSize(QSize(16, 16))
+        self.viz_style_combo.addItem(make_icon("viz-style-bars.svg"), "Bottom Spectrum Bars", "bars")
+        self.viz_style_combo.addItem(make_icon("viz-style-waves.svg"), "Silk Fluid Ambient Waves", "waves")
+        cur_style = self.viz_config.get("style_mode", "bars")
+        idx_style = self.viz_style_combo.findData(cur_style)
+        if idx_style >= 0:
+            self.viz_style_combo.setCurrentIndex(idx_style)
+        self.viz_style_combo.currentIndexChanged.connect(self._on_values_changed)
+        style_box.addWidget(self.viz_style_combo)
+        viz_page_layout.addLayout(style_box)
+
+        # Opacity Slider
+        viz_op_box = QVBoxLayout()
+        viz_op_header = QHBoxLayout()
+        viz_op_title = QLabel("VISUALIZER OPACITY")
+        viz_op_title.setProperty("class", "cinematicHeader")
+        init_viz_op = int(round(self.viz_config.get("opacity", 0.30) * 100 / 5.0) * 5)
+        self.viz_op_val_lbl = QLabel(f"{init_viz_op}%")
+        self.viz_op_val_lbl.setProperty("class", "cinematicValue")
+        viz_op_header.addWidget(viz_op_title)
+        viz_op_header.addStretch()
+        viz_op_header.addWidget(self.viz_op_val_lbl)
+        viz_op_box.addLayout(viz_op_header)
+
+        self.viz_opacity_slider = StepSlider(Qt.Horizontal, step=5)
+        self.viz_opacity_slider.setObjectName("vizOpacitySlider")
+        self.viz_opacity_slider.setRange(10, 100)
+        self.viz_opacity_slider.setValue(init_viz_op)
+        def _on_viz_op_change(val):
+            val = int(round(val / 5.0) * 5)
+            self.viz_op_val_lbl.setText(f"{val}%")
+            self._update_live_preview()
+        self.viz_opacity_slider.valueChanged.connect(_on_viz_op_change)
+        viz_op_box.addWidget(self.viz_opacity_slider)
+        viz_page_layout.addLayout(viz_op_box)
+
+        # Color & Bars count row
+        viz_row2 = QHBoxLayout()
+        viz_row2.setSpacing(10)
+
+        # Bars count combo
+        bars_col = QVBoxLayout()
+        bars_title = QLabel("BAR RESOLUTION")
+        bars_title.setProperty("class", "cinematicHeader")
+        bars_col.addWidget(bars_title)
+        self.viz_bars_combo = QComboBox()
+        self.viz_bars_combo.setObjectName("vizBarsCombo")
+        self.viz_bars_combo.setFixedHeight(30)
+        self.viz_bars_combo.addItem("32 Bars (Classic)", 32)
+        self.viz_bars_combo.addItem("48 Bars (High-Res)", 48)
+        cur_bars = self.viz_config.get("bar_count", 32)
+        idx_bars = self.viz_bars_combo.findData(cur_bars)
+        if idx_bars >= 0:
+            self.viz_bars_combo.setCurrentIndex(idx_bars)
+        self.viz_bars_combo.currentIndexChanged.connect(self._on_values_changed)
+        bars_col.addWidget(self.viz_bars_combo)
+        viz_row2.addLayout(bars_col)
+
+        # Color Theme combo
+        color_col = QVBoxLayout()
+        color_title = QLabel("COLOR PALETTE")
+        color_title.setProperty("class", "cinematicHeader")
+        color_col.addWidget(color_title)
+        self.viz_color_combo = QComboBox()
+        self.viz_color_combo.setObjectName("vizColorCombo")
+        self.viz_color_combo.setFixedHeight(30)
+        self.viz_color_combo.setIconSize(QSize(16, 16))
+        self.viz_color_combo.addItem(make_icon("lighting-adaptive.svg"), "Adaptive (Cover Art)", "adaptive")
+        self.viz_color_combo.addItem(make_icon("lighting-orange.svg"), "Cyber Orange", "cyber_orange")
+        self.viz_color_combo.addItem(make_icon("lighting-cyan.svg"), "Cyber Cyan", "cyber_cyan")
+        self.viz_color_combo.addItem(make_icon("lighting-magenta.svg"), "Neon Magenta", "neon_magenta")
+        self.viz_color_combo.addItem(make_icon("lighting-vibrant.svg"), "Synthwave", "synthwave")
+        cur_cm = self.viz_config.get("color_mode", "adaptive")
+        idx_cm = self.viz_color_combo.findData(cur_cm)
+        if idx_cm >= 0:
+            self.viz_color_combo.setCurrentIndex(idx_cm)
+        self.viz_color_combo.currentIndexChanged.connect(self._on_values_changed)
+        color_col.addWidget(self.viz_color_combo)
+        viz_row2.addLayout(color_col)
+
+        viz_page_layout.addLayout(viz_row2)
+        viz_page_layout.addSpacing(10)
+        self.settings_stack.addWidget(viz_page)
+
+        content_layout.addWidget(self.settings_stack)
+
+        # Style all combo widgets and popup item views to match SortComboBox
+        combo_qss = f"""
+            QComboBox {{
+                background: rgba(255, 255, 255, 0.10);
+                border: none;
+                border-radius: 8px;
+                padding: 3px 26px 3px 10px;
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11.5px;
+                font-weight: 500;
+            }}
+            QComboBox:hover {{
+                background: rgba(255, 255, 255, 0.20);
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox::down-arrow {{
+                image: url('{down_arrow_path}');
+                width: 10px;
+                height: 10px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: #1e2128;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+                outline: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11.5px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 26px;
+                padding: 4px 8px;
+                background: transparent;
+                color: #e0e0e0;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #ffffff;
+            }}
+        """
+        for combo in (self.mode_combo, self.viz_style_combo, self.viz_bars_combo, self.viz_color_combo):
+            combo.setStyleSheet(combo_qss)
+            view = combo.view()
+            if view:
+                view.setAutoFillBackground(True)
+                view.setStyleSheet("""
+                    QAbstractItemView {
+                        background: #1e2128;
+                        border: 1px solid rgba(255, 255, 255, 0.12);
+                        border-radius: 8px;
+                        padding: 4px;
+                        outline: 0px;
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 11.5px;
+                    }
+                    QAbstractItemView::item {
+                        min-height: 26px;
+                        padding: 4px 8px;
+                        background: transparent;
+                        color: #e0e0e0;
+                        border-radius: 4px;
+                    }
+                    QAbstractItemView::item:hover,
+                    QAbstractItemView::item:selected {
+                        background-color: rgba(255, 255, 255, 0.12);
+                        color: #ffffff;
+                    }
+                """)
+
+        self.scroll_area.setWidget(content_widget)
+        container_layout.addWidget(self.scroll_area, 1)
+
+        # 7. Bottom Action Bar (Fixed at bottom with clean margin gap)
+        bottom_bar = QWidget(self)
+        bottom_bar.setObjectName("cinematicBottomBar")
+        bottom_bar.setFixedHeight(64)
+        bottom_bar.setStyleSheet("""
+            QWidget#cinematicBottomBar {
+                background-color: rgba(6, 6, 8, 0.92);
+                border-bottom-left-radius: 13px;
+                border-bottom-right-radius: 13px;
+                border-top: 1px solid rgba(255, 255, 255, 0.08);
+            }
+        """)
+        btn_layout = QHBoxLayout(bottom_bar)
+        btn_layout.setContentsMargins(22, 10, 22, 18)
+        btn_layout.setSpacing(12)
 
         self.cancel_btn = FadeHoverButton("Cancel", border_radius=6.0, is_secondary=True)
         self.cancel_btn.setObjectName("cinematicCancelBtn")
-        self.cancel_btn.setFixedSize(100, 36)
+        self.cancel_btn.setFixedSize(110, 36)
         self.cancel_btn.clicked.connect(self.close_panel)
         btn_layout.addWidget(self.cancel_btn)
 
@@ -7459,14 +8270,19 @@ class CinematicLightingFloatingPanel(QFrame):
 
         self.apply_btn = FadeHoverButton("Save Settings", border_radius=6.0, is_secondary=False)
         self.apply_btn.setObjectName("cinematicApplyBtn")
-        self.apply_btn.setFixedSize(130, 36)
+        self.apply_btn.setFixedSize(140, 36)
         self.apply_btn.clicked.connect(self.save_and_close)
         btn_layout.addWidget(self.apply_btn)
 
-        content_layout.addLayout(btn_layout)
-        container_layout.addWidget(content_widget)
+        container_layout.addWidget(bottom_bar)
 
         self._update_live_preview()
+
+    def _on_tab_changed(self, mode: str):
+        if mode == "glow":
+            self.settings_stack.setCurrentIndex(0)
+        else:
+            self.settings_stack.setCurrentIndex(1)
 
     def _on_intensity_changed(self, val: int):
         val = int(round(val / 5.0) * 5)
@@ -7487,6 +8303,10 @@ class CinematicLightingFloatingPanel(QFrame):
         self._update_live_preview()
 
     def _on_values_changed(self):
+        self._update_live_preview()
+
+    def _on_preview_tick(self):
+        self._anim_time += 0.06
         self._update_live_preview()
 
     def _apply_preset(self, preset_name: str):
@@ -7522,11 +8342,74 @@ class CinematicLightingFloatingPanel(QFrame):
             self.mode_combo.setCurrentIndex(idx)
         self._update_live_preview()
 
+    def _get_palette_colors(self, cover_pix: QPixmap, color_mode: str) -> dict:
+        """Derive bottom, mid, top, peak colors for the visualizer preview."""
+        if color_mode == "cyber_orange":
+            return {
+                "bottom": QColor("#FF5B06"),
+                "mid": QColor("#FDA903"),
+                "top": QColor("#ff3da7"),
+                "peak": QColor("#FFFFFF")
+            }
+        elif color_mode == "cyber_cyan":
+            return {
+                "bottom": QColor("#0052D4"),
+                "mid": QColor("#4364F7"),
+                "top": QColor("#6FB1FC"),
+                "peak": QColor("#FFFFFF")
+            }
+        elif color_mode == "neon_magenta":
+            return {
+                "bottom": QColor("#8A2387"),
+                "mid": QColor("#E94057"),
+                "top": QColor("#F27121"),
+                "peak": QColor("#FFFFFF")
+            }
+        elif color_mode == "synthwave":
+            return {
+                "bottom": QColor("#11002c"),
+                "mid": QColor("#b5179e"),
+                "top": QColor("#4cc9f0"),
+                "peak": QColor("#7209b7")
+            }
+        else:
+            # "adaptive": Extract dominant color from cover art
+            if cover_pix and not cover_pix.isNull():
+                img = cover_pix.toImage().scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                if not img.isNull():
+                    dom_color = QColor(img.pixelColor(0, 0))
+                    if dom_color.isValid():
+                        h, s, v, _ = dom_color.getHsv()
+                        if s < 30:
+                            s = 140
+                        c_bot = QColor.fromHsv(h, max(140, s), min(255, max(180, v)))
+                        c_mid = QColor.fromHsv((h + 20) % 360, max(50, s), min(255, min(255, v + 40)))
+                        c_top = QColor.fromHsv((h + 50) % 360, max(40, max(0, s - 30)), 255)
+                        return {
+                            "bottom": c_bot,
+                            "mid": c_mid,
+                            "top": c_top,
+                            "peak": QColor("#FFFFFF")
+                        }
+            # Fallback to cyber orange
+            return {
+                "bottom": QColor("#FF5B06"),
+                "mid": QColor("#FDA903"),
+                "top": QColor("#ff3da7"),
+                "peak": QColor("#FFFFFF")
+            }
+
     def _update_live_preview(self):
-        enabled = self.enable_cb.isChecked()
+        glow_enabled = self.enable_cb.isChecked()
         intensity = self.intensity_slider.value() / 100.0
         spread = self.spread_slider.value()
-        mode = self.mode_combo.currentData() or "adaptive"
+        lighting_mode = self.mode_combo.currentData() or "adaptive"
+
+        viz_enabled = self.viz_enable_cb.isChecked() if hasattr(self, 'viz_enable_cb') else True
+        viz_style = self.viz_style_combo.currentData() if hasattr(self, 'viz_style_combo') else "bars"
+        viz_opacity = (self.viz_opacity_slider.value() / 100.0) if hasattr(self, 'viz_opacity_slider') else 0.30
+        viz_bars = self.viz_bars_combo.currentData() if hasattr(self, 'viz_bars_combo') else 32
+        viz_color_mode = self.viz_color_combo.currentData() if hasattr(self, 'viz_color_combo') else "adaptive"
 
         # Update cover preview
         if self.source_cover and not self.source_cover.isNull():
@@ -7543,23 +8426,121 @@ class CinematicLightingFloatingPanel(QFrame):
         p.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
         cx, cy = stage_w / 2.0, stage_h / 2.0
-        cover_size = 90.0
+        cover_size = 76.0
 
-        if enabled:
-            # Scale spread from [130, 200] down to preview scale (cover is 90px in preview vs 120px in header)
+        # Layer 1: Audio Spectrum Visualizer (Live Animated)
+        if viz_enabled:
+            colors = self._get_palette_colors(cover_pix, viz_color_mode)
+            c_bot = QColor(colors["bottom"])
+            c_mid = QColor(colors["mid"])
+            c_top = QColor(colors["top"])
+            c_peak = QColor(colors["peak"])
+
+            alpha_val = int(255 * viz_opacity)
+            c_bot.setAlpha(int(alpha_val * 0.70))
+            c_mid.setAlpha(int(alpha_val * 0.85))
+            c_top.setAlpha(alpha_val)
+
+            if viz_style == "bars":
+                num_bars = int(viz_bars) if viz_bars in (32, 48) else 32
+                bar_slot = stage_w / float(num_bars)
+                bar_spacing = max(1.5, bar_slot * 0.20)
+                bar_w = max(2.0, bar_slot - bar_spacing)
+                max_bar_h = stage_h * 0.58
+
+                grad = QLinearGradient(0, stage_h, 0, stage_h - max_bar_h)
+                grad.setColorAt(0.0, c_bot)
+                grad.setColorAt(0.5, c_mid)
+                grad.setColorAt(1.0, c_top)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QBrush(grad))
+
+                t = getattr(self, '_anim_time', 0.0)
+                for i in range(num_bars):
+                    # Organic musical spectrum simulation
+                    freq_ratio = float(i) / float(num_bars)
+                    w1 = math.sin(t * 3.0 + i * 0.40) * 0.5 + 0.5
+                    w2 = math.cos(t * 2.1 - i * 0.25) * 0.5 + 0.5
+                    w3 = math.sin(t * 5.2 + i * 0.90) * 0.3 + 0.3
+                    raw_e = (w1 * 0.45 + w2 * 0.35 + w3 * 0.20) * (1.1 - freq_ratio * 0.45)
+                    bar_h = max(3.0, raw_e * max_bar_h)
+
+                    bx = i * bar_slot + (bar_spacing / 2.0)
+                    by = stage_h - bar_h
+                    p.drawRoundedRect(QRectF(bx, by, bar_w, bar_h + 2.0), 1.5, 1.5)
+
+                    # Peak dot
+                    if raw_e > 0.4:
+                        peak_y = max(4.0, by - 3.0)
+                        p_dot_col = QColor(c_peak)
+                        p_dot_col.setAlpha(min(255, int(alpha_val * 1.2)))
+                        p.fillRect(QRectF(bx, peak_y, bar_w, 1.5), p_dot_col)
+
+            elif viz_style == "waves":
+                t = getattr(self, '_anim_time', 0.0)
+                # 3 harmonic sine wave layers with gradient fills
+                wave_configs = [
+                    (0.40, 1.4, 0.0, 0.55, c_bot),
+                    (0.55, 2.2, 1.2, 0.42, c_mid),
+                    (0.70, 3.1, 2.4, 0.32, c_top)
+                ]
+                for alpha_f, speed, phase, amp_ratio, w_col in wave_configs:
+                    path = QPainterPath()
+                    path.moveTo(0, stage_h)
+                    
+                    steps = 32
+                    dx = stage_w / float(steps)
+                    for s in range(steps + 1):
+                        x = s * dx
+                        rel_x = x / stage_w
+                        y = stage_h - (stage_h * amp_ratio) + (math.sin(t * speed + rel_x * 4.0 + phase) * 16.0) + (math.cos(t * 1.5 - rel_x * 6.0) * 8.0)
+                        path.lineTo(x, y)
+                    path.lineTo(stage_w, stage_h)
+                    path.closeSubpath()
+
+                    w_grad = QLinearGradient(0, stage_h, 0, stage_h * 0.4)
+                    c_fill = QColor(w_col)
+                    c_fill.setAlpha(int(alpha_val * alpha_f))
+                    w_grad.setColorAt(0.0, c_fill)
+                    c_fill_fade = QColor(w_col)
+                    c_fill_fade.setAlpha(0)
+                    w_grad.setColorAt(1.0, c_fill_fade)
+                    p.fillPath(path, QBrush(w_grad))
+
+                    # Glowing crest pen
+                    crest_pen = QPen(w_col, 1.5)
+                    p.setPen(crest_pen)
+                    p.setBrush(Qt.NoBrush)
+                    p.drawPath(path)
+
+        # Layer 2: Cinematic Ambient Glow on Cover
+        if glow_enabled:
             preview_spread = int(spread * (cover_size / 120.0))
             aura_pix = CinematicGlowEngine.generate_ambient_aura(
-                cover_pix, aura_size=preview_spread, cover_size=int(cover_size), intensity=intensity, mode=mode, enabled=True
+                cover_pix, aura_size=preview_spread, cover_size=int(cover_size), intensity=intensity, mode=lighting_mode, enabled=True
             )
             gx = cx - (preview_spread / 2.0)
             gy = cy - (preview_spread / 2.0)
             p.drawPixmap(int(gx), int(gy), aura_pix)
 
-        # Draw front cover
+        # Layer 3: Sharp Center Front Cover with rounded corners
         scaled_cover = cover_pix.scaled(int(cover_size), int(cover_size), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        px = cx - (cover_size / 2.0)
-        py = cy - (cover_size / 2.0)
-        p.drawPixmap(int(px), int(py), scaled_cover)
+        px = int(cx - (scaled_cover.width() / 2.0))
+        py = int(cy - (scaled_cover.height() / 2.0))
+
+        # Draw rounded clip for cover
+        p.save()
+        cover_path = QPainterPath()
+        cover_path.addRoundedRect(QRectF(px, py, scaled_cover.width(), scaled_cover.height()), 6.0, 6.0)
+        p.setClipPath(cover_path)
+        p.drawPixmap(px, py, scaled_cover)
+        p.restore()
+
+        # Subtle border ring around cover
+        p.setPen(QPen(QColor(255, 255, 255, 35), 1.0))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(px, py, scaled_cover.width(), scaled_cover.height()), 6.0, 6.0)
+
         p.end()
 
         self.preview_stage_lbl.setPixmap(stage_pix)
@@ -7576,23 +8557,45 @@ class CinematicLightingFloatingPanel(QFrame):
         """Position centered in parent and display with smooth fade in."""
         if self.parent():
             parent_rect = self.parent().rect()
-            x = max(20, (parent_rect.width() - self.width()) // 2)
-            y = max(45, (parent_rect.height() - self.height()) // 2)
+            p_w = parent_rect.width()
+            p_h = parent_rect.height()
+            target_w = 470
+            target_h = max(420, min(515, p_h - 16))
+            self.setFixedSize(target_w, target_h)
+            x = max(10, (p_w - target_w) // 2)
+            y = max(8, (p_h - target_h) // 2)
             self.move(x, y)
         self.show()
         self.raise_()
+        if hasattr(self, '_preview_timer'):
+            self._preview_timer.start()
         self.anim.setDirection(QPropertyAnimation.Forward)
         self.anim.start()
 
     def close_panel(self):
         """Close panel with smooth fade-out and cleanup."""
+        if hasattr(self, '_preview_timer'):
+            self._preview_timer.stop()
         self.anim.setDirection(QPropertyAnimation.Backward)
         self.anim.start()
 
     def save_and_close(self):
         """Save active config to persistent storage and notify caller."""
+        if hasattr(self, '_preview_timer'):
+            self._preview_timer.stop()
         cfg = self.get_config()
         CinematicLightingManager.save_config(cfg)
+        if hasattr(self, 'viz_enable_cb'):
+            viz_cfg = {
+                "enabled": self.viz_enable_cb.isChecked(),
+                "style_mode": self.viz_style_combo.currentData() if hasattr(self, 'viz_style_combo') else "bars",
+                "opacity": round(self.viz_opacity_slider.value() / 100.0, 2),
+                "bar_count": self.viz_bars_combo.currentData() or 32,
+                "color_mode": self.viz_color_combo.currentData() or "adaptive",
+                "peak_dots": True,
+                "sensitivity": 1.0
+            }
+            VisualizerConfigManager.save_config(viz_cfg)
         if callable(self.on_applied):
             self.on_applied()
         self.close_panel()
@@ -7655,16 +8658,17 @@ class PlaylistHeader(QFrame):
     
     def _setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 10, 25, 10)
-        layout.setSpacing(10)
+        layout.setContentsMargins(15, 6, 25, 6)
+        layout.setSpacing(12)
 
-        # Build the 200x200 cover container (supports dynamic aura spread)
+        # Build the compact cover container (supports dynamic aura spread)
         cover_container = self._setup_cover_container()
         layout.addWidget(cover_container)
 
         # Playlist info
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(8)
+        info_layout.setContentsMargins(0, 0, 0, 0)
+        info_layout.setSpacing(4)
 
         self.playlist_label = QLabel("PLAYLIST")
         self.playlist_label.setObjectName("playlistLabel")
@@ -7685,16 +8689,16 @@ class PlaylistHeader(QFrame):
 
     def _setup_cover_container(self) -> QWidget:
         """
-        Build and return the 200x200 cover-art container widget with dynamic ambient glow.
+        Build and return the compact cover-art container widget with dynamic ambient glow.
         """
         container = QWidget()
         container.setObjectName("coverContainer")
-        container.setFixedSize(200, 200)
+        container.setFixedSize(160, 144)
 
-        # 1. Background Layer: YouTube-Style Cinematic Ambient Lighting Aura (supports up to 200px)
+        # 1. Background Layer: YouTube-Style Cinematic Ambient Lighting Aura
         self.cover_ambient_glow = QLabel(container)
         self.cover_ambient_glow.setObjectName("coverAmbientGlow")
-        self.cover_ambient_glow.setGeometry(0, 0, 200, 200)
+        self.cover_ambient_glow.setGeometry(0, (144 - 160) // 2, 160, 160)
         self.cover_ambient_glow.setAlignment(Qt.AlignCenter)
         self.cover_ambient_glow.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.cover_ambient_glow.setAttribute(Qt.WA_TranslucentBackground, True)
@@ -7713,10 +8717,10 @@ class PlaylistHeader(QFrame):
         self._glow_pulse_anim.setLoopCount(-1)
         self._glow_pulse_anim.setEasingCurve(QEasingCurve.InOutSine)
 
-        # 2. Foreground Layer: 120x120 Pixel-Crisp Cover Artwork (centered at 40, 40)
+        # 2. Foreground Layer: 120x120 Pixel-Crisp Cover Artwork (centered at 20, 12)
         self.cover_front = QLabel(container)
         self.cover_front.setObjectName("coverFront")
-        self.cover_front.setGeometry(40, 40, 120, 120)
+        self.cover_front.setGeometry(20, 12, 120, 120)
         self.cover_front.setAlignment(Qt.AlignCenter)
         self.cover_front.setAttribute(Qt.WA_TranslucentBackground, True)
         self.cover_front.setCursor(Qt.PointingHandCursor)
@@ -7733,7 +8737,7 @@ class PlaylistHeader(QFrame):
         # 3. Interactive Edit overlay (shown on hover over container, conforms to active template shape)
         self._cover_edit_overlay = QLabel(container)
         self._cover_edit_overlay.setObjectName("coverEditOverlay")
-        self._cover_edit_overlay.setGeometry(40, 40, 120, 120)
+        self._cover_edit_overlay.setGeometry(20, 12, 120, 120)
         self._cover_edit_overlay.setStyleSheet("background: transparent; border: none;")
         self._cover_edit_overlay.setAlignment(Qt.AlignCenter)
         self._cover_edit_overlay.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -7868,26 +8872,28 @@ class PlaylistHeader(QFrame):
         Re-composite and update cover art display according to active template, photos, and cinematic lighting settings.
         """
         valid_pixmaps = []
-        if hasattr(self, '_cover_sources') and self._cover_sources:
-            for s in self._cover_sources:
-                if s and os.path.exists(s):
-                    pix = QPixmap(s)
-                    if not pix.isNull():
-                        valid_pixmaps.append(pix)
-
-        if not valid_pixmaps:
-            for path in self._cover_photos:
-                if path and os.path.exists(path):
-                    pix = QPixmap(path)
-                    if not pix.isNull():
-                        valid_pixmaps.append(pix)
+        raw_photos = getattr(self, '_cover_photos', [])
+        raw_sources = getattr(self, '_cover_sources', [])
+        max_count = max(len(raw_photos), len(raw_sources))
+        for i in range(max_count):
+            pix = None
+            if i < len(raw_photos):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_photos[i])
+            if (pix is None or pix.isNull()) and i < len(raw_sources):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_sources[i])
+            if pix and not pix.isNull():
+                valid_pixmaps.append(pix)
 
         if valid_pixmaps:
             rendered = CollageMasterDispatcher.render_cover(valid_pixmaps, self._active_template_id, size=240, offsets=getattr(self, '_cover_offsets', None))
+        elif hasattr(self, '_current_track_cover') and self._current_track_cover and not self._current_track_cover.isNull():
+            rendered = self._current_track_cover.scaled(240, 240, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        elif hasattr(self, 'cover_front') and self.cover_front.pixmap() and not self.cover_front.pixmap().isNull():
+            rendered = self.cover_front.pixmap().scaled(240, 240, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         else:
             rendered = CollageMasterDispatcher.render_cover([], size=240)
 
-        # 1. Update Sharp Foreground Cover (120x120 centered at 40, 40)
+        # 1. Update Sharp Foreground Cover (120x120 centered at 20, 12)
         scaled_cover = rendered.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.cover_front.setPixmap(scaled_cover)
         self._cover_edit_overlay.setPixmap(self._generate_hover_overlay(scaled_cover))
@@ -7902,8 +8908,8 @@ class PlaylistHeader(QFrame):
         aura_pix = CinematicGlowEngine.generate_ambient_aura(
             rendered, aura_size=spread, cover_size=120, intensity=intensity, mode=mode, enabled=enabled
         )
-        glow_x = max(0, (200 - spread) // 2)
-        glow_y = max(0, (200 - spread) // 2)
+        glow_x = (160 - spread) // 2
+        glow_y = (144 - spread) // 2
         self.cover_ambient_glow.setGeometry(glow_x, glow_y, spread, spread)
         self.cover_ambient_glow.setPixmap(aura_pix)
 
@@ -7914,6 +8920,27 @@ class PlaylistHeader(QFrame):
         else:
             self._glow_pulse_anim.stop()
             self._glow_opacity_effect.setOpacity(1.0)
+
+        # 4. Synchronize dominant album art colors with Audio Visualizer Background
+        try:
+            p = self.parent()
+            while p and not hasattr(p, 'visualizer_bg'):
+                p = p.parent()
+            if p and hasattr(p, 'visualizer_bg') and p.visualizer_bg:
+                img = rendered.toImage().scaled(1, 1, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+                if not img.isNull():
+                    dom_color = QColor(img.pixelColor(0, 0))
+                    if dom_color.isValid():
+                        h, s, v, _ = dom_color.getHsv()
+                        if s < 30:
+                            s = 140
+                        top_c = QColor.fromHsv(h, max(140, s), min(255, max(180, v)))
+                        bot_c = QColor.fromHsv(h, min(255, s + 30), max(50, v // 2))
+                        p.visualizer_bg.set_adaptive_colors(top_c, bot_c)
+                if hasattr(p.visualizer_bg, 'set_cover_pixmap'):
+                    p.visualizer_bg.set_cover_pixmap(rendered)
+        except Exception:
+            pass
 
     def set_covers(self, cover_path: str = '', *args):
         """Set cover art image (backwards compatibility)."""
@@ -7950,21 +8977,17 @@ class PlaylistHeader(QFrame):
         """
         self._pause_resume_timer()
         valid_pixmaps = []
-        if hasattr(self, '_cover_sources') and self._cover_sources:
-            for s in self._cover_sources:
-                if s and os.path.exists(s):
-                    pix = QPixmap(s)
-                    if not pix.isNull():
-                        valid_pixmaps.append(pix)
-
-        if not valid_pixmaps:
-            for p in self._cover_photos:
-                if isinstance(p, QPixmap) and not p.isNull():
-                    valid_pixmaps.append(p)
-                elif isinstance(p, str) and os.path.exists(p):
-                    pix = QPixmap(p)
-                    if not pix.isNull():
-                        valid_pixmaps.append(pix)
+        raw_photos = getattr(self, '_cover_photos', [])
+        raw_sources = getattr(self, '_cover_sources', [])
+        max_count = max(len(raw_photos), len(raw_sources))
+        for i in range(max_count):
+            pix = None
+            if i < len(raw_photos):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_photos[i])
+            if (pix is None or pix.isNull()) and i < len(raw_sources):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_sources[i])
+            if pix and not pix.isNull():
+                valid_pixmaps.append(pix)
 
         if not valid_pixmaps and hasattr(self, '_current_track_cover') and self._current_track_cover:
             valid_pixmaps = [self._current_track_cover]
@@ -8006,7 +9029,7 @@ class PlaylistHeader(QFrame):
         
         if event.button() == Qt.RightButton:
             # If cover is currently empty, directly open file picker & template flow
-            has_existing = any(p and os.path.exists(p) for p in self._cover_photos)
+            has_existing = any(p and os.path.exists(p) for p in getattr(self, '_cover_photos', [])) or any(s and os.path.exists(s) for s in getattr(self, '_cover_sources', []))
             if not has_existing:
                 self._open_cover_manager('edit')
                 return
@@ -8014,27 +9037,31 @@ class PlaylistHeader(QFrame):
             menu = QMenu(self)
             menu.setObjectName("playlistCoverMenu")
             menu.setStyleSheet("""
-                QMenu#playlistCoverMenu {
-                    background: rgba(25, 25, 35, 0.98);
+                QMenu#playlistCoverMenu, QMenu {
+                    background-color: #1e2128;
                     color: #e0e0e0;
-                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border: 1px solid rgba(255, 255, 255, 0.12);
                     border-radius: 8px;
                     padding: 5px;
                     font-family: 'Orbitron', sans-serif;
                 }
-                QMenu#playlistCoverMenu::item {
+                QMenu::item {
                     color: #e0e0e0;
-                    padding: 8px 25px;
+                    padding: 6px 20px 6px 12px;
+                    min-height: 26px;
                     border-radius: 4px;
+                    font-size: 11.5px;
+                    font-family: 'Orbitron', sans-serif;
+                    background-color: transparent;
                 }
-                QMenu#playlistCoverMenu::item:selected {
-                    background: rgba(255, 255, 255, 0.12);
+                QMenu::item:selected, QMenu::item:hover {
+                    background-color: rgba(255, 255, 255, 0.12);
                     color: #ffffff;
                 }
-                QMenu#playlistCoverMenu::separator {
+                QMenu::separator {
                     height: 1px;
-                    background: rgba(255, 255, 255, 0.1);
-                    margin: 5px 10px;
+                    background: rgba(255, 255, 255, 0.08);
+                    margin: 4px 6px;
                 }
             """)
             menu.aboutToShow.connect(self._pause_resume_timer)
@@ -8044,9 +9071,71 @@ class PlaylistHeader(QFrame):
             menu.addSeparator()
             menu.addAction("Review Cover", lambda: self._open_cover_manager('review'))
             menu.addAction("Edit Cover", lambda: self._open_cover_manager('edit'))
+            menu.addAction("Export Cover Image...", self._export_cover_image)
             menu.addSeparator()
             menu.addAction("Cinematic Lighting...", self._open_lighting_settings)
             menu.exec(QCursor.pos())
+
+    def _export_cover_image(self):
+        """Export the playlist header's active composite cover artwork to an image file on disk."""
+        from PySide6.QtWidgets import QFileDialog
+
+        valid_pixmaps = []
+        raw_photos = getattr(self, '_cover_photos', [])
+        raw_sources = getattr(self, '_cover_sources', [])
+        max_count = max(len(raw_photos), len(raw_sources))
+        for i in range(max_count):
+            pix = None
+            if i < len(raw_photos):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_photos[i])
+            if (pix is None or pix.isNull()) and i < len(raw_sources):
+                pix = VideoCoverExtractor.resolve_to_pixmap(raw_sources[i])
+            if pix and not pix.isNull():
+                valid_pixmaps.append(pix)
+
+        if valid_pixmaps:
+            rendered = CollageMasterDispatcher.render_cover(valid_pixmaps, self._active_template_id, size=1024, offsets=getattr(self, '_cover_offsets', None))
+        else:
+            rendered = CollageMasterDispatcher.render_cover([], size=1024)
+
+        if not rendered or rendered.isNull():
+            return
+
+        last_dir = ""
+        settings_path = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json')
+        try:
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    last_dir = json.load(f).get('last_cover_export_dir', '')
+        except Exception:
+            pass
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Playlist Cover Image",
+            os.path.join(last_dir, "playlist_cover.png"),
+            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;WebP Image (*.webp);;All Files (*)"
+        )
+        if save_path:
+            try:
+                d = {}
+                if os.path.exists(settings_path):
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        d = json.load(f)
+                d['last_cover_export_dir'] = os.path.dirname(save_path)
+                with open(settings_path, 'w', encoding='utf-8') as f:
+                    json.dump(d, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+
+            fmt = "PNG"
+            if save_path.lower().endswith(('.jpg', '.jpeg')):
+                fmt = "JPG"
+            elif save_path.lower().endswith('.webp'):
+                fmt = "WEBP"
+
+            if rendered.save(save_path, fmt):
+                print(f"[PlaylistHeader] Cover image exported successfully to: {save_path}")
 
     def _open_lighting_settings(self):
         """
@@ -8063,6 +9152,17 @@ class PlaylistHeader(QFrame):
         def _on_applied():
             self.refresh_cover_display()
             self._resume_resume_timer()
+            # Immediately sync visualizer background with newly applied visualizer settings
+            p = self.parent()
+            while p and not hasattr(p, 'visualizer_bg'):
+                p = p.parent()
+            if p and hasattr(p, 'visualizer_bg') and p.visualizer_bg:
+                viz_cfg = VisualizerConfigManager.load_config()
+                p.visualizer_bg.set_visualizer_enabled(viz_cfg.get("enabled", True))
+                p.visualizer_bg.set_style_mode(viz_cfg.get("style_mode", "bars"))
+                p.visualizer_bg.set_visualizer_opacity(viz_cfg.get("opacity", 0.30))
+                p.visualizer_bg.set_bar_count(viz_cfg.get("bar_count", 32))
+                p.visualizer_bg.set_color_mode(viz_cfg.get("color_mode", "adaptive"))
 
         current_cover = self.cover_front.pixmap()
         self._lighting_floating_panel = CinematicLightingFloatingPanel(
@@ -8072,6 +9172,9 @@ class PlaylistHeader(QFrame):
         )
         self._lighting_floating_panel.destroyed.connect(self._resume_resume_timer)
         self._lighting_floating_panel.show_panel()
+
+    _open_cinematic_lighting_modal = _open_lighting_settings
+    _open_cinematic_lighting_panel = _open_lighting_settings
 
     def _open_cover_manager(self, mode: str):
         """
@@ -8089,7 +9192,9 @@ class PlaylistHeader(QFrame):
 
             self._review_lightbox = CoverReviewLightboxOverlay(
                 photos=self._cover_photos,
+                sources=self._cover_sources,
                 template_id=self._active_template_id,
+                offsets=getattr(self, '_cover_offsets', {}),
                 parent=parent_target
             )
             self._review_lightbox.destroyed.connect(self._resume_resume_timer)
@@ -8128,8 +9233,28 @@ class PlaylistHeader(QFrame):
             self._cover_photos = saved_paths
             self._cover_sources = new_sources
 
+            # Check if there is an active music folder in parent widget
+            parent_target = self.parent() or self.window()
+            active_folder = getattr(parent_target, '_music_folder', '') if parent_target else ''
+            if active_folder:
+                folder_pl = os.path.basename(active_folder) + "'s Playlist"
+                self._save_cover_setting(
+                    folder_pl,
+                    self._cover_photos,
+                    self._cover_sources,
+                    self._active_template_id,
+                    self._cover_offsets
+                )
+
             self._save_cover_setting(
                 playlist_name,
+                self._cover_photos,
+                self._cover_sources,
+                self._active_template_id,
+                self._cover_offsets
+            )
+            self._save_cover_setting(
+                '__default__',
                 self._cover_photos,
                 self._cover_sources,
                 self._active_template_id,
@@ -8217,8 +9342,17 @@ class PlaylistHeader(QFrame):
                 'offsets': offsets or {},
                 'front': photos[0] if (isinstance(photos, list) and photos) else (photos if isinstance(photos, str) else '')
             }
+            # Save under exact playlist name
             covers[playlist_name] = cover_entry
             
+            # Save under normalized name variations (e.g. without "'s Playlist") to prevent mismatches
+            clean_name = playlist_name.replace("'s Playlist", "").replace("’s Playlist", "").strip()
+            if clean_name and clean_name != playlist_name:
+                covers[clean_name] = cover_entry
+            if clean_name and f"{clean_name}'s Playlist" != playlist_name:
+                covers[f"{clean_name}'s Playlist"] = cover_entry
+            
+            # Default fallback update
             if playlist_name == 'My Playlist' or '__default__' not in covers or not covers['__default__'].get('photos'):
                 covers['__default__'] = dict(cover_entry)
 
@@ -8260,41 +9394,71 @@ class PlaylistHeader(QFrame):
                     return [], [], "1_full", {}
                 if isinstance(entry, str):
                     if os.path.exists(entry):
-                        return [entry], [], "1_full", {}
+                        return [entry], [entry], "1_full", {}
                     return [], [], "1_full", {}
                 elif isinstance(entry, dict):
                     t_id = entry.get('template_id', '1_full')
                     offs = entry.get('offsets', {})
                     p_list = entry.get('photos', [])
                     s_list = entry.get('sources', [])
-                    if isinstance(s_list, list) and s_list:
-                        valid_sources = [s for s in s_list if s and os.path.exists(s)]
-                        if valid_sources:
-                            return valid_sources, s_list, t_id, offs
-                    if isinstance(p_list, list) and p_list:
-                        valid_p = [p for p in p_list if p and os.path.exists(p)]
-                        if valid_p:
-                            return valid_p, s_list, t_id, offs
-                    # Fallback to legacy 'front' / 'back'
+                    
+                    # 1. Prioritize saved PNG photos in AppData
+                    valid_p = []
+                    if isinstance(p_list, list):
+                        for p in p_list:
+                            if p and os.path.exists(p):
+                                pix = QPixmap(p)
+                                if not pix.isNull():
+                                    valid_p.append(p)
+                    if valid_p:
+                        return valid_p, s_list if isinstance(s_list, list) else [], t_id, offs
+
+                    # 2. Fallback to valid sources if photos don't exist
+                    valid_sources = []
+                    if isinstance(s_list, list):
+                        for s in s_list:
+                            pix = VideoCoverExtractor.resolve_to_pixmap(s)
+                            if pix and not pix.isNull():
+                                rec_path = self._save_cropped_cover(pix, f"recovered_{len(valid_sources)+1}")
+                                if rec_path:
+                                    valid_sources.append(rec_path)
+                    if valid_sources:
+                        return valid_sources, s_list, t_id, offs
+
+                    # 3. Fallback to legacy 'front' / 'back'
                     f_p = entry.get('front', '')
                     b_p = entry.get('back', '')
                     valid_legacy = []
-                    if f_p and os.path.exists(f_p): valid_legacy.append(f_p)
-                    if b_p and os.path.exists(b_p): valid_legacy.append(b_p)
+                    for lp in [f_p, b_p]:
+                        if lp and os.path.exists(lp):
+                            pix = VideoCoverExtractor.resolve_to_pixmap(lp)
+                            if pix and not pix.isNull():
+                                valid_legacy.append(lp)
                     if valid_legacy:
                         return valid_legacy, [entry.get('front_source', ''), entry.get('back_source', '')], t_id, offs
                 return [], [], "1_full", {}
 
-            # Tier 1: Exact match
-            photos, sources, t_id, offsets = _extract_entry(covers_map.get(lookup_name))
+            # Multi-alias candidate list
+            clean_lookup = lookup_name.replace("'s Playlist", "").replace("’s Playlist", "").strip() if lookup_name else ''
+            candidate_keys = [
+                lookup_name,
+                clean_lookup,
+                f"{clean_lookup}'s Playlist" if clean_lookup else '',
+                getattr(self, '_name', ''),
+                self.playlist_title.text() if hasattr(self, 'playlist_title') else '',
+                '__default__',
+                'My Playlist'
+            ]
+            
+            photos, sources, t_id, offsets = [], [], "1_full", {}
+            for cand in candidate_keys:
+                if cand and cand in covers_map:
+                    p, s, t, o = _extract_entry(covers_map.get(cand))
+                    if p:
+                        photos, sources, t_id, offsets = p, s, t, o
+                        break
 
-            # Tier 2: Global default / fallback ('__default__', 'My Playlist')
-            if not photos:
-                photos, sources, t_id, offsets = _extract_entry(covers_map.get('__default__'))
-            if not photos:
-                photos, sources, t_id, offsets = _extract_entry(covers_map.get('My Playlist'))
-
-            # Tier 3: First available valid entry
+            # Tier 3: First available valid entry if candidates failed
             if not photos:
                 for k, entry in covers_map.items():
                     p, s, t, o = _extract_entry(entry)
@@ -8682,6 +9846,22 @@ class PlaylistTable(QWidget):
         
         # Enable smooth scrolling
         self._tree_smoother = SmoothTableWidget(self.tree)
+        
+        # Audio Spectrum Visualizer Background underlay (anchored inside PlaylistTable)
+        self.visualizer_bg = AmbientVisualizerWidget(self)
+        self.visualizer_bg.lower()
+    
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
+            self.visualizer_bg.setGeometry(0, 0, self.width(), self.height())
+            self.visualizer_bg.lower()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
+            self.visualizer_bg.setGeometry(0, 0, self.width(), self.height())
+            self.visualizer_bg.lower()
     
     def _apply_style(self):
         self.tree.setStyleSheet("""
@@ -9183,6 +10363,7 @@ class PlayerBar(QFrame):
     nextClicked = Signal()
     shuffleClicked = Signal()
     loopClicked = Signal()
+    visualizerClicked = Signal()
     seekChanged = Signal(float)
     volumeChanged = Signal(int)
     
@@ -9279,6 +10460,13 @@ class PlayerBar(QFrame):
         self.loop_one_btn.clicked.connect(self._toggle_loop)
         self.loop_one_btn.hide()
         controls.addWidget(self.loop_one_btn)
+        
+        # Visualizer toggle button
+        self.visualizer_btn = self._create_icon_btn("visualizer-icon.svg", "Audio Visualizer (F9) [ON]")
+        self.visualizer_btn.setObjectName("visualizerBtn")
+        self.visualizer_btn.setIconSize(QSize(20, 20))
+        self.visualizer_btn.clicked.connect(self.visualizerClicked.emit)
+        controls.addWidget(self.visualizer_btn)
         
         layout.addLayout(controls, stretch=1)
         
@@ -9399,6 +10587,19 @@ class PlayerBar(QFrame):
             btn.setIconSize(QSize(18, 18))
         
         return btn
+
+    def set_visualizer_state(self, enabled: bool):
+        """Update visualizer button icon and tooltip."""
+        icon_name = "visualizer-icon.svg" if enabled else "visualizer-off-icon.svg"
+        status_text = "ON" if enabled else "OFF"
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(script_dir, "UI Icons", icon_name)
+        if os.path.exists(icon_path) and hasattr(self, 'visualizer_btn'):
+            self.visualizer_btn.setIcon(QIcon(icon_path))
+            self.visualizer_btn.setIconSize(QSize(20, 20))
+        if hasattr(self, 'visualizer_btn'):
+            self.visualizer_btn.setToolTip(f"Audio Visualizer (F9) [{status_text}]")
     
     def _apply_style(self):
         self.setStyleSheet("""
@@ -9422,7 +10623,8 @@ class PlayerBar(QFrame):
             QPushButton#loopBtn,
             QPushButton#prevBtn,
             QPushButton#nextBtn,
-            QPushButton#loopOneBtn {
+            QPushButton#loopOneBtn,
+            QPushButton#visualizerBtn {
                 background: transparent;
                 border: none;
                 border-radius: 24px;
@@ -9432,7 +10634,8 @@ class PlayerBar(QFrame):
             QPushButton#loopBtn:hover,
             QPushButton#prevBtn:hover,
             QPushButton#nextBtn:hover,
-            QPushButton#loopOneBtn:hover {
+            QPushButton#loopOneBtn:hover,
+            QPushButton#visualizerBtn:hover {
                 background: rgba(255, 255, 255, 0.1);
             }
             
@@ -11175,17 +12378,38 @@ class MusicPanelWidget(QWidget):
 
     def on_helxaic_page_hidden(self):
         self._helxaic_page_visible = False
+        if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
+            self.visualizer_bg.pause_rendering()
+        self._sync_taskbar_visualizer_state()
         self.schedule_ram_trim(500)
 
     def on_helxaic_page_shown(self):
         self._helxaic_page_visible = True
+        if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
+            self.visualizer_bg.resume_rendering()
+        self._sync_taskbar_visualizer_state()
+
+    def _sync_taskbar_visualizer_state(self):
+        """Suppress taskbar mini-visualizer when HELXAIC page is active and main visualizer is ON."""
+        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+            is_helxaic_active = getattr(self, '_helxaic_page_visible', True) and self.isVisible()
+            is_main_viz_on = hasattr(self, 'visualizer_bg') and self.visualizer_bg and self.visualizer_bg.is_visualizer_enabled()
+            should_suppress = is_helxaic_active and is_main_viz_on
+            if hasattr(self._taskbar_media_widget, 'set_visualizer_suppressed'):
+                self._taskbar_media_widget.set_visualizer_suppressed(should_suppress)
 
     def _on_app_state_changed_for_render_gate(self, state):
         pass
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._helxaic_page_visible = False
+        self._sync_taskbar_visualizer_state()
     
     def showEvent(self, event):
         """Force layout update when widget is shown to prevent PlayerBar clipping."""
         super().showEvent(event)
+        self._helxaic_page_visible = True
         # Force immediate layout recalculation
         self.updateGeometry()
         if hasattr(self, 'player_bar'):
@@ -11220,6 +12444,8 @@ class MusicPanelWidget(QWidget):
                 self._taskbar_media_widget.raise_()
         elif getattr(self, '_taskbar_widget_enabled', True):
             self._setup_media_key_service()
+
+        self._sync_taskbar_visualizer_state()
     
     def _check_ffmpeg(self) -> bool:
         """Check if FFmpeg is available in AppData tools path."""
@@ -11466,6 +12692,61 @@ class MusicPanelWidget(QWidget):
                 
         self._save_state()
 
+    def toggle_visualizer(self, enabled=None):
+        """Toggle or set visualizer background state and persist."""
+        if not hasattr(self, 'visualizer_bg') or self.visualizer_bg is None:
+            return
+        if enabled is None:
+            new_state = not self.visualizer_bg.is_visualizer_enabled()
+        else:
+            new_state = bool(enabled)
+            
+        self.visualizer_bg.set_visualizer_enabled(new_state)
+        if hasattr(self, 'player_bar') and self.player_bar:
+            self.player_bar.set_visualizer_state(new_state)
+        if hasattr(self, 'action_toggle_visualizer') and self.action_toggle_visualizer:
+            self.action_toggle_visualizer.blockSignals(True)
+            self.action_toggle_visualizer.setChecked(new_state)
+            self.action_toggle_visualizer.blockSignals(False)
+            
+        # Persist to VisualizerConfigManager
+        cfg = VisualizerConfigManager.load_config()
+        cfg["enabled"] = new_state
+        VisualizerConfigManager.save_config(cfg)
+        self._sync_taskbar_visualizer_state()
+        self._save_state()
+
+    def set_visualizer_style_mode(self, mode: str):
+        """Switch active visualizer style: 'bars' (Spectrum Bars), 'waves' (Silk Fluid Waves), or 'halo' (Radial Halo)."""
+        mode_key = str(mode).lower().strip()
+        if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
+            self.visualizer_bg.set_style_mode(mode_key)
+            
+        # Update Menu Bar action checked states
+        if hasattr(self, 'style_action_bars') and self.style_action_bars:
+            self.style_action_bars.blockSignals(True)
+            self.style_action_bars.setChecked(mode_key == "bars")
+            self.style_action_bars.blockSignals(False)
+        if hasattr(self, 'style_action_waves') and self.style_action_waves:
+            self.style_action_waves.blockSignals(True)
+            self.style_action_waves.setChecked(mode_key == "waves")
+            self.style_action_waves.blockSignals(False)
+            
+        # Persist to VisualizerConfigManager
+        cfg = VisualizerConfigManager.load_config()
+        cfg["style_mode"] = mode_key
+        VisualizerConfigManager.save_config(cfg)
+        self._save_state()
+
+    def _open_cinematic_lighting_dialog(self):
+        """Open Cinematic Lighting & Visualizer Floating Settings Panel."""
+        if hasattr(self, 'header') and hasattr(self.header, '_open_lighting_settings'):
+            self.header._open_lighting_settings()
+        elif hasattr(self, 'header') and hasattr(self.header, '_open_cinematic_lighting_modal'):
+            self.header._open_cinematic_lighting_modal()
+        elif hasattr(self, 'header') and hasattr(self.header, '_open_cinematic_lighting_panel'):
+            self.header._open_cinematic_lighting_panel()
+
     def _play_current_or_resume(self):
         """Resume playback if paused, or play current/first track."""
         if not hasattr(self, '_player') or self._player is None:
@@ -11654,6 +12935,12 @@ class MusicPanelWidget(QWidget):
 
         # === Standard Keyboard Shortcuts ===
         
+        # F9: Toggle Background Audio Visualizer
+        if key == Qt.Key_F9:
+            self.toggle_visualizer()
+            event.accept()
+            return
+
         # Spacebar: Play/Pause
         if key == Qt.Key_Space:
             self._toggle_play()
@@ -12147,12 +13434,17 @@ class MusicPanelWidget(QWidget):
         # === Page 0: Playlist View ===
         playlist_page = QWidget()
         playlist_page.setObjectName("playlistPage")
+        self._playlist_page = playlist_page
+        
         playlist_layout = QVBoxLayout(playlist_page)
         playlist_layout.setContentsMargins(0, 0, 0, 0)
         playlist_layout.setSpacing(0)
         
         self.header = PlaylistHeader()
         self.table = PlaylistTable()
+        
+        # Audio Spectrum Visualizer Background (underlay layer anchored inside PlaylistTable)
+        self.visualizer_bg = getattr(self.table, 'visualizer_bg', None)
         
         # Search bar
         self._create_search_bar(playlist_layout)
@@ -12344,8 +13636,30 @@ class MusicPanelWidget(QWidget):
             }
         """)
 
+        # Initialize Visualizer config and state
+        try:
+            viz_cfg = VisualizerConfigManager.load_config()
+            is_viz_enabled = viz_cfg.get("enabled", True)
+            if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
+                self.visualizer_bg.set_visualizer_enabled(is_viz_enabled, animate=False)
+                self.visualizer_bg.set_style_mode(viz_cfg.get("style_mode", "bars"))
+                self.visualizer_bg.set_visualizer_opacity(viz_cfg.get("opacity", 0.30))
+                self.visualizer_bg.set_bar_count(viz_cfg.get("bar_count", 32))
+                self.visualizer_bg.set_color_mode(viz_cfg.get("color_mode", "adaptive"))
+                self.visualizer_bg.set_peak_dots_enabled(viz_cfg.get("peak_dots", True))
+                self.visualizer_bg.set_sensitivity(viz_cfg.get("sensitivity", 1.0))
+            if hasattr(self, 'player_bar') and self.player_bar:
+                self.player_bar.set_visualizer_state(is_viz_enabled)
+        except Exception as e:
+            print(f"[Music] Error loading visualizer config: {e}")
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # Update Visualizer underlay geometry anchored inside PlaylistTable
+        if hasattr(self, 'table') and hasattr(self.table, 'visualizer_bg') and self.table.visualizer_bg:
+            self.table.visualizer_bg.setGeometry(0, 0, self.table.width(), self.table.height())
+            self.table.visualizer_bg.lower()
+
         # Enforce max sidebar width (<= 50% of panel)
         self._update_yt_panel_constraints()
         
@@ -12559,6 +13873,7 @@ class MusicPanelWidget(QWidget):
         self.player_bar.prevClicked.connect(self._prev_track)
         self.player_bar.nextClicked.connect(self._next_track)
         self.player_bar.loopClicked.connect(self._save_state)
+        self.player_bar.visualizerClicked.connect(self.toggle_visualizer)
         
         # Background shortcut removed due to conflict
         from PySide6.QtGui import QKeySequence, QShortcut
@@ -12868,6 +14183,46 @@ class MusicPanelWidget(QWidget):
         crossfade_menu.addAction(slider_action)
         
 
+        # === View Menu ===
+        view_menu = menu_bar.addMenu("View")
+        view_menu.setObjectName("viewMenu")
+        
+        # Audio Visualizer Toggle (F9)
+        self.action_toggle_visualizer = QAction("Audio Spectrum Visualizer\tF9", self)
+        self.action_toggle_visualizer.setCheckable(True)
+        self.action_toggle_visualizer.setShortcut(QKeySequence("F9"))
+        self.action_toggle_visualizer.setShortcutContext(Qt.WindowShortcut)
+        self.action_toggle_visualizer.setChecked(getattr(self.visualizer_bg, 'is_visualizer_enabled', lambda: True)() if hasattr(self, 'visualizer_bg') else True)
+        self.action_toggle_visualizer.triggered.connect(self.toggle_visualizer)
+        view_menu.addAction(self.action_toggle_visualizer)
+        self.addAction(self.action_toggle_visualizer)
+        
+        # Visualizer Style Submenu
+        self.visualizer_style_menu = view_menu.addMenu("Visualizer Style")
+        self.visualizer_style_menu.setObjectName("visualizerStyleMenu")
+        
+        self.style_action_bars = QAction("Bottom Spectrum Bars", self)
+        self.style_action_bars.setCheckable(True)
+        self.style_action_bars.triggered.connect(lambda: self.set_visualizer_style_mode("bars"))
+        self.visualizer_style_menu.addAction(self.style_action_bars)
+        
+        self.style_action_waves = QAction("Silk Fluid Ambient Waves", self)
+        self.style_action_waves.setCheckable(True)
+        self.style_action_waves.triggered.connect(lambda: self.set_visualizer_style_mode("waves"))
+        self.visualizer_style_menu.addAction(self.style_action_waves)
+        
+        cur_style = getattr(self.visualizer_bg, 'get_style_mode', lambda: 'bars')() if hasattr(self, 'visualizer_bg') else 'bars'
+        self.style_action_bars.setChecked(cur_style == 'bars')
+        self.style_action_waves.setChecked(cur_style == 'waves')
+        
+        view_menu.addSeparator()
+        
+        # Open Cinematic Lighting & Visualizer Settings Floating Panel
+        self.action_cinematic_lighting = QAction("Cinematic Lighting & Visualizer Settings...", self)
+        self.action_cinematic_lighting.triggered.connect(self._open_cinematic_lighting_dialog)
+        view_menu.addAction(self.action_cinematic_lighting)
+
+
         # === Tools Menu ===
         tools_menu = menu_bar.addMenu("Tools")
         tools_menu.setObjectName("toolsMenu")
@@ -12944,7 +14299,7 @@ class MusicPanelWidget(QWidget):
         
         # Connect pause and resume timer across all menus and submenus
         for m in [
-            media_menu, audio_menu, tools_menu,
+            media_menu, audio_menu, view_menu, tools_menu,
             self.recent_media_menu, self._device_menu,
             speed_menu, crossfade_menu, self.taskbar_media_menu
         ]:
@@ -14395,9 +15750,10 @@ class MusicPanelWidget(QWidget):
         # Ensure taskbar widget visualizer stays active when audio position is actively advancing
         if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
             if hasattr(self._taskbar_media_widget, 'visualizer') and self._taskbar_media_widget.visualizer:
-                if not self._taskbar_media_widget.visualizer._is_active:
-                    if hasattr(self, '_player') and self._player and self._player.playbackState() == QMediaPlayer.PlayingState:
-                        self._taskbar_media_widget.set_playback_state(True)
+                if not getattr(self._taskbar_media_widget, '_visualizer_suppressed', False):
+                    if not self._taskbar_media_widget.visualizer._is_active:
+                        if hasattr(self, '_player') and self._player and self._player.playbackState() == QMediaPlayer.PlayingState:
+                            self._taskbar_media_widget.set_playback_state(True)
     
     def _on_state(self, state):
         if not hasattr(self, 'player_bar') or self.player_bar is None:
@@ -14408,6 +15764,10 @@ class MusicPanelWidget(QWidget):
             return
         
         self.player_bar.set_playing(state == QMediaPlayer.PlayingState)
+        
+        # Sync with background audio spectrum visualizer
+        if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
+            self.visualizer_bg.set_playback_state(state == QMediaPlayer.PlayingState)
         
         # Emit signal for external listeners (e.g., taskbar integration)
         self.playbackStateChanged.emit(state)
@@ -14426,6 +15786,8 @@ class MusicPanelWidget(QWidget):
                 self._taskbar_media_widget.show()
                 self._taskbar_media_widget.sync_position()
                 self._taskbar_media_widget.raise_()
+        
+        self._sync_taskbar_visualizer_state()
         
         # In fullscreen: show playerbar when paused, hide when playing
         if hasattr(self, '_is_fullscreen') and self._is_fullscreen:
@@ -14837,6 +16199,48 @@ class MusicPanelWidget(QWidget):
                     else:
                         self._taskbar_media_widget.hide()
 
+                # Restore visualizer settings
+                if 'visualizer_enabled' in state or 'visualizer' in state or 'visualizer_style_mode' in state:
+                    viz_cfg = VisualizerConfigManager.load_config()
+                    if 'visualizer_enabled' in state:
+                        viz_cfg['enabled'] = state['visualizer_enabled']
+                    if 'visualizer_style_mode' in state:
+                        viz_cfg['style_mode'] = state['visualizer_style_mode']
+                    if 'visualizer_opacity' in state:
+                        viz_cfg['opacity'] = state['visualizer_opacity']
+                    if 'visualizer_bar_count' in state:
+                        viz_cfg['bar_count'] = state['visualizer_bar_count']
+                    if 'visualizer_color_mode' in state:
+                        viz_cfg['color_mode'] = state['visualizer_color_mode']
+                    
+                    if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
+                        self.visualizer_bg.set_visualizer_enabled(viz_cfg.get('enabled', True))
+                        self.visualizer_bg.set_style_mode(viz_cfg.get('style_mode', 'bars'))
+                        self.visualizer_bg.set_visualizer_opacity(viz_cfg.get('opacity', 0.30))
+                        self.visualizer_bg.set_bar_count(viz_cfg.get('bar_count', 32))
+                        self.visualizer_bg.set_color_mode(viz_cfg.get('color_mode', 'adaptive'))
+                        if viz_cfg.get('color_mode', 'adaptive') == 'adaptive':
+                            saved_bot = state.get('visualizer_adaptive_bottom', '')
+                            saved_top = state.get('visualizer_adaptive_top', '')
+                            if saved_bot:
+                                c_bot = QColor(saved_bot)
+                                c_top = QColor(saved_top) if saved_top else None
+                                if c_bot.isValid():
+                                    self.visualizer_bg.set_adaptive_colors(c_bot, c_top)
+                    if hasattr(self, 'player_bar') and self.player_bar:
+                        self.player_bar.set_visualizer_state(viz_cfg.get('enabled', True))
+                    if hasattr(self, 'action_toggle_visualizer') and self.action_toggle_visualizer:
+                        self.action_toggle_visualizer.blockSignals(True)
+                        self.action_toggle_visualizer.setChecked(viz_cfg.get('enabled', True))
+                        self.action_toggle_visualizer.blockSignals(False)
+                    if hasattr(self, 'style_action_bars') and self.style_action_bars:
+                        cur_style = viz_cfg.get('style_mode', 'bars')
+                        self.style_action_bars.setChecked(cur_style == 'bars')
+                        if hasattr(self, 'style_action_waves') and self.style_action_waves:
+                            self.style_action_waves.setChecked(cur_style == 'waves')
+                        if hasattr(self, 'style_action_halo') and self.style_action_halo:
+                            self.style_action_halo.setChecked(cur_style == 'halo')
+
                 print(f"Loaded state: {folder}")
         except Exception as e:
             print(f"Failed to load state: {e}")
@@ -14908,13 +16312,21 @@ class MusicPanelWidget(QWidget):
                 'taskbar_widget_collapsed': is_collapsed,
                 'taskbar_widget_locked': is_locked,
                 'taskbar_widget_width': custom_w,
-                'taskbar_widget_opacity': widget_opacity
+                'taskbar_widget_opacity': widget_opacity,
+                'visualizer_enabled': getattr(self.visualizer_bg, 'is_visualizer_enabled', lambda: True)() if hasattr(self, 'visualizer_bg') else True,
+                'visualizer_style_mode': getattr(self.visualizer_bg, 'get_style_mode', lambda: 'bars')() if hasattr(self, 'visualizer_bg') else 'bars',
+                'visualizer_opacity': getattr(self.visualizer_bg, '_opacity', 0.30) if hasattr(self, 'visualizer_bg') else 0.30,
+                'visualizer_bar_count': getattr(self.visualizer_bg, '_bar_count', 32) if hasattr(self, 'visualizer_bg') else 32,
+                'visualizer_color_mode': getattr(self.visualizer_bg, '_color_mode', 'adaptive') if hasattr(self, 'visualizer_bg') else 'adaptive',
+                'visualizer_adaptive_bottom': getattr(self.visualizer_bg, '_color_bottom', QColor()).name() if hasattr(self, 'visualizer_bg') and hasattr(self.visualizer_bg, '_color_bottom') else '',
+                'visualizer_adaptive_mid': getattr(self.visualizer_bg, '_color_mid', QColor()).name() if hasattr(self, 'visualizer_bg') and hasattr(self.visualizer_bg, '_color_mid') else '',
+                'visualizer_adaptive_top': getattr(self.visualizer_bg, '_color_top', QColor()).name() if hasattr(self, 'visualizer_bg') and hasattr(self.visualizer_bg, '_color_top') else ''
             }
             
             with open(self._config_path, 'w', encoding='utf-8') as f:
                 json.dump(state, f, indent=2)
             
-            print(f"Saved state: {current_track_path}")
+            print(f"Saved state: {current_track_path.encode('ascii', 'replace').decode('ascii')}")
         except Exception as e:
             print(f"Failed to save state: {e}")
     

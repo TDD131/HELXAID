@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QPushButton, QLabel, QFrame,
     QGraphicsDropShadowEffect, QApplication, QSizePolicy, QMenu
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QSize, QPoint, QRectF
+from PySide6.QtCore import Qt, QTimer, Signal, QSize, QPoint, QRectF, QVariantAnimation, QEasingCurve
 from PySide6.QtGui import (
     QFont, QColor, QPainter, QIcon, QPixmap, QCursor,
     QAction, QLinearGradient, QBrush, QPen
@@ -156,7 +156,7 @@ class TaskbarGripButton(QPushButton):
 
 class MiniSpectrumVisualizer(QWidget):
     """
-    Mini animated audio spectrum equalizer bars for TaskbarMediaWidget.
+    Mini animated audio spectrum equalizer bars for TaskbarMediaWidget with smooth transitions.
     Component Name: taskbarMediaVisualizer
     """
     def __init__(self, parent=None, bar_count: int = 7):
@@ -167,15 +167,39 @@ class MiniSpectrumVisualizer(QWidget):
         self.setToolTip("Audio Spectrum Visualizer")
         self._bar_count = bar_count
         self._is_active = False
+        self._suppressed = False
+        self._opacity = 1.0
         
         # Initial bar heights normalized (0.0 to 1.0)
         self._bar_heights = [0.15] * bar_count
         self._target_heights = [0.15] * bar_count
         
+        # Smooth transition animation
+        self._fade_anim = QVariantAnimation(self)
+        self._fade_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self._fade_anim.valueChanged.connect(self._on_fade_value_changed)
+        self._fade_anim.finished.connect(self._on_fade_finished)
+        self._fade_finish_cb = None
+        
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_bars)
         self._timer.start(50)  # 20 FPS smooth animation
         
+    def _on_fade_value_changed(self, val):
+        self._opacity = float(val)
+        self.update()
+
+    def _on_fade_finished(self):
+        if self._suppressed:
+            self.hide()
+        if hasattr(self, '_fade_finish_cb') and self._fade_finish_cb:
+            cb = self._fade_finish_cb
+            self._fade_finish_cb = None
+            try:
+                cb()
+            except Exception:
+                pass
+
     def set_active(self, active: bool):
         """Set whether the visualizer is active (music playing) or idling (stopped/paused)."""
         self._is_active = bool(active)
@@ -183,9 +207,35 @@ class MiniSpectrumVisualizer(QWidget):
             self._target_heights = [0.15] * self._bar_count
         self.update()
 
+    def set_suppressed(self, suppressed: bool, animate: bool = True):
+        """Smoothly fade out/in when suppressed by main HELXAIC visualizer."""
+        self._suppressed = bool(suppressed)
+        if self._fade_anim.state() == QVariantAnimation.Running:
+            self._fade_anim.stop()
+
+        if self._suppressed:
+            if animate and self.isVisible():
+                self._fade_anim.setDuration(240)
+                self._fade_anim.setStartValue(float(self._opacity))
+                self._fade_anim.setEndValue(0.0)
+                self._fade_anim.start()
+            else:
+                self._opacity = 0.0
+                self.hide()
+        else:
+            self.show()
+            if animate:
+                self._fade_anim.setDuration(300)
+                self._fade_anim.setStartValue(float(self._opacity))
+                self._fade_anim.setEndValue(1.0)
+                self._fade_anim.start()
+            else:
+                self._opacity = 1.0
+                self.update()
+
     def _update_bars(self):
         """Animate bars smoothly with realistic audio frequency dynamics."""
-        if not self._is_active:
+        if not self._is_active or self._suppressed:
             # Gradually settle bars to resting idle line
             for i in range(self._bar_count):
                 self._bar_heights[i] += (0.15 - self._bar_heights[i]) * 0.15
@@ -209,8 +259,11 @@ class MiniSpectrumVisualizer(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        if self._opacity <= 0.01:
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
+        p.setOpacity(self._opacity)
         
         w = self.width()
         h = self.height()
@@ -972,7 +1025,20 @@ class TaskbarMediaWidget(QWidget):
         """Update Play/Pause icon, audio visualizer, and marquee scrolling based on playback state."""
         self._is_playing = is_playing
         if hasattr(self, 'visualizer') and self.visualizer:
-            self.visualizer.set_active(is_playing)
+            if getattr(self, '_visualizer_suppressed', False):
+                if hasattr(self.visualizer, 'set_suppressed'):
+                    self.visualizer.set_suppressed(True, animate=True)
+                else:
+                    self.visualizer.set_active(False)
+                    self.visualizer.hide()
+            elif not getattr(self, '_is_collapsed', False):
+                if hasattr(self.visualizer, 'set_suppressed'):
+                    self.visualizer.set_suppressed(False, animate=True)
+                else:
+                    self.visualizer.show()
+                self.visualizer.set_active(is_playing)
+            else:
+                self.visualizer.set_active(is_playing)
         if hasattr(self, 'lbl_title') and hasattr(self.lbl_title, 'set_playback_state'):
             self.lbl_title.set_playback_state(is_playing)
         if is_playing:
@@ -981,6 +1047,22 @@ class TaskbarMediaWidget(QWidget):
         else:
             self.btn_play.setIcon(_get_taskbar_icon("taskbar-play-icon.png", SVG_PLAY, size=13, color="#FF5B06"))
             self.btn_play.setToolTip("Play")
+
+    def set_visualizer_suppressed(self, suppressed: bool, animate: bool = True):
+        """Suppress mini visualizer when HELXAIC page is active with main visualizer."""
+        self._visualizer_suppressed = bool(suppressed)
+        if hasattr(self, 'visualizer') and self.visualizer:
+            if hasattr(self.visualizer, 'set_suppressed'):
+                self.visualizer.set_suppressed(self._visualizer_suppressed, animate=animate)
+                if not self._visualizer_suppressed:
+                    self.visualizer.set_active(getattr(self, '_is_playing', False))
+            else:
+                if self._visualizer_suppressed:
+                    self.visualizer.set_active(False)
+                    self.visualizer.hide()
+                elif not getattr(self, '_is_collapsed', False):
+                    self.visualizer.show()
+                    self.visualizer.set_active(getattr(self, '_is_playing', False))
 
     def _update_title_elide(self):
         """Update marquee scroll bounds dynamically based on current widget width."""

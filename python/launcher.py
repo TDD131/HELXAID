@@ -2157,7 +2157,7 @@ def load_settings():
     """Load app settings from settings.json"""
     try:
         if os.path.exists(SETTINGS_PATH):
-            with open(SETTINGS_PATH, "r") as f:
+            with open(SETTINGS_PATH, "r", encoding="utf-8", errors="replace") as f:
                 settings = json.load(f)
                 # Merge with defaults to add any new keys
                 for key, value in DEFAULT_SETTINGS.items():
