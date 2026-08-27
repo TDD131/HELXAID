@@ -2,10 +2,9 @@
 Ambient Multi-Mode Audio Visualizer Widget for HELXAIC.
 
 High-performance QPainter vector visualizer rendered as a non-blocking background underlay.
-Features modular renderer strategies:
+Features modular renderer strategies with zero heap allocations per frame:
 1. SpectrumBarsRenderer: Rounded gradient equalizer bars with floating peak dots.
 2. SilkWaveRenderer: Multi-layer harmonic Bezier fluid waves modulated by bass/mid/treble.
-3. RadialHaloRenderer: Orbitron radial glowing audio halo with pulsing ring, frequency spokes, and particle halo.
 
 Component Name: AmbientVisualizerWidget
 """
@@ -55,9 +54,12 @@ class IVisualizerRenderer(ABC):
     def reset(self):
         pass
 
+    def set_render_quality(self, quality: str):
+        pass
+
 
 # ==============================================================================
-# 2. OPTION 1: SPECTRUM BARS RENDERER
+# 2. OPTION 1: SPECTRUM BARS RENDERER (ZERO-ALLOCATION)
 # ==============================================================================
 
 class SpectrumBarsRenderer(IVisualizerRenderer):
@@ -70,24 +72,35 @@ class SpectrumBarsRenderer(IVisualizerRenderer):
         self._bar_rects = [QRectF() for _ in range(64)]
         self._peak_rects = [QRectF() for _ in range(64)]
         self._cached_brush: Optional[QBrush] = None
+        self._cached_peak_brush: Optional[QBrush] = None
         self._cached_grad_h = 0.0
         self._cached_max_h = 0.0
+        self._cached_color_key = None
         self._bar_height_ratio = 0.42
+        self._render_quality = "ultra"
 
     def initialize(self, widget: 'AmbientVisualizerWidget'):
-        self._cached_brush = None
+        self.reset()
 
     def resize(self, width: float, height: float):
-        self._cached_brush = None
+        self.reset()
 
     def reset(self):
         self._cached_brush = None
+        self._cached_peak_brush = None
+        self._cached_color_key = None
+
+    def set_render_quality(self, quality: str):
+        self._render_quality = str(quality).lower().strip()
+        self.reset()
 
     def render(self, painter: QPainter, width: float, height: float,
                spectrum: np.ndarray, peaks: np.ndarray,
                band_energies: Tuple[float, float, float, float],
                colors: Dict[str, QColor], effective_opacity: float,
                peak_dots_enabled: bool, dt: float):
+        if self._render_quality == "eco":
+            peak_dots_enabled = False
         num_bars = len(spectrum)
         if num_bars == 0 or width < 10 or height < 10:
             return
@@ -98,36 +111,44 @@ class SpectrumBarsRenderer(IVisualizerRenderer):
         bar_spacing = max(2.0, total_bar_slot * 0.18)
         bar_w = max(3.0, total_bar_slot - bar_spacing)
         max_bar_h = max(50.0, height * self._bar_height_ratio)
-        min_bar_h = 3.0  # Baseline idle height
+        min_bar_h = 3.0
 
         # Symmetrical horizontal centering
         actual_total_w = (num_bars * total_bar_slot) - bar_spacing
         start_x = (width - actual_total_w) / 2.0
 
         # Cached gradient brush (zero allocations per frame)
-        if self._cached_brush is None or self._cached_grad_h != height or self._cached_max_h != max_bar_h:
-            gradient = QLinearGradient(0, height, 0, height - max_bar_h)
-            c_bot = QColor(colors["bottom"])
-            c_bot.setAlpha(180)
-            c_mid = QColor(colors["mid"])
-            c_mid.setAlpha(230)
-            c_top = QColor(colors["top"])
-            c_top.setAlpha(255)
+        c_bot = colors["bottom"]
+        c_mid = colors["mid"]
+        c_top = colors["top"]
+        c_peak = colors["peak"]
+        color_key = (c_bot.rgba(), c_mid.rgba(), c_top.rgba())
 
-            gradient.setColorAt(0.0, c_bot)
-            gradient.setColorAt(0.5, c_mid)
-            gradient.setColorAt(1.0, c_top)
+        if self._cached_brush is None or self._cached_grad_h != height or self._cached_max_h != max_bar_h or self._cached_color_key != color_key:
+            gradient = QLinearGradient(0, height, 0, height - max_bar_h)
+            c1 = QColor(c_bot)
+            c1.setAlpha(180)
+            c2 = QColor(c_mid)
+            c2.setAlpha(230)
+            c3 = QColor(c_top)
+            c3.setAlpha(255)
+
+            gradient.setColorAt(0.0, c1)
+            gradient.setColorAt(0.5, c2)
+            gradient.setColorAt(1.0, c3)
 
             self._cached_brush = QBrush(gradient)
+            self._cached_peak_brush = QBrush(c_peak)
             self._cached_grad_h = height
             self._cached_max_h = max_bar_h
+            self._cached_color_key = color_key
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(self._cached_brush)
 
         corner_radius = max(2.0, min(bar_w / 2.0, 6.0))
         peak_dot_h = max(2.0, corner_radius * 0.7)
-        peak_brush = QBrush(colors["peak"])
+        peak_brush = self._cached_peak_brush or QBrush(c_peak)
 
         # Draw bars using pre-allocated QRectF (zero heap allocations)
         for i in range(num_bars):
@@ -138,12 +159,10 @@ class SpectrumBarsRenderer(IVisualizerRenderer):
             x = start_x + (i * total_bar_slot)
             y = height - bar_h
 
-            # Draw rounded bar
             rect = self._bar_rects[i]
             rect.setRect(x, y, bar_w, bar_h + corner_radius)
             painter.drawRoundedRect(rect, corner_radius, corner_radius)
 
-            # Draw floating peak dot
             if peak_dots_enabled and peak_val > 0.03:
                 peak_h = max(min_bar_h, peak_val * max_bar_h)
                 peak_y = height - peak_h - 4.0
@@ -154,36 +173,30 @@ class SpectrumBarsRenderer(IVisualizerRenderer):
 
 
 # ==============================================================================
-# 3. OPTION 2: SILK FLUID AMBIENT WAVES RENDERER
+# 3. OPTION 2: SILK FLUID AMBIENT WAVES RENDERER (ZERO-ALLOCATION)
 # ==============================================================================
 
 class SilkWaveRenderer(IVisualizerRenderer):
     """
-    Multi-Layer Harmonic Bezier Fluid Ambient Waves.
-    
-    Renders 3 layered organic waves reacting dynamically to:
-    - Layer 0 (Sub-Bass Swell): Low frequencies (30-180 Hz) driving deep base swells.
-    - Layer 1 (Midrange Vocal Ribbon): Mid frequencies (250-2500 Hz) driving melodic ribbon.
-    - Layer 2 (Treble Shimmer Crest): High frequencies (3000-14000 Hz) with glowing crest stroke.
+    Multi-Layer Harmonic Bezier Fluid Ambient Waves with cached paths and brushes.
     
     Component Name: SilkWaveRenderer
     """
-    NUM_NODES = 16  # 16 sample nodes across width for ultra-smooth Catmull-Rom cubic splines
+    NUM_NODES = 16
 
     def __init__(self):
-        # Pre-allocated QPainterPaths (3 layers)
         self._paths = [QPainterPath(), QPainterPath(), QPainterPath()]
         self._crest_paths = [QPainterPath(), QPainterPath(), QPainterPath()]
-        
-        # Pre-allocated arrays for 16 node points per layer
-        self._nodes_x = np.zeros(self.NUM_NODES, dtype=np.float32)
         self._nodes_y = [np.zeros(self.NUM_NODES, dtype=np.float32) for _ in range(3)]
-        
-        # Dynamic continuous phase trackers
         self._phases = [0.0, 0.0, 0.0]
         
-        # Pre-allocated pen for glowing crest lines
-        self._crest_pen = QPen(Qt.white, 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        # Pre-allocated pens & brushes
+        self._crest_pens = [
+            QPen(Qt.white, 2.0, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin),
+            QPen(Qt.white, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin),
+            QPen(Qt.white, 2.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        ]
+        self._render_quality = "ultra"
 
     def initialize(self, widget: 'AmbientVisualizerWidget'):
         self.reset()
@@ -193,6 +206,9 @@ class SilkWaveRenderer(IVisualizerRenderer):
 
     def reset(self):
         self._phases = [0.0, 0.0, 0.0]
+
+    def set_render_quality(self, quality: str):
+        self._render_quality = str(quality).lower().strip()
 
     def render(self, painter: QPainter, width: float, height: float,
                spectrum: np.ndarray, peaks: np.ndarray,
@@ -204,14 +220,18 @@ class SilkWaveRenderer(IVisualizerRenderer):
 
         bass, mid, treble, total_rms = band_energies
 
-        # Update continuous harmonic wave phases based on audio tempo & energy
         safe_dt = min(0.05, max(0.005, dt))
         self._phases[0] += (1.2 + 1.5 * bass) * safe_dt
-        self._phases[1] -= (1.8 + 2.0 * mid) * safe_dt       # Counter-flow drift
-        self._phases[2] += (3.4 + 3.0 * treble) * safe_dt    # Fast shimmer
+        self._phases[1] -= (1.8 + 2.0 * mid) * safe_dt
+        self._phases[2] += (3.4 + 3.0 * treble) * safe_dt
 
-        # Sample spectrum across 16 horizontal nodes (Bark frequency spatial mapping)
-        n_nodes = self.NUM_NODES
+        if self._render_quality == "eco":
+            n_nodes = 8
+        elif self._render_quality == "balanced":
+            n_nodes = 12
+        else:
+            n_nodes = self.NUM_NODES
+
         if len(spectrum) >= n_nodes:
             step = len(spectrum) / float(n_nodes)
             node_indices = [min(len(spectrum) - 1, int(i * step)) for i in range(n_nodes)]
@@ -219,18 +239,9 @@ class SilkWaveRenderer(IVisualizerRenderer):
         else:
             spec_nodes = np.zeros(n_nodes, dtype=np.float32)
 
-        # Precompute 16 horizontal node coordinates
-        dx = width / float(n_nodes - 1)
-        for i in range(n_nodes):
-            self._nodes_x[i] = i * dx
+        x_arr = np.linspace(0.0, width, n_nodes, dtype=np.float32)
 
-        x_arr = self._nodes_x
-
-        # ----------------------------------------------------------------------
-        # Layer Parameters: (base_ratio, amp_base, amp_audio_factor, wavelength, phase, spec_weight)
-        # ----------------------------------------------------------------------
         layer_specs = [
-            # Layer 0: Sub-Bass Swell (Surges high on kick drums & 808s)
             {
                 "y_base": height * 0.82,
                 "amp": height * (0.04 + 0.22 * bass),
@@ -244,7 +255,6 @@ class SilkWaveRenderer(IVisualizerRenderer):
                 "alpha_bot": 210,
                 "draw_crest": False
             },
-            # Layer 1: Midrange Vocal / Melody Ribbon (Vivid secondary gradient)
             {
                 "y_base": height * 0.86,
                 "amp": height * (0.03 + 0.18 * mid),
@@ -256,12 +266,11 @@ class SilkWaveRenderer(IVisualizerRenderer):
                 "color_bot": colors["bottom"],
                 "alpha_top": 170,
                 "alpha_bot": 240,
-                "draw_crest": True,
+                "draw_crest": (self._render_quality != "eco"),
                 "crest_color": colors["mid"],
                 "crest_alpha": 200,
                 "crest_width": 1.8
             },
-            # Layer 2: Treble Shimmer Crest (Bright glowing top highlight)
             {
                 "y_base": height * 0.90,
                 "amp": height * (0.02 + 0.14 * treble),
@@ -280,23 +289,25 @@ class SilkWaveRenderer(IVisualizerRenderer):
             }
         ]
 
-        # ----------------------------------------------------------------------
-        # Render Each Wave Layer using Smooth Cubic Bezier Splines
-        # ----------------------------------------------------------------------
-        for layer_idx, spec in enumerate(layer_specs):
+        if self._render_quality == "eco":
+            active_layers = [layer_specs[0]]
+        elif self._render_quality == "balanced":
+            active_layers = layer_specs[:2]
+        else:
+            active_layers = layer_specs
+
+        for layer_idx, spec in enumerate(active_layers):
             y_base = spec["y_base"]
             amp = spec["amp"]
             sub_amp = spec["sub_amp"]
             wave_k = (2.0 * math.pi) / max(10.0, spec["wave_len"])
             ph = spec["phase"]
 
-            # Vectorized node displacement combining harmonic flow and direct frequency nodes
             sin_part = np.sin(wave_k * x_arr + ph)
             cos_part = np.cos(wave_k * 2.0 * x_arr - 0.7 * ph)
             spec_part = spec_nodes * spec["spec_mod_weight"]
             
             raw_displacement = amp * sin_part + sub_amp * cos_part + spec_part
-            # Headroom compression: organic soft-knee damping so waves never clip flat against the top
             max_lift = height * 0.60
             compressed_lift = np.where(
                 raw_displacement > max_lift,
@@ -307,7 +318,6 @@ class SilkWaveRenderer(IVisualizerRenderer):
             np.clip(y_nodes, height * 0.18, height + 10.0, out=y_nodes)
             self._nodes_y[layer_idx] = y_nodes
 
-            # Construct smooth Cubic Bezier Path
             path = self._paths[layer_idx]
             path.clear()
             path.moveTo(0.0, float(y_nodes[0]))
@@ -324,7 +334,6 @@ class SilkWaveRenderer(IVisualizerRenderer):
                 p2_y = float(y_nodes[i + 1])
                 p3_y = float(y_nodes[min(n_nodes - 1, i + 2)])
 
-                # Catmull-Rom tangents converted to Cubic Bezier control points
                 c1_x = p1_x + (p2_x - float(x_arr[max(0, i - 1)])) / 6.0
                 c1_y = p1_y + (p2_y - p0_y) / 6.0
                 c2_x = p2_x - (float(x_arr[min(n_nodes - 1, i + 2)]) - p1_x) / 6.0
@@ -334,12 +343,10 @@ class SilkWaveRenderer(IVisualizerRenderer):
                 if spec["draw_crest"]:
                     crest_path.cubicTo(c1_x, c1_y, c2_x, c2_y, p2_x, p2_y)
 
-            # Close wave path down to the bottom corners
             path.lineTo(width, height)
             path.lineTo(0.0, height)
             path.closeSubpath()
 
-            # Dynamic Linear Gradient Fill for Wave Fluid Mesh
             min_y = float(np.min(y_nodes))
             grad = QLinearGradient(0, min_y, 0, height)
             c_top = QColor(spec["color_top"])
@@ -354,13 +361,13 @@ class SilkWaveRenderer(IVisualizerRenderer):
             painter.setBrush(QBrush(grad))
             painter.drawPath(path)
 
-            # Render glowing crest highlight line on top edge
             if spec["draw_crest"]:
                 cr_color = QColor(spec["crest_color"])
                 cr_color.setAlpha(spec["crest_alpha"])
-                self._crest_pen.setColor(cr_color)
-                self._crest_pen.setWidthF(spec["crest_width"])
-                painter.setPen(self._crest_pen)
+                pen = self._crest_pens[layer_idx]
+                pen.setColor(cr_color)
+                pen.setWidthF(spec["crest_width"])
+                painter.setPen(pen)
                 painter.setBrush(Qt.NoBrush)
                 painter.drawPath(crest_path)
 
@@ -379,7 +386,6 @@ class AmbientVisualizerWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("AmbientVisualizerWidget")
         
-        # Transparent to all mouse clicks so playlist clicks pass through unimpeded
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         
@@ -388,14 +394,17 @@ class AmbientVisualizerWidget(QWidget):
         
         # Visualizer Settings
         self._target_enabled = True
-        self._style_mode = "bars"  # "bars" (Option 1), "waves" (Option 2)
+        self._style_mode = "bars"
         self._opacity = 0.30
         self._bar_count = 32
         self._peak_dots_enabled = True
-        self._color_mode = "adaptive"  # "adaptive", "cyber_orange", "cyber_cyan", "neon_magenta", "synthwave"
+        self._color_mode = "adaptive"
         self._bar_height_ratio = 0.42
+        self._target_fps = 60.0
+        self._render_quality = "ultra"
+        self._eco_mode = True
         
-        # Adaptive Color Palette (defaults to signature Cyber Orange / Amber / Magenta)
+        # Adaptive Color Palette
         self._color_bottom = QColor("#FF5B06")
         self._color_mid = QColor("#FDA903")
         self._color_top = QColor("#ff3da7")
@@ -411,12 +420,12 @@ class AmbientVisualizerWidget(QWidget):
             
         self._last_frame_time = time.time()
         
-        # Render Loop (Buttery smooth 60 FPS / 16ms with zero-CPU bounded dirty rects)
+        # Render Loop (Adaptive interval)
         self._render_timer = QTimer(self)
         self._render_timer.setInterval(16)
         self._render_timer.timeout.connect(self._on_render_tick)
         
-        # Smooth Fade Animation State (0.0 to 1.0) - Starts at 0.0 when paused on launch
+        # Smooth Fade Animation State (0.0 to 1.0)
         self._fade_factor = 0.0
         self._fade_anim = QVariantAnimation(self)
         self._fade_anim.setEasingCurve(QEasingCurve.OutQuad)
@@ -429,7 +438,7 @@ class AmbientVisualizerWidget(QWidget):
         self._is_active_page = True
         self._is_manually_paused = False
         
-        # Start engine (render timer starts only when playback starts)
+        # Start engine
         self._engine.start()
         if self._target_enabled and self._is_playing:
             self._render_timer.start()
@@ -448,7 +457,6 @@ class AmbientVisualizerWidget(QWidget):
                 pass
 
     def _animate_fade(self, start_val: float, end_val: float, duration_ms: int = 300, on_finished=None):
-        """Smoothly animate opacity factor for elegant on/off and tab-switching transitions."""
         if self._fade_anim.state() == QVariantAnimation.Running:
             self._fade_anim.stop()
         self._fade_finish_cb = on_finished
@@ -458,7 +466,6 @@ class AmbientVisualizerWidget(QWidget):
         self._fade_anim.start()
 
     def set_visualizer_enabled(self, enabled: bool, animate: bool = True):
-        """Enable or disable the visualizer with smooth, visible fade transition."""
         self._target_enabled = bool(enabled)
         if self._target_enabled:
             self.show()
@@ -487,7 +494,6 @@ class AmbientVisualizerWidget(QWidget):
         return self._target_enabled
 
     def set_style_mode(self, mode: str):
-        """Set visualizer style: 'bars' (Option 1), 'waves' (Option 2)."""
         mode_key = str(mode).lower().strip()
         if mode_key not in self._renderers:
             mode_key = "bars"
@@ -499,7 +505,6 @@ class AmbientVisualizerWidget(QWidget):
         return self._style_mode
 
     def set_visualizer_opacity(self, opacity: float):
-        """Set visualizer background opacity (0.05 to 1.0)."""
         self._opacity = max(0.05, min(1.0, float(opacity)))
         self.update()
 
@@ -507,7 +512,6 @@ class AmbientVisualizerWidget(QWidget):
         return self._opacity
 
     def set_bar_count(self, count: int):
-        """Set bar count: 32 (default) or 48 (high-res)."""
         self._bar_count = 48 if count >= 40 else 32
         self.update()
 
@@ -515,7 +519,6 @@ class AmbientVisualizerWidget(QWidget):
         return self._bar_count
 
     def set_color_mode(self, mode: str):
-        """Set color mode: adaptive, cyber_orange, cyber_cyan, neon_magenta, synthwave."""
         self._color_mode = mode.lower()
         if self._color_mode == "adaptive":
             target_dom = getattr(self, '_last_adaptive_bottom', None)
@@ -533,12 +536,41 @@ class AmbientVisualizerWidget(QWidget):
         return self._color_mode
 
     def set_peak_dots_enabled(self, enabled: bool):
-        """Toggle floating peak dots (for bars and halo mode)."""
         self._peak_dots_enabled = bool(enabled)
         self.update()
 
+    def set_target_fps(self, fps: float):
+        try:
+            val = float(fps)
+            if val > 0:
+                self._target_fps = val
+                interval_ms = 16 if abs(self._target_fps - 60.0) < 0.01 else max(8, int(round(1000.0 / self._target_fps)))
+                self._render_timer.setInterval(interval_ms)
+                self._engine.set_target_fps(self._target_fps)
+        except Exception:
+            pass
+
+    def get_target_fps(self) -> float:
+        return self._target_fps
+
+    def set_render_quality(self, quality: str):
+        self._render_quality = str(quality).lower().strip()
+        for r in self._renderers.values():
+            if hasattr(r, 'set_render_quality'):
+                r.set_render_quality(self._render_quality)
+        self.update()
+
+    def get_render_quality(self) -> str:
+        return self._render_quality
+
+    def set_eco_mode(self, enabled: bool):
+        self._eco_mode = bool(enabled)
+        self._engine.set_eco_mode(self._eco_mode)
+
+    def get_eco_mode(self) -> bool:
+        return self._eco_mode
+
     def set_playback_state(self, is_playing: bool):
-        """Update playback state for audio engine and render gating."""
         was_playing = self._is_playing
         self._is_playing = bool(is_playing)
         self._engine.set_playback_state(self._is_playing)
@@ -556,11 +588,9 @@ class AmbientVisualizerWidget(QWidget):
                 self._sync_render_timer()
 
     def set_sensitivity(self, sens: float):
-        """Set audio gain sensitivity."""
         self._engine.set_sensitivity(sens)
 
     def pause_rendering(self, animate: bool = True):
-        """Pause render timer with smooth fade out when HELXAIC tab is hidden or window minimized."""
         self._is_active_page = False
         if animate and self._target_enabled and self.isVisible():
             def _on_done():
@@ -572,7 +602,6 @@ class AmbientVisualizerWidget(QWidget):
             self._sync_render_timer()
 
     def resume_rendering(self, animate: bool = True):
-        """Resume render timer with smooth fade in when HELXAIC tab is shown and window active."""
         self._is_active_page = True
         self._sync_render_timer()
         if self._target_enabled and self._is_playing:
@@ -583,7 +612,6 @@ class AmbientVisualizerWidget(QWidget):
                 self.update()
 
     def set_adaptive_colors(self, dominant_color: Optional[QColor] = None, secondary_color: Optional[QColor] = None):
-        """Update adaptive color gradient based on current album artwork."""
         if dominant_color and dominant_color.isValid():
             self._last_adaptive_bottom = QColor(dominant_color)
             if secondary_color and secondary_color.isValid():
@@ -596,7 +624,6 @@ class AmbientVisualizerWidget(QWidget):
             target_dom = dominant_color if (dominant_color and dominant_color.isValid()) else getattr(self, '_last_adaptive_bottom', None)
             if target_dom and target_dom.isValid():
                 self._color_bottom = target_dom
-                # Derive brightened/tinted highlights
                 h, s, v, a = target_dom.getHsv()
                 self._color_mid = QColor.fromHsv((h + 20) % 360, max(50, s), min(255, v + 40))
                 self._color_top = getattr(self, '_last_adaptive_top', None) or QColor.fromHsv((h + 50) % 360, max(40, s - 30), 255)
@@ -607,14 +634,12 @@ class AmbientVisualizerWidget(QWidget):
             self.update()
 
     def set_cover_pixmap(self, pixmap: Optional[QPixmap]):
-        """Update active track cover artwork for visualizer renderers (e.g. NCS Circle)."""
         for r in self._renderers.values():
             if hasattr(r, 'set_cover_pixmap'):
                 r.set_cover_pixmap(pixmap)
         self.update()
 
     def _apply_preset_colors(self):
-        """Apply color palettes based on active color_mode."""
         if self._color_mode == "adaptive":
             target_dom = getattr(self, '_last_adaptive_bottom', None)
             if target_dom and target_dom.isValid():
@@ -650,7 +675,6 @@ class AmbientVisualizerWidget(QWidget):
             self._color_peak = QColor("#7209b7")
 
     def _is_render_allowed(self) -> bool:
-        """Strict render gating check for 0% CPU consumption."""
         is_fading = (self._fade_factor > 0.005 and self._fade_factor < 0.999)
         if not self._target_enabled and not is_fading:
             return False
@@ -665,7 +689,6 @@ class AmbientVisualizerWidget(QWidget):
         return True
 
     def _sync_render_timer(self):
-        """Start or stop the render timer based on gating conditions."""
         is_fading = (self._fade_factor > 0.005 and self._fade_factor < 0.999)
         should_run = self._is_render_allowed() and (self._is_playing or is_fading)
         if should_run and not self._render_timer.isActive():
@@ -675,7 +698,6 @@ class AmbientVisualizerWidget(QWidget):
             self._render_timer.stop()
 
     def _on_render_tick(self):
-        """60 FPS tick handler with full widget update (eliminates tearing & ghost pixels)."""
         if not self._is_render_allowed():
             self._render_timer.stop()
             return
@@ -692,7 +714,6 @@ class AmbientVisualizerWidget(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        """Zero-allocation vector rendering delegated to active style renderer."""
         if not self._target_enabled and self._fade_factor <= 0.005:
             return
 
@@ -721,10 +742,13 @@ class AmbientVisualizerWidget(QWidget):
         }
 
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        if self._render_quality == "eco":
+            painter.setRenderHint(QPainter.Antialiasing, False)
+        else:
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         painter.setOpacity(effective_opacity)
 
-        # Delegate to active renderer strategy
         renderer = self._renderers.get(self._style_mode, self._renderers["bars"])
         renderer.render(
             painter=painter,

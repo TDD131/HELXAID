@@ -17,6 +17,8 @@ datas = [
     ('python/hardware_utils.pyd', '.'),
     ('python/innertube_fast_resolver.cp314-win_amd64.pyd', '.'),
     ('python/innertube_fast_resolver.pyd', '.'),
+    ('python/audio_spectrum_native.cp314-win_amd64.pyd', '.'),
+    ('python/audio_spectrum_native.pyd', '.'),
 ]
 binaries = [
     ('python/helxaid_native.cp314-win_amd64.pyd', '.'),
@@ -25,8 +27,11 @@ binaries = [
     ('python/hardware_utils.pyd', '.'),
     ('python/innertube_fast_resolver.cp314-win_amd64.pyd', '.'),
     ('python/innertube_fast_resolver.pyd', '.'),
+    ('python/audio_spectrum_native.cp314-win_amd64.pyd', '.'),
+    ('python/audio_spectrum_native.pyd', '.'),
 ]
 hiddenimports = [
+    'audio_spectrum_native',
     'hardware_utils',
     'hardware_wrapper',
     'native_wrapper',

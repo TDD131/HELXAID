@@ -5480,6 +5480,9 @@ class VisualizerConfigManager:
         "peak_dots": True,
         "color_mode": "adaptive",  # "adaptive", "cyber_orange", "cyber_cyan", "neon_magenta", "synthwave"
         "sensitivity": 1.0,
+        "target_fps": 60.0,
+        "render_quality": "ultra",  # "ultra", "balanced", "eco"
+        "eco_mode": True,
     }
 
     @classmethod
@@ -7728,7 +7731,7 @@ class CinematicLightingFloatingPanel(QFrame):
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.setFixedSize(470, 515)
+        self.setFixedSize(420, 500)
 
         self.source_cover = current_cover
         self.on_applied = on_applied
@@ -8125,8 +8128,11 @@ class CinematicLightingFloatingPanel(QFrame):
         self.viz_bars_combo = QComboBox()
         self.viz_bars_combo.setObjectName("vizBarsCombo")
         self.viz_bars_combo.setFixedHeight(30)
-        self.viz_bars_combo.addItem("32 Bars (Classic)", 32)
-        self.viz_bars_combo.addItem("48 Bars (High-Res)", 48)
+        self.viz_bars_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.viz_bars_combo.setMinimumContentsLength(4)
+        self.viz_bars_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.viz_bars_combo.addItem("32 Bars", 32)
+        self.viz_bars_combo.addItem("48 Bars", 48)
         cur_bars = self.viz_config.get("bar_count", 32)
         idx_bars = self.viz_bars_combo.findData(cur_bars)
         if idx_bars >= 0:
@@ -8144,7 +8150,10 @@ class CinematicLightingFloatingPanel(QFrame):
         self.viz_color_combo.setObjectName("vizColorCombo")
         self.viz_color_combo.setFixedHeight(30)
         self.viz_color_combo.setIconSize(QSize(16, 16))
-        self.viz_color_combo.addItem(make_icon("lighting-adaptive.svg"), "Adaptive (Cover Art)", "adaptive")
+        self.viz_color_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.viz_color_combo.setMinimumContentsLength(4)
+        self.viz_color_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.viz_color_combo.addItem(make_icon("lighting-adaptive.svg"), "Adaptive", "adaptive")
         self.viz_color_combo.addItem(make_icon("lighting-orange.svg"), "Cyber Orange", "cyber_orange")
         self.viz_color_combo.addItem(make_icon("lighting-cyan.svg"), "Cyber Cyan", "cyber_cyan")
         self.viz_color_combo.addItem(make_icon("lighting-magenta.svg"), "Neon Magenta", "neon_magenta")
@@ -8158,6 +8167,71 @@ class CinematicLightingFloatingPanel(QFrame):
         viz_row2.addLayout(color_col)
 
         viz_page_layout.addLayout(viz_row2)
+
+        # Row 3: Target FPS & Quality Setting
+        viz_row3 = QHBoxLayout()
+        viz_row3.setSpacing(10)
+
+        # Target FPS combo
+        fps_col = QVBoxLayout()
+        fps_title = QLabel("TARGET FPS")
+        fps_title.setProperty("class", "cinematicHeader")
+        fps_col.addWidget(fps_title)
+        self.viz_fps_combo = QComboBox()
+        self.viz_fps_combo.setObjectName("vizFpsCombo")
+        self.viz_fps_combo.setFixedHeight(30)
+        self.viz_fps_combo.setIconSize(QSize(16, 16))
+        self.viz_fps_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.viz_fps_combo.setMinimumContentsLength(4)
+        self.viz_fps_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.viz_fps_combo.addItem(make_icon("fps-meter.svg"), "60 FPS (Smooth)", 60.0)
+        self.viz_fps_combo.addItem(make_icon("fps-meter.svg"), "59.97 FPS", 59.97)
+        self.viz_fps_combo.addItem(make_icon("fps-meter.svg"), "30 FPS (Balanced)", 30.0)
+        self.viz_fps_combo.addItem(make_icon("fps-meter.svg"), "24 FPS (Eco)", 24.0)
+        cur_fps = float(self.viz_config.get("target_fps", 60.0))
+        matched_fps_idx = 0
+        for i in range(self.viz_fps_combo.count()):
+            if abs(float(self.viz_fps_combo.itemData(i)) - cur_fps) < 0.1:
+                matched_fps_idx = i
+                break
+        self.viz_fps_combo.setCurrentIndex(matched_fps_idx)
+        self.viz_fps_combo.currentIndexChanged.connect(self._on_fps_combo_changed)
+        fps_col.addWidget(self.viz_fps_combo)
+        viz_row3.addLayout(fps_col)
+
+        # Quality Preset combo
+        quality_col = QVBoxLayout()
+        quality_title = QLabel("RENDER QUALITY")
+        quality_title.setProperty("class", "cinematicHeader")
+        quality_col.addWidget(quality_title)
+        self.viz_quality_combo = QComboBox()
+        self.viz_quality_combo.setObjectName("vizQualityCombo")
+        self.viz_quality_combo.setFixedHeight(30)
+        self.viz_quality_combo.setIconSize(QSize(16, 16))
+        self.viz_quality_combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.viz_quality_combo.setMinimumContentsLength(4)
+        self.viz_quality_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.viz_quality_combo.addItem(make_icon("hardware-chip.svg"), "Ultra (Full)", "ultra")
+        self.viz_quality_combo.addItem(make_icon("hardware-chip.svg"), "Balanced", "balanced")
+        self.viz_quality_combo.addItem(make_icon("hardware-chip.svg"), "Power Saver", "eco")
+        cur_quality = str(self.viz_config.get("render_quality", "ultra")).lower().strip()
+        idx_quality = self.viz_quality_combo.findData(cur_quality)
+        if idx_quality >= 0:
+            self.viz_quality_combo.setCurrentIndex(idx_quality)
+        self.viz_quality_combo.currentIndexChanged.connect(self._on_values_changed)
+        quality_col.addWidget(self.viz_quality_combo)
+        viz_row3.addLayout(quality_col)
+
+        viz_page_layout.addLayout(viz_row3)
+
+        # Hardware Eco Mode Checkbox
+        self.viz_eco_mode_cb = AnimatedCheckBox("Hardware Eco Mode (Auto-Throttle)")
+        self.viz_eco_mode_cb.setObjectName("vizEcoModeCheck")
+        self.viz_eco_mode_cb.setFont(QFont("Orbitron", 8, QFont.Bold))
+        self.viz_eco_mode_cb.setChecked(self.viz_config.get("eco_mode", True))
+        self.viz_eco_mode_cb.toggled.connect(self._on_values_changed)
+        viz_page_layout.addWidget(self.viz_eco_mode_cb)
+
         viz_page_layout.addSpacing(10)
         self.settings_stack.addWidget(viz_page)
 
@@ -8169,10 +8243,10 @@ class CinematicLightingFloatingPanel(QFrame):
                 background: rgba(255, 255, 255, 0.10);
                 border: none;
                 border-radius: 8px;
-                padding: 3px 26px 3px 10px;
+                padding: 3px 22px 3px 8px;
                 color: #e0e0e0;
                 font-family: 'Orbitron', sans-serif;
-                font-size: 11.5px;
+                font-size: 11px;
                 font-weight: 500;
             }}
             QComboBox:hover {{
@@ -8212,7 +8286,7 @@ class CinematicLightingFloatingPanel(QFrame):
                 color: #ffffff;
             }}
         """
-        for combo in (self.mode_combo, self.viz_style_combo, self.viz_bars_combo, self.viz_color_combo):
+        for combo in (self.mode_combo, self.viz_style_combo, self.viz_bars_combo, self.viz_color_combo, self.viz_fps_combo, self.viz_quality_combo):
             combo.setStyleSheet(combo_qss)
             view = combo.view()
             if view:
@@ -8305,8 +8379,15 @@ class CinematicLightingFloatingPanel(QFrame):
     def _on_values_changed(self):
         self._update_live_preview()
 
+    def _on_fps_combo_changed(self):
+        if hasattr(self, 'viz_fps_combo') and hasattr(self, '_preview_timer'):
+            fps = float(self.viz_fps_combo.currentData() or 60.0)
+            self._preview_timer.setInterval(max(10, int(round(1000.0 / fps))))
+        self._update_live_preview()
+
     def _on_preview_tick(self):
-        self._anim_time += 0.06
+        fps = float(self.viz_fps_combo.currentData() or 60.0) if hasattr(self, 'viz_fps_combo') else 60.0
+        self._anim_time += (3.6 / max(10.0, fps))
         self._update_live_preview()
 
     def _apply_preset(self, preset_name: str):
@@ -8559,15 +8640,18 @@ class CinematicLightingFloatingPanel(QFrame):
             parent_rect = self.parent().rect()
             p_w = parent_rect.width()
             p_h = parent_rect.height()
-            target_w = 470
-            target_h = max(420, min(515, p_h - 16))
+            target_w = 420
+            target_h = max(440, min(540, p_h - 16))
             self.setFixedSize(target_w, target_h)
-            x = max(10, (p_w - target_w) // 2)
-            y = max(8, (p_h - target_h) // 2)
+            x = max(0, (p_w - target_w) // 2)
+            y = max(0, (p_h - target_h) // 2)
             self.move(x, y)
         self.show()
         self.raise_()
         if hasattr(self, '_preview_timer'):
+            if hasattr(self, 'viz_fps_combo'):
+                fps = float(self.viz_fps_combo.currentData() or 60.0)
+                self._preview_timer.setInterval(max(10, int(round(1000.0 / fps))))
             self._preview_timer.start()
         self.anim.setDirection(QPropertyAnimation.Forward)
         self.anim.start()
@@ -8593,7 +8677,10 @@ class CinematicLightingFloatingPanel(QFrame):
                 "bar_count": self.viz_bars_combo.currentData() or 32,
                 "color_mode": self.viz_color_combo.currentData() or "adaptive",
                 "peak_dots": True,
-                "sensitivity": 1.0
+                "sensitivity": 1.0,
+                "target_fps": float(self.viz_fps_combo.currentData() or 60.0) if hasattr(self, 'viz_fps_combo') else 60.0,
+                "render_quality": self.viz_quality_combo.currentData() if hasattr(self, 'viz_quality_combo') else "ultra",
+                "eco_mode": self.viz_eco_mode_cb.isChecked() if hasattr(self, 'viz_eco_mode_cb') else True
             }
             VisualizerConfigManager.save_config(viz_cfg)
         if callable(self.on_applied):
@@ -9023,63 +9110,71 @@ class PlaylistHeader(QFrame):
         """
         Route mouse button events on the cover container:
           - Right button → If empty, directly open file picker & template modal. If existing, show context menu.
+          - Left button → Directly open immersive review lightbox.
+        """
+        if event.button() == Qt.RightButton:
+            if not self._cover_photos and not self._cover_sources:
+                self._open_template_picker()
+            else:
+                self._show_cover_context_menu(event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos())
+        elif event.button() == Qt.LeftButton:
+            self._open_cover_manager('review')
+
+    def _show_cover_context_menu(self, global_pos: "QPoint"):
+        """
+        Show custom dark-cyber context menu for playlist cover options.
         """
         from PySide6.QtWidgets import QMenu
-        from PySide6.QtGui import QCursor
-        
-        if event.button() == Qt.RightButton:
-            # If cover is currently empty, directly open file picker & template flow
-            has_existing = any(p and os.path.exists(p) for p in getattr(self, '_cover_photos', [])) or any(s and os.path.exists(s) for s in getattr(self, '_cover_sources', []))
-            if not has_existing:
-                self._open_cover_manager('edit')
-                return
+        menu = QMenu(self)
+        menu.setObjectName("playlistCoverContextMenu")
+        menu.setStyleSheet("""
+            QMenu#playlistCoverContextMenu {
+                background-color: #12131A;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
+                padding: 4px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+            }
+            QMenu#playlistCoverContextMenu::item {
+                color: #D1D5DB;
+                padding: 7px 22px 7px 10px;
+                border-radius: 5px;
+            }
+            QMenu#playlistCoverContextMenu::item:selected {
+                background-color: rgba(255, 91, 6, 0.25);
+                color: #FFFFFF;
+            }
+            QMenu#playlistCoverContextMenu::separator {
+                height: 1px;
+                background: rgba(255, 255, 255, 0.08);
+                margin: 4px 6px;
+            }
+        """)
 
-            menu = QMenu(self)
-            menu.setObjectName("playlistCoverMenu")
-            menu.setStyleSheet("""
-                QMenu#playlistCoverMenu, QMenu {
-                    background-color: #1e2128;
-                    color: #e0e0e0;
-                    border: 1px solid rgba(255, 255, 255, 0.12);
-                    border-radius: 8px;
-                    padding: 5px;
-                    font-family: 'Orbitron', sans-serif;
-                }
-                QMenu::item {
-                    color: #e0e0e0;
-                    padding: 6px 20px 6px 12px;
-                    min-height: 26px;
-                    border-radius: 4px;
-                    font-size: 11.5px;
-                    font-family: 'Orbitron', sans-serif;
-                    background-color: transparent;
-                }
-                QMenu::item:selected, QMenu::item:hover {
-                    background-color: rgba(255, 255, 255, 0.12);
-                    color: #ffffff;
-                }
-                QMenu::separator {
-                    height: 1px;
-                    background: rgba(255, 255, 255, 0.08);
-                    margin: 4px 6px;
-                }
-            """)
-            menu.aboutToShow.connect(self._pause_resume_timer)
-            menu.aboutToHide.connect(self._resume_resume_timer)
+        menu.aboutToShow.connect(self._pause_resume_timer)
+        menu.aboutToHide.connect(self._resume_resume_timer)
 
-            menu.addAction("Choose Cover Template...", self._open_template_picker)
-            menu.addSeparator()
-            menu.addAction("Review Cover", lambda: self._open_cover_manager('review'))
-            menu.addAction("Edit Cover", lambda: self._open_cover_manager('edit'))
-            menu.addAction("Export Cover Image...", self._export_cover_image)
-            menu.addSeparator()
+        menu.addAction("Review Cover (Lightbox)", lambda: self._open_cover_manager('review'))
+        menu.addAction("Edit Cover & Collage...", lambda: self._open_cover_manager('edit'))
+        menu.addAction("Change Template...", self._open_template_picker)
+        menu.addAction("Save Current Cover As...", self._export_current_cover)
+        menu.addSeparator()
+        if hasattr(self, '_open_lighting_settings'):
             menu.addAction("Cinematic Lighting...", self._open_lighting_settings)
-            menu.exec(QCursor.pos())
+        menu.addSeparator()
+        menu.addAction("Reset to Default", self._reset_covers)
 
-    def _export_cover_image(self):
-        """Export the playlist header's active composite cover artwork to an image file on disk."""
+        menu.exec(global_pos)
+
+    def _export_current_cover(self):
+        """
+        Export the current composited playlist cover artwork to high-res PNG / WebP image file.
+        """
         from PySide6.QtWidgets import QFileDialog
-
+        import json
+        
+        # Re-derive render for export (1024x1024)
         valid_pixmaps = []
         raw_photos = getattr(self, '_cover_photos', [])
         raw_sources = getattr(self, '_cover_sources', [])
@@ -9092,32 +9187,34 @@ class PlaylistHeader(QFrame):
                 pix = VideoCoverExtractor.resolve_to_pixmap(raw_sources[i])
             if pix and not pix.isNull():
                 valid_pixmaps.append(pix)
-
-        if valid_pixmaps:
-            rendered = CollageMasterDispatcher.render_cover(valid_pixmaps, self._active_template_id, size=1024, offsets=getattr(self, '_cover_offsets', None))
-        else:
-            rendered = CollageMasterDispatcher.render_cover([], size=1024)
-
-        if not rendered or rendered.isNull():
+        
+        rendered = CollageMasterDispatcher.render_cover(valid_pixmaps, self._active_template_id, size=1024, offsets=getattr(self, '_cover_offsets', None))
+        if rendered.isNull():
             return
 
-        last_dir = ""
         settings_path = os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'settings.json')
+        last_dir = ""
         try:
             if os.path.exists(settings_path):
                 with open(settings_path, 'r', encoding='utf-8') as f:
-                    last_dir = json.load(f).get('last_cover_export_dir', '')
+                    d = json.load(f)
+                    last_dir = d.get('last_cover_export_dir', '')
         except Exception:
             pass
 
+        default_name = (getattr(self, '_name', '') or (self.playlist_title.text() if hasattr(self, 'playlist_title') else '') or "playlist_cover").strip()
+        default_name = "".join(c for c in default_name if c.isalnum() or c in (' ', '_', '-')).strip()
+        default_file = os.path.join(last_dir or os.path.expanduser("~/Pictures"), f"{default_name}.png")
+
         save_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Playlist Cover Image",
-            os.path.join(last_dir, "playlist_cover.png"),
-            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;WebP Image (*.webp);;All Files (*)"
+            "Save Playlist Cover Artwork",
+            default_file,
+            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;WebP Image (*.webp)"
         )
         if save_path:
             try:
+                os.makedirs(os.path.dirname(settings_path), exist_ok=True)
                 d = {}
                 if os.path.exists(settings_path):
                     with open(settings_path, 'r', encoding='utf-8') as f:
@@ -9133,9 +9230,7 @@ class PlaylistHeader(QFrame):
                 fmt = "JPG"
             elif save_path.lower().endswith('.webp'):
                 fmt = "WEBP"
-
-            if rendered.save(save_path, fmt):
-                print(f"[PlaylistHeader] Cover image exported successfully to: {save_path}")
+            rendered.save(save_path, fmt)
 
     def _open_lighting_settings(self):
         """
@@ -9153,16 +9248,19 @@ class PlaylistHeader(QFrame):
             self.refresh_cover_display()
             self._resume_resume_timer()
             # Immediately sync visualizer background with newly applied visualizer settings
-            p = self.parent()
-            while p and not hasattr(p, 'visualizer_bg'):
-                p = p.parent()
-            if p and hasattr(p, 'visualizer_bg') and p.visualizer_bg:
+            p_viz = self.parent()
+            while p_viz and not hasattr(p_viz, 'visualizer_bg'):
+                p_viz = p_viz.parent()
+            if p_viz and hasattr(p_viz, 'visualizer_bg') and p_viz.visualizer_bg:
                 viz_cfg = VisualizerConfigManager.load_config()
-                p.visualizer_bg.set_visualizer_enabled(viz_cfg.get("enabled", True))
-                p.visualizer_bg.set_style_mode(viz_cfg.get("style_mode", "bars"))
-                p.visualizer_bg.set_visualizer_opacity(viz_cfg.get("opacity", 0.30))
-                p.visualizer_bg.set_bar_count(viz_cfg.get("bar_count", 32))
-                p.visualizer_bg.set_color_mode(viz_cfg.get("color_mode", "adaptive"))
+                p_viz.visualizer_bg.set_visualizer_enabled(viz_cfg.get("enabled", True))
+                p_viz.visualizer_bg.set_style_mode(viz_cfg.get("style_mode", "bars"))
+                p_viz.visualizer_bg.set_visualizer_opacity(viz_cfg.get("opacity", 0.30))
+                p_viz.visualizer_bg.set_bar_count(viz_cfg.get("bar_count", 32))
+                p_viz.visualizer_bg.set_color_mode(viz_cfg.get("color_mode", "adaptive"))
+                p_viz.visualizer_bg.set_target_fps(viz_cfg.get("target_fps", 60.0))
+                p_viz.visualizer_bg.set_render_quality(viz_cfg.get("render_quality", "ultra"))
+                p_viz.visualizer_bg.set_eco_mode(viz_cfg.get("eco_mode", True))
 
         current_cover = self.cover_front.pixmap()
         self._lighting_floating_panel = CinematicLightingFloatingPanel(
@@ -13648,6 +13746,9 @@ class MusicPanelWidget(QWidget):
                 self.visualizer_bg.set_color_mode(viz_cfg.get("color_mode", "adaptive"))
                 self.visualizer_bg.set_peak_dots_enabled(viz_cfg.get("peak_dots", True))
                 self.visualizer_bg.set_sensitivity(viz_cfg.get("sensitivity", 1.0))
+                self.visualizer_bg.set_target_fps(viz_cfg.get("target_fps", 60.0))
+                self.visualizer_bg.set_render_quality(viz_cfg.get("render_quality", "ultra"))
+                self.visualizer_bg.set_eco_mode(viz_cfg.get("eco_mode", True))
             if hasattr(self, 'player_bar') and self.player_bar:
                 self.player_bar.set_visualizer_state(is_viz_enabled)
         except Exception as e:
@@ -16212,6 +16313,12 @@ class MusicPanelWidget(QWidget):
                         viz_cfg['bar_count'] = state['visualizer_bar_count']
                     if 'visualizer_color_mode' in state:
                         viz_cfg['color_mode'] = state['visualizer_color_mode']
+                    if 'visualizer_target_fps' in state:
+                        viz_cfg['target_fps'] = state['visualizer_target_fps']
+                    if 'visualizer_render_quality' in state:
+                        viz_cfg['render_quality'] = state['visualizer_render_quality']
+                    if 'visualizer_eco_mode' in state:
+                        viz_cfg['eco_mode'] = state['visualizer_eco_mode']
                     
                     if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
                         self.visualizer_bg.set_visualizer_enabled(viz_cfg.get('enabled', True))
@@ -16219,6 +16326,9 @@ class MusicPanelWidget(QWidget):
                         self.visualizer_bg.set_visualizer_opacity(viz_cfg.get('opacity', 0.30))
                         self.visualizer_bg.set_bar_count(viz_cfg.get('bar_count', 32))
                         self.visualizer_bg.set_color_mode(viz_cfg.get('color_mode', 'adaptive'))
+                        self.visualizer_bg.set_target_fps(viz_cfg.get('target_fps', 60.0))
+                        self.visualizer_bg.set_render_quality(viz_cfg.get('render_quality', 'ultra'))
+                        self.visualizer_bg.set_eco_mode(viz_cfg.get('eco_mode', True))
                         if viz_cfg.get('color_mode', 'adaptive') == 'adaptive':
                             saved_bot = state.get('visualizer_adaptive_bottom', '')
                             saved_top = state.get('visualizer_adaptive_top', '')

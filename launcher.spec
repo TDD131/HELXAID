@@ -30,6 +30,7 @@ datas = [
 
 # Hidden imports for dynamic imports
 hiddenimports = [
+    'audio_spectrum_native',
     'PySide6.QtCore',
     'PySide6.QtGui', 
     'PySide6.QtWidgets',
