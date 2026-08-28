@@ -9024,6 +9024,9 @@ class PlaylistHeader(QFrame):
                         top_c = QColor.fromHsv(h, max(140, s), min(255, max(180, v)))
                         bot_c = QColor.fromHsv(h, min(255, s + 30), max(50, v // 2))
                         p.visualizer_bg.set_adaptive_colors(top_c, bot_c)
+                        if hasattr(p, '_taskbar_media_widget') and p._taskbar_media_widget:
+                            if hasattr(p._taskbar_media_widget, 'set_adaptive_colors'):
+                                p._taskbar_media_widget.set_adaptive_colors(bot_c, top_c)
                 if hasattr(p.visualizer_bg, 'set_cover_pixmap'):
                     p.visualizer_bg.set_cover_pixmap(rendered)
         except Exception:

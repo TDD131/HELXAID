@@ -156,7 +156,7 @@ class TaskbarGripButton(QPushButton):
 
 class MiniSpectrumVisualizer(QWidget):
     """
-    Mini animated audio spectrum equalizer bars for TaskbarMediaWidget with smooth transitions.
+    Mini animated audio spectrum equalizer bars for TaskbarMediaWidget synced with AudioSpectrumEngine.
     Component Name: taskbarMediaVisualizer
     """
     def __init__(self, parent=None, bar_count: int = 7):
@@ -170,9 +170,16 @@ class MiniSpectrumVisualizer(QWidget):
         self._suppressed = False
         self._opacity = 1.0
         
+        # Audio Engine reference
+        self._engine = None
+        
         # Initial bar heights normalized (0.0 to 1.0)
-        self._bar_heights = [0.15] * bar_count
-        self._target_heights = [0.15] * bar_count
+        self._bar_heights = [0.12] * bar_count
+        self._target_heights = [0.12] * bar_count
+        
+        # Palette colors (default Cyber Orange)
+        self._color_top = QColor("#FDA903")
+        self._color_bottom = QColor("#FF5B06")
         
         # Smooth transition animation
         self._fade_anim = QVariantAnimation(self)
@@ -183,7 +190,7 @@ class MiniSpectrumVisualizer(QWidget):
         
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._update_bars)
-        self._timer.start(50)  # 20 FPS smooth animation
+        self._timer.start(25)  # 40 FPS snappy real-time audio animation
         
     def _on_fade_value_changed(self, val):
         self._opacity = float(val)
@@ -200,11 +207,19 @@ class MiniSpectrumVisualizer(QWidget):
             except Exception:
                 pass
 
+    def set_colors(self, color_bottom: QColor, color_top: QColor):
+        """Update gradient colors matching active album art theme."""
+        if color_bottom and color_bottom.isValid():
+            self._color_bottom = color_bottom
+        if color_top and color_top.isValid():
+            self._color_top = color_top
+        self.update()
+
     def set_active(self, active: bool):
         """Set whether the visualizer is active (music playing) or idling (stopped/paused)."""
         self._is_active = bool(active)
         if not self._is_active:
-            self._target_heights = [0.15] * self._bar_count
+            self._target_heights = [0.12] * self._bar_count
         self.update()
 
     def set_suppressed(self, suppressed: bool, animate: bool = True):
@@ -234,28 +249,39 @@ class MiniSpectrumVisualizer(QWidget):
                 self.update()
 
     def _update_bars(self):
-        """Animate bars smoothly with realistic audio frequency dynamics."""
+        """Animate bars in real-time synchronized with AudioSpectrumEngine frequency bins."""
         if not self._is_active or self._suppressed:
             # Gradually settle bars to resting idle line
             for i in range(self._bar_count):
-                self._bar_heights[i] += (0.15 - self._bar_heights[i]) * 0.15
+                self._bar_heights[i] += (0.12 - self._bar_heights[i]) * 0.20
             self.update()
             return
 
-        for i in range(self._bar_count):
-            if random.random() < 0.35:
-                # Bass (left) has higher amplitude peaks, Mids balanced, Treble (right) has faster jitter
-                if i <= 1:
-                    base = 0.45
-                elif i <= 4:
-                    base = 0.35
-                else:
-                    base = 0.20
-                self._target_heights[i] = min(1.0, max(0.18, base + random.random() * 0.70))
-            
-            # Smooth interpolation
-            self._bar_heights[i] += (self._target_heights[i] - self._bar_heights[i]) * 0.38
-            
+        try:
+            if self._engine is None:
+                from AudioSpectrumEngine import AudioSpectrumEngine
+                self._engine = AudioSpectrumEngine.get_instance()
+
+            import numpy as np
+            spec, _ = self._engine.get_spectrum_snapshot(64)
+            n_spec = len(spec)
+            if n_spec >= self._bar_count:
+                # Downsample 64 frequency bins into 7 bars covering Sub-Bass to Treble
+                indices = np.linspace(0, n_spec - 1, self._bar_count + 1).astype(int)
+                for i in range(self._bar_count):
+                    st = indices[i]
+                    en = max(st + 1, indices[i + 1])
+                    chunk = spec[st:en]
+                    val = float(np.max(chunk)) if len(chunk) > 0 else 0.0
+                    
+                    target = min(1.0, max(0.12, val * 1.25))
+                    diff = target - self._bar_heights[i]
+                    # Snappy attack (0.75) on beats, smooth decay (0.28)
+                    rate = 0.75 if diff > 0 else 0.28
+                    self._bar_heights[i] += diff * rate
+        except Exception:
+            pass
+
         self.update()
 
     def paintEvent(self, event):
@@ -275,10 +301,9 @@ class MiniSpectrumVisualizer(QWidget):
             bx = i * (bar_w + gap)
             by = h - bh
             
-            # Glowing Cyberpunk Gradient (Vivid Yellow-Orange to Signal Orange)
             grad = QLinearGradient(bx, by, bx, h)
-            grad.setColorAt(0.0, QColor("#FDA903"))
-            grad.setColorAt(1.0, QColor("#FF5B06"))
+            grad.setColorAt(0.0, self._color_top)
+            grad.setColorAt(1.0, self._color_bottom)
             
             p.setPen(Qt.NoPen)
             p.setBrush(QBrush(grad))
