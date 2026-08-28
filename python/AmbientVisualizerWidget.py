@@ -13,8 +13,7 @@ import sys
 import time
 import math
 from abc import ABC, abstractmethod
-from typing import Optional, List, Tuple, Dict
-import numpy as np
+from typing import Optional, List, Tuple, Dict, Any
 
 from PySide6.QtWidgets import QWidget, QApplication
 from PySide6.QtCore import Qt, QTimer, QRectF, QPointF, QLineF, QVariantAnimation, QEasingCurve
@@ -42,7 +41,7 @@ class IVisualizerRenderer(ABC):
 
     @abstractmethod
     def render(self, painter: QPainter, width: float, height: float,
-               spectrum: np.ndarray, peaks: np.ndarray,
+               spectrum: Any, peaks: Any,
                band_energies: Tuple[float, float, float, float],
                colors: Dict[str, QColor], effective_opacity: float,
                peak_dots_enabled: bool, dt: float):
@@ -95,7 +94,7 @@ class SpectrumBarsRenderer(IVisualizerRenderer):
         self.reset()
 
     def render(self, painter: QPainter, width: float, height: float,
-               spectrum: np.ndarray, peaks: np.ndarray,
+               spectrum: Any, peaks: Any,
                band_energies: Tuple[float, float, float, float],
                colors: Dict[str, QColor], effective_opacity: float,
                peak_dots_enabled: bool, dt: float):
@@ -187,7 +186,7 @@ class SilkWaveRenderer(IVisualizerRenderer):
     def __init__(self):
         self._paths = [QPainterPath(), QPainterPath(), QPainterPath()]
         self._crest_paths = [QPainterPath(), QPainterPath(), QPainterPath()]
-        self._nodes_y = [np.zeros(self.NUM_NODES, dtype=np.float32) for _ in range(3)]
+        self._nodes_y = None
         self._phases = [0.0, 0.0, 0.0]
         
         # Pre-allocated pens & brushes
@@ -211,12 +210,16 @@ class SilkWaveRenderer(IVisualizerRenderer):
         self._render_quality = str(quality).lower().strip()
 
     def render(self, painter: QPainter, width: float, height: float,
-               spectrum: np.ndarray, peaks: np.ndarray,
+               spectrum: Any, peaks: Any,
                band_energies: Tuple[float, float, float, float],
                colors: Dict[str, QColor], effective_opacity: float,
                peak_dots_enabled: bool, dt: float):
         if width < 10 or height < 10:
             return
+
+        import numpy as np
+        if self._nodes_y is None:
+            self._nodes_y = [np.zeros(self.NUM_NODES, dtype=np.float32) for _ in range(3)]
 
         bass, mid, treble, total_rms = band_energies
 

@@ -24,6 +24,7 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
     _svc_name_ = 'HelxaidHelperService'
     _svc_display_name_ = 'HELXAID Helper Service'
     _svc_description_ = 'Provides zero-UAC CPU/TDP adjustments for HELXAID.'
+    _svc_start_type_ = win32service.SERVICE_AUTO_START if 'win32service' in globals() else 2
     
     if getattr(sys, 'frozen', False):
         _exe_name_ = sys.executable
@@ -974,23 +975,31 @@ def run_as_service():
             sys.argv.pop(1) 
             
             if action == '--install':
-                sys.argv[1] = 'install'
+                sys.argv = [sys.argv[0], '--startup', 'auto', 'install']
                 win32serviceutil.HandleCommandLine(HelxaidHelperService)
+                try:
+                    subprocess.run(['sc.exe', 'config', 'HelxaidHelperService', 'start=', 'auto'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                except Exception:
+                    pass
             elif action == '--remove':
-                sys.argv[1] = 'remove'
+                sys.argv = [sys.argv[0], 'remove']
                 win32serviceutil.HandleCommandLine(HelxaidHelperService)
             elif action == '--start':
-                sys.argv[1] = 'start'
+                sys.argv = [sys.argv[0], 'start']
                 win32serviceutil.HandleCommandLine(HelxaidHelperService)
             elif action == '--stop':
-                sys.argv[1] = 'stop'
+                sys.argv = [sys.argv[0], 'stop']
                 win32serviceutil.HandleCommandLine(HelxaidHelperService)
             elif action == '--setup':
-                sys.argv[1] = 'install'
+                sys.argv = [sys.argv[0], '--startup', 'auto', 'install']
                 win32serviceutil.HandleCommandLine(HelxaidHelperService)
                 # Wait a bit for SCM to register it
                 import time
                 time.sleep(1)
+                try:
+                    subprocess.run(['sc.exe', 'config', 'HelxaidHelperService', 'start=', 'auto'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                except Exception:
+                    pass
                 try:
                     win32serviceutil.StartService(HelxaidHelperService._svc_name_)
                 except Exception as e:

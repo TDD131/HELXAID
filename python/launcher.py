@@ -7867,7 +7867,7 @@ class TabInitProfilerWindow(QWidget):
 class GameLauncher(QWidget):
     # Class-level icon cache to avoid reloading same icons
     _icon_cache = {}
-    _icon_cache_max_size = 67 # Limit cache to prevent RAM growth
+    _icon_cache_max_size = 40 # Limit cache to prevent RAM growth
     
     taskbar_button_clicked = Signal(int)
     
@@ -7876,34 +7876,31 @@ class GameLauncher(QWidget):
         apply_custom_titlebar(self, "#000000")
 
     def _cleanup_memory(self):
-        """Periodic memory cleanup to prevent RAM growth."""
+        """Periodic memory cleanup and aggressive working set trimming to prevent RAM growth."""
         # Limit icon cache size
         if len(self._icon_cache) > self._icon_cache_max_size:
-            # Remove oldest entries (first 25% of cache)
+            # Remove oldest entries (first 30% of cache)
             keys = list(self._icon_cache.keys())
-            for key in keys[:len(keys) // 4]:
+            for key in keys[:len(keys) // 3]:
                 del self._icon_cache[key]
         
-        # Run lightweight garbage collection (generation 0 only for minimal pause)
-        gc.collect(0)
+        # Run garbage collection
+        gc.collect()
         
-        # Trim the Working Set to reduce RAM usage shown in Task Manager
-        # SetProcessWorkingSetSize with -1, -1 is the standard Win32 API for this
+        # Trim the Working Set to release pages back to Windows OS
         import sys
         if sys.platform == 'win32':
             try:
                 import ctypes
                 handle = ctypes.windll.kernel32.GetCurrentProcess()
                 ctypes.windll.kernel32.SetProcessWorkingSetSize(handle, -1, -1)
+                if hasattr(ctypes.windll, 'psapi') and hasattr(ctypes.windll.psapi, 'EmptyWorkingSet'):
+                    ctypes.windll.psapi.EmptyWorkingSet(handle)
             except Exception:
                 pass
 
     def _deferred_startup_tasks(self):
         """Run non-critical startup tasks after UI is visible for faster perceived startup."""
-        # NOTE: Heavy modules (pyqtgraph, numpy, MusicPanelWidget, etc.) are NOT
-        # prewarmed here. They are lazy-loaded when the user first switches to
-        # their panel via switch_panel(). This saves ~200MB RAM at startup.
-
         # Auto-fix corrupt icons at startup
         if hasattr(self, 'data') and self.data:
             validate_and_fix_corrupt_icons(self.data)
@@ -7921,41 +7918,10 @@ class GameLauncher(QWidget):
         # Setup deferred button animations (improves startup time)
         self._setup_deferred_button_animations()
 
-        # Pre-instantiate panel widgets sequentially on idle timers so tab switching is instantaneous
-        # NOTE: HELXAIR (3), HELXAIRO (4), and HELXTATS (5) are strictly lazy-loaded on page initialize
-        def _prewarm_panel_step(step):
-            if not hasattr(self, 'content_stack'):
-                return
-            try:
-                if step == 1 and not hasattr(self, 'music_panel'):
-                    self._setup_music_panel()
-                elif step == 2 and not hasattr(self, 'cpu_panel'):
-                    self._setup_cpu_panel()
-                elif step == 6 and not hasattr(self, 'wincustom_panel'):
-                    self._setup_wincustom_panel()
-            except Exception as pe:
-                print(f"[Panel Prewarm Step {step} Error] {pe}")
-
-        QTimer.singleShot(150, lambda: _prewarm_panel_step(1))
-        QTimer.singleShot(300, lambda: _prewarm_panel_step(2))
-        QTimer.singleShot(450, lambda: _prewarm_panel_step(6))
-
-        # Pre-instantiate panel shells sequentially in idle ticks so panel switches are INSTANT (< 1ms)
-        QTimer.singleShot(300, lambda: self._ensure_panel_preloaded(1))   # HELXAIC - Music
-        QTimer.singleShot(600, lambda: self._ensure_panel_preloaded(2))   # HELXAIL - CPU
-        QTimer.singleShot(900, lambda: self._ensure_panel_preloaded(6))   # HELRCUS - Win Custom
-
-    def _ensure_panel_preloaded(self, index: int):
-        """Pre-instantiate panel shell safely in background idle time."""
-        try:
-            if index == 1 and not hasattr(self, 'music_panel'):
-                self._setup_music_panel()
-            elif index == 2 and not hasattr(self, 'cpu_panel'):
-                self._setup_cpu_panel()
-            elif index == 6 and not hasattr(self, 'wincustom_panel'):
-                self._setup_wincustom_panel()
-        except Exception as e:
-            print(f"[Startup] Panel {index} pre-load skipped: {e}")
+        # All heavy panels (Music, CPU, Crosshair, Macro, Hardware, WinCustom) are purely
+        # lazy-loaded on first user click via switch_panel() to keep startup RAM minimal (~90-120MB).
+        # Trim working set once startup settles
+        QTimer.singleShot(1500, self._cleanup_memory)
 
     def _setup_deferred_button_animations(self):
         """Setup rotation animations for settings buttons after UI is visible.
@@ -8264,6 +8230,7 @@ class GameLauncher(QWidget):
         self.taskbar_toolbar = None
         self._taskbar_init_attempts = 0
         self._taskbar_retry_count = 0
+        self.taskbar_button_clicked.connect(self._on_taskbar_button_clicked)
         
         # Initialize Debug Console (only redirects; doesn't show window)
         self.debug_console = get_debug_console(self)
@@ -8357,13 +8324,13 @@ class GameLauncher(QWidget):
                     if hicon:
                         self._hicon = hicon
                         QTimer.singleShot(100, self._apply_taskbar_icon)
-                        
-                        # Setup periodic memory cleanup (every 60 seconds)
-                        self._memory_timer = QTimer(self)
-                        self._memory_timer.timeout.connect(self._cleanup_memory)
-                        self._memory_timer.start(60000)  # 60 seconds
                 except:
                     pass
+        
+        # Setup periodic memory cleanup and working set trim (every 30 seconds)
+        self._memory_timer = QTimer(self)
+        self._memory_timer.timeout.connect(self._cleanup_memory)
+        self._memory_timer.start(30000)  # 30 seconds
         
         # Set base minimum size first
         self.setMinimumSize(1380, 790)
@@ -8409,18 +8376,7 @@ class GameLauncher(QWidget):
         self._enable_drag_drop_for_elevated()
         self._debug_delay()
         
-        # Early initialization of Taskbar Thumbnail Toolbar so COM wrapper is ready for OS messages
-        if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar and self.taskbar_toolbar is None:
-            try:
-                hwnd = int(self.winId())
-                self.taskbar_toolbar = TaskbarThumbnailToolbar(
-                    hwnd,
-                    on_prev=self._taskbar_prev,
-                    on_playpause=self._taskbar_playpause,
-                    on_next=self._taskbar_next
-                )
-            except Exception as e:
-                print(f"[Taskbar FATAL] Early taskbar toolbar init failed: {e}")
+        # Taskbar Thumbnail Toolbar is deferred to _setup_music_panel() (lazy-loaded on HELXAIC open)
         
         # Apply after layout settles so background scales to final window size
         # (at this point the window geometry may not be restored yet)
@@ -13030,6 +12986,10 @@ Stylesheet Selector:
                 
             ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
             if ret > 32:
+                self.settings["init_zero_uac_in_panel"] = True
+                save_settings(self.settings)
+                if hasattr(self, '_qs_init_zero_uac_cb') and self._qs_init_zero_uac_cb:
+                    self._qs_init_zero_uac_cb.setChecked(True)
                 QTimer.singleShot(3000, self._update_service_ui_status)
 
     def _uninstall_helper_service(self):
@@ -13058,6 +13018,10 @@ Stylesheet Selector:
                 
             ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, remove_args, None, 0)
             if ret > 32:
+                self.settings["init_zero_uac_in_panel"] = False
+                save_settings(self.settings)
+                if hasattr(self, '_qs_init_zero_uac_cb') and self._qs_init_zero_uac_cb:
+                    self._qs_init_zero_uac_cb.setChecked(False)
                 QTimer.singleShot(2000, self._update_service_ui_status)
 
     def _reset_cpu_sliders(self):
@@ -14978,6 +14942,7 @@ Stylesheet Selector:
         init_zero_uac_cb = AnimatedCheckBox("Auto-enable Zero-UAC on launch")
         init_zero_uac_cb.setObjectName("quickSettingsInitZeroUacCheckBox")
         init_zero_uac_cb.setChecked(self.settings.get("init_zero_uac_in_panel", False))
+        self._qs_init_zero_uac_cb = init_zero_uac_cb
         service_layout.addWidget(init_zero_uac_cb)
 
         layout.addWidget(service_group)
@@ -16828,10 +16793,14 @@ Stylesheet Selector:
     def _exec_os_taskbar_init(self):
         """Executes taskbar init specifically triggered by Explorer OS message."""
         hwnd = getattr(self, '_os_taskbar_proxy_hwnd', None)
-        self._init_taskbar_buttons(hwnd)
-        if not hasattr(self, '_wndproc_hooked_for_taskbar') and hwnd:
-            self._install_wndproc_hook(hwnd)
-            self._wndproc_hooked_for_taskbar = True
+        # Only bind buttons if HELXAIC has already been opened and initialized
+        if hasattr(self, 'music_panel') and self.music_panel is not None:
+            self._init_taskbar_buttons(hwnd)
+            if not hasattr(self, '_wndproc_hooked_for_taskbar') and hwnd:
+                self._install_wndproc_hook(hwnd)
+                self._wndproc_hooked_for_taskbar = True
+        else:
+            print("[Taskbar DEBUG] OS Taskbar init deferred: HELXAIC not opened yet.", flush=True)
 
     def _install_wndproc_hook(self, hwnd):
         try:
@@ -16899,6 +16868,15 @@ Stylesheet Selector:
             msg_ptr = int(message)
             msg = ctypes.cast(msg_ptr, ctypes.POINTER(wintypes.MSG)).contents
             
+            # Intercept Taskbar Thumbnail Toolbar button clicks (Layer 2)
+            if msg.message == 0x0111:  # WM_COMMAND
+                hi_word = (msg.wParam >> 16) & 0xFFFF
+                if hi_word == 0x1800:  # THBN_CLICKED
+                    button_id = msg.wParam & 0xFFFF
+                    print(f"[Taskbar DEBUG] Layer 2 (nativeEvent) caught THBN_CLICKED: {button_id}", flush=True)
+                    self._on_taskbar_button_clicked(button_id)
+                    return True, 0
+
             # System sleep/resume events
             if msg.message == 0x0218:
                 if msg.wParam == 0x0000:
@@ -16922,6 +16900,8 @@ Stylesheet Selector:
     def _taskbar_prev(self):
         """Handle taskbar Previous button."""
         try:
+            if not hasattr(self, 'music_panel') or self.music_panel is None:
+                self._setup_music_panel()
             if hasattr(self, 'music_panel') and self.music_panel is not None:
                 if hasattr(self.music_panel, '_prev_track'):
                     self.music_panel._prev_track()
@@ -16934,6 +16914,8 @@ Stylesheet Selector:
     def _taskbar_playpause(self):
         """Handle taskbar Play/Pause toggle button."""
         try:
+            if not hasattr(self, 'music_panel') or self.music_panel is None:
+                self._setup_music_panel()
             if hasattr(self, 'music_panel') and self.music_panel is not None:
                 if hasattr(self.music_panel, '_toggle_play'):
                     self.music_panel._toggle_play()
@@ -16946,6 +16928,8 @@ Stylesheet Selector:
     def _taskbar_next(self):
         """Handle taskbar Next button."""
         try:
+            if not hasattr(self, 'music_panel') or self.music_panel is None:
+                self._setup_music_panel()
             if hasattr(self, 'music_panel') and self.music_panel is not None:
                 if hasattr(self.music_panel, '_next_track'):
                     self.music_panel._next_track()
@@ -18465,22 +18449,25 @@ Stylesheet Selector:
         """Throttle background polling and aggressively trim RAM during gaming.
         
         Reduces timer frequency from 2s to 10s to minimize CPU cycles while the user
-        is playing, and periodically trims Working Set to lock memory under 75MB.
+        is playing, and periodically trims Working Set to minimize memory footprint.
         """
         self._in_game_mode = True
         self._process_scan_interval = 10.0  # Slow down background psutil thread
         if hasattr(self, 'game_detection_timer'):
             self.game_detection_timer.setInterval(10000)  # Slow down UI timer to 10s
         
-        # Schedule initial working set trim 5 seconds after game initialization
-        QTimer.singleShot(5000, self._cleanup_memory)
+        # Flush Qt image caches and schedule immediate working set trims
+        from PySide6.QtGui import QPixmapCache
+        QPixmapCache.clear()
+        QTimer.singleShot(1000, self._cleanup_memory)
+        QTimer.singleShot(4000, self._cleanup_memory)
         
-        # Setup periodic in-game RAM trimmer (every 60 seconds)
+        # Setup periodic in-game RAM trimmer (every 30 seconds)
         if not hasattr(self, '_in_game_trim_timer'):
             self._in_game_trim_timer = QTimer(self)
             self._in_game_trim_timer.timeout.connect(self._cleanup_memory)
-        self._in_game_trim_timer.start(60000)
-        print("[GameMode] Entered In-Game Low RAM Mode (10s scan interval, 60s memory trimming)")
+        self._in_game_trim_timer.start(30000)
+        print("[GameMode] Entered In-Game Low RAM Mode (10s scan interval, 30s memory trimming)")
 
     def _exit_game_mode(self):
         """Restore normal polling frequency and cleanup memory after game exits."""
@@ -20087,27 +20074,6 @@ Stylesheet Selector:
 
 
 if __name__ == "__main__":
-    # Pre-warm heavy panel modules in background thread so PyInstaller zipimport decompression happens before user interaction
-    def _bg_prewarm_modules():
-        import threading
-        def _import_job():
-            modules = [
-                'MusicPanelWidget',
-                'HardwarePanelWidget',
-                'MacroSettingsPanel',
-                'WindowsCustomPanel',
-                'CrosshairWidget',
-            ]
-            for mod in modules:
-                try:
-                    __import__(mod)
-                except Exception:
-                    pass
-        t = threading.Thread(target=_import_job, daemon=True, name="HELXAID_ModulePrewarmer")
-        t.start()
-
-    _bg_prewarm_modules()
-
     # Suppress Qt warning messages (like QFont::setPointSize warnings)
     import warnings
     warnings.filterwarnings("ignore")
@@ -20167,18 +20133,12 @@ if __name__ == "__main__":
     # ---------------------------------------------------------
     # MEMORY OPTIMIZATION: Limit PySide6/Qt Image Cache
     # Qt caches all background/border-images heavily (uncompressed).
-    # We restrict it to 30 MB to prevent the app from ballooning to 1GB+.
+    # We restrict it to 10 MB to prevent the app from ballooning in RAM.
     # ---------------------------------------------------------
     from PySide6.QtGui import QPixmapCache
-    QPixmapCache.setCacheLimit(30720) # 30 MB max
+    QPixmapCache.setCacheLimit(10240) # 10 MB max
     
     from PySide6.QtCore import QObject, QEvent, QTimer
-    
-    # Run garbage collector occasionally to free up C++ wrappings
-    import gc
-    gc_timer = QTimer()
-    gc_timer.timeout.connect(lambda: gc.collect())
-    gc_timer.start(30000) # Every 30 seconds
     
     class ComboBoxScrollFilter(QObject):
         """Globally prevents QComboBox from capturing mouse wheel scrolling
@@ -20459,17 +20419,24 @@ if __name__ == "__main__":
             if is_service_running():
                 print("[Init] Zero-UAC Service is already running.")
             else:
-                update_splash(70, "Initializing Zero-UAC Service...")
-                import ctypes
-                if getattr(sys, 'frozen', False):
-                    exe_path = sys.executable
-                    setup_args = "--run-service --setup"
+                try:
+                    subprocess.run(['net.exe', 'start', 'HelxaidHelperService'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=3)
+                except Exception:
+                    pass
+                if is_service_running():
+                    print("[Init] Zero-UAC Service started successfully.")
                 else:
-                    pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
-                    exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
-                    script_path = os.path.abspath(sys.argv[0])
-                    setup_args = f'"{script_path}" --run-service --setup'
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
+                    update_splash(70, "Initializing Zero-UAC Service...")
+                    import ctypes
+                    if getattr(sys, 'frozen', False):
+                        exe_path = sys.executable
+                        setup_args = "--run-service --setup"
+                    else:
+                        pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+                        exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
+                        script_path = os.path.abspath(sys.argv[0])
+                        setup_args = f'"{script_path}" --run-service --setup'
+                    ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
     except Exception as e:
         print(f"[Init] Zero-UAC panel init error: {e}")
     

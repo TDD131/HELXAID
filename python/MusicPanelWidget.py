@@ -3051,7 +3051,7 @@ class CollageEngineCategory2:
         path.addPolygon(poly)
         path.closeSubpath()
         painter.setClipPath(path)
-        cls._draw_fitted_pixmap(painter, pixmap, QRectF(0, 0, W, H), offset)
+        cls._draw_fitted_pixmap(painter, pixmap, path.boundingRect(), offset)
         painter.restore()
 
     @classmethod
@@ -3269,7 +3269,7 @@ class CollageEngineCategory2:
 
         painter.save()
         painter.setClipPath(path_left)
-        cls._draw_fitted_pixmap(painter, p1, QRectF(0, 0, W, H), off1)
+        cls._draw_fitted_pixmap(painter, p1, path_left.boundingRect(), off1)
         painter.restore()
 
         # Right Semicircle (270 to 450/90 deg)
@@ -3280,7 +3280,7 @@ class CollageEngineCategory2:
 
         painter.save()
         painter.setClipPath(path_right)
-        cls._draw_fitted_pixmap(painter, p2, QRectF(0, 0, W, H), off2)
+        cls._draw_fitted_pixmap(painter, p2, path_right.boundingRect(), off2)
         painter.restore()
 
         # Center Seam Line
@@ -3940,7 +3940,7 @@ class CollageEngineCategory3:
 
             painter.save()
             painter.setClipPath(wedge_path)
-            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], QRectF(0, 0, W, H), offs[i])
+            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], wedge_path.boundingRect(), offs[i])
             painter.restore()
 
         # Radial Seams
@@ -4257,7 +4257,7 @@ class CollageEngineCategory4:
 
             painter.save()
             painter.setClipPath(wedge_path)
-            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], QRectF(0, 0, W, H), offs[i])
+            CollageEngineCategory2._draw_fitted_pixmap(painter, photos[i], wedge_path.boundingRect(), offs[i])
             painter.restore()
 
         # Crosshair Seam Lines

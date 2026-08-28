@@ -12,7 +12,7 @@ import sys
 import time
 import math
 import threading
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Any
 import numpy as np
 
 # Try importing the high-performance C++ Native Module
@@ -100,11 +100,11 @@ class AudioSpectrumEngine:
         self.num_bins = num_bins
         self._use_native = (_NATIVE_ENGINE is not None)
         
-        # Fallback Engine State
-        self._raw_pcm_buffer = np.zeros(fft_size * 4, dtype=np.float32)
-        self._spectrum = np.zeros(64, dtype=np.float32)
-        self._peaks = np.zeros(64, dtype=np.float32)
-        self._peak_velocities = np.zeros(64, dtype=np.float32)
+        # Fallback Engine State (initialized only if native C++ engine is absent)
+        self._raw_pcm_buffer = None
+        self._spectrum = None
+        self._peaks = None
+        self._peak_velocities = None
         self._band_energies = (0.0, 0.0, 0.0, 0.0)
         
         # AGC & Sensitivity
@@ -124,7 +124,20 @@ class AudioSpectrumEngine:
         self._target_fps = 60.0
         self._eco_mode = True
         
-        # Precompute window & band indices for fallback
+        # Precompute window & band indices for fallback only when needed
+        self._hann_window = None
+        self._band_indices_64 = None
+        if not self._use_native:
+            self._init_fallback_state()
+
+    def _init_fallback_state(self):
+        """Initialize fallback NumPy state only when C++ native engine is unavailable."""
+        if self._raw_pcm_buffer is not None:
+            return
+        self._raw_pcm_buffer = np.zeros(self.fft_size * 4, dtype=np.float32)
+        self._spectrum = np.zeros(64, dtype=np.float32)
+        self._peaks = np.zeros(64, dtype=np.float32)
+        self._peak_velocities = np.zeros(64, dtype=np.float32)
         self._hann_window = np.hanning(self.fft_size).astype(np.float32)
         self._band_indices_64 = self._compute_log_bands(64, self.fft_size, self.sample_rate)
 
@@ -211,7 +224,7 @@ class AudioSpectrumEngine:
             return _NATIVE_ENGINE.is_wasapi_active()
         return self._wasapi_active
 
-    def get_spectrum_snapshot(self, num_bars: int = 32) -> Tuple[np.ndarray, np.ndarray]:
+    def get_spectrum_snapshot(self, num_bars: int = 32) -> Tuple[Any, Any]:
         """
         Thread-safe fetch of current normalized spectrum values [0.0..1.0] and peak dots [0.0..1.0].
         Downsamples full 64-band spectrum cleanly across the requested number of bars.
@@ -221,6 +234,8 @@ class AudioSpectrumEngine:
             return np.asarray(spec_list, dtype=np.float32), np.asarray(peaks_list, dtype=np.float32)
 
         with self._lock:
+            if self._spectrum is None:
+                self._init_fallback_state()
             if num_bars == 64 or num_bars >= len(self._spectrum):
                 return self._spectrum[:num_bars].copy(), self._peaks[:num_bars].copy()
             elif num_bars == 32:
