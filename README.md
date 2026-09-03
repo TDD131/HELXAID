@@ -80,6 +80,39 @@ HELXAID is built entirely on a modular architecture. Each module serves a highly
 
 ---
 
+## ✦ NEXT GENERATION : HELXAID V.5 — COMING SOON
+
+<p align="center">
+  <img src="https://img.shields.io/badge/TARGET-VERSION_5.0-red?style=for-the-badge&logo=target" alt="Target">
+  <img src="https://img.shields.io/badge/CLEARANCE-TOP_SECRET-000000?style=for-the-badge&logo=shield" alt="Clearance">
+  <img src="https://img.shields.io/badge/STATUS-UNDER_ACTIVE_DEVELOPMENT-ff0055?style=for-the-badge" alt="Status">
+</p>
+
+<p align="center">
+  <b>The next monumental chapter in the HELXAID ecosystem is currently being forged.</b><br>
+  <i>Engineered from the ground up for extreme gaming performance, zero-latency execution, and complete hardware dominance.</i>
+</p>
+
+<table align="center" width="100%">
+  <tr>
+    <td align="center" style="background-color: #0d1117; padding: 25px; border-radius: 8px;">
+      <h3 align="center">[REDACTED] // CLASSIFIED CORE MODULE</h3>
+      <p align="center">
+        <code>CLEARANCE LEVEL: TOP SECRET // CLASSIFIED ACCESS ONLY</code>
+      </p>
+      <p align="center">
+        A groundbreaking new module is being secretly developed for the <b>HELXAID V.5</b> launch.<br>
+        Built with experimental low-level architecture to deliver unprecedented real-time system augmentation and competitive control.
+      </p>
+      <p align="center">
+        <b>✦ Module Identity:</b> <code>[CLASSIFIED // TO BE REVEALED IN V.5]</code> &nbsp;|&nbsp; <b>✦ Development Phase:</b> <i>Internal Alpha Prototype</i>
+      </p>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## ✦ Portable Deployment & Updates
 
 HELXAID is distributed as a **100% Portable Executable**. It leaves zero system registry footprints and runs completely standalone.
