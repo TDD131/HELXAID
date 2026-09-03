@@ -12,7 +12,7 @@
 
 <p align="center">
   <b>A modular, high-performance desktop utility suite designed for gamers and power users.</b><br>
-  <i>Engineered with a strict focus on modular architecture, minimal system overhead, and practical hardware control — providing a centralized, hardware-accelerated layer for game launching, CPU tuning, media management, and input automation.</i>
+  <i>Engineered with a strict focus on modular architecture, minimal system overhead, and practical hardware control, providing a centralized, hardware-accelerated layer for game launching, CPU tuning, media management, and input automation.</i>
 </p>
 
 ---
@@ -80,7 +80,7 @@ HELXAID is built entirely on a modular architecture. Each module serves a highly
 
 ---
 
-## ✦ NEXT GENERATION : HELXAID V.5 — COMING SOON
+## ✦ NEXT GENERATION : HELXAID V.5 (COMING SOON)
 
 <p align="center">
   <img src="https://img.shields.io/badge/TARGET-VERSION_5.0-red?style=for-the-badge&logo=target" alt="Target">
@@ -93,23 +93,37 @@ HELXAID is built entirely on a modular architecture. Each module serves a highly
   <i>Engineered from the ground up for extreme gaming performance, zero-latency execution, and complete hardware dominance.</i>
 </p>
 
+<details align="center">
+<summary><b>[DECRYPT CLASSIFIED DOSSIER // CLICK TO ACCESS LEAK]</b></summary>
+<br>
+
 <table align="center" width="100%">
   <tr>
-    <td align="center" style="background-color: #0d1117; padding: 25px; border-radius: 8px;">
+    <td align="left" style="background-color: #0d1117; padding: 20px; font-family: monospace;">
       <h3 align="center">[REDACTED] // CLASSIFIED CORE MODULE</h3>
       <p align="center">
         <code>CLEARANCE LEVEL: TOP SECRET // CLASSIFIED ACCESS ONLY</code>
       </p>
-      <p align="center">
-        A groundbreaking new module is being secretly developed for the <b>HELXAID V.5</b> launch.<br>
-        Built with experimental low-level architecture to deliver unprecedented real-time system augmentation and competitive control.
-      </p>
+      <pre>
+[INIT] Loading HELXAID v5.0 Next-Gen Architecture...
+[INFO] Native Low-Level Driver Bridge ................. [ACTIVE]
+[INFO] Sub-millisecond Hardware Input Injection ....... [ENABLED]
+[INFO] Project Codename: HELX[REDACTED]
+[LEAK] Early Prototype Highlights:
+  + Zero-RAM Idle Footprint Optimization Pipeline
+  + Real-time Dynamic Frame Pacing and Kernel Governor
+  + Unified Autonomous Hardware Orchestration
+  + Direct Low-Level GPU Frame Buffer Integration
+[WARN] Full telemetry specifications classified until Official v5.0 Launch.
+      </pre>
       <p align="center">
         <b>✦ Module Identity:</b> <code>[CLASSIFIED // TO BE REVEALED IN V.5]</code> &nbsp;|&nbsp; <b>✦ Development Phase:</b> <i>Internal Alpha Prototype</i>
       </p>
     </td>
   </tr>
 </table>
+
+</details>
 
 ---
 
