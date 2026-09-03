@@ -124,12 +124,6 @@ HELXAID is distributed as a **100% Portable Executable**. It leaves zero system 
 
 ---
 
-## ✦ Built For The Edge
-
-HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++** (via `pybind11`) for native Windows API hooking.
-
----
-
 ## ✦ Feature Notes
 
 ### 1. HELXAID (Game Launcher)
@@ -178,26 +172,11 @@ For a detailed history of updates, feature additions, and bug fixes across all v
 
 ## ✦ Tech Stack & Platform
 
-HELXAID combines a reactive Python front-end with high-performance native C++ engines and direct Windows OS subsystem hooks:
-
-- **Core Application Engine:** Python (PySide6 / Qt6) — reactive desktop GUI, custom widgets, and signal architecture
-- **Native Acceleration Layer (C++ / pybind11):**
-  - `helxaid_native` — Windows API hooks, standby memory purging (`EmptyWorkingSet`), and high-priority process injection
-  - `helxairo_native` — Low-level HID hardware input interception, rapid-fire macros, and DPI loop management
-  - `audio_spectrum_native` — Real-time FFT spectrum analysis engine for high-framerate audio visualizers
-  - `image_cache_native` — High-throughput image decoding, scaling, and RAM-optimized caching pipeline
-  - `innertube_fast_resolver` — Native media stream resolution and network payload parser
-  - `ambient_glow` — Dynamic dominant color extraction and ambient glow calculation
-- **Graphics & Rendering:** Hardware-accelerated OpenGL (`QOpenGLWidget` / CrosshairGL) & dynamic vector SVG rendering
-- **OS & Hardware Integration:**
-  - **Win32 & WinRT:** Windows System Media Transport Controls (SMTC), Bluetooth AVRCP, and Windows Lock Screen integration
-  - **Hardware Telemetry & Control:** RyzenAdj (AMD CPU/APU TDP tuning), HWiNFO & LibreHardwareMonitor (Shared Memory IPC)
-  - **Automation:** AutoHotkey (AHK Engine bridge), PowerShell, and VBScript for silent OS operations
-- **Cloud & Media Subsystems:**
-  - **Cloud Sync:** Firebase Realtime Database & Google OAuth2 Authentication
-  - **Media Engines:** DirectStream Hub, InnerTube API resolver, LRCLIB / Musixmatch synced lyrics engine, FFmpeg & yt-dlp
-  - **Browser Companion:** Chrome / Chromium Extension (Manifest V3) for browser audio stream synchronization
-- **Build & Packaging System:** CMake & MSVC (Native C++ Modules), PyInstaller (100% Portable release packaging), Inno Setup (Installer generation)
+- **Operating System:** Windows 10 / Windows 11
+- **Core Application Engine:** Python (PySide6)
+- **Native Hardware Layer:** C++ (with `pybind11` for direct Windows API & HID hooking)
+- **System Automation Scripts:** PowerShell & VBScript (for silent execution & OS-level telemetry manipulation)
+- **Build System:** CMake (Native Module) & PyInstaller (Release Packaging)
 
 ---
 
