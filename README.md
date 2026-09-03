@@ -12,7 +12,7 @@
 
 <p align="center">
   <b>A modular, high-performance desktop utility suite designed for gamers and power users.</b><br>
-  <i>Instead of running multiple scattered applications, HELXAID provides a centralized, hardware-accelerated control layer for launching games, tuning CPU performance, managing media, and automating inputs.</i>
+  <i>Engineered with a strict focus on modular architecture, minimal system overhead, and practical hardware control — providing a centralized, hardware-accelerated layer for game launching, CPU tuning, media management, and input automation.</i>
 </p>
 
 ---
@@ -171,77 +171,33 @@ HELXAID relies heavily on **Python (PySide6)** for the front-end logic and **C++
 ---
 
 ## ✦ Changelog
-### 4.14
 
-- Fixed some bugs in HELXAIC (I forgot to list them, sorry :<)
-- Migrated to QMediaPlayer backend for audio playback
-- fixes hover-effect on icon bugs in HELXAID.
-- Add 1-6 Shortcut Key at software so you can switch panel quickly.
-- Remap Open Folder shortcut key from (Ctrl + O) to (Ctrl + K + O).
-- Add Open File shortcut key (Ctrl + O) at HELXAIC.
-- Fixes crashes when paste url at Youtube Downloader.
-- Fix "Current version" function, now it IS updated to 4.14.
-- Shuffle and Loop Mode now saved as last time state.
-- Make the last time duration track more accurate.
-- Now the covers of HELXAIC media can be editable.
-- Fixes some minor issues that I'm lazy to write down :)
-
-### 4.13
-
-- Add Estimated Size at Youtube Downloader.
-- Add `--no-playlist` flag so that even if the link is a playlist, it will only download the video you copied.
-- Improved Youtube Downloader, include:
-  -- Preview Image.
-  -- Youtube Downloader now is a panel instead of floating window.
-- Fixes duration bar bug.
-- Upgraded Internet Data usage Software detection.
-
-### 4.12
-
-- Improve Universal Scan detection (Add Epic Games, GOG Galaxy, Ubisoft Connect, Riot Games, EA App).
-- "Hardware Health" card turned to "System Vital" card.
-- Improve hardware detection.
-- From "Fan" tab to "Network" tab at HELXTATS.
-- Add "Network" tab... Obviously... That included:
-  -- Network Interface Name
-  -- Network Interface IP
-  -- Network Interface MAC
-  -- Network Interface Speed
-  -- Network Interface Status
-  -- Network Interface Type
-  -- Network Interface Up Time
-  -- Network Interface Bytes Sent
-  -- Network Interface Bytes Received
-  -- Network Interface Packets Sent
-  -- Network Interface Packets Received
-  -- Network Interface Errors
-  -- Network Interface Collisions
-- Fixes "Update Interval" label appeared at all Tab, now it only appears at "Quick Setup", "CPU", "Drive", "System Vital" Tab.
-
----
-
-## ✦ Development Status
-
-HELXAID is under active development.  
-Features, APIs, and internal structures may change as the project evolves.
-
-This project prioritizes:
-
-- Modular architecture
-- Low system overhead
-- Long-term maintainability
-- Practical system control over visual gimmicks
+For a detailed history of updates, feature additions, and bug fixes across all versions, please refer to [CHANGELOG.md](CHANGELOG.md) or visit the [Releases Tab](../../releases).
 
 ---
 
 ## ✦ Tech Stack & Platform
 
-- **Operating System:** Windows 10 / Windows 11
-- **Core Application Engine:** Python (PySide6)
-- **Native Hardware Layer:** C++ (with `pybind11` for direct Windows API & HID hooking)
-- **Frontend / Auxiliary Modules:** HTML5, CSS3, JavaScript (Vue.js compiled app for the ControlHub panel)
-- **System Automation Scripts:** PowerShell & VBScript (for silent execution & OS-level telemetry manipulation)
-- **Build System:** CMake (Native Module) & PyInstaller (Release Packaging)
+HELXAID combines a reactive Python front-end with high-performance native C++ engines and direct Windows OS subsystem hooks:
+
+- **Core Application Engine:** Python (PySide6 / Qt6) — reactive desktop GUI, custom widgets, and signal architecture
+- **Native Acceleration Layer (C++ / pybind11):**
+  - `helxaid_native` — Windows API hooks, standby memory purging (`EmptyWorkingSet`), and high-priority process injection
+  - `helxairo_native` — Low-level HID hardware input interception, rapid-fire macros, and DPI loop management
+  - `audio_spectrum_native` — Real-time FFT spectrum analysis engine for high-framerate audio visualizers
+  - `image_cache_native` — High-throughput image decoding, scaling, and RAM-optimized caching pipeline
+  - `innertube_fast_resolver` — Native media stream resolution and network payload parser
+  - `ambient_glow` — Dynamic dominant color extraction and ambient glow calculation
+- **Graphics & Rendering:** Hardware-accelerated OpenGL (`QOpenGLWidget` / CrosshairGL) & dynamic vector SVG rendering
+- **OS & Hardware Integration:**
+  - **Win32 & WinRT:** Windows System Media Transport Controls (SMTC), Bluetooth AVRCP, and Windows Lock Screen integration
+  - **Hardware Telemetry & Control:** RyzenAdj (AMD CPU/APU TDP tuning), HWiNFO & LibreHardwareMonitor (Shared Memory IPC)
+  - **Automation:** AutoHotkey (AHK Engine bridge), PowerShell, and VBScript for silent OS operations
+- **Cloud & Media Subsystems:**
+  - **Cloud Sync:** Firebase Realtime Database & Google OAuth2 Authentication
+  - **Media Engines:** DirectStream Hub, InnerTube API resolver, LRCLIB / Musixmatch synced lyrics engine, FFmpeg & yt-dlp
+  - **Browser Companion:** Chrome / Chromium Extension (Manifest V3) for browser audio stream synchronization
+- **Build & Packaging System:** CMake & MSVC (Native C++ Modules), PyInstaller (100% Portable release packaging), Inno Setup (Installer generation)
 
 ---
 
