@@ -110,6 +110,7 @@ HELXAID is built entirely on a modular architecture. Each module serves a highly
 [INFO] Sub-millisecond Hardware Input Injection ....... [ENABLED]
 [INFO] Project Codename: HELX[REDACTED]
 [LEAK] Early Prototype Highlights:
+  + Standalone .EXE Compressed by Nearly 50% vs Pre-v5 Builds
   + Zero-RAM Idle Footprint Optimization Pipeline
   + Real-time Dynamic Frame Pacing and Kernel Governor
   + Unified Autonomous Hardware Orchestration
