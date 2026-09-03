@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QThread, QObject, QEvent, QPoint
 from PySide6.QtGui import QCursor, QColor, QIcon, QFont, QKeySequence, QShortcut
+from AnimatedButton import HoverCloseButton
 
 class FloatingInvalidPathPanel(QFrame):
     """Floating error dialog panel matching HELXAIL Guide / Modal Panel design system.
@@ -23,45 +24,36 @@ class FloatingInvalidPathPanel(QFrame):
         self._is_dragging = False
         self._drag_start_pos = QPoint(0, 0)
 
-        import os
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon.svg").replace('\\', '/')
-        close_icon_hover_path = os.path.join(script_dir, "UI Icons", "close-icon-hover.svg").replace('\\', '/')
-
-        self.setStyleSheet(f"""
-            QFrame#FloatingInvalidPathPanel {{
+        self.setStyleSheet("""
+            QFrame#FloatingInvalidPathPanel {
                 background-color: #16161a;
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 12px;
-            }}
-            QWidget#TitleBar {{
+            }
+            QWidget#TitleBar {
                 background-color: rgba(0, 0, 0, 0.4);
                 border-top-left-radius: 12px;
                 border-top-right-radius: 12px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-            }}
-            QLabel#Title {{
+            }
+            QLabel#Title {
                 color: #FF5B06;
                 font-size: 13px;
                 font-weight: bold;
                 font-family: 'Orbitron', sans-serif;
                 background: transparent;
-            }}
-            QPushButton#CloseBtn {{
+            }
+            QPushButton#CloseBtn {
                 background: transparent;
                 border: none;
-                image: url('{close_icon_path}');
-            }}
-            QPushButton#CloseBtn:hover {{
-                image: url('{close_icon_hover_path}');
-            }}
-            QLabel#Message {{
+            }
+            QLabel#Message {
                 color: #E0E0E0;
                 font-size: 12px;
                 font-family: 'Orbitron', sans-serif;
                 background: transparent;
                 line-height: 1.4;
-            }}
+            }
         """)
 
         main_vbox = QVBoxLayout(self)
@@ -79,10 +71,8 @@ class FloatingInvalidPathPanel(QFrame):
         title_label = QLabel(title)
         title_label.setObjectName("Title")
 
-        close_btn = QPushButton()
+        close_btn = HoverCloseButton(size=16, icon_size=12, parent=title_bar)
         close_btn.setObjectName("CloseBtn")
-        close_btn.setFixedSize(16, 16)
-        close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.clicked.connect(self.hide_panel)
 
         tb_layout.addWidget(title_label, 0, Qt.AlignVCenter)
@@ -227,8 +217,9 @@ class MediaLibraryPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("mediaLibraryPage")
         self._library_data = []  # List of dicts representing added roots (folders or files)
-        self.audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
+        self.audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.hxstream', '.strm'}
         self._allow_same_folder = False
         
         # Track items mapping for search
@@ -558,12 +549,30 @@ class MediaLibraryPage(QWidget):
         orig_mimeData = self.tree.mimeData
         def _tree_mimeData(items):
             from PySide6.QtCore import QUrl
+            import os
+            import tempfile
             mime = orig_mimeData(items)
             urls = []
             for item in items:
                 path = item.data(1, Qt.UserRole)
-                if path:
+                if path and os.path.exists(path):
                     urls.append(QUrl.fromLocalFile(path))
+                elif path and (path.startswith('http://') or path.startswith('https://')):
+                    try:
+                        from StreamFileEngine import write_stream_file
+                        temp_drag_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_DragExport')
+                        os.makedirs(temp_drag_dir, exist_ok=True)
+                        track_meta = {
+                            'title': item.text(1) or 'Unknown Stream',
+                            'artist': item.text(2) or '',
+                            'duration': 0,
+                            'original_url': path
+                        }
+                        stream_file = write_stream_file(temp_drag_dir, track_meta, format_ext=".hxstream")
+                        if stream_file and os.path.exists(stream_file):
+                            urls.append(QUrl.fromLocalFile(stream_file))
+                    except Exception as e:
+                        print(f"[MediaLibrary] Error creating .hxstream for drag: {e}")
             if urls:
                 mime.setUrls(urls)
             return mime
@@ -772,6 +781,17 @@ class MediaLibraryPage(QWidget):
                 view_explorer_action = QAction("View at Explorer", self)
                 view_explorer_action.triggered.connect(lambda _, p=target_path: self._on_view_at_explorer(p))
                 menu.addAction(view_explorer_action)
+                
+                if target_path.lower().endswith(('.hxstream', '.strm')):
+                    from StreamFileEngine import read_stream_file
+                    st_data = read_stream_file(target_path)
+                    if st_data and st_data.get('original_url'):
+                        from PySide6.QtGui import QDesktopServices
+                        from PySide6.QtCore import QUrl
+                        open_browser_action = QAction("Open Stream in Browser", self)
+                        open_browser_action.triggered.connect(lambda _, u=st_data['original_url']: QDesktopServices.openUrl(QUrl(u)))
+                        menu.addAction(open_browser_action)
+                        
                 menu.addSeparator()
 
         if selected:
@@ -1041,111 +1061,157 @@ class MediaLibraryPage(QWidget):
             self._library_data = valid_items
             self._save_library()
 
-        self.tree.setSortingEnabled(False)
-        self.tree.clear()
-        self._all_track_items = []
-        self._all_folder_items = []
-        
-        total_tracks = 0
-        total_duration = 0
-        total_folders = 0
-        
-        import re
-        def natural_sort_key(text):
-            return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', str(text))]
+        self.tree.setUpdatesEnabled(False)
+        try:
+            self.tree.setSortingEnabled(False)
+            self.tree.clear()
+            self._all_track_items = []
+            self._all_folder_items = []
             
-        # Separate folders and files
-        folders = [item for item in self._library_data if item.get('is_folder', True)]
-        standalone_files = [item for item in self._library_data if not item.get('is_folder', True)]
-        
-        # Sort folders
-        def sort_folder(item_data):
-            return natural_sort_key(os.path.basename(item_data['path']))
+            total_tracks = 0
+            total_duration = 0
+            total_folders = 0
             
-        if self._sort_column is not None:
-            folders = sorted(folders, key=sort_folder, reverse=not self._sort_ascending)
-        
-        # Sort standalone files
-        def sort_file(item_data):
-            path = item_data['path']
-            track = self._get_track_meta(path)
-            if not track:
-                return natural_sort_key(path)
-            if self._sort_column == "title":
-                return natural_sort_key(track.get('title', ''))
-            elif self._sort_column == "artist":
-                return natural_sort_key(track.get('artist', ''))
-            elif self._sort_column == "album":
-                return natural_sort_key(track.get('album', ''))
-            elif self._sort_column == "length":
-                return track.get('duration', 0)
-            else:
-                return natural_sort_key(track.get('title', ''))
+            import re
+            def natural_sort_key(text):
+                return [int(c) if c.isdigit() else c.lower() for c in re.split(r'(\d+)', str(text))]
                 
-        if self._sort_column is not None:
-            standalone_files = sorted(standalone_files, key=sort_file, reverse=not self._sort_ascending)
-        
-        # Combine them with folders always on top
-        sorted_library_data = folders + standalone_files
-        
-        for item_data in sorted_library_data:
-            path = item_data['path']
-            is_folder = item_data.get('is_folder', True) # Backwards compat
+            # Separate folders and files
+            folders = [item for item in self._library_data if item.get('is_folder', True)]
+            standalone_files = [item for item in self._library_data if not item.get('is_folder', True)]
             
-            if is_folder:
-                total_folders += 1
-                folder_item = QTreeWidgetItem(self.tree)
-                folder_name = os.path.basename(path) or path
-                from PySide6.QtGui import QIcon
-                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
-                folder_item.setIcon(1, QIcon(icon_path))
-                folder_item.setText(1, folder_name)
-                folder_item.setData(0, Qt.UserRole, "folder")
-                folder_item.setData(1, Qt.UserRole, path)
+            # Sort folders
+            def sort_folder(item_data):
+                return natural_sort_key(os.path.basename(item_data['path']))
                 
-                folder_item.setText(0, str(total_folders))
-                folder_item.setTextAlignment(0, Qt.AlignCenter)
-                
-                # Make folder row highlighted
-                for c in range(5):
-                    folder_item.setBackground(c, QColor(40, 40, 45, 180))
-                    font = folder_item.font(c)
-                    font.setBold(True)
-                    folder_item.setFont(c, font)
-                    if c not in (0, 1):
-                        folder_item.setText(c, "")
-                        
-                self._all_folder_items.append(folder_item)
-                
-                # Scan and sort tracks inside folder
-                tracks = self._scan_folder(path)
-                def sort_track(track):
-                    if self._sort_column == "title":
-                        return natural_sort_key(track.get('title', ''))
-                    elif self._sort_column == "artist":
-                        return natural_sort_key(track.get('artist', ''))
-                    elif self._sort_column == "album":
-                        return natural_sort_key(track.get('album', ''))
-                    elif self._sort_column == "length":
-                        return track.get('duration', 0)
-                    else:
-                        return natural_sort_key(track.get('title', ''))
-                        
-                if self._sort_column is not None:
-                    sorted_tracks = sorted(tracks, key=sort_track, reverse=not self._sort_ascending)
+            if self._sort_column is not None:
+                folders = sorted(folders, key=sort_folder, reverse=not self._sort_ascending)
+            
+            # Sort standalone files
+            def sort_file(item_data):
+                path = item_data['path']
+                track = self._get_track_meta(path)
+                if not track:
+                    return natural_sort_key(path)
+                if self._sort_column == "title":
+                    return natural_sort_key(track.get('title', ''))
+                elif self._sort_column == "artist":
+                    return natural_sort_key(track.get('artist', ''))
+                elif self._sort_column == "album":
+                    return natural_sort_key(track.get('album', ''))
+                elif self._sort_column == "length":
+                    return track.get('duration', 0)
                 else:
-                    sorted_tracks = tracks
+                    return natural_sort_key(track.get('title', ''))
+                    
+            if self._sort_column is not None:
+                standalone_files = sorted(standalone_files, key=sort_file, reverse=not self._sort_ascending)
+            
+            # Combine them with folders always on top
+            sorted_library_data = folders + standalone_files
+            
+            for item_data in sorted_library_data:
+                path = item_data['path']
+                is_folder = item_data.get('is_folder', True) # Backwards compat
                 
-                for idx, track in enumerate(sorted_tracks):
-                    track_item = QTreeWidgetItem(folder_item)
+                if is_folder:
+                    total_folders += 1
+                    folder_item = QTreeWidgetItem(self.tree)
+                    folder_name = os.path.basename(path) or path
+                    from PySide6.QtGui import QIcon
+                    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
+                    folder_item.setIcon(1, QIcon(icon_path))
+                    folder_item.setText(1, folder_name)
+                    folder_item.setData(0, Qt.UserRole, "folder")
+                    folder_item.setData(1, Qt.UserRole, path)
+                    
+                    folder_item.setText(0, str(total_folders))
+                    folder_item.setTextAlignment(0, Qt.AlignCenter)
+                    
+                    # Make folder row highlighted
+                    for c in range(5):
+                        folder_item.setBackground(c, QColor(40, 40, 45, 180))
+                        font = folder_item.font(c)
+                        font.setBold(True)
+                        folder_item.setFont(c, font)
+                        if c not in (0, 1):
+                            folder_item.setText(c, "")
+                            
+                    self._all_folder_items.append(folder_item)
+                    
+                    # Scan and sort tracks inside folder
+                    tracks = self._scan_folder(path)
+                    def sort_track(track):
+                        if self._sort_column == "title":
+                            return natural_sort_key(track.get('title', ''))
+                        elif self._sort_column == "artist":
+                            return natural_sort_key(track.get('artist', ''))
+                        elif self._sort_column == "album":
+                            return natural_sort_key(track.get('album', ''))
+                        elif self._sort_column == "length":
+                            return track.get('duration', 0)
+                        else:
+                            return natural_sort_key(track.get('title', ''))
+                            
+                    if self._sort_column is not None:
+                        sorted_tracks = sorted(tracks, key=sort_track, reverse=not self._sort_ascending)
+                    else:
+                        sorted_tracks = tracks
+                    
+                    for idx, track in enumerate(sorted_tracks):
+                        track_item = QTreeWidgetItem(folder_item)
+                        track_item.setFlags(track_item.flags() & ~Qt.ItemIsDropEnabled)
+                        track_item.setData(0, Qt.UserRole, "track")
+                        track_item.setData(1, Qt.UserRole, track['path'])
+                        
+                        track_item.setText(0, "")
+                        track_item.setText(1, track['title'])
+                        track_item.setText(2, track['artist'])
+                        track_item.setText(3, track['album'])
+                        
+                        if track.get('is_stream') or track.get('is_online') or track.get('is_stream_file') or track['path'].lower().endswith(('.hxstream', '.strm')):
+                            stream_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "stream-signal-icon.svg").replace("\\", "/")
+                            if os.path.exists(stream_icon_path):
+                                track_item.setIcon(1, QIcon(stream_icon_path))
+                        
+                        dur = track['duration']
+                        if dur > 0:
+                            m, s = divmod(int(dur), 60)
+                            track_item.setText(4, f"{m}:{s:02d}")
+                        else:
+                            track_item.setText(4, "")
+                            
+                        track_item.setTextAlignment(0, Qt.AlignCenter)
+                        track_item.setTextAlignment(1, Qt.AlignLeft | Qt.AlignVCenter)
+                        track_item.setTextAlignment(2, Qt.AlignLeft | Qt.AlignVCenter)
+                        track_item.setTextAlignment(3, Qt.AlignLeft | Qt.AlignVCenter)
+                        track_item.setTextAlignment(4, Qt.AlignCenter)
+                        
+                        self._all_track_items.append(track_item)
+                        total_tracks += 1
+                        total_duration += dur
+                        
+                    folder_item.setExpanded(False)
+                else:
+                    # Top level file
+                    track = self._get_track_meta(path)
+                    if not track: continue
+                    
+                    track_item = QTreeWidgetItem(self.tree)
                     track_item.setFlags(track_item.flags() & ~Qt.ItemIsDropEnabled)
                     track_item.setData(0, Qt.UserRole, "track")
                     track_item.setData(1, Qt.UserRole, track['path'])
                     
+                    total_tracks += 1
                     track_item.setText(0, "")
                     track_item.setText(1, track['title'])
                     track_item.setText(2, track['artist'])
                     track_item.setText(3, track['album'])
+                    
+                    if track.get('is_stream') or track.get('is_online') or track.get('is_stream_file') or track['path'].lower().endswith(('.hxstream', '.strm')):
+                        stream_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "stream-signal-icon.svg").replace("\\", "/")
+                        if os.path.exists(stream_icon_path):
+                            track_item.setIcon(1, QIcon(stream_icon_path))
                     
                     dur = track['duration']
                     if dur > 0:
@@ -1155,54 +1221,22 @@ class MediaLibraryPage(QWidget):
                         track_item.setText(4, "")
                         
                     track_item.setTextAlignment(0, Qt.AlignCenter)
-                    track_item.setTextAlignment(1, Qt.AlignLeft | Qt.AlignVCenter)
-                    track_item.setTextAlignment(2, Qt.AlignLeft | Qt.AlignVCenter)
-                    track_item.setTextAlignment(3, Qt.AlignLeft | Qt.AlignVCenter)
-                    track_item.setTextAlignment(4, Qt.AlignCenter)
+                    track_item.setTextAlignment(4, Qt.AlignRight | Qt.AlignVCenter)
                     
                     self._all_track_items.append(track_item)
-                    total_tracks += 1
                     total_duration += dur
                     
-                folder_item.setExpanded(False)
-            else:
-                # Top level file
-                track = self._get_track_meta(path)
-                if not track: continue
-                
-                track_item = QTreeWidgetItem(self.tree)
-                track_item.setFlags(track_item.flags() & ~Qt.ItemIsDropEnabled)
-                track_item.setData(0, Qt.UserRole, "track")
-                track_item.setData(1, Qt.UserRole, track['path'])
-                
-                total_tracks += 1
-                track_item.setText(0, "")
-                track_item.setText(1, track['title'])
-                track_item.setText(2, track['artist'])
-                track_item.setText(3, track['album'])
-                
-                dur = track['duration']
-                if dur > 0:
-                    m, s = divmod(int(dur), 60)
-                    track_item.setText(4, f"{m}:{s:02d}")
-                else:
-                    track_item.setText(4, "")
-                    
-                track_item.setTextAlignment(0, Qt.AlignCenter)
-                track_item.setTextAlignment(4, Qt.AlignRight | Qt.AlignVCenter)
-                
-                self._all_track_items.append(track_item)
-                total_duration += dur
-                
-        # Update Stats
-        h, rem = divmod(int(total_duration), 3600)
-        m, s = divmod(rem, 60)
-        time_str = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
-        self.stats_label.setText(f"{total_tracks} tracks | {time_str} total | {total_folders} folder(s)")
-        
-        self._renumber_items()
-        self.tree.clearSelection()
-        self._update_item_selection_styles()
+            # Update Stats
+            h, rem = divmod(int(total_duration), 3600)
+            m, s = divmod(rem, 60)
+            time_str = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
+            self.stats_label.setText(f"{total_tracks} tracks | {time_str} total | {total_folders} folder(s)")
+            
+            self._renumber_items()
+            self.tree.clearSelection()
+            self._update_item_selection_styles()
+        finally:
+            self.tree.setUpdatesEnabled(True)
 
     def _on_item_double_clicked(self, item, column):
         role = item.data(0, Qt.UserRole)
@@ -1272,6 +1306,17 @@ class MediaLibraryPage(QWidget):
         if path in self._meta_cache and self._meta_cache[path].get('mtime') == mtime:
             return self._meta_cache[path]['meta']
             
+        ext = os.path.splitext(path)[1].lower()
+        if ext in ('.hxstream', '.strm'):
+            try:
+                from StreamFileEngine import read_stream_file
+                meta = read_stream_file(path)
+                if meta:
+                    self._meta_cache[path] = {'mtime': mtime, 'meta': meta}
+                    return meta
+            except Exception as e:
+                print(f"[MediaLibraryPage] Error reading stream file {path}: {e}")
+
         title = os.path.splitext(os.path.basename(path))[0]
         artist = ""
         album = ""
@@ -1279,7 +1324,6 @@ class MediaLibraryPage(QWidget):
         
         if MUTAGEN_AVAILABLE:
             try:
-                ext = os.path.splitext(path)[1].lower()
                 audio = None
                 
                 if ext == '.mp3':

@@ -1227,7 +1227,7 @@ class JunkItemsFloatingPanel(QDialog):
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         tag_icon_path = os.path.join(script_dir, "UI Icons", "tag-icon.svg")
-        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon-white.svg")
+        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon.svg")
 
         icon_lbl = QLabel()
         icon_lbl.setFixedSize(16, 16)

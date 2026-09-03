@@ -805,12 +805,12 @@ class TaskbarMediaWidget(QWidget):
         menu.addSeparator()
 
         # 4. Open HELXAIC Action
-        open_icon = _get_ui_icon("open-white.svg", fallback_svg=SVG_OPEN_APP, size=13)
+        open_icon = _get_ui_icon("open-browser.svg", fallback_svg=SVG_OPEN_APP, size=13)
         act_open = menu.addAction(open_icon, "Open HELXAIC")
         act_open.triggered.connect(self.title_clicked.emit)
 
         # 5. Hide Widget Action
-        hide_icon = _get_ui_icon("close-icon-white.svg", fallback_svg=SVG_CLOSE, size=12)
+        hide_icon = _get_ui_icon("close-icon.svg", fallback_svg=SVG_CLOSE, size=12)
         act_hide = menu.addAction(hide_icon, "Hide Widget")
         act_hide.triggered.connect(self.close_clicked.emit)
 

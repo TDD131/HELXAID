@@ -11,6 +11,9 @@ ENV/
 python/settings.json
 python/config.json
 python/music_page.json
+*firebase*.json
+credentials/
+python/credentials/
 
 # Local Data
 python/icons/

@@ -8,6 +8,7 @@ Features:
 Component Name: WindowsCustomPanel
 """
 
+from fast_stream_resolver import script_dir
 import os
 import sys
 import json
@@ -849,39 +850,31 @@ class HelrcusHotkeyGuidePanel(QFrame):
         self._is_dragging = False
         self._drag_start_pos = QPoint(0, 0)
         
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon.svg").replace('\\', '/')
-        close_icon_hover_path = os.path.join(script_dir, "UI Icons", "close-icon-hover.svg").replace('\\', '/')
-        
-        self.setStyleSheet(f"""
-            QFrame#HelrcusHotkeyGuidePanel {{
+        self.setStyleSheet("""
+            QFrame#HelrcusHotkeyGuidePanel {
                 background-color: rgba(22, 22, 26, 0.98);
                 border: none;
                 border-radius: 14px;
-            }}
-            QWidget#GuideTitleBar {{
+            }
+            QWidget#GuideTitleBar {
                 background-color: rgba(14, 14, 16, 0.7);
                 border-top-left-radius: 14px;
                 border-top-right-radius: 14px;
                 border: none;
-            }}
-            QLabel#GuideTitle {{
+            }
+            QLabel#GuideTitle {
                 color: #FFFFFF;
                 font-size: 14px;
                 font-weight: bold;
                 font-family: 'Orbitron';
                 border: none;
                 background: transparent;
-            }}
-            QPushButton#GuideCloseBtn {{
+            }
+            QPushButton#GuideCloseBtn {
                 background: transparent;
                 border: none;
-                image: url({close_icon_path});
-            }}
-            QPushButton#GuideCloseBtn:hover {{
-                image: url({close_icon_hover_path});
-            }}
-            QPushButton#GuideActionBtn {{
+            }
+            QPushButton#GuideActionBtn {
                 background-color: rgba(255, 91, 6, 0.25);
                 color: #FF5B06;
                 border: none;

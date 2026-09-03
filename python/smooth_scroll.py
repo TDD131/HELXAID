@@ -38,9 +38,25 @@ class SmoothScrollArea(QScrollArea):
         self._target = 0
         self._last_wheel_time = 0
         self._velocity = 0
-    
+        self._scroll_enabled = True
+
+    def set_scroll_enabled(self, enabled: bool):
+        """Enable or completely disable scrolling and reset position to top."""
+        self._scroll_enabled = enabled
+        if not enabled:
+            self._animation.stop()
+            self._target = 0
+            self.verticalScrollBar().setValue(0)
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        else:
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
     def wheelEvent(self, event: QWheelEvent):
         """Handle wheel with dynamic speed-based animation."""
+        if not getattr(self, '_scroll_enabled', True):
+            event.accept()
+            return
+
         delta = event.angleDelta().y()
         
         if delta == 0:

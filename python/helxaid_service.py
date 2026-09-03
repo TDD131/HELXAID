@@ -320,7 +320,7 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                         c.Open()
                         _service_lhm_computer = c
                         try:
-                            import System
+                            import System  # type: ignore[import-not-found, import-untyped]  # noqa: F401
                             System.GC.Collect()
                         except Exception:
                             pass

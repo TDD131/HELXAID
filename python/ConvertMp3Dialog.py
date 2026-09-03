@@ -171,6 +171,8 @@ class ConvertMp3Worker(QThread):
 
                 if self._current_proc.returncode == 0 and os.path.exists(output_file):
                     success_count += 1
+                    # Inject Apple Music canonical metadata, HD artwork, and synced lyrics
+                    self._inject_studio_metadata_and_lyrics(output_file, track)
                     self.fileCompleted.emit(input_path, output_file, True, "OK")
                 else:
                     failed_count += 1
@@ -188,6 +190,90 @@ class ConvertMp3Worker(QThread):
         final_pct = 100.0 if not self._is_cancelled else pct
         self.progressChanged.emit(total, total, "Finished", final_pct)
         self.conversionComplete.emit(success_count, failed_count, skipped_count, error_logs)
+
+    def _inject_studio_metadata_and_lyrics(self, output_file: str, track: Dict):
+        """Embed ID3 tags, 1200px Apple Music cover art, and synced lyrics into converted MP3, plus sidecar .lrc."""
+        try:
+            from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, USLT, ID3NoHeaderError
+            from CanonicalMetadataEngine import iTunesMetadataClient
+            from LyricsEngine import LRCLibClient, NetEaseClient, MusixmatchClient
+
+            title = track.get('title', '')
+            artist = track.get('artist', '')
+            album = track.get('album', '')
+            artwork_url = track.get('artwork_url', '')
+
+            # Resolve canonical metadata if missing album or artwork
+            if not album or not artwork_url:
+                canonical = iTunesMetadataClient.resolve_metadata(title, artist)
+                if canonical:
+                    title = canonical.title or title
+                    artist = canonical.artist or artist
+                    album = canonical.album or album
+                    artwork_url = canonical.artwork_url or artwork_url
+
+            # Fetch synchronized lyrics
+            lyrics_data = (
+                MusixmatchClient.fetch_lyrics(title, artist)
+                or NetEaseClient.fetch_lyrics(title, artist)
+                or LRCLibClient.fetch_lyrics(title, artist)
+            )
+
+            # Write sidecar .lrc file
+            if lyrics_data and lyrics_data.lines:
+                base_path = os.path.splitext(output_file)[0]
+                lrc_path = base_path + ".lrc"
+                try:
+                    with open(lrc_path, "w", encoding="utf-8") as f:
+                        if lyrics_data.is_synced:
+                            for line in lyrics_data.lines:
+                                if line.time_ms >= 0:
+                                    mins = line.time_ms // 60000
+                                    secs = (line.time_ms % 60000) / 1000.0
+                                    f.write(f"[{mins:02d}:{secs:05.2f}]{line.text}\n")
+                        else:
+                            f.write(lyrics_data.plain_text or "")
+                except Exception as e:
+                    print(f"[ConvertMp3] Sidecar LRC write error: {e}")
+
+            # Open or initialize ID3 tag
+            try:
+                audio = ID3(output_file)
+            except ID3NoHeaderError:
+                audio = ID3()
+
+            if title:
+                audio.add(TIT2(encoding=3, text=title))
+            if artist:
+                audio.add(TPE1(encoding=3, text=artist))
+            if album:
+                audio.add(TALB(encoding=3, text=album))
+            if lyrics_data and lyrics_data.plain_text:
+                audio.add(USLT(encoding=3, lang='eng', desc='', text=lyrics_data.plain_text))
+
+            # Download and embed cover artwork
+            if artwork_url:
+                try:
+                    import urllib.request, ssl
+                    ctx = ssl._create_unverified_context()
+                    req = urllib.request.Request(artwork_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=4.0, context=ctx) as img_resp:
+                        if img_resp.status == 200:
+                            img_data = img_resp.read()
+                            audio.add(APIC(
+                                encoding=3,
+                                mime='image/jpeg',
+                                type=3,  # Front cover
+                                desc='Cover',
+                                data=img_data
+                            ))
+                except Exception as e:
+                    print(f"[ConvertMp3] Cover art embed notice: {e}")
+
+            audio.save(output_file)
+            print(f"[ConvertMp3] Injected studio metadata, artwork, and lyrics into '{os.path.basename(output_file)}'")
+        except Exception as e:
+            print(f"[ConvertMp3] Metadata injection notice: {e}")
 
 
 class ConvertMp3Dialog(QDialog):

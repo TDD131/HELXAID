@@ -93,7 +93,7 @@ class LHMEmbeddedReader:
             self._initialized = True
             print("[LHM Engine] LibreHardwareMonitorLib opened successfully (100% Exclusive)")
             try:
-                import System
+                import System  # type: ignore[import-not-found, import-untyped]  # noqa: F401
                 System.GC.Collect()
                 System.GC.WaitForPendingFinalizers()
             except Exception:

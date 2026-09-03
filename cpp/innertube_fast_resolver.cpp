@@ -105,7 +105,7 @@ public:
     void init_session() {
         if (!h_session_) {
             h_session_ = WinHttpOpen(
-                L"com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip",
+                L"com.google.ios.youtube/19.29.1 (iPhone14,3; U; CPU iOS 16_5 like Mac OS X; en_US)",
                 WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                 WINHTTP_NO_PROXY_NAME,
                 WINHTTP_NO_PROXY_BYPASS,
@@ -159,8 +159,8 @@ public:
         WinHttpSetTimeouts(h_request, 1500, 2000, 3000, 4000);
 
         LPCWSTR headers = L"Content-Type: application/json\r\n"
-                          L"X-YouTube-Client-Name: 3\r\n"
-                          L"X-YouTube-Client-Version: 19.09.37\r\n"
+                          L"X-YouTube-Client-Name: 5\r\n"
+                          L"X-YouTube-Client-Version: 19.29.1\r\n"
                           L"Origin: https://www.youtube.com\r\n"
                           L"Accept: */*\r\n";
 
@@ -377,13 +377,16 @@ static ResolvedTrack resolve_video_id_internal(const std::string& video_id) {
         return result;
     }
 
-    // Build Innertube Android VR Client payload (highest direct unthrottled streaming URL yield)
+    // Build Innertube iOS Client payload (ultra-fast direct unthrottled streaming URL yield)
     std::string payload = "{"
         "\"context\":{"
             "\"client\":{"
-                "\"clientName\":\"ANDROID_VR\","
-                "\"clientVersion\":\"1.60.19\","
-                "\"deviceModel\":\"Quest 3\","
+                "\"clientName\":\"IOS\","
+                "\"clientVersion\":\"19.29.1\","
+                "\"deviceMake\":\"Apple\","
+                "\"deviceModel\":\"iPhone14,3\","
+                "\"osName\":\"iOS\","
+                "\"osVersion\":\"16.5.0.20F66\","
                 "\"hl\":\"en\","
                 "\"gl\":\"US\""
             "}"
@@ -391,10 +394,11 @@ static ResolvedTrack resolve_video_id_internal(const std::string& video_id) {
         "\"videoId\":\"" + video_id + "\","
         "\"playbackContext\":{"
             "\"contentPlaybackContext\":{"
-                "\"html5Preference\":\"HTML5_PREF_WANTS\","
-                "\"signatureTimestamp\":19800"
+                "\"html5Preference\":\"HTML5_PREF_WANTS\""
             "}"
-        "}"
+        "},"
+        "\"contentCheckOk\":true,"
+        "\"racyCheckOk\":true"
     "}";
 
     std::string response_body;

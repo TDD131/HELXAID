@@ -4,6 +4,7 @@ Macro Settings Panel
 A panel widget for the sidebar stack to configure macros, profiles, and layers.
 """
 
+from utils.drive_utils import psutil
 from PySide6.QtCore import QRectF
 import os
 import sys
@@ -13471,12 +13472,16 @@ class BossKeyController(QObject):
 
     def _init_audio(self):
         try:
-            import pythoncom
+            import pythoncom  # type: ignore[import-not-found, import-untyped]  # noqa: F401
             pythoncom.CoInitialize()
         except Exception:
             pass
         try:
-            from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+            try:
+                from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume  # type: ignore[import-not-found, import-untyped]  # noqa: F401
+            except (ImportError, AttributeError):
+                from pycaw.utils import AudioUtilities  # type: ignore[import-not-found, import-untyped]  # noqa: F401
+                from pycaw.pycaw import IAudioEndpointVolume  # type: ignore[import-not-found, import-untyped]  # noqa: F401
             speakers = AudioUtilities.GetSpeakers()
             if hasattr(speakers, 'EndpointVolume') and speakers.EndpointVolume:
                 self._audio_endpoint = speakers.EndpointVolume
@@ -13497,7 +13502,7 @@ class BossKeyController(QObject):
         if self._audio_endpoint:
             try:
                 try:
-                    import pythoncom
+                    import pythoncom  # type: ignore[import-not-found, import-untyped]  # noqa: F401
                     pythoncom.CoInitialize()
                 except Exception:
                     pass
@@ -13523,7 +13528,7 @@ class BossKeyController(QObject):
         if self._audio_endpoint:
             try:
                 try:
-                    import pythoncom
+                    import pythoncom  # type: ignore[import-not-found, import-untyped]  # noqa: F401
                     pythoncom.CoInitialize()
                 except Exception:
                     pass
@@ -13694,7 +13699,7 @@ class BossKeyController(QObject):
         mode = self.decoy_mode
         if mode == "desktop":
             try:
-                import pythoncom, win32com.client
+                import pythoncom, win32com.client  # type: ignore[import-not-found, import-untyped]  # noqa: F401
                 pythoncom.CoInitialize()
                 shell = win32com.client.Dispatch("Shell.Application")
                 shell.ToggleDesktop()
@@ -13753,7 +13758,7 @@ class BossKeyController(QObject):
                 if not launched:
                     # Final fallback: toggle desktop if launch fails
                     try:
-                        import pythoncom, win32com.client
+                        import pythoncom, win32com.client  # type: ignore[import-not-found, import-untyped]  # noqa: F401
                         pythoncom.CoInitialize()
                         win32com.client.Dispatch("Shell.Application").ToggleDesktop()
                     except Exception:
@@ -16977,7 +16982,7 @@ class MacroSettingsPanel(QWidget):
 
         self.disable_all_btn = FadeHoverButton("", is_secondary=True)
         self.disable_all_btn.setObjectName("helxairo_stopAll")
-        self.disable_all_btn.setIcon(QIcon(os.path.join(icons_dir, "close-icon-white.svg")))
+        self.disable_all_btn.setIcon(QIcon(os.path.join(icons_dir, "close-icon.svg")))
         self.disable_all_btn.setIconSize(QSize(16, 16))
         self.disable_all_btn.setFixedHeight(32)
         self.disable_all_btn.setToolTip("Stop All Macros")

@@ -161,48 +161,45 @@ class CookieExporter:
             os.makedirs(self._temp_dir, exist_ok=True)
         return self._temp_dir
     
-    def _get_cookie_db_path(self, browser: str) -> Optional[str]:
+    def _get_cookie_db_paths(self, browser: str) -> List[str]:
         """
-        Find the path to the browser's cookie database.
-        
-        Checks both the legacy 'Cookies' file and the newer 'Network/Cookies' location.
-        Also checks alternate profiles if the default profile doesn't have cookies.
+        Find all candidate cookie database paths across all browser profiles (Default, Profile 1..10, etc).
         
         Args:
             browser: Browser name ('chrome', 'edge', 'brave')
             
         Returns:
-            Absolute path to the cookie database file, or None if not found.
+            List of absolute paths to existing cookie database files.
         """
         if browser not in self.BROWSER_PATHS:
-            return None
+            return []
             
         localappdata = os.environ.get('LOCALAPPDATA', '')
         if not localappdata:
-            return None
+            return []
             
         browser_info = self.BROWSER_PATHS[browser]
         base_path = os.path.join(localappdata, browser_info['base'])
-        
-        # List of profiles to check (default first, then alternates)
-        profiles = [browser_info['default_profile']] + browser_info['alt_profiles']
-        
-        for profile in profiles:
-            profile_path = os.path.join(base_path, profile)
-            if not os.path.isdir(profile_path):
-                continue
-                
-            # Check both legacy and new cookie locations
-            cookie_paths = [
-                os.path.join(profile_path, 'Network', 'Cookies'),  # Chrome 114+ new location
-                os.path.join(profile_path, 'Cookies'),             # Legacy location
-            ]
+        if not os.path.isdir(base_path):
+            return []
             
-            for cookie_path in cookie_paths:
-                if os.path.isfile(cookie_path):
-                    return cookie_path
+        candidate_paths = []
+        
+        # Check standard default profile first
+        for prof in [browser_info['default_profile']] + [f'Profile {i}' for i in range(1, 10)]:
+            prof_dir = os.path.join(base_path, prof)
+            if not os.path.isdir(prof_dir):
+                continue
+            for sub in [os.path.join('Network', 'Cookies'), 'Cookies']:
+                c_path = os.path.join(prof_dir, sub)
+                if os.path.isfile(c_path) and c_path not in candidate_paths:
+                    candidate_paths.append(c_path)
                     
-        return None
+        return candidate_paths
+
+    def _get_cookie_db_path(self, browser: str) -> Optional[str]:
+        paths = self._get_cookie_db_paths(browser)
+        return paths[0] if paths else None
     
     def _copy_locked_file_with_backup_semantics(self, src_path: str, dst_path: str) -> bool:
         """
@@ -325,39 +322,74 @@ class CookieExporter:
             
         return None
     
-    def _decrypt_dpapi_value(self, encrypted_value: bytes) -> str:
+    def _get_master_key(self, browser: str) -> Optional[bytes]:
         """
-        Decrypt a DPAPI-encrypted cookie value.
-        
-        Chromium browsers on Windows encrypt cookie values using DPAPI
-        (Data Protection API) with the current user's credentials.
-        
-        Args:
-            encrypted_value: The encrypted cookie value bytes
-            
-        Returns:
-            Decrypted cookie value as a string.
-            
-        Raises:
-            DecryptionError: If decryption fails.
+        Extract and decrypt the AES-256-GCM master key from Chromium's Local State file.
+        """
+        try:
+            if browser not in self.BROWSER_PATHS:
+                return None
+            localappdata = os.environ.get('LOCALAPPDATA', '')
+            if not localappdata:
+                return None
+            base_path = os.path.join(localappdata, self.BROWSER_PATHS[browser]['base'])
+            local_state_path = os.path.join(base_path, 'Local State')
+            if not os.path.isfile(local_state_path):
+                return None
+                
+            import json, base64
+            with open(local_state_path, 'r', encoding='utf-8') as f:
+                local_state = json.load(f)
+            encrypted_key = base64.b64decode(local_state['os_crypt']['encrypted_key'])
+            if encrypted_key.startswith(b'DPAPI'):
+                encrypted_key = encrypted_key[5:]
+                
+            try:
+                import win32crypt
+                unprotected = win32crypt.CryptUnprotectData(encrypted_key, None, None, None, 0)
+                if unprotected and len(unprotected) > 1:
+                    return unprotected[1]
+            except Exception:
+                pass
+                
+            crypt32 = ctypes.WinDLL("crypt32.dll")
+            class DATA_BLOB(ctypes.Structure):
+                _fields_ = [('cbData', ctypes.wintypes.DWORD), ('pbData', ctypes.POINTER(ctypes.wintypes.BYTE))]
+            in_blob = DATA_BLOB()
+            in_blob.cbData = len(encrypted_key)
+            in_blob.pbData = (ctypes.wintypes.BYTE * len(encrypted_key))(*encrypted_key)
+            out_blob = DATA_BLOB()
+            crypt32.CryptUnprotectData.restype = ctypes.wintypes.BOOL
+            success = crypt32.CryptUnprotectData(ctypes.byref(in_blob), None, None, None, None, 0x01, ctypes.byref(out_blob))
+            if success and out_blob.pbData:
+                key = ctypes.string_at(out_blob.pbData, out_blob.cbData)
+                ctypes.windll.kernel32.LocalFree(out_blob.pbData)
+                return key
+        except Exception as e:
+            print(f"[CookieExporter] Failed to get master key for {browser}: {e}")
+        return None
+
+    def _decrypt_dpapi_value(self, encrypted_value: bytes, master_key: Optional[bytes] = None) -> str:
+        """
+        Decrypt a Chromium cookie value using AES-GCM (v10/v11) or legacy DPAPI.
         """
         if not encrypted_value:
             return ""
             
-        # Check if this is actually encrypted (Chromium prefix)
-        # Chromium cookies start with a version prefix: v10 (0x76 0x31 0x30)
-        # or v11 (0x76 0x31 0x31) for encrypted values
-        if len(encrypted_value) >= 3:
-            prefix = encrypted_value[:3]
-            if prefix == b'v10' or prefix == b'v11':
-                # This is a Chromium-encrypted value, strip the prefix
-                encrypted_value = encrypted_value[3:]
-        
-        # If the value is empty or just plaintext, return as-is
-        if not encrypted_value:
+        # Modern Chromium (v10 / v11 AES-256-GCM)
+        if len(encrypted_value) >= 31 and (encrypted_value.startswith(b'v10') or encrypted_value.startswith(b'v11')):
+            if master_key:
+                try:
+                    from Cryptodome.Cipher import AES
+                    nonce = encrypted_value[3:15]
+                    ciphertext = encrypted_value[15:-16]
+                    cipher = AES.new(master_key, AES.MODE_GCM, nonce)
+                    return cipher.decrypt(ciphertext).decode('utf-8', errors='ignore')
+                except Exception:
+                    pass
             return ""
-            
-        # Try to decode as UTF-8 first (might be unencrypted)
+
+        # Try to decode as plaintext UTF-8
         try:
             decoded = encrypted_value.decode('utf-8')
             if all(ord(c) < 128 or ord(c) > 31 for c in decoded):
@@ -365,49 +397,38 @@ class CookieExporter:
         except UnicodeDecodeError:
             pass
             
-        # Use DPAPI to decrypt
-        crypt32 = ctypes.windll.crypt32
-        
-        class DATA_BLOB(ctypes.Structure):
-            _fields_ = [
-                ('cbData', ctypes.wintypes.DWORD),
-                ('pbData', ctypes.POINTER(ctypes.wintypes.BYTE))
-            ]
-            
-        # Prepare input blob
-        input_blob = DATA_BLOB()
-        input_blob.cbData = len(encrypted_value)
-        input_blob.pbData = (ctypes.wintypes.BYTE * len(encrypted_value))(*encrypted_value)
-        
-        # Prepare output blob
-        output_blob = DATA_BLOB()
-        
-        # Decrypt
-        success = crypt32.CryptUnprotectData(
-            ctypes.byref(input_blob),
-            None,  # Description (optional)
-            None,  # Entropy (optional)
-            None,  # Reserved
-            None,  # Prompt structure
-            CRYPTPROTECT_UI_FORBIDDEN,
-            ctypes.byref(output_blob)
-        )
-        
-        if not success:
-            raise DecryptionError("DPAPI decryption failed")
-            
-        # Extract decrypted data
+        # Legacy DPAPI decryption
         try:
-            decrypted = ctypes.string_at(output_blob.pbData, output_blob.cbData)
-            return decrypted.decode('utf-8', errors='replace')
-        finally:
-            # Free the output buffer
-            ctypes.windll.kernel32.LocalFree(output_blob.pbData)
+            import win32crypt
+            unprotected = win32crypt.CryptUnprotectData(encrypted_value, None, None, None, 0)
+            if unprotected and len(unprotected) > 1 and unprotected[1]:
+                return unprotected[1].decode('utf-8', errors='replace')
+        except Exception:
+            pass
+
+        try:
+            crypt32 = ctypes.WinDLL("crypt32.dll")
+            class DATA_BLOB(ctypes.Structure):
+                _fields_ = [('cbData', ctypes.wintypes.DWORD), ('pbData', ctypes.POINTER(ctypes.wintypes.BYTE))]
+            input_blob = DATA_BLOB()
+            input_blob.cbData = len(encrypted_value)
+            input_blob.pbData = (ctypes.wintypes.BYTE * len(encrypted_value))(*encrypted_value)
+            output_blob = DATA_BLOB()
+            crypt32.CryptUnprotectData.restype = ctypes.wintypes.BOOL
+            success = crypt32.CryptUnprotectData(ctypes.byref(input_blob), None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, ctypes.byref(output_blob))
+            if success and output_blob.pbData:
+                decrypted = ctypes.string_at(output_blob.pbData, output_blob.cbData)
+                ctypes.windll.kernel32.LocalFree(output_blob.pbData)
+                return decrypted.decode('utf-8', errors='replace')
+        except Exception:
+            pass
+        return ""
     
     def _read_cookies_from_db(
         self, 
         db_path: str, 
-        domains: Optional[List[str]] = None
+        domains: Optional[List[str]] = None,
+        master_key: Optional[bytes] = None
     ) -> List[CookieEntry]:
         """
         Read cookies from a SQLite cookie database.
@@ -416,36 +437,25 @@ class CookieExporter:
             db_path: Path to the cookie database file
             domains: Optional list of domain filters (e.g., ['.youtube.com'])
                      If None, all cookies are returned.
+            master_key: Optional decrypted AES-256-GCM master key for modern Chromium
         
         Returns:
             List of CookieEntry objects.
-            
-        Raises:
-            sqlite3.Error: If database query fails.
         """
         cookies = []
-        
-        # Connect to the database in read-only mode
-        # URI mode allows us to specify ?mode=ro for read-only
         db_uri = f"file:{db_path}?mode=ro"
         
         try:
             conn = sqlite3.connect(db_uri, uri=True)
         except sqlite3.OperationalError:
-            # Fall back to normal connection if URI mode fails
             conn = sqlite3.connect(db_path)
             
         try:
             cursor = conn.cursor()
-            
-            # Build query with optional domain filter
             if domains:
-                # Create LIKE patterns for each domain
-                # Match both exact domain and subdomain patterns
                 domain_conditions = []
                 params = []
                 for domain in domains:
-                    # Clean domain for matching
                     clean_domain = domain.lstrip('.')
                     domain_conditions.append(
                         "(host_key = ? OR host_key LIKE ? OR host_key = ?)"
@@ -473,18 +483,14 @@ class CookieExporter:
                 host_key, path, is_secure, expires_utc, name, encrypted_value = row
                 
                 try:
-                    # Decrypt the cookie value
-                    value = self._decrypt_dpapi_value(encrypted_value)
-                except DecryptionError:
-                    # Skip cookies we can't decrypt
+                    value = self._decrypt_dpapi_value(encrypted_value, master_key=master_key)
+                except Exception:
                     continue
                     
-                # Convert Chrome timestamp to Unix timestamp
-                # Chrome uses Windows FILETIME (100-nanosecond intervals since Jan 1, 1601)
-                # FILETIME epoch: 11644473600 seconds before Unix epoch
+                if not value:
+                    continue
+                    
                 if expires_utc and expires_utc > 0:
-                    # Chrome stores timestamps in microseconds since 1601
-                    # Convert to Unix timestamp
                     try:
                         unix_timestamp = int((expires_utc / 1000000) - 11644473600)
                     except (ValueError, TypeError):
@@ -500,48 +506,26 @@ class CookieExporter:
                     name=name,
                     value=value
                 ))
-                
         finally:
             conn.close()
             
         return cookies
-    
+
     def _write_netscape_format(self, cookies: List[CookieEntry], output_path: str) -> None:
         """
         Write cookies to a file in Netscape format.
-        
-        This format is compatible with yt-dlp's --cookies option.
-        
-        Format:
-        # Netscape HTTP Cookie File
-        # https://curl.haxx.se/rfc/cookie_spec.html
-        # This is a generated file! Do not edit.
-        
-        domain	FLAG	path	secure	expiry	name	value
-        
-        Args:
-            cookies: List of CookieEntry objects to write
-            output_path: Path to the output file
         """
         with open(output_path, 'w', encoding='utf-8') as f:
-            # Write header
             f.write("# Netscape HTTP Cookie File\n")
             f.write("# https://curl.haxx.se/rfc/cookie_spec.html\n")
             f.write("# This file was generated by HELXAID Cookie Exporter\n")
             f.write("# Do not edit this file manually.\n\n")
-            
-            # Write each cookie
             for cookie in cookies:
-                # Format: domain	FLAG	path	secure	expiry	name	value
-                # FLAG is TRUE if domain starts with '.', FALSE otherwise
                 flag = "TRUE" if cookie.domain.startswith('.') else "FALSE"
                 secure = "TRUE" if cookie.secure else "FALSE"
-                
-                # Escape special characters in value (tab, newline, backslash)
                 value = cookie.value.replace('\\', '\\\\').replace('\t', '\\t').replace('\n', '\\n')
-                
                 f.write(f"{cookie.domain}\t{flag}\t{cookie.path}\t{secure}\t{cookie.expires}\t{cookie.name}\t{value}\n")
-    
+
     def export_cookies(
         self, 
         browser: str, 
@@ -550,35 +534,9 @@ class CookieExporter:
     ) -> Optional[str]:
         """
         Export cookies from the specified browser to a temporary file.
-        
-        This is the main entry point for cookie export. It handles:
-        1. Finding the browser's cookie database
-        2. Copying the database (with lock bypass if needed)
-        3. Reading and decrypting cookies
-        4. Writing to Netscape format file
-        
-        Args:
-            browser: Browser name ('chrome', 'edge', 'brave')
-            domains: Optional list of domains to filter (e.g., ['.youtube.com'])
-                     If None, exports all cookies (not recommended for privacy)
-            progress_callback: Optional callback for progress updates
-                               Signature: callback(message: str)
-        
-        Returns:
-            Path to the temporary cookie file, or None if export failed.
-            The caller is responsible for calling cleanup() when done.
-            
-        Raises:
-            BrowserNotFoundError: If browser is not installed or has no profile
-            DatabaseLockedError: If database is locked and all retries failed
-            CookieExporterError: For other export failures
         """
-        if progress_callback:
-            progress_callback(f"Finding {browser} profile...")
-            
-        # Find cookie database
-        db_path = self._get_cookie_db_path(browser)
-        if not db_path:
+        candidate_paths = self._get_cookie_db_paths(browser)
+        if not candidate_paths:
             raise BrowserNotFoundError(
                 f"Browser '{browser}' not found or has no profile. "
                 f"Try selecting a different browser."
@@ -587,65 +545,89 @@ class CookieExporter:
         if progress_callback:
             progress_callback("Preparing cookie database...")
             
-        # Copy database with retries
-        temp_db_path = None
-        last_error = None
+        master_key = self._get_master_key(browser)
+        all_errors = []
         
-        for attempt in range(self.max_retries):
+        for db_path in candidate_paths:
+            temp_db_path = self._copy_cookie_db(db_path)
+            if not temp_db_path:
+                continue
+                
             try:
-                temp_db_path = self._copy_cookie_db(db_path)
-                if temp_db_path:
-                    break
-            except Exception as e:
-                last_error = e
-                
-            if attempt < self.max_retries - 1:
-                delay = self.retry_delay * (2 ** attempt)  # Exponential backoff
                 if progress_callback:
-                    progress_callback(f"Retrying in {delay:.1f}s...")
-                time.sleep(delay)
-                
-        if not temp_db_path:
-            raise DatabaseLockedError(
-                f"Could not access {browser} cookie database. "
-                f"The database may be locked. Try closing {browser} completely "
-                f"(check System Tray) or select a different browser."
-            )
-            
-        try:
-            if progress_callback:
-                progress_callback("Reading cookies...")
-                
-            # Read cookies from the copied database
-            cookies = self._read_cookies_from_db(temp_db_path, domains)
-            
-            if not cookies:
-                # No cookies found - might be wrong domain or empty profile
-                return None
-                
-            if progress_callback:
-                progress_callback(f"Exported {len(cookies)} cookies")
-                
-            # Create output file
-            temp_dir = self._get_temp_dir()
-            self._temp_file_path = os.path.join(
-                temp_dir, 
-                f"yt_cookies_{uuid.uuid4().hex[:12]}.txt"
-            )
-            
-            # Write in Netscape format
-            self._write_netscape_format(cookies, self._temp_file_path)
-            
-            return self._temp_file_path
-            
-        finally:
-            # Clean up the temporary database copy
-            if temp_db_path and os.path.exists(temp_db_path):
-                try:
-                    os.remove(temp_db_path)
-                except OSError:
-                    pass
+                    progress_callback("Reading cookies...")
                     
+                cookies = self._read_cookies_from_db(temp_db_path, domains, master_key=master_key)
+                if cookies and len(cookies) > 0:
+                    if progress_callback:
+                        progress_callback(f"Exported {len(cookies)} cookies")
+                        
+                    temp_dir = self._get_temp_dir()
+                    self._temp_file_path = os.path.join(
+                        temp_dir, 
+                        f"yt_cookies_{uuid.uuid4().hex[:12]}.txt"
+                    )
+                    self._write_netscape_format(cookies, self._temp_file_path)
+                    return self._temp_file_path
+            except Exception as e:
+                all_errors.append(str(e))
+            finally:
+                if temp_db_path and os.path.exists(temp_db_path):
+                    try:
+                        os.remove(temp_db_path)
+                    except OSError:
+                        pass
+                        
+        raise DatabaseLockedError(
+            f"Could not access {browser} cookie database. "
+            f"The database may be locked. Try closing {browser} completely "
+            f"(check System Tray) or select a different browser."
+        )
+        
+    def get_cookies_dict(self, browser: str, domains: Optional[List[str]] = None) -> Dict[str, str]:
+        """
+        Extract cookies directly as a key-value dictionary for in-memory session synchronization.
+        """
+        paths = self._get_cookie_db_paths(browser)
+        master_key = self._get_master_key(browser)
+        for db_path in paths:
+            temp_db_path = self._copy_cookie_db(db_path)
+            if not temp_db_path:
+                continue
+            try:
+                cookies = self._read_cookies_from_db(temp_db_path, domains or YOUTUBE_DOMAINS, master_key=master_key)
+                if cookies and len(cookies) > 0:
+                    res = {}
+                    for c in cookies:
+                        res[c.name] = c.value
+                    if 'SAPISID' in res or '__Secure-3PAPISID' in res or 'SID' in res:
+                        return res
+            except Exception:
+                pass
+            finally:
+                if temp_db_path and os.path.exists(temp_db_path):
+                    try:
+                        os.remove(temp_db_path)
+                    except OSError:
+                        pass
+        return {}
+
+    def auto_import_youtube_cookies(self) -> Tuple[bool, str, Dict[str, str]]:
+        """
+        Automatically search Chrome, Edge, and Brave to extract active YouTube/Google session cookies.
+        
+        Returns:
+            Tuple of (success: bool, browser_name: str, cookies_dict: Dict[str, str])
+        """
+        for b in ['chrome', 'edge', 'brave']:
+            try:
+                c_dict = self.get_cookies_dict(b, YOUTUBE_DOMAINS)
+                if c_dict and ('SAPISID' in c_dict or '__Secure-3PAPISID' in c_dict or 'SID' in c_dict):
+                    return True, b, c_dict
+            except Exception:
+                continue
+        return False, "", {}
+
     def cleanup(self) -> None:
         """
         Remove the temporary cookie file if it exists.

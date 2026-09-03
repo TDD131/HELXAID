@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>HELXAID Sync</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      width: 290px;
+      background: #0E1017;
+      color: #E2E4E9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 13px 13px 14px 13px;
+      user-select: none;
+    }
+
+    /* Component: extHeader */
+    #extHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #181B26;
+    }
+
+    #extBrandRow {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .ext-brand-icon {
+      width: 14px;
+      height: 14px;
+      fill: #FF5B06;
+      flex-shrink: 0;
+    }
+
+    #extTitle {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.8px;
+      color: #FFFFFF;
+    }
+
+    #extTitle span {
+      color: #FF5B06;
+    }
+
+    #extVersionTag {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 8px;
+      font-weight: 700;
+      color: #6C7284;
+      background: #151824;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+    }
+
+    /* Component: extStatusCard */
+    #extStatusCard {
+      background: #141722;
+      border-radius: 6px;
+      padding: 9px 10px;
+      margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .ext-status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10px;
+    }
+
+    .ext-status-lbl {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 8.5px;
+      font-weight: 700;
+      color: #7E8496;
+      letter-spacing: 0.5px;
+    }
+
+    .ext-status-badge {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 8.5px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: #0E1017;
+    }
+
+    .status-active {
+      color: #00E599;
+      background: rgba(0, 229, 153, 0.08);
+    }
+
+    .status-checking {
+      color: #FFA726;
+      background: rgba(255, 167, 38, 0.08);
+    }
+
+    .status-error {
+      color: #FF4B4B;
+      background: rgba(255, 75, 75, 0.08);
+    }
+
+    /* Component: extSyncBtn */
+    #syncBtn {
+      width: 100%;
+      height: 32px;
+      background: #FF5B06;
+      color: #FFFFFF;
+      border: none;
+      border-radius: 5px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 9.5px;
+      font-weight: 900;
+      letter-spacing: 0.8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      transition: background 0.15s ease;
+      outline: none;
+    }
+
+    #syncBtn:hover:not(:disabled) {
+      background: #FF7020;
+    }
+
+    #syncBtn:active:not(:disabled) {
+      background: #E54E00;
+    }
+
+    #syncBtn:disabled {
+      background: #181B26;
+      color: #52586B;
+      cursor: not-allowed;
+    }
+
+    .ext-btn-svg {
+      width: 13px;
+      height: 13px;
+      fill: currentColor;
+      flex-shrink: 0;
+    }
+
+    @keyframes extRotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .ext-spin {
+      animation: extRotate 0.8s linear infinite;
+    }
+
+    /* Component: extMsgBox */
+    #msgBox {
+      margin-top: 8px;
+      font-size: 9px;
+      color: #6D7387;
+      text-align: center;
+      min-height: 13px;
+      line-height: 1.3;
+      letter-spacing: 0.3px;
+    }
+  </style>
+</head>
+<body id="extPopupBody">
+  <!-- Header -->
+  <div id="extHeader">
+    <div id="extBrandRow">
+      <img src="icons/icon48.png" style="width: 16px; height: 16px; border-radius: 3px; display: block;" alt="HELXAID">
+      <div id="extTitle">HELXAID <span>BRIDGE</span></div>
+    </div>
+    <span id="extVersionTag">v1.0</span>
+  </div>
+
+  <!-- Status Card -->
+  <div id="extStatusCard">
+    <div class="ext-status-row">
+      <span class="ext-status-lbl">HELXAID APP</span>
+      <span id="appStatus" class="ext-status-badge status-checking">CHECKING...</span>
+    </div>
+    <div class="ext-status-row">
+      <span class="ext-status-lbl">YOUTUBE LOGIN</span>
+      <span id="ytStatus" class="ext-status-badge status-checking">CHECKING...</span>
+    </div>
+  </div>
+
+  <!-- Sync Action Button -->
+  <button id="syncBtn" disabled>
+    <svg class="ext-btn-svg" viewBox="0 0 24 24">
+      <path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46A7.93 7.93 0 0020 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74A7.93 7.93 0 004 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/>
+    </svg>
+    <span id="syncBtnText">SYNC TO HELXAID</span>
+  </button>
+
+  <!-- Message Box -->
+  <div id="msgBox">Connecting to local helper service...</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

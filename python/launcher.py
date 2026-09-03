@@ -18,6 +18,39 @@ import threading
 import urllib.request
 import urllib.parse
 from datetime import datetime
+
+# Configure FFmpeg / QtMultimedia logging levels to suppress benign TLS close socket alerts
+os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia*=false;qt.multimedia.ffmpeg*=false;*.debug=false")
+os.environ.setdefault("AV_LOG_FORCE_NOCOLOR", "1")
+
+# Route any automatic FFmpeg report logs strictly into AppData/HELXAID/logs/ffmpeg instead of workspace root
+ffmpeg_log_dir = os.path.join(os.getenv('LOCALAPPDATA', os.getenv('APPDATA', '')), 'HELXAID', 'logs', 'ffmpeg')
+try:
+    os.makedirs(ffmpeg_log_dir, exist_ok=True)
+    os.environ["FFREPORT"] = f"file={ffmpeg_log_dir}\\ffmpeg-%p-%t.log:level=32"
+except Exception:
+    os.environ.pop("FFREPORT", None)
+
+def silence_ffmpeg_multimedia_logs():
+    """Silence FFmpeg C-runtime TLS socket and demuxing noise in QtMultimedia."""
+    try:
+        import PySide6
+        base_dir = os.path.dirname(PySide6.__file__)
+        for root, _, files in os.walk(base_dir):
+            for f in files:
+                if f.startswith("avutil") and f.endswith(".dll"):
+                    dll_path = os.path.join(root, f)
+                    try:
+                        lib = ctypes.CDLL(dll_path)
+                        if hasattr(lib, 'av_log_set_level'):
+                            # AV_LOG_FATAL = 8, AV_LOG_QUIET = -8
+                            lib.av_log_set_level(-8)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+silence_ffmpeg_multimedia_logs()
 from PySide6.QtWidgets import (
     QApplication, QWidget, QGridLayout, QLabel, QPushButton, QFileDialog,
     QVBoxLayout, QSlider, QMessageBox, QScrollArea, QMenu, QInputDialog,
@@ -30,7 +63,7 @@ from smooth_scroll import SmoothScrollArea
 from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDesktopServices, QLinearGradient, QImage, QFont, QFontMetrics, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread
 from integrations.cpu_controller import is_uxtu_installed, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
-from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton
+from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton, HoverCloseButton
 from DebugConsoleWidget import get_debug_console, toggle_debug_console
 
 # Global Feature Flags
@@ -633,8 +666,8 @@ try:
                     
             return None
                 
-        except Exception as e:
-            print(f"Thumbnail error: {e}")
+        except Exception:
+            pass
             
         return None
 
@@ -4149,41 +4182,33 @@ class DraggableFloatingPanel(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("FloatingPanel")
         
-        import os
-        close_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "close-icon.svg").replace('\\', '/')
-        close_icon_hover_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "close-icon-hover.svg").replace('\\', '/')
-
-        self.setStyleSheet(f'''
-            QFrame#FloatingPanel {{
+        self.setStyleSheet('''
+            QFrame#FloatingPanel {
                 background-color: rgba(35, 35, 35, 255);
                 border: 1px solid transparent;
                 border-radius: 12px;
-            }}
-            QWidget#TitleBar {{
+            }
+            QWidget#TitleBar {
                 background-color: rgba(0, 0, 0, 100);
                 border-top-left-radius: 10px;
                 border-top-right-radius: 10px;
-            }}
-            QLabel#Title {{
+            }
+            QLabel#Title {
                 color: #FFFFFF;
                 font-size: 14px;
                 font-weight: bold;
                 font-family: 'Orbitron', sans-serif;
-            }}
-            QLabel#Message {{
+            }
+            QLabel#Message {
                 color: #E0E0E0;
                 font-size: 13px;
                 font-family: 'Orbitron', sans-serif;
-            }}
-            QPushButton#CloseBtn {{
+            }
+            QPushButton#CloseBtn {
                 background: transparent;
                 border: none;
-                image: url({close_icon_path});
-            }}
-            QPushButton#CloseBtn:hover {{
-                image: url({close_icon_hover_path});
-            }}
-            QPushButton#OkBtn {{
+            }
+            QPushButton#OkBtn {
                 background-color: rgba(255, 91, 6, 40);
                 border: 1px solid #FF5B06;
                 border-radius: 6px;
@@ -4191,10 +4216,10 @@ class DraggableFloatingPanel(QFrame):
                 font-family: 'Orbitron', sans-serif;
                 font-size: 13px;
                 padding: 6px 20px;
-            }}
-            QPushButton#OkBtn:hover {{
+            }
+            QPushButton#OkBtn:hover {
                 background-color: rgba(255, 91, 6, 80);
-            }}
+            }
         ''')
 
         layout = QVBoxLayout(self)
@@ -4210,10 +4235,8 @@ class DraggableFloatingPanel(QFrame):
         self.title_label = QLabel(title)
         self.title_label.setObjectName("Title")
         
-        self.close_btn = QPushButton()
+        self.close_btn = HoverCloseButton(size=20, icon_size=12, parent=self.title_bar)
         self.close_btn.setObjectName("CloseBtn")
-        self.close_btn.setFixedSize(20, 20)
-        self.close_btn.setCursor(Qt.PointingHandCursor)
         self.close_btn.clicked.connect(self.close_panel)
         
         title_layout.addWidget(self.title_label)
@@ -7362,49 +7385,41 @@ class HelxailInfoWizard(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("WizardPanel")
         
-        import os
-        close_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "close-icon.svg").replace('\\', '/')
-        close_icon_hover_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "close-icon-hover.svg").replace('\\', '/')
-
-        self.setStyleSheet(f'''
-            QFrame#WizardPanel {{
+        self.setStyleSheet('''
+            QFrame#WizardPanel {
                 background-color: rgba(28, 28, 28, 250);
                 border: 1px solid transparent;
                 border-radius: 12px;
-            }}
-            QWidget#TitleBar {{
+            }
+            QWidget#TitleBar {
                 background-color: rgba(0, 0, 0, 100);
                 border-top-left-radius: 10px;
                 border-top-right-radius: 10px;
-            }}
-            QLabel#Title {{
+            }
+            QLabel#Title {
                 color: #FFFFFF;
                 font-size: 14px;
                 font-weight: bold;
                 font-family: 'Orbitron', sans-serif;
-            }}
-            QLabel#StepTitle {{
+            }
+            QLabel#StepTitle {
                 color: #FF5B06;
                 font-size: 16px;
                 font-weight: bold;
                 font-family: 'Orbitron', sans-serif;
                 margin-top: 10px;
-            }}
-            QLabel#StepDesc {{
+            }
+            QLabel#StepDesc {
                 color: #E0E0E0;
                 font-size: 13px;
                 font-family: 'Orbitron', sans-serif;
                 margin-top: 5px;
-            }}
-            QPushButton#CloseBtn {{
+            }
+            QPushButton#CloseBtn {
                 background: transparent;
                 border: none;
-                image: url({close_icon_path});
-            }}
-            QPushButton#CloseBtn:hover {{
-                image: url({close_icon_hover_path});
-            }}
-            QPushButton.WizardBtn {{
+            }
+            QPushButton.WizardBtn {
                 background-color: rgba(255, 91, 6, 40);
                 border: 1px solid #FF5B06;
                 border-radius: 6px;
@@ -7412,13 +7427,13 @@ class HelxailInfoWizard(QFrame):
                 font-family: 'Orbitron', sans-serif;
                 font-size: 13px;
                 padding: 6px 20px;
-            }}
-            QPushButton.WizardBtn:hover {{ background-color: rgba(255, 91, 6, 80); }}
-            QPushButton.WizardBtn:disabled {{
+            }
+            QPushButton.WizardBtn:hover { background-color: rgba(255, 91, 6, 80); }
+            QPushButton.WizardBtn:disabled {
                 background-color: rgba(100, 100, 100, 40);
                 border: 1px solid #666666;
                 color: #999999;
-            }}
+            }
         ''')
 
         layout = QVBoxLayout(self)
@@ -7431,10 +7446,8 @@ class HelxailInfoWizard(QFrame):
         title_layout.setContentsMargins(15, 8, 15, 8)
         self.title_label = QLabel("HELXAIL First-Time Guide")
         self.title_label.setObjectName("Title")
-        self.close_btn = QPushButton()
+        self.close_btn = HoverCloseButton(size=20, icon_size=12, parent=self.title_bar)
         self.close_btn.setObjectName("CloseBtn")
-        self.close_btn.setFixedSize(20, 20)
-        self.close_btn.setCursor(Qt.PointingHandCursor)
         self.close_btn.clicked.connect(self.close_panel)
         title_layout.addWidget(self.title_label)
         title_layout.addStretch()
@@ -7717,8 +7730,9 @@ class PageInitProfilerWindow(QWidget):
     
     Component Name: PageInitProfilerWindow
     """
-    def __init__(self, page_name: str, elapsed_ms: float):
+    def __init__(self, page_name: str, elapsed_ms: float, parent_window=None):
         super().__init__(None)  # Top-level standalone OS window
+        self._parent_window = parent_window
         self.setObjectName("PageInitProfilerWindow")
         self.setWindowTitle("Page Initialization Profiler")
         self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
@@ -7785,6 +7799,18 @@ class PageInitProfilerWindow(QWidget):
         ok_btn.clicked.connect(self.close)
         btn_layout.addWidget(ok_btn)
         main_layout.addLayout(btn_layout)
+
+    def closeEvent(self, event):
+        super().closeEvent(event)
+        try:
+            if hasattr(self, '_parent_window') and self._parent_window:
+                self._parent_window.activateWindow()
+                self._parent_window.setFocus()
+                if hasattr(self._parent_window, 'music_panel') and hasattr(self._parent_window.music_panel, 'resume_banner'):
+                    if hasattr(self._parent_window.music_panel.resume_banner, 'reset_and_start_timer'):
+                        self._parent_window.music_panel.resume_banner.reset_and_start_timer()
+        except Exception:
+            pass
 
 
 class TabInitProfilerWindow(QWidget):
@@ -8244,6 +8270,16 @@ class GameLauncher(QWidget):
         self.f12_shortcut = QShortcut(QKeySequence(Qt.Key_F12), self)
         self.f12_shortcut.setContext(Qt.ApplicationShortcut)
         self.f12_shortcut.activated.connect(self._trigger_inspector)
+
+        # Real-Size UI Layout Visualizer Toggle (Ctrl+F12)
+        try:
+            from UILayoutVisualizerOverlay import UILayoutVisualizerOverlay
+            self.ui_visualizer_overlay = UILayoutVisualizerOverlay(self)
+            self.ctrl_f12_shortcut = QShortcut(QKeySequence("Ctrl+F12"), self)
+            self.ctrl_f12_shortcut.setContext(Qt.ApplicationShortcut)
+            self.ctrl_f12_shortcut.activated.connect(self.ui_visualizer_overlay.toggle)
+        except Exception as e:
+            print(f"[UILayoutVisualizer] Overlay init notice: {e}")
         
         # Quick Search Global Shortcut (Ctrl+F)
         self.search_shortcut = QShortcut(QKeySequence.Find, self)
@@ -9496,7 +9532,21 @@ class GameLauncher(QWidget):
         # Also run once shortly after startup for initial trim
         QTimer.singleShot(3000, self._cleanup_memory)
         
+        # Idle Preloader: Warm up heavy panels (HELXAIC - Music Panel) in the background during idle time
+        # This completely eliminates the 2-3 second 'Not Responding' UI freeze when switching to HELXAIC!
+        QTimer.singleShot(600, self._idle_preload_panels)
+        
         print(f"[TIMING] GameLauncher.__init__ DONE")
+
+    def _idle_preload_panels(self):
+        """Preload heavy panels (HELXAIC) during idle startup so page switches are 0ms instant."""
+        if not hasattr(self, 'music_panel'):
+            try:
+                t0 = time.perf_counter()
+                self._setup_music_panel()
+                print(f"[Preload] HELXAIC (Music Panel) preloaded in {(time.perf_counter()-t0)*1000:.2f}ms during idle time")
+            except Exception as e:
+                print(f"[Preload] Music panel preload error: {e}")
 
     def open_launcher_youtube(self):
         QDesktopServices.openUrl(QUrl("https://rickrolled.com/"))
@@ -10105,10 +10155,13 @@ class GameLauncher(QWidget):
             print(f"[Page Profiler] {page_label} initialized in {elapsed_ms:.2f} ms")
 
             try:
-                self._profiler_win = PageInitProfilerWindow(page_label, elapsed_ms)
+                self._profiler_win = PageInitProfilerWindow(page_label, elapsed_ms, parent_window=self)
                 self._profiler_win.show()
                 self._profiler_win.raise_()
                 self._profiler_win.activateWindow()
+                if hasattr(self, 'music_panel') and hasattr(self.music_panel, 'resume_banner'):
+                    if hasattr(self.music_panel.resume_banner, 'pause_timer'):
+                        self.music_panel.resume_banner.pause_timer()
             except Exception as pe:
                 print(f"[Page Profiler Error] {pe}")
         
@@ -10175,14 +10228,10 @@ class GameLauncher(QWidget):
         
         # Music panel shortcuts (when on music page - panel index 2)
         is_music_panel_active = hasattr(self, 'content_stack') and hasattr(self, 'music_panel') and self.content_stack.currentWidget() == self.music_panel
-        if is_music_panel_active:
-            if hasattr(self, 'audio_player') and self.audio_player:
-                # Check if a button/input has focus (don't override their behavior)
-                from PySide6.QtWidgets import QApplication, QPushButton, QLineEdit, QComboBox, QSpinBox
-                focus_widget = QApplication.focusWidget()
-                is_interactive = isinstance(focus_widget, (QPushButton, QLineEdit, QComboBox, QSpinBox))
-                
-                # Cooldown guard (matches eventFilter's 300ms protection)
+        if is_music_panel_active and hasattr(self, 'music_panel') and self.music_panel:
+            from PySide6.QtWidgets import QApplication, QLineEdit
+            focus_widget = QApplication.focusWidget()
+            if not isinstance(focus_widget, (QLineEdit,)):
                 import time
                 if not hasattr(self, '_shortcut_last_fired'):
                     self._shortcut_last_fired = {}
@@ -10192,17 +10241,17 @@ class GameLauncher(QWidget):
                     return
                 self._shortcut_last_fired[event.key()] = now
                 
-                # Space: Toggle play/pause (only if no button focused)
-                if event.key() == Qt.Key_Space and not is_interactive:
-                    self.audio_player.toggle_play()
+                # Space: Toggle play/pause
+                if event.key() == Qt.Key_Space:
+                    self.music_panel._toggle_play()
                     return
-                # P: Previous track (only if not typing in input)
-                elif event.key() == Qt.Key_P and not isinstance(focus_widget, (QLineEdit,)):
-                    self.audio_player.prev_track()
+                # P: Previous track
+                elif event.key() == Qt.Key_P:
+                    self.music_panel._prev_track(force_wrap=True)
                     return
-                # N: Next track (only if not typing in input)
-                elif event.key() == Qt.Key_N and not isinstance(focus_widget, (QLineEdit,)):
-                    self.audio_player.next_track()
+                # N: Next track
+                elif event.key() == Qt.Key_N:
+                    self.music_panel._next_track(force_wrap=True)
                     return
 
         
@@ -10256,7 +10305,7 @@ class GameLauncher(QWidget):
             super().keyPressEvent(event)
 
     def _trigger_inspector(self):
-        """Component Inspector - show info about widget under cursor."""
+        """Component Inspector - show info about widget under cursor in a floating panel."""
         focus_widget = QApplication.focusWidget()
         if focus_widget:
             w = focus_widget
@@ -10271,103 +10320,22 @@ class GameLauncher(QWidget):
             pos = self.mapFromGlobal(cursor_pos)
             widget = self.childAt(pos)
         if widget:
-            # Build parent hierarchy
-            hierarchy = []
-            w = widget
-            while w:
-                name = w.objectName() or "(no name)"
-                hierarchy.append(f"{w.__class__.__name__}#{name}")
-                w = w.parent()
-            
-            # Detect component type
-            component_name = "Unknown"
-            code_ref = ""
-            widget_type = widget.__class__.__name__
-            
-            # Check for game buttons
-            if widget_type == "AnimatedGameButton":
-                for idx, (btn, game) in enumerate(self.game_buttons):
-                    if btn == widget:
-                        component_name = f"Game Button: \"{game.get('name', 'Unknown')}\""
-                        code_ref = f"self.game_buttons[{idx}]"
-                        break
-            elif widget_type == "QPushButton":
-                btn_text = widget.text() if hasattr(widget, 'text') else ""
-                if btn_text:
-                    component_name = f"Button: \"{btn_text}\""
-                if widget == getattr(self, 'settings_btn', None):
-                    code_ref = "self.settings_btn"
-                elif widget == getattr(self, 'add_btn', None):
-                    code_ref = "self.add_btn"
-                elif widget == getattr(self, 'refresh_btn', None):
-                    code_ref = "self.refresh_btn"
-                elif widget == getattr(self, 'discord_btn', None):
-                    code_ref = "self.discord_btn"
-            elif widget_type == "QLineEdit":
-                if widget == getattr(self, 'search_input', None):
-                    component_name = "Search Input"
-                    code_ref = "self.search_input"
-            elif widget_type == "QComboBox":
-                if widget == getattr(self, 'sort_combo', None):
-                    component_name = "Sort Dropdown"
-                    code_ref = "self.sort_combo"
-                elif widget == getattr(self, 'filter_combo', None):
-                    component_name = "Filter Dropdown"
-                    code_ref = "self.filter_combo"
-            elif widget_type == "QLabel":
-                label_text = widget.text() if hasattr(widget, 'text') else ""
-                if label_text:
-                    component_name = f"Label: \"{label_text[:30]}...\""
-            elif widget.objectName() == "gamesContainer":
-                component_name = "Games Container (Grid Background)"
-                code_ref = "self.games_container"
-            elif widget.objectName() == "gamesScrollArea":
-                component_name = "Games Scroll Area"
-                code_ref = "self.games_scroll"
+            try:
+                if hasattr(self, "_inspector_floating_panel") and self._inspector_floating_panel is not None:
+                    try:
+                        self._inspector_floating_panel.close_panel()
+                    except Exception:
+                        pass
+                    self._inspector_floating_panel = None
 
-            # Fallback dynamic resolution for any named component or accessible widget
-            if component_name == "Unknown":
-                if widget.accessibleName():
-                    component_name = widget.accessibleName()
-                elif widget.objectName():
-                    component_name = widget.objectName()
-                elif hasattr(widget, 'text') and widget.text():
-                    component_name = f"{widget_type}: \"{widget.text()[:30]}\""
-                elif widget.toolTip():
-                    component_name = f"{widget_type} ({widget.toolTip()[:30]})"
-                else:
-                    component_name = widget_type
-            
-            selector_text = f"{widget_type}#{widget.objectName()}" if widget.objectName() else f"<{widget_type}: set objectName first>"
-            accessible_text = f"Accessible Name: {widget.accessibleName()}" if widget.accessibleName() else ""
-            info = f"""Component Inspector
-
-Component: {component_name}
-Widget Type: {widget_type}
-Object Name: {widget.objectName() or '(not set)'}
-{accessible_text + chr(10) if accessible_text else ''}Size: {widget.width()} x {widget.height()}
-{f'Code Reference: {code_ref}' + chr(10) if code_ref else ''}
-Hierarchy (child → parent):
-{chr(10).join(f"  {i}. {h}" for i, h in enumerate(hierarchy[:6]))}
-
-Stylesheet Selector:
-  {selector_text}
-"""
-            msg = QMessageBox(self)
-            msg.setIcon(QMessageBox.Information)
-            msg.setWindowTitle("Component Inspector (F12) - HELXAID")
-            msg.setText(info)
-            msg.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
-            
-            # Auto copy to clipboard for convenience
-            QApplication.clipboard().setText(info)
-            
-            copy_btn = msg.addButton("Copy Info", QMessageBox.ActionRole)
-            msg.addButton(QMessageBox.Ok)
-            
-            msg.exec_()
-            if msg.clickedButton() == copy_btn:
-                QApplication.clipboard().setText(info)
+                from ComponentInspectorDialog import ComponentInspectorFloatingPanel, inspect_widget
+                info_data = inspect_widget(widget, main_window=self)
+                self._inspector_floating_panel = ComponentInspectorFloatingPanel(info_data, parent=self)
+                self._inspector_floating_panel.show_panel()
+            except Exception as e:
+                print(f"[ComponentInspector] Error launching inspector floating panel: {e}")
+                # Fallback to standard message box if custom panel fails
+                QMessageBox.information(self, "Component Inspector", f"Inspected: {widget.__class__.__name__}#{widget.objectName() or 'no-name'}")
         else:
             QMessageBox.information(self, "Component Inspector", "No widget under cursor")
 
@@ -10418,7 +10386,7 @@ Stylesheet Selector:
             QTimer.singleShot(600, lambda: save_settings(self.settings))
         finally:
             # Clear transition lock and perform clean final layout & background pass
-            def _finish_transition():
+            def _finish_transition(): 
                 self._is_toggling_fullscreen = False
                 self.reflow_grid()
                 self.apply_theme(update_root_stylesheet=False)
@@ -14417,7 +14385,15 @@ Stylesheet Selector:
             # (typically 30-50ms) while feeling instant for deliberate presses.
             COOLDOWN = 0.30
             
-            if event.type() in (QEvent.KeyPress, QEvent.ShortcutOverride):
+            if event.type() == QEvent.KeyPress:
+                # Never intercept keys if MainWindow is not the active window or obj is not a descendant of MainWindow
+                active_win = QApplication.activeWindow()
+                if active_win is not None and active_win != self:
+                    return False
+                if obj is not None and hasattr(self, 'isAncestorOf'):
+                    if obj != self and not self.isAncestorOf(obj):
+                        return False
+
                 key = event.key()
                 modifiers = event.modifiers()
                 if key == Qt.Key_A and bool(modifiers & Qt.ControlModifier):
@@ -14428,13 +14404,10 @@ Stylesheet Selector:
                     (key == Qt.Key_F11 and modifiers == Qt.NoModifier) or
                     (key == Qt.Key_Return and modifiers == Qt.AltModifier)
                 ):
-                    # Always allow F11 to toggle fullscreen. For Alt+Return, skip if in a text input
                     focus_widget = QApplication.focusWidget()
-                    if key == Qt.Key_F11 or not isinstance(focus_widget, QLineEdit):
+                    if key == Qt.Key_F11 or (focus_widget is not None and not any(t in focus_widget.__class__.__name__ for t in ("LineEdit", "TextEdit", "PlainTextEdit", "WebEngine", "RenderWidgetHost"))):
                         self.toggle_fullscreen()
                         return True
-                        
-
 
                 # Only handle key press events on music panel (index 1)
                 if hasattr(self, 'content_stack') and hasattr(self, 'music_panel') and self.content_stack.currentWidget() == self.music_panel:
@@ -14445,12 +14418,15 @@ Stylesheet Selector:
                             
                         focus_widget = QApplication.focusWidget()
                         
-                        # Skip if typing in input or recording hotkeys
-                        is_input_focus = (
-                            isinstance(focus_widget, QLineEdit) or 
-                            getattr(focus_widget, '_recording', False) or 
-                            (focus_widget is not None and focus_widget.__class__.__name__ == 'HotkeyRecordButton')
-                        )
+                        # Skip if typing in any text input, web engine view, or recording hotkeys
+                        is_input_focus = False
+                        if focus_widget is not None:
+                            cname = focus_widget.__class__.__name__
+                            is_input_focus = (
+                                any(t in cname for t in ("LineEdit", "TextEdit", "PlainTextEdit", "WebEngine", "RenderWidgetHost")) or 
+                                getattr(focus_widget, '_recording', False) or 
+                                cname == 'HotkeyRecordButton'
+                            )
                         if is_input_focus:
                             return False
                         
@@ -14482,10 +14458,7 @@ Stylesheet Selector:
                             return True
                         
                         # === Cooldown guard for discrete shortcuts ===
-                        # Reject the event if the same key was fired within
-                        # COOLDOWN seconds. Uses time.monotonic() which is
-                        # immune to wall-clock adjustments and works regardless
-                        # of keyboard driver autorepeat behavior.
+                        # Reject the event if the same key was fired within COOLDOWN seconds
                         if not hasattr(self, '_shortcut_last_fired'):
                             self._shortcut_last_fired = {}
                         now = time.monotonic()
@@ -14500,10 +14473,10 @@ Stylesheet Selector:
                             self.music_panel._toggle_play()
                             return True
                         elif key == Qt.Key_MediaNext:
-                            self.music_panel._next_track()
+                            self.music_panel._next_track(force_wrap=True)
                             return True
                         elif key == Qt.Key_MediaPrevious:
-                            self.music_panel._prev_track()
+                            self.music_panel._prev_track(force_wrap=True)
                             return True
                         elif key == Qt.Key_MediaStop:
                             if hasattr(self.music_panel, '_player') and self.music_panel._player:
@@ -14516,14 +14489,19 @@ Stylesheet Selector:
                             return True
                         # P: Previous track
                         elif key == Qt.Key_P:
-                            self.music_panel._prev_track()
+                            self.music_panel._prev_track(force_wrap=True)
                             return True
                         # N: Next track
                         elif key == Qt.Key_N:
-                            self.music_panel._next_track()
+                            self.music_panel._next_track(force_wrap=True)
                             return True
-                        # L: Loop toggle
-                        elif key == Qt.Key_L:
+                        # Ctrl + L: Toggle Lyrics View
+                        elif key == Qt.Key_L and bool(modifiers & Qt.ControlModifier):
+                            if hasattr(self.music_panel, '_toggle_lyrics_view'):
+                                self.music_panel._toggle_lyrics_view()
+                            return True
+                        # L (standalone without Ctrl): Loop toggle
+                        elif key == Qt.Key_L and not bool(modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier)):
                             self.music_panel.player_bar._toggle_loop()
                             return True
                         # Ctrl + R or F5: Reload currently viewed tracks
@@ -16604,6 +16582,9 @@ Stylesheet Selector:
         
         if hasattr(self, 'floating_loading_panel') and self.floating_loading_panel and self.floating_loading_panel.isVisible():
             self.floating_loading_panel.show_centered()
+
+        if hasattr(self, 'ui_visualizer_overlay') and self.ui_visualizer_overlay and self.ui_visualizer_overlay.isVisible():
+            self.ui_visualizer_overlay.setGeometry(self.rect())
         
         # During fullscreen transition animation, let OS animate smoothly without intermediate layout churn
         if getattr(self, '_is_toggling_fullscreen', False):
@@ -16796,69 +16777,12 @@ Stylesheet Selector:
         # Only bind buttons if HELXAIC has already been opened and initialized
         if hasattr(self, 'music_panel') and self.music_panel is not None:
             self._init_taskbar_buttons(hwnd)
-            if not hasattr(self, '_wndproc_hooked_for_taskbar') and hwnd:
-                self._install_wndproc_hook(hwnd)
-                self._wndproc_hooked_for_taskbar = True
         else:
             print("[Taskbar DEBUG] OS Taskbar init deferred: HELXAIC not opened yet.", flush=True)
 
     def _install_wndproc_hook(self, hwnd):
-        try:
-            import ctypes
-            from ctypes import wintypes
-            user32 = ctypes.windll.user32
-            
-            GWLP_WNDPROC = -4
-            WM_COMMAND = 0x0111
-            
-            # Setup correct types for 64-bit pointers
-            LRESULT = ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long
-            WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
-            
-            try:
-                GetWindowLongPtr = user32.GetWindowLongPtrW
-                SetWindowLongPtr = user32.SetWindowLongPtrW
-            except AttributeError:
-                GetWindowLongPtr = user32.GetWindowLongW
-                SetWindowLongPtr = user32.SetWindowLongW
-                
-            GetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int]
-            GetWindowLongPtr.restype = ctypes.c_void_p
-            
-            SetWindowLongPtr.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
-            SetWindowLongPtr.restype = ctypes.c_void_p
-            
-            CallWindowProc = user32.CallWindowProcW
-            CallWindowProc.argtypes = [ctypes.c_void_p, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-            CallWindowProc.restype = LRESULT
-            
-            self._orig_wndproc_ptr = GetWindowLongPtr(int(hwnd), GWLP_WNDPROC)
-            
-            def wndproc_hook(h, m, w, l):
-                try:
-                    if m == WM_COMMAND:
-                        hi = (w >> 16) & 0xFFFF
-                        if hi == 0x1800: # THBN_CLICKED
-                            button_id = w & 0xFFFF
-                            print(f"[Taskbar DEBUG] ctypes hook caught THBN_CLICKED: {button_id}", flush=True)
-                            if hasattr(self, 'taskbar_button_clicked'):
-                                print(f"[Taskbar DEBUG] ctypes hook emitting signal for button {button_id}", flush=True)
-                                self.taskbar_button_clicked.emit(button_id)
-                            else:
-                                print(f"[Taskbar ERROR] ctypes hook: taskbar_button_clicked signal NOT FOUND!", flush=True)
-                            return 0
-                except Exception as e:
-                    print(f"[Taskbar ERROR] Error in WndProc hook: {e}")
-                
-                return CallWindowProc(self._orig_wndproc_ptr, h, m, w, l)
-                
-            self._wndproc_hook_cb = WNDPROC(wndproc_hook)
-            cb_ptr = ctypes.cast(self._wndproc_hook_cb, ctypes.c_void_p)
-            
-            SetWindowLongPtr(int(hwnd), GWLP_WNDPROC, cb_ptr)
-            print(f"[Taskbar DEBUG] ctypes WndProc hooked for HWND {hex(hwnd)}", flush=True)
-        except Exception as e:
-            print(f"[Taskbar ERROR] Failed to hook WndProc: {e}")
+        """No-op: QWidget.nativeEvent natively handles Windows messages safely without ctypes hook."""
+        pass
 
     def nativeEvent(self, eventType, message):
         """Handle Windows native events."""
@@ -20171,21 +20095,39 @@ if __name__ == "__main__":
         def eventFilter(self, obj, event):
             if event.type() in (QEvent.KeyPress, QEvent.KeyRelease, QEvent.ShortcutOverride):
                 if hasattr(event, "key") and event.key() == Qt.Key_Space:
-                    # 1. Allow normal text typing in input fields
+                    # 1. Allow normal text typing in input fields & web engines
                     from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
                     if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit)):
                         return False
+                    if obj is not None and any(t in obj.__class__.__name__ for t in ("WebEngine", "RenderWidgetHost", "TextEdit", "LineEdit")):
+                        return False
                     fw = QApplication.focusWidget()
                     if isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)):
+                        return False
+                    if fw is not None and any(t in fw.__class__.__name__ for t in ("WebEngine", "RenderWidgetHost", "TextEdit", "LineEdit")):
+                        return False
+                    
+                    # If active window is a separate dialog/window, do not block space
+                    active_win = QApplication.activeWindow()
+                    if active_win is not None and self._launcher_ref is not None and active_win != self._launcher_ref:
                         return False
                     
                     # 2. Allow key capture / recorder widgets (e.g. TacticalInputCatcherButton)
                     if getattr(obj, "_is_capturing", False):
                         return False
                     
-                    # 3. Allow HELXAIC (Music Player) where Space is play/pause
+                    # 3. Handle HELXAIC (Music Player) Spacebar Play/Pause
                     if self._is_in_helxaic(obj):
-                        return False
+                        if event.type() == QEvent.KeyPress:
+                            now = time.monotonic()
+                            if not hasattr(self, '_last_space_time'):
+                                self._last_space_time = 0.0
+                            if now - self._last_space_time >= 0.25:
+                                self._last_space_time = now
+                                if self._launcher_ref and hasattr(self._launcher_ref, 'music_panel') and self._launcher_ref.music_panel:
+                                    self._launcher_ref.music_panel._toggle_play()
+                        event.accept()
+                        return True
                     
                     # 4. Block Spacebar from clicking buttons, sliders, tabs, checklists everywhere else!
                     event.accept()
@@ -20193,19 +20135,19 @@ if __name__ == "__main__":
             return False
 
         def _is_in_helxaic(self, obj) -> bool:
+            if self._launcher_ref:
+                if hasattr(self._launcher_ref, 'content_stack') and hasattr(self._launcher_ref, 'music_panel'):
+                    if self._launcher_ref.content_stack.currentWidget() == self._launcher_ref.music_panel:
+                        return True
             if not obj:
                 return False
             w = obj
             while w:
                 cname = w.__class__.__name__
-                oname = w.objectName() or ""
-                if "Music" in cname or "MediaLibrary" in cname or "music" in oname.lower() or "helxaic" in oname.lower():
+                oname = (w.objectName() or "").lower()
+                if any(k in cname for k in ("Music", "MediaLibrary", "Stream", "Lyrics", "Visualizer", "DirectStream")) or any(k in oname for k in ("music", "helxaic", "stream", "track", "playlist", "mix")):
                     return True
                 w = w.parent() if hasattr(w, "parent") else None
-            
-            if self._launcher_ref and getattr(self._launcher_ref, "current_panel_index", -1) == 1:
-                return True
-                
             return False
 
     # Install the global filter to protect all UI controls from Spacebar activation
@@ -20414,6 +20356,7 @@ if __name__ == "__main__":
 
     # Check if Zero-UAC should be initialized in Software Initialize Panel
     try:
+        _s = load_settings()
         if _s.get("init_zero_uac_in_panel", False):
             from integrations.cpu_controller import is_service_running
             if is_service_running():

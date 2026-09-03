@@ -9,7 +9,7 @@ Features:
 from PySide6.QtCore import QVariantAnimation
 from PySide6.QtWidgets import QPushButton
 from PySide6.QtCore import QSize, QTimer, Property, QPropertyAnimation, QEasingCurve, Qt, QRectF, Signal
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QIcon, QLinearGradient, QFontMetrics
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QIcon, QLinearGradient, QFontMetrics, QFont
 
 
 class AnimatedButton(QPushButton):
@@ -40,7 +40,17 @@ class AnimatedButton(QPushButton):
         self._force_hover_fill = False
         self._hover_mode = "slide"  # "slide" or "fade"
         self._gradient_direction = "horizontal"  # "horizontal" or "vertical"
+        self._border_radius = None
+        self._custom_font_size = None
     
+    def setBorderRadius(self, radius: float):
+        """Set custom corner radius for the button (e.g. 5.0 or 6.0)."""
+        self._border_radius = float(radius)
+
+    def setFontSize(self, size: int):
+        """Set custom font point size (e.g. 9 or 10)."""
+        self._custom_font_size = int(size)
+
     def setHoverMode(self, mode: str):
         """Set hover animation mode: 'slide' (sliding wipe) or 'fade' (full button fade)."""
         self._hover_mode = mode
@@ -126,8 +136,11 @@ class AnimatedButton(QPushButton):
         painter.setRenderHint(QPainter.Antialiasing)
         
         rect = self.rect()
-        adjusted_rect = QRectF(rect.adjusted(1, 1, -1, -1))
-        radius = min(12.0, adjusted_rect.height() / 2.0)  # Border radius (matches tech aesthetic)
+        adjusted_rect = QRectF(0.5, 0.5, max(0.0, float(rect.width() - 1.0)), max(0.0, float(rect.height() - 1.0)))
+        if self._border_radius is not None:
+            radius = self._border_radius
+        else:
+            radius = min(4.0 if adjusted_rect.height() <= 32 else 12.0, adjusted_rect.height() / 2.0)
         
         if self._hover_mode == "fade":
             # Fade hover mode: full-surface opacity fade matching FadeHoverButton / helxairo_editorDeleteKeyBtn
@@ -162,9 +175,21 @@ class AnimatedButton(QPushButton):
             
             # Text stays crisp white Orbitron matching helxairo_editorModifyKeyBtn
             painter.setPen(QColor(255, 255, 255))
-            font = self.font()
-            font.setFamily("Orbitron")
+            font = QFont("Orbitron")
             font.setBold(True)
+            if hasattr(self, '_custom_pixel_size') and self._custom_pixel_size is not None:
+                font.setPixelSize(self._custom_pixel_size)
+            elif self._custom_font_size is not None:
+                if self._custom_font_size <= 13:
+                    font.setPixelSize(self._custom_font_size)
+                else:
+                    font.setPointSize(self._custom_font_size)
+            elif adjusted_rect.height() <= 32:
+                font.setPixelSize(10)
+            else:
+                font = self.font()
+                font.setFamily("Orbitron")
+                font.setBold(True)
             painter.setFont(font)
             painter.drawText(rect, Qt.AlignCenter, self.text())
             painter.end()
@@ -233,9 +258,21 @@ class AnimatedButton(QPushButton):
                 painter.drawPixmap(x, y, pixmap)
         else:
             painter.setPen(text_color)
-            font = self.font()
-            font.setFamily("Orbitron")
+            font = QFont("Orbitron")
             font.setBold(True)
+            if hasattr(self, '_custom_pixel_size') and self._custom_pixel_size is not None:
+                font.setPixelSize(self._custom_pixel_size)
+            elif self._custom_font_size is not None:
+                if self._custom_font_size <= 13:
+                    font.setPixelSize(self._custom_font_size)
+                else:
+                    font.setPointSize(self._custom_font_size)
+            elif adjusted_rect.height() <= 32:
+                font.setPixelSize(10)
+            else:
+                font = self.font()
+                font.setFamily("Orbitron")
+                font.setBold(True)
             painter.setFont(font)
             painter.drawText(rect, Qt.AlignCenter, self.text())
         
@@ -782,3 +819,62 @@ class FadeHoverButton(QPushButton):
                     painter.drawText(text_rect, self._text_align | Qt.AlignVCenter, self.text())
 
         painter.end()
+
+
+class HoverCloseButton(QPushButton):
+    """
+    Component Name: hoverCloseButton
+    Interactive close button that dynamically recolors close-icon.svg via code.
+    Idle color: #999999 (soft gray), Hover color: #FF5B06 (HELXAID cyber orange).
+    """
+    def __init__(self, size: int = 20, icon_size: int = 12, idle_color: str = "#999999", hover_color: str = "#FF5B06", parent=None):
+        super().__init__(parent)
+        self.setObjectName("hoverCloseButton")
+        self.setFixedSize(size, size)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("QPushButton { background: transparent; border: none; padding: 0px; margin: 0px; }")
+        
+        self._icon_size = icon_size
+        self._idle_icon = self._render_svg_icon(idle_color, icon_size)
+        self._hover_icon = self._render_svg_icon(hover_color, icon_size)
+        
+        self.setIcon(self._idle_icon)
+        self.setIconSize(QSize(icon_size, icon_size))
+        
+    @staticmethod
+    def _render_svg_icon(color_hex: str, size: int) -> QIcon:
+        import os, re
+        from PySide6.QtSvg import QSvgRenderer
+        from PySide6.QtGui import QPixmap
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        svg_path = os.path.join(base_dir, "UI Icons", "close-icon.svg")
+        content = ""
+        if os.path.exists(svg_path):
+            try:
+                with open(svg_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception:
+                content = ""
+        if not content:
+            content = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
+            
+        content = re.sub(r'stroke="#[0-9a-fA-F]{3,8}"', f'stroke="{color_hex}"', content)
+        content = re.sub(r'fill="#[0-9a-fA-F]{3,8}"', f'fill="{color_hex}"', content)
+        
+        renderer = QSvgRenderer(content.encode('utf-8'))
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        renderer.render(p)
+        p.end()
+        return QIcon(pix)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.setIcon(self._hover_icon)
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.setIcon(self._idle_icon)
