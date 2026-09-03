@@ -39,8 +39,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QSettings, QVariantAnimation, QEasingCurve, QRectF, QPoint, QUrl, QPropertyAnimation
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QLinearGradient, QGradient, QFont, QFontMetrics, QPen
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineSettings, QWebEngineScript, QWebEnginePage
-from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from CanonicalMetadataEngine import CanonicalSearchEngine, InnertubeSearchClient
 from TasteProfileEngine import TasteProfileEngine
@@ -533,142 +531,7 @@ class StreamSearchWorker(QThread):
                 self.searchFailed.emit(self.seq_id, str(e))
 
 
-class YouTubeWebEnginePage(QWebEnginePage):
-    """Custom WebEnginePage that returns consistent Edge Desktop UA for all URLs."""
-    def userAgentForUrl(self, url: QUrl) -> str:
-        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
 
-
-class YouTubeWebLoginWindow(QMainWindow):
-    """
-    Independent Top-Level Native Browser Window for Google / YouTube Music Web Sign-In.
-    Component Name: youTubeWebLoginWindow
-    """
-    loginCompleted = Signal(bool, str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent, Qt.Window | Qt.WindowTitleHint | Qt.WindowCloseButtonHint | Qt.WindowMinMaxButtonsHint)
-        self.setObjectName("youTubeWebLoginWindow")
-        self.setWindowTitle("Sign In to YouTube Music - HELXAID")
-        self.setWindowModality(Qt.ApplicationModal)
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
-        self.resize(560, 720)
-        self.setStyleSheet("""
-            QMainWindow#youTubeWebLoginWindow {
-                background-color: #12141D;
-            }
-        """)
-        self._auth_completed = False
-        self.captured_cookies: Dict[str, str] = {}
-        self._setup_ui()
-
-    def _setup_ui(self):
-        central = QWidget(self)
-        self.setCentralWidget(central)
-        layout = QVBoxLayout(central)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Progress / Status Strip
-        self.progress_bar = QProgressBar(self)
-        self.progress_bar.setObjectName("ytLoginProgressBar")
-        self.progress_bar.setFixedHeight(3)
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar { background: #161822; border: none; }
-            QProgressBar::chunk { background: #FF0000; }
-        """)
-        layout.addWidget(self.progress_bar)
-
-        self.web_view = QWebEngineView(self)
-        self.web_view.setObjectName("ytWebLoginEngineView")
-        self.web_view.setFocusPolicy(Qt.StrongFocus)
-
-        custom_page = YouTubeWebEnginePage(self.web_view)
-        self.web_view.setPage(custom_page)
-
-        settings = self.web_view.settings()
-        settings.setAttribute(QWebEngineSettings.FocusOnNavigationEnabled, True)
-        settings.setAttribute(QWebEngineSettings.JavascriptCanAccessClipboard, True)
-        settings.setAttribute(QWebEngineSettings.JavascriptEnabled, True)
-        settings.setAttribute(QWebEngineSettings.LocalStorageEnabled, True)
-        settings.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
-        settings.setAttribute(QWebEngineSettings.WebGLEnabled, True)
-
-        profile = custom_page.profile()
-        edge_ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
-        profile.setHttpUserAgent(edge_ua)
-
-        # Stealth script to match JavaScript navigator fingerprint with authentic Windows Edge Desktop
-        stealth_script = QWebEngineScript()
-        stealth_script.setName("edge_stealth_script")
-        stealth_script.setInjectionPoint(QWebEngineScript.DocumentCreation)
-        stealth_script.setWorldId(QWebEngineScript.MainWorld)
-        stealth_script.setRunsOnSubFrames(True)
-        stealth_script.setSourceCode("""
-            try {
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
-                Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.', configurable: true });
-                Object.defineProperty(navigator, 'platform', { get: () => 'Win32', configurable: true });
-                if (!window.chrome) {
-                    window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
-                }
-            } catch(e) {}
-        """)
-        profile.scripts().insert(stealth_script)
-        
-        web_cache_dir = os.path.join(os.getenv("APPDATA", ""), "HELXAID", "web_profile")
-        os.makedirs(web_cache_dir, exist_ok=True)
-        profile.setPersistentStoragePath(web_cache_dir)
-        profile.setPersistentCookiesPolicy(QWebEngineProfile.ForcePersistentCookies)
-
-        cookie_store = profile.cookieStore()
-        cookie_store.cookieAdded.connect(self._on_cookie_added)
-
-        self.web_view.loadProgress.connect(self.progress_bar.setValue)
-        self.web_view.loadFinished.connect(self._on_load_finished)
-        self.web_view.urlChanged.connect(self._on_url_changed)
-
-        layout.addWidget(self.web_view, stretch=1)
-
-        # Load YouTube Music web portal directly
-        login_url = "https://music.youtube.com/"
-        self.web_view.load(QUrl(login_url))
-
-    def _on_cookie_added(self, cookie):
-        name = cookie.name().data().decode("utf-8", errors="ignore")
-        val = cookie.value().data().decode("utf-8", errors="ignore")
-        domain = cookie.domain()
-        if "youtube.com" in domain or "google.com" in domain:
-            self.captured_cookies[name] = val
-            self._check_login_state()
-
-    def _on_url_changed(self, url):
-        url_str = url.toString()
-        if "music.youtube.com" in url_str:
-            self._check_login_state()
-
-    def _on_load_finished(self, ok: bool):
-        self.progress_bar.hide()
-        if ok:
-            self.web_view.setFocus()
-            self.activateWindow()
-            self._check_login_state()
-
-    def _check_login_state(self):
-        if self._auth_completed:
-            return
-        sapisid = self.captured_cookies.get("SAPISID") or self.captured_cookies.get("__Secure-3PAPISID") or self.captured_cookies.get("SID")
-        url_str = self.web_view.url().toString()
-        
-        # When session token is received and user reached YouTube Music
-        if sapisid and ("accounts.google.com" not in url_str or "music.youtube.com" in url_str):
-            self._auth_completed = True
-            user_name = self.captured_cookies.get("ACCOUNT_NAME") or self.captured_cookies.get("LOGIN_INFO") or "Google / YouTube User"
-            ok, msg = YouTubeAccountEngine.get_instance().import_cookies_dict(self.captured_cookies, user_name)
-            if ok:
-                self.loginCompleted.emit(True, user_name)
-                QTimer.singleShot(350, self.close)
 
 
 
@@ -1982,16 +1845,7 @@ class CloudProfileView(QWidget):
         self.accountsChanged.emit()
 
     def _open_web_login(self):
-        self._yt_web_window = YouTubeWebLoginWindow(None)
-        self._yt_web_window.loginCompleted.connect(self._on_web_login_completed)
-        self._yt_web_window.show()
-        self._yt_web_window.raise_()
-        self._yt_web_window.activateWindow()
-
-    def _on_web_login_completed(self, ok: bool, user_name: str):
-        if ok:
-            self.refresh_state()
-            self.accountsChanged.emit()
+        self._open_youtube_cookie_dialog()
 
     def _open_google_settings(self):
         dialog = GoogleCredentialsDialog(self)

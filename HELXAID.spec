@@ -74,9 +74,11 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
-    excludes=['torch', 'scipy', 'pandas', 'matplotlib', 'tkinter'],
-    noarchive=False,
+    excludes=[
+        'torch', 'scipy', 'pandas', 'matplotlib', 'tkinter',
+        'PySide6.QtWebEngineCore', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebEngineQuick',
+        'PySide6.Qt3DCore', 'PySide6.Qt3DRender', 'PySide6.QtQuick3D', 'PySide6.QtPdf', 'PySide6.QtCharts'
+    ],
 )
 
 pyz = PYZ(a.pure)
