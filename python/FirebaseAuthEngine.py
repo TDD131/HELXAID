@@ -83,6 +83,7 @@ class FirebaseLoopbackHandler(BaseHTTPRequestHandler):
             try:
                 from YouTubeAccountEngine import YouTubeAccountEngine
                 yt = YouTubeAccountEngine.get_instance()
+                yt.reload_session()
                 is_yt = yt.is_authenticated()
                 user_name = yt.get_user_name() if is_yt else ""
             except Exception:
@@ -95,6 +96,20 @@ class FirebaseLoopbackHandler(BaseHTTPRequestHandler):
                 "user_name": user_name
             }
             self.wfile.write(json.dumps(res_obj).encode("utf-8"))
+            return
+
+        # 1b. Disconnect endpoint for extension / testing
+        if parsed.path == "/api/disconnect_youtube":
+            try:
+                from YouTubeAccountEngine import YouTubeAccountEngine
+                YouTubeAccountEngine.get_instance().disconnect()
+            except Exception:
+                pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b'{"success":true,"message":"Disconnected YouTube session"}')
             return
 
         # 2. Google OAuth redirect callback

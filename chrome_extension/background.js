@@ -42,8 +42,9 @@ async function syncToHelxaid(force = false) {
     const healthData = await healthRes.json();
     const isAppSynced = (healthData && healthData.youtube_synced === true);
 
-    // If already synchronized and not forced, no need to spam the API
-    if (isAppSynced && !force) {
+    const now = Date.now();
+    // If already synchronized, not forced, and synced recently (< 2 minutes), skip to avoid spamming
+    if (isAppSynced && !force && (now - lastSyncTimestamp < 120000)) {
       return true;
     }
 
@@ -52,7 +53,6 @@ async function syncToHelxaid(force = false) {
     if (!cookies) return false;
 
     // Rate-limit sync calls to at most once every 5 seconds unless forced
-    const now = Date.now();
     if (!force && (now - lastSyncTimestamp < 5000)) {
       return true;
     }

@@ -40,13 +40,8 @@ import json
 import tempfile
 import ctypes
 
-# Route any automatic FFmpeg report logs strictly into AppData/HELXAID/logs/ffmpeg instead of workspace root
-ffmpeg_log_dir = os.path.join(os.getenv('LOCALAPPDATA', os.getenv('APPDATA', '')), 'HELXAID', 'logs', 'ffmpeg')
-try:
-    os.makedirs(ffmpeg_log_dir, exist_ok=True)
-    os.environ["FFREPORT"] = f"file={ffmpeg_log_dir}\\ffmpeg-%p-%t.log:level=32"
-except Exception:
-    os.environ.pop("FFREPORT", None)
+# Suppress FFmpeg report file generation
+os.environ.pop("FFREPORT", None)
 
 def _silence_ffmpeg_multimedia_logs():
     try:

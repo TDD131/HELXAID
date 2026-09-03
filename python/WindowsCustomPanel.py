@@ -8,7 +8,6 @@ Features:
 Component Name: WindowsCustomPanel
 """
 
-from fast_stream_resolver import script_dir
 import os
 import sys
 import json
@@ -33,6 +32,7 @@ if hasattr(sys, '_MEIPASS'):
     SCRIPT_DIR = sys._MEIPASS
 else:
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+script_dir = SCRIPT_DIR
 APPDATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "HELXAID")
 HELRCUS_CONFIG_PATH = os.path.join(APPDATA_DIR, "helrcus_settings.json")
 

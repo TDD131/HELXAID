@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
     QMenu, QDialog, QScrollArea, QMainWindow, QProgressBar, QFileDialog
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QSettings, QVariantAnimation, QEasingCurve, QRectF, QPoint, QUrl, QPropertyAnimation
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QLinearGradient, QGradient, QFont, QFontMetrics, QPen
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QLinearGradient, QGradient, QFont, QFontMetrics, QPen, QShortcut, QKeySequence
 from PySide6.QtSvg import QSvgRenderer
 
 from CanonicalMetadataEngine import CanonicalSearchEngine, InnertubeSearchClient
@@ -307,24 +307,31 @@ class SvgHoverButton(QPushButton):
         self._update_state(False)
 
 
-def make_pixmap_from_bytes(data_bytes: bytes) -> Optional[QPixmap]:
-    """Safely construct a QPixmap from raw downloaded image bytes."""
+def make_pixmap_from_bytes(data_bytes: bytes, max_w: int = 360, max_h: int = 360) -> Optional[QPixmap]:
+    """Safely construct a lightweight QPixmap from raw downloaded image bytes."""
     if not data_bytes:
         return None
+    try:
+        from ImageCacheEngine import ImageCacheEngine
+        data_bytes = ImageCacheEngine.get_instance().downscale_image_bytes(data_bytes, max_w, max_h)
+    except Exception:
+        pass
     pix = QPixmap()
     if pix.loadFromData(data_bytes) and not pix.isNull():
+        if pix.width() > max_w or pix.height() > max_h:
+            pix = pix.scaled(max_w, max_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         return pix
     return None
 
 
-def _safe_set_card_pixmap(card_widget, data_bytes: bytes):
-    """Safely apply pixmap from downloaded bytes to a card widget even if it was deleted."""
+def _safe_set_card_pixmap(card_widget, data_bytes: bytes, max_w: int = 360, max_h: int = 360):
+    """Safely apply downscaled pixmap from downloaded bytes to a card widget even if it was deleted."""
     try:
         if card_widget is None:
             return
         # Test if C++ object is alive
         _ = card_widget.width()
-        pix = make_pixmap_from_bytes(data_bytes)
+        pix = make_pixmap_from_bytes(data_bytes, max_w, max_h)
         if pix:
             card_widget.set_pixmap(pix)
     except (RuntimeError, AttributeError):
@@ -337,8 +344,9 @@ def _safe_set_card_pixmap(card_widget, data_bytes: bytes):
 
 
 class AsyncImageLoader(QThread):
-    """Asynchronously download and cache preview thumbnails without blocking the UI thread."""
+    """Bounded asynchronous thumbnail downloader utilizing C++ WIC / WinHTTP with 0% GIL locking."""
     loaded = Signal(str, bytes)
+    _pool_semaphore = threading.Semaphore(3)  # Max 3 concurrent network requests to prevent thread explosion
 
     def __init__(self, url: str, parent=None):
         super().__init__(parent)
@@ -352,7 +360,7 @@ class AsyncImageLoader(QThread):
         if self._is_cancelled or not self.url:
             return
 
-        # 1. Tier 0/1: Instant Memory & Disk Cache Check (<1ms)
+        # 1. Tier 0/1: Instant Memory & Disk Cache Check (<1ms, no semaphore needed)
         try:
             from ImageCacheEngine import ImageCacheEngine
             cached = ImageCacheEngine.get_instance().get_bytes(self.url)
@@ -362,24 +370,55 @@ class AsyncImageLoader(QThread):
         except Exception:
             pass
 
-        # 2. Tier 2: Resilient Network Download
-        try:
-            req = urllib.request.Request(
-                self.url,
-                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-            )
-            ctx = ssl._create_unverified_context()
-            with urllib.request.urlopen(req, timeout=8.0, context=ctx) as resp:
-                data = resp.read()
-                if not self._is_cancelled and data:
+        # 2. Bounded Concurrency: Only 3 workers active simultaneously
+        with AsyncImageLoader._pool_semaphore:
+            if self._is_cancelled:
+                return
+
+            # Check cache again in case another worker already cached it
+            try:
+                from ImageCacheEngine import ImageCacheEngine
+                cached = ImageCacheEngine.get_instance().get_bytes(self.url)
+                if cached and not self._is_cancelled:
+                    self.loaded.emit(self.url, cached)
+                    return
+            except Exception:
+                pass
+
+            # 3. Fast C++ WinHTTP download + WIC hardware downscale if native module available
+            try:
+                import image_cache_native
+                downscaled = image_cache_native.fetch_and_downscale(self.url, 360, 360)
+                if downscaled and not self._is_cancelled:
                     try:
                         from ImageCacheEngine import ImageCacheEngine
-                        ImageCacheEngine.get_instance().put_bytes(self.url, data)
+                        ImageCacheEngine.get_instance().put_bytes(self.url, downscaled)
                     except Exception:
                         pass
-                    self.loaded.emit(self.url, data)
-        except Exception:
-            pass
+                    self.loaded.emit(self.url, downscaled)
+                    return
+            except Exception:
+                pass
+
+            # 4. Resilient Python Network Fallback
+            try:
+                req = urllib.request.Request(
+                    self.url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                )
+                ctx = ssl._create_unverified_context()
+                with urllib.request.urlopen(req, timeout=6.0, context=ctx) as resp:
+                    data = resp.read()
+                    if not self._is_cancelled and data:
+                        try:
+                            from ImageCacheEngine import ImageCacheEngine
+                            ImageCacheEngine.get_instance().put_bytes(self.url, data)
+                            downscaled = ImageCacheEngine.get_instance().get_bytes(self.url) or data
+                        except Exception:
+                            downscaled = data
+                        self.loaded.emit(self.url, downscaled)
+            except Exception:
+                pass
 
 
 class RecommendationWorker(QThread):
@@ -1298,7 +1337,7 @@ class CloudProfileView(QWidget):
         self.google_auth_btn.clicked.connect(self._on_google_login_clicked)
         hero_actions.addWidget(self.google_auth_btn)
 
-        self.google_logout_btn = QPushButton("Disconnect", self.hero_card)
+        self.google_logout_btn = QPushButton("Logout", self.hero_card)
         self.google_logout_btn.setObjectName("googleLogoutBtn")
         self.google_logout_btn.setFixedHeight(34)
         self.google_logout_btn.setCursor(Qt.PointingHandCursor)
@@ -1441,7 +1480,7 @@ class CloudProfileView(QWidget):
         self.yt_import_btn.clicked.connect(self._open_youtube_cookie_dialog)
         yt_actions.addWidget(self.yt_import_btn)
 
-        self.yt_disc_btn = QPushButton("Logout", self.yt_card)
+        self.yt_disc_btn = QPushButton("Disconnect", self.yt_card)
         self.yt_disc_btn.setObjectName("ytCloudLogoutBtn")
         self.yt_disc_btn.setFixedHeight(32)
         self.yt_disc_btn.setCursor(Qt.PointingHandCursor)
@@ -2368,6 +2407,8 @@ class YTMusicVideoCard(QFrame):
     def set_pixmap(self, pixmap: Optional[QPixmap]):
         if not pixmap or pixmap.isNull():
             return
+        if pixmap.width() > 360:
+            pixmap = pixmap.scaledToWidth(360, Qt.SmoothTransformation)
         self._raw_pixmap = pixmap
         self._render_thumbnail()
 
@@ -2486,7 +2527,16 @@ class YTQuickPickThumbWidget(QWidget):
 
     def set_pixmap(self, pixmap: Optional[QPixmap]):
         try:
-            self._pixmap = pixmap
+            if pixmap and not pixmap.isNull():
+                w = self.width() if self.width() > 10 else 42
+                h = self.height() if self.height() > 10 else 42
+                target_dim = max(w, h) * 2
+                scaled = pixmap.scaled(target_dim, target_dim, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                crop_x = max(0, (scaled.width() - target_dim) // 2)
+                crop_y = max(0, (scaled.height() - target_dim) // 2)
+                self._pixmap = scaled.copy(crop_x, crop_y, target_dim, target_dim)
+            else:
+                self._pixmap = None
             self.update()
         except (RuntimeError, AttributeError):
             pass
@@ -2510,10 +2560,7 @@ class YTQuickPickThumbWidget(QWidget):
 
         # 1. Base Cover Art or Placeholder
         if self._pixmap and not self._pixmap.isNull():
-            scaled = self._pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            crop_x = max(0, (scaled.width() - w) // 2)
-            crop_y = max(0, (scaled.height() - h) // 2)
-            p.drawPixmap(0, 0, scaled, crop_x, crop_y, w, h)
+            p.drawPixmap(0, 0, w, h, self._pixmap)
         else:
             p.fillRect(0, 0, w, h, QColor("#1c1d24"))
 
@@ -3026,6 +3073,8 @@ class CloudMediaCard(QFrame):
         try:
             if not pixmap or pixmap.isNull():
                 return
+            if pixmap.width() > 360:
+                pixmap = pixmap.scaledToWidth(360, Qt.SmoothTransformation)
             self._raw_pixmap = pixmap
             self._render_thumbnail()
         except (RuntimeError, Exception):
@@ -4466,6 +4515,196 @@ class StreamCandidateCard(QFrame):
             self.playlistClicked.emit(self._item_data)
 
 
+class DirectStreamSyncWarningOverlayPanel(QWidget):
+    """
+    Floating overlay panel warning user when streaming on fallback/unsynced extension session.
+    Matching HELXAIRO / helxairo_acCreateBtn floating modal aesthetic.
+    
+    Component Name: directStreamSyncWarningOverlay
+    """
+    closed = Signal()
+
+    def __init__(self, parent_window, on_proceed_callback):
+        super().__init__(parent_window)
+        self.parent_window = parent_window
+        self.on_proceed_callback = on_proceed_callback
+        
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("directStreamSyncWarningOverlay")
+        
+        if parent_window:
+            self.setGeometry(0, 0, parent_window.width(), parent_window.height())
+        
+        self._setup_ui()
+        
+        # Shortcut Esc to proceed & close
+        self._esc_shortcut = QShortcut(QKeySequence("Escape"), self)
+        self._esc_shortcut.activated.connect(self._on_proceed)
+
+        # Opacity & animation
+        self._opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._opacity_effect)
+        self._opacity_effect.setOpacity(0.0)
+        
+        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._fade_anim.setDuration(220)
+        self._fade_anim.setStartValue(0.0)
+        self._fade_anim.setEndValue(1.0)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+
+    def _setup_ui(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        warning_icon_path = os.path.join(script_dir, "UI Icons", "warning-icon.svg").replace('\\', '/')
+
+        self.setStyleSheet("""
+            QWidget#directStreamSyncWarningOverlay {
+                background-color: rgba(0, 0, 0, 0.65);
+            }
+            QFrame#directStreamWarningCard {
+                background-color: rgba(18, 20, 27, 0.98);
+                border-radius: 14px;
+            }
+            QWidget#directStreamWarningTitleBar {
+                background: transparent;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+        """)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setAlignment(Qt.AlignCenter)
+
+        self.card = QFrame()
+        self.card.setObjectName("directStreamWarningCard")
+        self.card.setFixedSize(500, 270)
+
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(0, 0, 0, 18)
+        card_layout.setSpacing(14)
+
+        # 1. Title Bar
+        title_bar = QWidget()
+        title_bar.setObjectName("directStreamWarningTitleBar")
+        title_bar.setFixedHeight(46)
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(20, 0, 16, 0)
+        title_layout.setSpacing(10)
+
+        icon_lbl = QLabel()
+        icon_lbl.setObjectName("directStreamWarningIcon")
+        icon_lbl.setFixedSize(20, 20)
+        if os.path.exists(warning_icon_path):
+            icon_lbl.setPixmap(QPixmap(warning_icon_path).scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        icon_lbl.setStyleSheet("background: transparent;")
+        title_layout.addWidget(icon_lbl)
+
+        title_lbl = QLabel("EXTENSION NOT SYNCHRONIZED")
+        title_lbl.setObjectName("directStreamWarningTitle")
+        title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 900; letter-spacing: 0.5px; background: transparent;")
+        title_layout.addWidget(title_lbl)
+
+        # Amber Badge
+        badge_lbl = QLabel("OFFLINE CACHE")
+        badge_lbl.setObjectName("directStreamWarningBadge")
+        badge_lbl.setStyleSheet("background-color: rgba(255, 91, 6, 0.15); color: #FF9100; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; border-radius: 4px; padding: 3px 8px; border: none;")
+        title_layout.addWidget(badge_lbl)
+
+        title_layout.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("directStreamWarningCloseBtn")
+        close_btn.setFixedSize(26, 26)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setStyleSheet("""
+            QPushButton#directStreamWarningCloseBtn {
+                background: transparent; color: #7A7E8F; font-size: 14px; font-weight: bold; border: none; border-radius: 13px;
+            }
+            QPushButton#directStreamWarningCloseBtn:hover {
+                background: rgba(255, 255, 255, 0.08); color: #FFFFFF;
+            }
+        """)
+        close_btn.clicked.connect(self._on_proceed)
+        title_layout.addWidget(close_btn)
+
+        card_layout.addWidget(title_bar)
+
+        # 2. Body Message
+        body_widget = QWidget()
+        body_layout = QVBoxLayout(body_widget)
+        body_layout.setContentsMargins(22, 4, 22, 4)
+        body_layout.setSpacing(8)
+
+        msg_title = QLabel("Running on Last Known Saved State")
+        msg_title.setObjectName("directStreamWarningSubheader")
+        msg_title.setStyleSheet("color: #FDA903; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold; background: transparent;")
+        body_layout.addWidget(msg_title)
+
+        msg_body = QLabel(
+            "HELXAID is currently streaming using your previously cached session because the Chrome Extension is offline or not yet connected in this run.\n\n"
+            "Public streams will play smoothly. To sync your live liked songs, personal playlists, and latest recommendations, please sync via the Chrome Extension."
+        )
+        msg_body.setObjectName("directStreamWarningBody")
+        msg_body.setWordWrap(True)
+        msg_body.setStyleSheet("color: #A0A4B5; font-size: 11px; line-height: 1.45; background: transparent;")
+        body_layout.addWidget(msg_body)
+
+        card_layout.addWidget(body_widget, 1)
+
+        # 3. Footer Action Buttons
+        action_layout = QHBoxLayout()
+        action_layout.setContentsMargins(22, 0, 22, 0)
+        action_layout.setSpacing(12)
+
+        open_ext_btn = FadeHoverButton("Open Extension", is_secondary=True, border_radius=6.0)
+        open_ext_btn.setObjectName("directStreamOpenExtBtn")
+        open_ext_btn.setFixedHeight(34)
+        open_ext_btn.setFixedWidth(140)
+        open_ext_btn.clicked.connect(self._open_extension)
+        action_layout.addWidget(open_ext_btn)
+
+        action_layout.addStretch()
+
+        proceed_btn = FadeHoverButton("Continue Playing", is_secondary=False, border_radius=6.0, color_mode="default")
+        proceed_btn.setObjectName("directStreamProceedBtn")
+        proceed_btn.setFixedHeight(34)
+        proceed_btn.setFixedWidth(145)
+        proceed_btn.clicked.connect(self._on_proceed)
+        action_layout.addWidget(proceed_btn)
+
+        card_layout.addLayout(action_layout)
+        outer_layout.addWidget(self.card)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.raise_()
+        self.activateWindow()
+        self._opacity_effect.setOpacity(0.0)
+        self._fade_anim.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.parent_window:
+            self.setGeometry(0, 0, self.parent_window.width(), self.parent_window.height())
+
+    def _open_extension(self):
+        try:
+            import webbrowser
+            ext_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chrome_extension")
+            webbrowser.open("chrome://extensions/")
+            if os.path.exists(ext_dir):
+                os.startfile(ext_dir)
+        except Exception:
+            pass
+        self._on_proceed()
+
+    def _on_proceed(self):
+        self.close()
+        self.closed.emit()
+        if callable(self.on_proceed_callback):
+            self.on_proceed_callback()
+
+
 class DirectStreamPage(QWidget):
     """
     Master Page for HELXAIC Dedicated Direct Streaming & Cloud Accounts Hub.
@@ -4480,7 +4719,11 @@ class DirectStreamPage(QWidget):
         super().__init__(parent)
         self.setObjectName("DirectStreamPage")
         self.setStyleSheet("QWidget#DirectStreamPage { background: transparent; }")
+        from PySide6.QtGui import QPixmapCache
+        QPixmapCache.setCacheLimit(16384)
         self._seq_id = 0
+        self._unsynced_warning_shown = False
+        self._live_extension_synced = False
         self._search_worker: Optional[StreamSearchWorker] = None
         self._recom_worker: Optional[RecommendationWorker] = None
         self._image_loaders: List[AsyncImageLoader] = []
@@ -4499,6 +4742,7 @@ class DirectStreamPage(QWidget):
         YouTubeAccountEngine.get_instance().sessionChanged.connect(self._on_accounts_state_changed)
         SpotifyAccountEngine.get_instance().authStatusChanged.connect(self._on_accounts_state_changed)
         FirebaseAuthEngine.get_instance().authStatusChanged.connect(self._on_accounts_state_changed)
+        FirebaseAuthEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)
 
     def _init_ui(self):
         master_layout = QVBoxLayout(self)
@@ -4780,56 +5024,16 @@ class DirectStreamPage(QWidget):
 
         self.view_stack.addWidget(self.results_view)  # Index 1
 
-        # --- View 2: Cloud Profile & Accounts Panel ---
-        self.profile_view = CloudProfileView(self)
-        self.profile_view.backClicked.connect(self._show_home_panel)
-        self.profile_view.accountsChanged.connect(self._on_accounts_state_changed)
+        # --- View 2: Cloud Profile & Accounts Panel (Lazy-loaded on first click) ---
+        self.profile_view = None
+        self.profile_scroll = None
+        self._profile_placeholder = QWidget()
+        self.view_stack.addWidget(self._profile_placeholder)  # Index 2
 
-        self.profile_scroll = SmoothScrollArea(self)
-        self.profile_scroll.setObjectName("streamProfileScroll")
-        self.profile_scroll.setFrameShape(QFrame.NoFrame)
-        self.profile_scroll.setWidgetResizable(True)
-        self.profile_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.profile_scroll.setStyleSheet("""
-            QScrollArea#streamProfileScroll { background: transparent; border: none; }
-            QScrollArea#streamProfileScroll > QWidget > QWidget { background: transparent; }
-            QScrollBar:vertical {
-                background: transparent;
-                width: 16px;
-                border-radius: 8px;
-                margin: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06);
-                border-radius: 7px;
-                min-height: 40px;
-                border: 2px solid rgba(253, 169, 3, 0.8);
-            }
-            QScrollBar::handle:vertical:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903);
-                border: 2px solid #FFFF00;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px; background: none; border: none;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: transparent;
-            }
-        """)
-        if self.profile_scroll.viewport():
-            self.profile_scroll.viewport().setStyleSheet("background: transparent;")
-        self.profile_scroll.setWidget(self.profile_view)
-        self.view_stack.addWidget(self.profile_scroll)  # Index 2
-
-        # --- View 3: Mix & Playlist Detail Panel (Image 1 Style) ---
-        self.playlist_detail_view = StreamPlaylistDetailView(self)
-        self.playlist_detail_view.backClicked.connect(self._show_home_panel)
-        self.playlist_detail_view.playTrackRequested.connect(self._on_play_track)
-        self.playlist_detail_view.playAllRequested.connect(self._on_play_track)
-        self.playlist_detail_view.savePlaylistRequested.connect(self._on_save_stream)
-        self.playlist_detail_view.addToQueueRequested.connect(self._on_add_playlist)
-        self.playlist_detail_view.downloadPlaylistRequested.connect(lambda u, t: self.downloadRequested.emit(u, t))
-        self.view_stack.addWidget(self.playlist_detail_view)  # Index 3
+        # --- View 3: Mix & Playlist Detail Panel (Lazy-loaded on first click) ---
+        self.playlist_detail_view = None
+        self._playlist_placeholder = QWidget()
+        self.view_stack.addWidget(self._playlist_placeholder)  # Index 3
 
         # Add View Stack directly to Master Layout with stretch
         master_layout.addWidget(self.view_stack, stretch=1)
@@ -4838,8 +5042,71 @@ class DirectStreamPage(QWidget):
     def _on_view_changed(self, idx: int):
         pass
 
+    def _ensure_profile_view(self):
+        if self.profile_view is None:
+            self.profile_view = CloudProfileView(self)
+            self.profile_view.backClicked.connect(self._show_home_panel)
+            self.profile_view.accountsChanged.connect(self._on_accounts_state_changed)
+
+            from smooth_scroll import SmoothScrollArea
+            self.profile_scroll = SmoothScrollArea(self)
+            self.profile_scroll.setObjectName("streamProfileScroll")
+            self.profile_scroll.setFrameShape(QFrame.NoFrame)
+            self.profile_scroll.setWidgetResizable(True)
+            self.profile_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.profile_scroll.setStyleSheet("""
+                QScrollArea#streamProfileScroll { background: transparent; border: none; }
+                QScrollArea#streamProfileScroll > QWidget > QWidget { background: transparent; }
+                QScrollBar:vertical {
+                    background: transparent;
+                    width: 16px;
+                    border-radius: 8px;
+                    margin: 4px;
+                }
+                QScrollBar::handle:vertical {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06);
+                    border-radius: 7px;
+                    min-height: 40px;
+                    border: 2px solid rgba(253, 169, 3, 0.8);
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903);
+                    border: 2px solid #FFFF00;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px; background: none; border: none;
+                }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: transparent;
+                }
+            """)
+            if self.profile_scroll.viewport():
+                self.profile_scroll.viewport().setStyleSheet("background: transparent;")
+            self.profile_scroll.setWidget(self.profile_view)
+            if self._profile_placeholder:
+                self.view_stack.removeWidget(self._profile_placeholder)
+                self._profile_placeholder.deleteLater()
+                self._profile_placeholder = None
+            self.view_stack.insertWidget(2, self.profile_scroll)
+
+    def _ensure_playlist_detail_view(self):
+        if self.playlist_detail_view is None:
+            self.playlist_detail_view = StreamPlaylistDetailView(self)
+            self.playlist_detail_view.backClicked.connect(self._show_home_panel)
+            self.playlist_detail_view.playTrackRequested.connect(self._on_play_track)
+            self.playlist_detail_view.playAllRequested.connect(self._on_play_track)
+            self.playlist_detail_view.savePlaylistRequested.connect(self._on_save_stream)
+            self.playlist_detail_view.addToQueueRequested.connect(self._on_add_playlist)
+            self.playlist_detail_view.downloadPlaylistRequested.connect(lambda u, t: self.downloadRequested.emit(u, t))
+            if self._playlist_placeholder:
+                self.view_stack.removeWidget(self._playlist_placeholder)
+                self._playlist_placeholder.deleteLater()
+                self._playlist_placeholder = None
+            self.view_stack.insertWidget(3, self.playlist_detail_view)
+
     def _toggle_profile_panel(self):
         """Toggle between Home view (Index 0) and Cloud Profile panel (Index 2)."""
+        self._ensure_profile_view()
         if self.view_stack.currentIndex() == 2:
             self._show_home_panel()
         else:
@@ -4847,39 +5114,63 @@ class DirectStreamPage(QWidget):
             self.search_bar.clear_btn.hide()
             self.search_bar.hide()
             self.profile_view.refresh_state()
-            self.scroll_area.verticalScrollBar().setValue(0)
+            if hasattr(self, 'scroll_area') and self.scroll_area and self.scroll_area.verticalScrollBar():
+                self.scroll_area.verticalScrollBar().setValue(0)
             self.view_stack.setCurrentIndex(2)
             self.search_bar.profile_btn.update_status(is_active_panel=True)
+
+    def _on_extension_cookies_received(self, cookies: dict):
+        print("[DirectStreamPage] Real-time session sync received from Chrome extension!")
+        self._live_extension_synced = True
+        self._on_accounts_state_changed()
+
+    def _is_extension_synced(self) -> bool:
+        """Check if session is currently live-synchronized from Chrome extension."""
+        if getattr(self, '_live_extension_synced', False):
+            return True
+        yt = YouTubeAccountEngine.get_instance()
+        if yt.is_authenticated():
+            synced_at = yt.session_data.get("synced_at", 0)
+            if synced_at and (time.time() - synced_at < 7200):
+                return True
+        return False
+
+    def _emit_play_stream(self, payload: dict):
+        """Internal dispatcher for stream playback with first-play unsynced extension notification."""
+        if not getattr(self, '_unsynced_warning_shown', False) and not self._is_extension_synced():
+            self._unsynced_warning_shown = True
+            parent_win = self.window()
+            if parent_win:
+                overlay = DirectStreamSyncWarningOverlayPanel(parent_win, on_proceed=lambda: self.playStreamRequested.emit(payload))
+                overlay.show()
+                overlay.raise_()
+                return
+
+        self.playStreamRequested.emit(payload)
 
     def on_page_activated(self):
         """Lifecycle hook invoked whenever user navigates to or loads the Direct Stream page."""
         is_profile_active = (self.view_stack.currentIndex() == 2)
         if hasattr(self, 'search_bar') and hasattr(self.search_bar, 'profile_btn'):
             self.search_bar.profile_btn.update_status(is_active_panel=is_profile_active)
-        if hasattr(self, 'profile_view'):
+        if hasattr(self, 'profile_view') and self.profile_view:
             self.profile_view.refresh_state()
 
         # Re-verify live authentication from disk cache in case session was synced while on another tab
         yt_engine = YouTubeAccountEngine.get_instance()
-        if not yt_engine.is_authenticated():
-            loaded = yt_engine._load_persisted_session()
-            if loaded and yt_engine.is_authenticated():
-                self._on_accounts_state_changed()
-                return
+        persisted = yt_engine._load_persisted_session()
+        if persisted and isinstance(persisted, dict):
+            cookies = persisted.get("cookies", {})
+            sapisid = persisted.get("sapisid") or cookies.get("SAPISID") or cookies.get("__Secure-3PAPISID")
+            if sapisid or persisted.get("access_token"):
+                if not yt_engine.session_data or yt_engine.session_data.get("sapisid") != sapisid:
+                    yt_engine.session_data = persisted
+                    self._on_accounts_state_changed()
+                    return
 
-        # If authenticated, ensure cloud feeds are genuinely loaded (not displaying fallback dummy cards)
+        # If authenticated, ensure cloud feeds are genuinely loaded
         if yt_engine.is_authenticated():
-            has_fallback = False
-            if hasattr(self, 'featured_mixes_cards') and self.featured_mixes_cards:
-                for c in self.featured_mixes_cards:
-                    if getattr(c, 'mix_id', '') == 'RDTMAK5uy_n_eQ6L28892s923kdkf023':
-                        has_fallback = True
-                        break
-            else:
-                has_fallback = True
-
-            if has_fallback:
-                self._load_cloud_feeds()
+            self._load_cloud_feeds()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -4893,7 +5184,8 @@ class DirectStreamPage(QWidget):
     def _on_accounts_state_changed(self):
         is_profile_active = (self.view_stack.currentIndex() == 2)
         self.search_bar.profile_btn.update_status(is_active_panel=is_profile_active)
-        self.profile_view.refresh_state()
+        if hasattr(self, 'profile_view') and self.profile_view:
+            self.profile_view.refresh_state()
         self._load_cloud_feeds()
         self._load_recommendations()
 
@@ -5242,14 +5534,14 @@ class DirectStreamPage(QWidget):
             payload["is_single_track"] = True
             payload["is_playlist"] = False
             self._record_history(payload)
-            self.playStreamRequested.emit(payload)
+            self._emit_play_stream(payload)
             return
 
         # If it's a playlist or station that needs resolving into tracks
         if track_data.get("is_playlist") or (not track_data.get("original_url") and not track_data.get("video_id")):
             if track_data.get("tracks"):
                 self._record_history(track_data)
-                self.playStreamRequested.emit(track_data)
+                self._emit_play_stream(track_data)
                 return
 
             browse_id = track_data.get("id", "")
@@ -5274,11 +5566,11 @@ class DirectStreamPage(QWidget):
                         "tracks": tracks
                     }
                     self._record_history(payload)
-                    self.playStreamRequested.emit(payload)
+                    self._emit_play_stream(payload)
                     return
 
         self._record_history(track_data)
-        self.playStreamRequested.emit(track_data)
+        self._emit_play_stream(track_data)
 
     def _on_play_spotify_track(self, track_data: dict):
         title = track_data.get("title", "")
@@ -5329,7 +5621,7 @@ class DirectStreamPage(QWidget):
                     'is_playlist': True,
                     'tracks': tracks
                 }
-                self.playStreamRequested.emit(payload)
+                self._emit_play_stream(payload)
 
     def _apply_featured_card_image(self, card: YTMusicVideoCard, data_bytes: bytes):
         try:
@@ -5355,12 +5647,9 @@ class DirectStreamPage(QWidget):
                     self._image_loaders.append(loader)
                     loader.start()
 
-        # Background pre-warm recommendations into RAM stream cache
-        try:
-            from fast_stream_resolver import prefetch_batch
-            prefetch_batch(items[:target_count])
-        except Exception:
-            pass
+        # Eager prefetch disabled on page load to prevent ~100MB RAM spike from yt-dlp.
+        # Tracks resolve on-demand in <150ms when played.
+        pass
 
     def _load_recommendations(self):
         target_count = len(self.featured_video_cards) if hasattr(self, 'featured_video_cards') and self.featured_video_cards else 8
@@ -5498,16 +5787,12 @@ class DirectStreamPage(QWidget):
                 self._image_loaders.append(loader)
                 loader.start()
 
-        # Background pre-warm streaming URLs into RAM Cache for instant 0.01ms playback
-        try:
-            from fast_stream_resolver import prefetch_batch
-            prefetch_batch(combined_items[:12])
-        except Exception:
-            pass
+        # Eager prefetch disabled on page load to preserve ~100MB RAM.
+        pass
 
     def _on_play_next(self, track_data: dict):
         self._record_history(track_data)
-        self.playStreamRequested.emit(track_data)
+        self._emit_play_stream(track_data)
 
     def _on_add_to_queue(self, track_data: dict):
         self._record_history(track_data)

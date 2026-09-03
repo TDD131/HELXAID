@@ -23,13 +23,8 @@ from datetime import datetime
 os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia*=false;qt.multimedia.ffmpeg*=false;*.debug=false")
 os.environ.setdefault("AV_LOG_FORCE_NOCOLOR", "1")
 
-# Route any automatic FFmpeg report logs strictly into AppData/HELXAID/logs/ffmpeg instead of workspace root
-ffmpeg_log_dir = os.path.join(os.getenv('LOCALAPPDATA', os.getenv('APPDATA', '')), 'HELXAID', 'logs', 'ffmpeg')
-try:
-    os.makedirs(ffmpeg_log_dir, exist_ok=True)
-    os.environ["FFREPORT"] = f"file={ffmpeg_log_dir}\\ffmpeg-%p-%t.log:level=32"
-except Exception:
-    os.environ.pop("FFREPORT", None)
+# Suppress FFmpeg report file generation
+os.environ.pop("FFREPORT", None)
 
 def silence_ffmpeg_multimedia_logs():
     """Silence FFmpeg C-runtime TLS socket and demuxing noise in QtMultimedia."""

@@ -279,6 +279,11 @@ class YouTubeAccountEngine(QObject):
             path = self._get_session_disk_path()
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+            # Also preserve a Last Known Good Session (LKGS) snapshot
+            if data.get("cookies") or data.get("access_token"):
+                backup_path = path.replace(".json", "_last_good.json")
+                with open(backup_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[YouTubeAccountEngine] Disk session save notice: {e}")
 
@@ -308,7 +313,35 @@ class YouTubeAccountEngine(QObject):
             except Exception:
                 pass
 
+        # 3. Tertiary fallback: Last Known Good Session backup
+        if not data:
+            try:
+                backup_path = self._get_session_disk_path().replace(".json", "_last_good.json")
+                if os.path.exists(backup_path):
+                    with open(backup_path, "r", encoding="utf-8") as f:
+                        bk_data = json.load(f)
+                    if isinstance(bk_data, dict) and (bk_data.get("cookies") or bk_data.get("access_token")):
+                        data = bk_data
+                        self._save_session_data(data)
+            except Exception:
+                pass
+
         return data
+
+    def reload_session(self) -> bool:
+        """Reload persisted session from QSettings and disk file into memory."""
+        data = self._load_persisted_session()
+        if data and isinstance(data, dict):
+            cookies = data.get("cookies", {})
+            sapisid = data.get("sapisid") or cookies.get("SAPISID") or cookies.get("__Secure-3PAPISID")
+            if sapisid or data.get("access_token"):
+                changed = (data.get("sapisid") != self.session_data.get("sapisid"))
+                self.session_data = data
+                if changed:
+                    user_name = self.get_user_name()
+                    self.sessionChanged.emit(self.is_authenticated(), user_name)
+                return self.is_authenticated()
+        return False
 
     def get_client_id(self) -> str:
         return self.settings.value("YouTubeAccount/client_id", "") or ""
