@@ -5331,11 +5331,13 @@ class DirectStreamPage(QWidget):
 
     def _show_playlist_detail(self, item_data: dict):
         """Open the full-page Album/Playlist/Mix detail view (Image 1 Style)."""
-        self.playlist_detail_view.set_data(item_data)
-        if hasattr(self.playlist_detail_view, 'track_scroll') and self.playlist_detail_view.track_scroll:
-            self.playlist_detail_view.track_scroll.verticalScrollBar().setValue(0)
-        self.view_stack.setCurrentIndex(3)
-        self.search_bar.profile_btn.update_status(is_active_panel=False)
+        self._ensure_playlist_detail_view()
+        if self.playlist_detail_view:
+            self.playlist_detail_view.set_data(item_data)
+            if hasattr(self.playlist_detail_view, 'track_scroll') and self.playlist_detail_view.track_scroll:
+                self.playlist_detail_view.track_scroll.verticalScrollBar().setValue(0)
+            self.view_stack.setCurrentIndex(3)
+            self.search_bar.profile_btn.update_status(is_active_panel=False)
 
     def _on_cloud_mixes_loaded(self, mixes: list):
         while self.cloud_mixes_layout.count() > 1:

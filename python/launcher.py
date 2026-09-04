@@ -10300,7 +10300,7 @@ class GameLauncher(QWidget):
             super().keyPressEvent(event)
 
     def _trigger_inspector(self):
-        """Component Inspector - show info about widget under cursor in a floating panel."""
+        """Component Inspector - show info about widget or QWindow under cursor in a floating panel."""
         focus_widget = QApplication.focusWidget()
         if focus_widget:
             w = focus_widget
@@ -10309,30 +10309,14 @@ class GameLauncher(QWidget):
                     return
                 w = w.parent()
 
-        cursor_pos = self.cursor().pos()
-        widget = QApplication.widgetAt(cursor_pos)
-        if not widget:
-            pos = self.mapFromGlobal(cursor_pos)
-            widget = self.childAt(pos)
-        if widget:
-            try:
-                if hasattr(self, "_inspector_floating_panel") and self._inspector_floating_panel is not None:
-                    try:
-                        self._inspector_floating_panel.close_panel()
-                    except Exception:
-                        pass
-                    self._inspector_floating_panel = None
-
-                from ComponentInspectorDialog import ComponentInspectorFloatingPanel, inspect_widget
-                info_data = inspect_widget(widget, main_window=self)
-                self._inspector_floating_panel = ComponentInspectorFloatingPanel(info_data, parent=self)
-                self._inspector_floating_panel.show_panel()
-            except Exception as e:
-                print(f"[ComponentInspector] Error launching inspector floating panel: {e}")
-                # Fallback to standard message box if custom panel fails
-                QMessageBox.information(self, "Component Inspector", f"Inspected: {widget.__class__.__name__}#{widget.objectName() or 'no-name'}")
-        else:
-            QMessageBox.information(self, "Component Inspector", "No widget under cursor")
+        try:
+            from ComponentInspectorDialog import show_component_inspector
+            success = show_component_inspector(main_window=self)
+            if not success:
+                QMessageBox.information(self, "Component Inspector", "No widget or QWindow detected under cursor.")
+        except Exception as e:
+            print(f"[ComponentInspector] Error launching inspector floating panel: {e}")
+            QMessageBox.information(self, "Component Inspector", f"Inspector error: {e}")
 
     def toggle_fullscreen(self):
         """Toggle fullscreen mode with debouncing guard and transition lock."""
@@ -14660,9 +14644,17 @@ class GameLauncher(QWidget):
         """Compact settings dialog opened from the navbar settings button.
         Only includes Background & Theme and System Settings.
         Display and Library are accessible from the full settings (top-bar gear icon).
+        Non-modal: allows interacting with main launcher window while open.
         """
+        if hasattr(self, "_active_quick_settings_dlg") and self._active_quick_settings_dlg is not None and self._active_quick_settings_dlg.isVisible():
+            self._active_quick_settings_dlg.raise_()
+            self._active_quick_settings_dlg.activateWindow()
+            return self._active_quick_settings_dlg
+
         dialog = QDialog(self)
         dialog.setObjectName("quickSettingsDialog")
+        dialog.setModal(False)
+        self._active_quick_settings_dlg = dialog
         apply_custom_titlebar(dialog, "#000000")
         dialog.setWindowTitle("Main Setting")
         dialog.setMinimumWidth(520)
@@ -15111,13 +15103,9 @@ class GameLauncher(QWidget):
         btn_layout.addWidget(cancel_btn)
         main_layout.addLayout(btn_layout)
 
-        ok_btn.clicked.connect(dialog.accept)
-        cancel_btn.clicked.connect(dialog.reject)
-
         orig_startup = is_startup_enabled()
-        
-        result = dialog.exec()
-        if result == QDialog.Accepted:
+
+        def _on_accepted():
             # Check if any settings actually changed
             new_bg_image = self._qs_bg_path.text()
             new_bg_mode = self._qs_bg_mode.currentText()
@@ -15157,7 +15145,6 @@ class GameLauncher(QWidget):
                 new_check == self.settings.get("check_version_daily", True) and
                 new_startup == orig_startup and
                 new_delay == self.settings.get("startup_delay", 0)):
-                del dialog
                 return
             
             self.confirm_on_exit = new_confirm
@@ -15227,10 +15214,15 @@ class GameLauncher(QWidget):
                 self.setFixedSize(self.size())
             
             self.apply_theme()
-            # self.refresh() is deliberately omitted here. None of the Quick Settings 
-            # affect the game library grid, so completely rebuilding the UI grid from 
-            # scratch and parsing the config JSON again is a massive waste of time 
-            # and causes extreme UI freezing.
+
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.accepted.connect(_on_accepted)
+
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
             
     def reset_appdata_clean_install(self):
         """Wipe AppData, presets, playlists, and QSettings to simulate a 100% fresh install."""
@@ -20088,10 +20080,26 @@ if __name__ == "__main__":
             self._launcher_ref = launcher
 
         def eventFilter(self, obj, event):
+            from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
+
+            # Global F12 Component Inspector interception across all windows, modal dialogs, & QWindows
+            if event.type() == QEvent.KeyPress and hasattr(event, "key") and event.key() == Qt.Key_F12:
+                if getattr(obj, "_is_capturing", False) or getattr(obj, "_recording", False):
+                    return False
+                fw = QApplication.focusWidget()
+                if fw and (getattr(fw, "_is_capturing", False) or getattr(fw, "_recording", False)):
+                    return False
+                try:
+                    from ComponentInspectorDialog import show_component_inspector
+                    show_component_inspector(main_window=self._launcher_ref)
+                    event.accept()
+                    return True
+                except Exception as err:
+                    print(f"[ComponentInspector] Global F12 notice: {err}")
+
             if event.type() in (QEvent.KeyPress, QEvent.KeyRelease, QEvent.ShortcutOverride):
                 if hasattr(event, "key") and event.key() == Qt.Key_Space:
                     # 1. Allow normal text typing in input fields & web engines
-                    from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
                     if isinstance(obj, (QLineEdit, QTextEdit, QPlainTextEdit)):
                         return False
                     if obj is not None and any(t in obj.__class__.__name__ for t in ("WebEngine", "RenderWidgetHost", "TextEdit", "LineEdit")):

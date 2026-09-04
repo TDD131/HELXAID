@@ -98,8 +98,8 @@ class UILayoutVisualizerOverlay(QWidget):
             if rect.width() < 10 or rect.height() < 10:
                 continue
 
-            # Map coordinates to overlay
-            top_left = w.mapTo(self, QPoint(0, 0))
+            # Map coordinates to overlay via global coordinates to ensure perfect alignment in windowed mode
+            top_left = self.mapFromGlobal(w.mapToGlobal(QPoint(0, 0)))
             box_rect = QRect(top_left.x(), top_left.y(), rect.width(), rect.height())
 
             # Intersect with overlay bounds to ensure it's in viewport
@@ -111,7 +111,8 @@ class UILayoutVisualizerOverlay(QWidget):
             is_clipped = False
             while p and p is not parent_window:
                 if p.isWidgetType() and isinstance(p.parentWidget(), QScrollArea):
-                    vp_rect = QRect(p.mapTo(self, QPoint(0, 0)), p.size())
+                    vp_top_left = self.mapFromGlobal(p.mapToGlobal(QPoint(0, 0)))
+                    vp_rect = QRect(vp_top_left, p.size())
                     if not box_rect.intersects(vp_rect):
                         is_clipped = True
                         break
