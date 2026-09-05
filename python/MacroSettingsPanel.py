@@ -15080,13 +15080,15 @@ class BossKeyPanel(QWidget):
         self.back_clicked.emit()
 
 
+
+
 class TacticalToolsHubPanel(QWidget):
     """
-    Tactical Utilities Hub with 6 Tool Cards.
+    Tactical Utilities Hub with 5 Tool Cards.
     
     Component Name: TacticalToolsHubPanel
     """
-    tool_selected = Signal(int)  # 1: Sniper Clutch, 2: Clamp, 3: Rapid-Fire, 4: Anti-AFK, 5: Boss Key, 6: Loupe
+    tool_selected = Signal(int)  # 1: Sniper Clutch, 2: Clamp, 3: Rapid-Fire, 4: Anti-AFK, 5: Boss Key
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -15181,15 +15183,6 @@ class TacticalToolsHubPanel(QWidget):
             mode_idx=5
         )
         cards_grid.addWidget(c5, 1, 1)
-
-        # Card 6: Crosshair Sniper Loupe
-        c6 = self._create_card(
-            card_id="SniperLoupeCard",
-            title="Crosshair Sniper Loupe",
-            desc="Hardware-accelerated 60 FPS transparent floating 2x-5x crosshair zoom lens.",
-            mode_idx=6
-        )
-        cards_grid.addWidget(c6, 1, 2)
 
         hub_group_layout.addWidget(cards_container)
         main_layout.addWidget(hub_group)
@@ -15670,8 +15663,8 @@ class MacroSettingsPanel(QWidget):
 
         layout.addWidget(self._ahk_banner_container)
         
-        # Check initial AHK status
-        QTimer.singleShot(500, self._check_ahk_banner_status)
+        # Immediately evaluate AHK status synchronously to prevent banner from flashing/appearing
+        self._check_ahk_banner_status()
         
         # ===== CUSTOM TAB BAR (HELXTATS Style) =====
         tab_bar_container = QWidget()
@@ -16289,7 +16282,7 @@ class MacroSettingsPanel(QWidget):
         self._page_stack.addWidget(home_tab)
         
         # Add placeholders for remaining tabs (built deferred on tick 0)
-        for _ in range(3):
+        for _ in range(4):
             ph = QWidget()
             ph.setObjectName(f"macroPagePlaceholder_{_}")
             self._page_stack.addWidget(ph)
@@ -17954,10 +17947,7 @@ class MacroSettingsPanel(QWidget):
         self.boss_key_panel.back_clicked.connect(lambda: self._tactical_stack.setCurrentIndex(0))
         self._tactical_stack.addWidget(self.boss_key_panel)  # Index 5: Boss Key
 
-        # ── SUB-PAGE 6: SNIPER LOUPE (PLACEHOLDER) ──
-        self.sniper_loupe_placeholder = QWidget()
-        self.sniper_loupe_placeholder.setObjectName("TacticalSniperLoupePlaceholder")
-        self._tactical_stack.addWidget(self.sniper_loupe_placeholder)  # Index 6: Loupe
+
 
         tactical_layout.addWidget(self._tactical_stack)
         self._page_stack.addWidget(tactical_tab)
@@ -18147,10 +18137,23 @@ class MacroSettingsPanel(QWidget):
 
     def _check_ahk_banner_status(self):
         """Check if AutoHotkey is installed and toggle missing engine banner visibility."""
+        installed = False
         try:
-            from integrations.tools_downloader import is_ahk_installed
-            installed = is_ahk_installed()
-        except Exception:
+            # 1. Check parent launcher detection state if available
+            if hasattr(self, 'launcher') and self.launcher and hasattr(self.launcher, 'is_user_ahk_installed'):
+                installed = self.launcher.is_user_ahk_installed()
+            
+            # 2. Check via tools_downloader / ahk_detector
+            if not installed:
+                from integrations.tools_downloader import is_ahk_installed
+                installed = is_ahk_installed()
+
+            if installed:
+                from ahk_detector import detect_user_ahk
+                ahk_info = detect_user_ahk(quick=True)
+                print(f"[HELXAIRO] User AutoHotkey detected: {ahk_info.get('path')} (v{ahk_info.get('version')}, source: {ahk_info.get('source')})")
+        except Exception as e:
+            print(f"[HELXAIRO] AHK status check notice: {e}")
             installed = False
 
         if hasattr(self, '_ahk_banner_container'):
@@ -18523,6 +18526,8 @@ class MacroSettingsPanel(QWidget):
                             bk_ctrl.set_restore_on_alt_tab(bool(bk['restore_on_alt_tab']))
                     else:
                         self.boss_key_panel._load_settings()
+                
+
             except Exception as e:
                 print(f"[HELXAIRO] Note restoring Tactical Tools: {e}")
                         
@@ -18572,6 +18577,9 @@ class MacroSettingsPanel(QWidget):
         """Called when panel becomes visible."""
         super().showEvent(event)
         
+        # Ensure AHK banner visibility is synchronized when panel is shown
+        self._check_ahk_banner_status()
+
         # Start timers for UI and hardware updates
         if not self._refresh_timer.isActive():
             self._refresh_timer.start()

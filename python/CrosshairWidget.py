@@ -11,6 +11,7 @@ from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import Qt, Signal, Property, QPropertyAnimation, QEasingCurve, QTimer, QPoint, QRect, QSize
 from PySide6.QtGui import QColor, QPixmap, QIcon, QCursor, QPainter, QScreen, QPen, QBrush, QIntValidator
 from CrosshairOverlay import CrosshairOverlay
+from SniperLoupeOverlay import SniperLoupeOverlay
 from AnimatedButton import AnimatedCheckBox
 import os
 import json
@@ -543,15 +544,22 @@ class CrosshairWidget(QWidget):
     
     # Thread-safe signal for hotkey
     hotkey_triggered = Signal()
+    loupe_hotkey_triggered = Signal()
+    loupe_hold_released = Signal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("crosshairPanel")
         
         self.hotkey_triggered.connect(self._on_toggle)
+        self.loupe_hotkey_triggered.connect(self._on_loupe_hotkey_pressed)
+        self.loupe_hold_released.connect(self._on_loupe_hotkey_released)
         
-        # Create the overlay (hidden by default)
+        # Create the overlays (hidden by default)
         self.overlay = CrosshairOverlay()
+        self.sniper_loupe = SniperLoupeOverlay()
+        self._current_registered_loupe_key = None
+        self._loupe_hooks = []
         
         # Setup global hotkey listener (deferred by 1s for zero-latency page switch)
         if KEYBOARD_AVAILABLE:
@@ -890,13 +898,170 @@ class CrosshairWidget(QWidget):
         
         scroll_layout.addWidget(pos_group)
         
+        # === SNIPER LOUPE (TACTICAL MAGNIFIER) SECTION ===
+        loupe_group = QGroupBox("Sniper Loupe (Tactical Screen Magnifier)")
+        loupe_group.setObjectName("sniperLoupeGroup")
+        loupe_group.setStyleSheet(self._group_style())
+        loupe_layout = QVBoxLayout(loupe_group)
+        loupe_layout.setSpacing(14)
+
+        # Quick Control row (Enable button + Info label)
+        loupe_ctrl_row = QHBoxLayout()
+        loupe_ctrl_row.setSpacing(12)
+
+        self.loupe_enable_btn = QPushButton("Enable Sniper Loupe")
+        self.loupe_enable_btn.setObjectName("sniperLoupeEnableBtn")
+        self.loupe_enable_btn.setCheckable(True)
+        self.loupe_enable_btn.setFixedWidth(210)
+        self.loupe_enable_btn.setStyleSheet(self._toggle_btn_style())
+        self.loupe_enable_btn.clicked.connect(self._on_loupe_toggle_clicked)
+        loupe_ctrl_row.addWidget(self.loupe_enable_btn)
+
+        loupe_hotkey_info = QLabel("Instant Optical Zoom • Zero Input Lag")
+        loupe_hotkey_info.setObjectName("sniperLoupeHotkeyInfo")
+        loupe_hotkey_info.setStyleSheet("color: #9DB2BF; font-family: 'Orbitron', 'Segoe UI', sans-serif; font-size: 11px;")
+        loupe_ctrl_row.addWidget(loupe_hotkey_info)
+        loupe_ctrl_row.addStretch()
+        loupe_layout.addLayout(loupe_ctrl_row)
+
+        # Grid of Controls
+        loupe_grid = QGridLayout()
+        loupe_grid.setHorizontalSpacing(16)
+        loupe_grid.setVerticalSpacing(12)
+
+        # Hotkey & Trigger Mode
+        lbl_hotkey = QLabel("Trigger Hotkey:")
+        lbl_hotkey.setObjectName("sniperLoupeHotkeyLabel")
+        lbl_hotkey.setStyleSheet("color: #DDE6ED; font-weight: 500;")
+        loupe_grid.addWidget(lbl_hotkey, 0, 0)
+
+        self.loupe_hotkey_combo = AnimatedComboBox()
+        self.loupe_hotkey_combo.setObjectName("sniperLoupeHotkeyCombo")
+        self.loupe_hotkey_combo.addItems(["F7", "F8", "F6", "Ctrl+Shift+Z", "Ctrl+Shift+L", "V", "C"])
+        self.loupe_hotkey_combo.setStyleSheet(self._animated_combo_style())
+        self.loupe_hotkey_combo.currentTextChanged.connect(self._on_loupe_hotkey_changed)
+        loupe_grid.addWidget(self.loupe_hotkey_combo, 0, 1)
+
+        lbl_mode = QLabel("Trigger Mode:")
+        lbl_mode.setObjectName("sniperLoupeModeLabel")
+        lbl_mode.setStyleSheet("color: #DDE6ED; font-weight: 500;")
+        loupe_grid.addWidget(lbl_mode, 0, 2)
+
+        self.loupe_mode_combo = AnimatedComboBox()
+        self.loupe_mode_combo.setObjectName("sniperLoupeModeCombo")
+        self.loupe_mode_combo.addItems(["Toggle (Press to On/Off)", "Hold (Active while Held)"])
+        self.loupe_mode_combo.setStyleSheet(self._animated_combo_style())
+        self.loupe_mode_combo.currentIndexChanged.connect(self._on_loupe_mode_changed)
+        loupe_grid.addWidget(self.loupe_mode_combo, 0, 3)
+
+        # Magnification Level Slider (2.0x to 5.0x)
+        lbl_zoom = QLabel("Magnification:")
+        lbl_zoom.setObjectName("sniperLoupeZoomLabel")
+        lbl_zoom.setStyleSheet("color: #DDE6ED; font-weight: 500;")
+        loupe_grid.addWidget(lbl_zoom, 1, 0)
+
+        self.loupe_zoom_slider = NoScrollSlider(Qt.Horizontal)
+        self.loupe_zoom_slider.setObjectName("sniperLoupeZoomSlider")
+        self.loupe_zoom_slider.setRange(20, 50)
+        self.loupe_zoom_slider.setValue(30)
+        self.loupe_zoom_slider.setStyleSheet(self._slider_style())
+        self.loupe_zoom_slider.valueChanged.connect(self._on_loupe_zoom_changed)
+        loupe_grid.addWidget(self.loupe_zoom_slider, 1, 1)
+
+        self.loupe_zoom_val_label = QLabel("3.0x")
+        self.loupe_zoom_val_label.setObjectName("sniperLoupeZoomValLabel")
+        self.loupe_zoom_val_label.setFixedWidth(50)
+        self.loupe_zoom_val_label.setStyleSheet("color: #FDA903; font-family: 'Orbitron', 'Segoe UI', sans-serif; font-weight: bold;")
+        self.loupe_zoom_val_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        loupe_grid.addWidget(self.loupe_zoom_val_label, 1, 2)
+
+        # Lens Diameter Slider (160px to 320px)
+        lbl_diam = QLabel("Lens Diameter:")
+        lbl_diam.setObjectName("sniperLoupeDiameterLabel")
+        lbl_diam.setStyleSheet("color: #DDE6ED; font-weight: 500;")
+        loupe_grid.addWidget(lbl_diam, 2, 0)
+
+        self.loupe_diam_slider = NoScrollSlider(Qt.Horizontal)
+        self.loupe_diam_slider.setObjectName("sniperLoupeDiameterSlider")
+        self.loupe_diam_slider.setRange(160, 320)
+        self.loupe_diam_slider.setValue(220)
+        self.loupe_diam_slider.setStyleSheet(self._slider_style())
+        self.loupe_diam_slider.valueChanged.connect(self._on_loupe_diam_changed)
+        loupe_grid.addWidget(self.loupe_diam_slider, 2, 1)
+
+        self.loupe_diam_val_label = QLabel("220px")
+        self.loupe_diam_val_label.setObjectName("sniperLoupeDiameterValLabel")
+        self.loupe_diam_val_label.setFixedWidth(50)
+        self.loupe_diam_val_label.setStyleSheet("color: #FDA903; font-family: 'Orbitron', 'Segoe UI', sans-serif; font-weight: bold;")
+        self.loupe_diam_val_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        loupe_grid.addWidget(self.loupe_diam_val_label, 2, 2)
+
+        # Lens Shape & Reticle Type
+        lbl_shape = QLabel("Lens Shape:")
+        lbl_shape.setObjectName("sniperLoupeShapeLabel")
+        lbl_shape.setStyleSheet("color: #DDE6ED; font-weight: 500;")
+        loupe_grid.addWidget(lbl_shape, 3, 0)
+
+        self.loupe_shape_combo = AnimatedComboBox()
+        self.loupe_shape_combo.setObjectName("sniperLoupeShapeCombo")
+        self.loupe_shape_combo.addItems(["Circular Scope Lens", "HUD Rounded Square"])
+        self.loupe_shape_combo.setStyleSheet(self._animated_combo_style())
+        self.loupe_shape_combo.currentIndexChanged.connect(self._on_loupe_shape_changed)
+        loupe_grid.addWidget(self.loupe_shape_combo, 3, 1)
+
+        lbl_reticle = QLabel("In-Scope Reticle:")
+        lbl_reticle.setObjectName("sniperLoupeReticleLabel")
+        lbl_reticle.setStyleSheet("color: #DDE6ED; font-weight: 500;")
+        loupe_grid.addWidget(lbl_reticle, 3, 2)
+
+        self.loupe_reticle_combo = AnimatedComboBox()
+        self.loupe_reticle_combo.setObjectName("sniperLoupeReticleCombo")
+        self.loupe_reticle_combo.addItems(["Mil-Dot Tactical", "Fine Precision Cross", "Circle Dot Reflex", "Clean Glass (No Reticle)"])
+        self.loupe_reticle_combo.setStyleSheet(self._animated_combo_style())
+        self.loupe_reticle_combo.currentIndexChanged.connect(self._on_loupe_reticle_changed)
+        loupe_grid.addWidget(self.loupe_reticle_combo, 3, 3)
+
+        # Optical Tint & Outer Bezel Glow
+        lbl_tint = QLabel("Optical Tint:")
+        lbl_tint.setObjectName("sniperLoupeTintLabel")
+        lbl_tint.setStyleSheet("color: #DDE6ED; font-weight: 500;")
+        loupe_grid.addWidget(lbl_tint, 4, 0)
+
+        self.loupe_tint_combo = AnimatedComboBox()
+        self.loupe_tint_combo.setObjectName("sniperLoupeTintCombo")
+        self.loupe_tint_combo.addItems(["Clear Neutral", "Tactical Amber Recon", "Cyber Green HUD", "Night Vision Phosphor"])
+        self.loupe_tint_combo.setStyleSheet(self._animated_combo_style())
+        self.loupe_tint_combo.currentIndexChanged.connect(self._on_loupe_tint_changed)
+        loupe_grid.addWidget(self.loupe_tint_combo, 4, 1)
+
+        lbl_glow = QLabel("Bezel Glow Color:")
+        lbl_glow.setObjectName("sniperLoupeGlowLabel")
+        lbl_glow.setStyleSheet("color: #DDE6ED; font-weight: 500;")
+        loupe_grid.addWidget(lbl_glow, 4, 2)
+
+        self.loupe_glow_btn = ColorButton("#FF5B06")
+        self.loupe_glow_btn.setObjectName("sniperLoupeGlowColorBtn")
+        self.loupe_glow_btn.colorChanged.connect(lambda c: self.sniper_loupe.update_setting("border_color", c))
+        loupe_grid.addWidget(self.loupe_glow_btn, 4, 3)
+
+        loupe_layout.addLayout(loupe_grid)
+
+        # Orbitron HUD Badge CheckBox
+        self.loupe_hud_check = AnimatedCheckBox("Display In-Scope Zoom Tag (Orbitron HUD)")
+        self.loupe_hud_check.setObjectName("sniperLoupeHudCheck")
+        self.loupe_hud_check.setChecked(True)
+        self.loupe_hud_check.toggled.connect(lambda s: self.sniper_loupe.update_setting("show_hud_badge", bool(s)))
+        loupe_layout.addWidget(self.loupe_hud_check)
+
+        scroll_layout.addWidget(loupe_group)
+        
         scroll_layout.addStretch()
         scroll.setWidget(scroll_content)
         scroll.viewport().setStyleSheet("background: transparent;")
         main_layout.addWidget(scroll)
     
     def _setup_hotkey(self):
-        """Setup global hotkey listener for Ctrl+Shift+C (works in games)."""
+        """Setup global hotkey listener for Ctrl+Shift+C and Sniper Loupe."""
         if not KEYBOARD_AVAILABLE:
             print("Hotkey disabled - keyboard library not available")
             return
@@ -908,6 +1073,49 @@ class CrosshairWidget(QWidget):
             print("Global hotkey registered: Ctrl+Shift+C (low-level hook)")
         except Exception as e:
             print(f"Failed to register hotkey: {e}")
+
+        # Setup Sniper Loupe Hotkey
+        self._setup_loupe_hotkey()
+    
+    def _setup_loupe_hotkey(self):
+        """Setup or refresh the global hotkey listener for Sniper Loupe."""
+        if not KEYBOARD_AVAILABLE:
+            return
+
+        target_hotkey = self.sniper_loupe.settings.get("hotkey", "f7").lower()
+        trigger_mode = self.sniper_loupe.settings.get("trigger_mode", "toggle")
+
+        # Clean up previous hooks
+        if hasattr(self, '_loupe_hooks'):
+            for h in self._loupe_hooks:
+                try:
+                    kb_hook.unhook(h)
+                except Exception:
+                    pass
+            self._loupe_hooks.clear()
+        else:
+            self._loupe_hooks = []
+
+        if hasattr(self, '_current_registered_loupe_key') and self._current_registered_loupe_key:
+            try:
+                kb_hook.remove_hotkey(self._current_registered_loupe_key)
+            except Exception:
+                pass
+            self._current_registered_loupe_key = None
+
+        try:
+            if trigger_mode == "toggle":
+                kb_hook.add_hotkey(target_hotkey, self.loupe_hotkey_triggered.emit, suppress=False)
+                self._current_registered_loupe_key = target_hotkey
+                print(f"[SniperLoupe] Global hotkey registered: {target_hotkey} (Toggle Mode)")
+            else:
+                h_press = kb_hook.on_press_key(target_hotkey, lambda e: self.loupe_hotkey_triggered.emit(), suppress=False)
+                h_release = kb_hook.on_release_key(target_hotkey, lambda e: self.loupe_hold_released.emit(), suppress=False)
+                self._loupe_hooks.extend([h_press, h_release])
+                self._current_registered_loupe_key = target_hotkey
+                print(f"[SniperLoupe] Global hotkey registered: {target_hotkey} (Hold Mode)")
+        except Exception as e:
+            print(f"[SniperLoupe] Failed to register hotkey {target_hotkey}: {e}")
     
     def _on_toggle(self):
         """Toggle crosshair overlay."""
@@ -915,6 +1123,63 @@ class CrosshairWidget(QWidget):
         is_enabled = self.overlay.isVisible()
         self.enable_btn.setChecked(is_enabled)
         self.enable_btn.setText("Crosshair Enabled" if is_enabled else "Enable Crosshair")
+
+    def _on_loupe_toggle_clicked(self):
+        """Toggle Sniper Loupe from UI button."""
+        self.sniper_loupe.toggle_loupe()
+        is_active = self.sniper_loupe.is_active
+        self.loupe_enable_btn.setChecked(is_active)
+        self.loupe_enable_btn.setText("Sniper Loupe Active" if is_active else "Enable Sniper Loupe")
+
+    def _on_loupe_hotkey_pressed(self):
+        """Handle global hotkey trigger for Sniper Loupe."""
+        mode = self.sniper_loupe.settings.get("trigger_mode", "toggle")
+        if mode == "toggle":
+            self.sniper_loupe.toggle_loupe()
+        else:
+            self.sniper_loupe.show_loupe()
+        is_active = self.sniper_loupe.is_active
+        self.loupe_enable_btn.setChecked(is_active)
+        self.loupe_enable_btn.setText("Sniper Loupe Active" if is_active else "Enable Sniper Loupe")
+
+    def _on_loupe_hotkey_released(self):
+        """Handle release of hotkey in Hold Mode."""
+        mode = self.sniper_loupe.settings.get("trigger_mode", "toggle")
+        if mode == "hold":
+            self.sniper_loupe.hide_loupe()
+            self.loupe_enable_btn.setChecked(False)
+            self.loupe_enable_btn.setText("Enable Sniper Loupe")
+
+    def _on_loupe_zoom_changed(self, val):
+        zoom = val / 10.0
+        self.loupe_zoom_val_label.setText(f"{zoom:.1f}x")
+        self.sniper_loupe.update_setting("zoom_factor", zoom)
+
+    def _on_loupe_diam_changed(self, val):
+        self.loupe_diam_val_label.setText(f"{val}px")
+        self.sniper_loupe.update_setting("diameter", val)
+
+    def _on_loupe_shape_changed(self, idx):
+        shape = "circle" if idx == 0 else "rounded_hud"
+        self.sniper_loupe.update_setting("shape", shape)
+
+    def _on_loupe_reticle_changed(self, idx):
+        reticle_map = {0: "mil_dot", 1: "fine_cross", 2: "circle_dot", 3: "none"}
+        self.sniper_loupe.update_setting("reticle_type", reticle_map.get(idx, "mil_dot"))
+
+    def _on_loupe_tint_changed(self, idx):
+        tint_map = {0: "clear", 1: "tactical_amber", 2: "cyber_green", 3: "night_vision"}
+        self.sniper_loupe.update_setting("tint_mode", tint_map.get(idx, "clear"))
+
+    def _on_loupe_hotkey_changed(self, key_text):
+        target_key = key_text.strip().lower()
+        self.sniper_loupe.update_setting("hotkey", target_key)
+        self._setup_loupe_hotkey()
+
+    def _on_loupe_mode_changed(self, idx):
+        mode = "toggle" if idx == 0 else "hold"
+        self.sniper_loupe.update_setting("trigger_mode", mode)
+        self._setup_loupe_hotkey()
     
     def _offset_btn_style(self):
         return """
@@ -1011,6 +1276,8 @@ class CrosshairWidget(QWidget):
             self._offset_y = max(-500, min(500, self._offset_y + delta))
             self.y_offset_value.setText(str(self._offset_y))
             self._update_setting("offset_y", self._offset_y)
+        if hasattr(self, 'sniper_loupe'):
+            self.sniper_loupe.set_offsets(self._offset_x, self._offset_y)
     
     def _on_shape_change(self, shape_text):
         """Handle shape selection change."""
@@ -1038,6 +1305,8 @@ class CrosshairWidget(QWidget):
     def _update_setting(self, key, value):
         """Update overlay setting and refresh."""
         self.overlay.update_settings(key, value)
+        if key in ("offset_x", "offset_y") and hasattr(self, 'sniper_loupe'):
+            self.sniper_loupe.set_offsets(self._offset_x, self._offset_y)
     
     def load_ui_from_settings(self):
         """Load UI controls from overlay settings."""
@@ -1071,6 +1340,45 @@ class CrosshairWidget(QWidget):
             self.overlay.show()
             self.enable_btn.setChecked(True)
             self.enable_btn.setText("Crosshair Enabled")
+
+        # Load Sniper Loupe settings into UI
+        if hasattr(self, 'sniper_loupe'):
+            ls = self.sniper_loupe.settings
+            zoom_val = int(ls.get("zoom_factor", 3.0) * 10)
+            self.loupe_zoom_slider.setValue(zoom_val)
+            self.loupe_zoom_val_label.setText(f"{ls.get('zoom_factor', 3.0):.1f}x")
+
+            diam_val = int(ls.get("diameter", 220))
+            self.loupe_diam_slider.setValue(diam_val)
+            self.loupe_diam_val_label.setText(f"{diam_val}px")
+
+            shape_idx = 0 if ls.get("shape", "circle") == "circle" else 1
+            self.loupe_shape_combo.setCurrentIndex(shape_idx)
+
+            reticle_map_rev = {"mil_dot": 0, "fine_cross": 1, "circle_dot": 2, "none": 3}
+            self.loupe_reticle_combo.setCurrentIndex(reticle_map_rev.get(ls.get("reticle_type", "mil_dot"), 0))
+
+            tint_map_rev = {"clear": 0, "tactical_amber": 1, "cyber_green": 2, "night_vision": 3}
+            self.loupe_tint_combo.setCurrentIndex(tint_map_rev.get(ls.get("tint_mode", "clear"), 0))
+
+            self.loupe_glow_btn.setColor(ls.get("border_color", "#FF5B06"))
+            self.loupe_hud_check.setChecked(ls.get("show_hud_badge", True))
+
+            hotkey_text = ls.get("hotkey", "f7").upper()
+            idx = self.loupe_hotkey_combo.findText(hotkey_text, Qt.MatchFixedString)
+            if idx >= 0:
+                self.loupe_hotkey_combo.setCurrentIndex(idx)
+
+            mode_idx = 0 if ls.get("trigger_mode", "toggle") == "toggle" else 1
+            self.loupe_mode_combo.setCurrentIndex(mode_idx)
+
+            # Sync initial crosshair offset to loupe
+            self.sniper_loupe.set_offsets(self._offset_x, self._offset_y)
+
+            if ls.get("enabled", False):
+                self.sniper_loupe.show_loupe()
+                self.loupe_enable_btn.setChecked(True)
+                self.loupe_enable_btn.setText("Sniper Loupe Active")
     
     def cleanup(self):
         """Cleanup resources on close."""
@@ -1079,7 +1387,21 @@ class CrosshairWidget(QWidget):
                 kb_hook.remove_hotkey('ctrl+shift+c')
             except:
                 pass
+            if hasattr(self, '_loupe_hooks'):
+                for h in self._loupe_hooks:
+                    try:
+                        kb_hook.unhook(h)
+                    except Exception:
+                        pass
+                self._loupe_hooks.clear()
+            if hasattr(self, '_current_registered_loupe_key') and self._current_registered_loupe_key:
+                try:
+                    kb_hook.remove_hotkey(self._current_registered_loupe_key)
+                except Exception:
+                    pass
         self.overlay.hide()
+        if hasattr(self, 'sniper_loupe'):
+            self.sniper_loupe.hide_loupe()
     
     # === STYLE HELPERS ===
     def _group_style(self):

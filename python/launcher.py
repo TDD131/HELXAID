@@ -7920,6 +7920,53 @@ class GameLauncher(QWidget):
             except Exception:
                 pass
 
+    def _init_user_ahk_detection(self):
+        """
+        Detect whether user has AutoHotkey installed or running on the system.
+        Runs during main launcher initialize so all macro systems and integrations
+        are immediately aware of the user's AHK environment.
+        """
+        try:
+            from ahk_detector import detect_user_ahk
+            self.ahk_info = detect_user_ahk(quick=True)
+            print(f"[Init] AutoHotkey User Detection Initialized: installed={self.ahk_info['installed']}, "
+                  f"path='{self.ahk_info['path']}', source='{self.ahk_info['source']}', "
+                  f"version='{self.ahk_info['version']}'")
+            if self.ahk_info.get("running_scripts"):
+                print(f"[Init] Active AHK Scripts detected: {self.ahk_info['running_scripts']}")
+        except Exception as e:
+            print(f"[Init] AHK User Detection notice: {e}")
+            self.ahk_info = {
+                "installed": False,
+                "path": None,
+                "version": "unknown",
+                "source": "none",
+                "running": False,
+                "running_pids": [],
+                "running_scripts": [],
+                "is_v2": False,
+                "executable_name": "",
+                "all_found_paths": []
+            }
+
+    def get_user_ahk_info(self) -> dict:
+        """Get the current user AutoHotkey detection status."""
+        if not hasattr(self, 'ahk_info') or self.ahk_info is None:
+            self._init_user_ahk_detection()
+        return self.ahk_info
+
+    def is_user_ahk_installed(self) -> bool:
+        """Check if user has AutoHotkey installed on the system."""
+        return bool(self.get_user_ahk_info().get("installed", False))
+
+    def is_user_ahk_running(self) -> bool:
+        """Check if any AutoHotkey process is currently active."""
+        return bool(self.get_user_ahk_info().get("running", False))
+
+    def get_user_ahk_path(self) -> str:
+        """Get the path to the user's detected AutoHotkey executable."""
+        return self.get_user_ahk_info().get("path") or ""
+
     def _deferred_startup_tasks(self):
         """Run non-critical startup tasks after UI is visible for faster perceived startup."""
         # Auto-fix corrupt icons at startup
@@ -7938,6 +7985,14 @@ class GameLauncher(QWidget):
         
         # Setup deferred button animations (improves startup time)
         self._setup_deferred_button_animations()
+
+        # Refresh AHK detection running state after startup settles
+        if hasattr(self, 'ahk_info'):
+            try:
+                from ahk_detector import detect_user_ahk
+                self.ahk_info = detect_user_ahk(force_refresh=True, check_processes=True)
+            except Exception:
+                pass
 
         # All heavy panels (Music, CPU, Crosshair, Macro, Hardware, WinCustom) are purely
         # lazy-loaded on first user click via switch_panel() to keep startup RAM minimal (~90-120MB).
@@ -8238,6 +8293,9 @@ class GameLauncher(QWidget):
         self.game_buttons = []
         self.current_session = None
         self._app_type_cache = {}
+
+        # Initialize User AutoHotkey (AHK) Detection
+        self._init_user_ahk_detection()
         
         # Register the TaskbarButtonCreated message early so we don't miss it when window shows
         try:
@@ -9534,7 +9592,7 @@ class GameLauncher(QWidget):
         print(f"[TIMING] GameLauncher.__init__ DONE")
 
     def _idle_preload_panels(self):
-        """Preload heavy panels (HELXAIC) during idle startup so page switches are 0ms instant."""
+        """Preload heavy panels (HELXAIC & HELXAIL) during idle startup so page switches are 0ms instant."""
         if not hasattr(self, 'music_panel'):
             try:
                 t0 = time.perf_counter()
@@ -9542,6 +9600,15 @@ class GameLauncher(QWidget):
                 print(f"[Preload] HELXAIC (Music Panel) preloaded in {(time.perf_counter()-t0)*1000:.2f}ms during idle time")
             except Exception as e:
                 print(f"[Preload] Music panel preload error: {e}")
+
+        # Preload HELXAIL (CPU Controller) during idle time for 0ms instant page switch
+        if not hasattr(self, 'cpu_panel'):
+            try:
+                t0 = time.perf_counter()
+                self._setup_cpu_panel()
+                print(f"[Preload] HELXAIL (CPU Controller) preloaded in {(time.perf_counter()-t0)*1000:.2f}ms during idle time")
+            except Exception as e:
+                print(f"[Preload] CPU panel preload error: {e}")
 
     def open_launcher_youtube(self):
         QDesktopServices.openUrl(QUrl("https://rickrolled.com/"))
@@ -10743,6 +10810,7 @@ class GameLauncher(QWidget):
             return
         self.cpu_panel = QWidget()
         self.cpu_panel.setObjectName("cpuPanel")
+        self.cpu_panel.setStyleSheet("QWidget#cpuPanel { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a); }")
         layout = QVBoxLayout(self.cpu_panel)
         layout.setContentsMargins(40, 30, 40, 30)
         layout.setSpacing(24)
@@ -11143,46 +11211,44 @@ class GameLauncher(QWidget):
             QPushButton:hover {
         """)
         
-        # Setup animated icon rotation on hover
+        # Setup animated icon rotation on hover (lazy initialized on first hover to eliminate ~165ms page load stall)
         if os.path.exists(icon_path):
-            from PySide6.QtGui import QPixmap, QTransform
             from PySide6.QtCore import QTimer
             
-            # Load icon and scale down to button size (50x50) BEFORE frame generation to prevent ~800MB RAM leak
-            full_pixmap = QPixmap(icon_path)
-            target_size = QSize(50, 50)
-            pixmap = full_pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            del full_pixmap  # Immediately release 58.2MB raw bitmap buffer
-            
-            original_size = pixmap.size()
-            frames = []
-            num_frames = 9  # 0, -5, -10, -15, -20, -25, -30, -35, -40, -45
-            for i in range(num_frames + 1):
-                angle = -5 * i  # 0 to -45 degrees
-                transform = QTransform().rotate(angle)
-                rotated = pixmap.transformed(transform, Qt.SmoothTransformation)
-                
-                # Create fixed-size canvas and center the rotated icon
-                from PySide6.QtGui import QPainter
-                canvas = QPixmap(original_size)
-                canvas.fill(Qt.transparent)
-                painter = QPainter(canvas)
-                # Center the rotated pixmap on canvas
-                x = (original_size.width() - rotated.width()) // 2
-                y = (original_size.height() - rotated.height()) // 2
-                painter.drawPixmap(x, y, rotated)
-                painter.end()
-                
-                frames.append(QIcon(canvas))
-            
-            # Store animation state on button
-            settings_btn._rot_frames = frames
+            settings_btn._rot_frames = None
             settings_btn._rot_index = 0
-            settings_btn._rot_forward = True  # True = rotating, False = returning
+            settings_btn._rot_forward = True
             settings_btn._rot_timer = QTimer()
             settings_btn._rot_timer.setInterval(20)  # 20ms per frame = ~200ms total
             
+            def _lazy_init_frames():
+                if getattr(settings_btn, '_rot_frames', None) is not None:
+                    return
+                from PySide6.QtGui import QPixmap, QTransform, QPainter
+                full_pixmap = QPixmap(icon_path)
+                target_size = QSize(50, 50)
+                pixmap = full_pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                del full_pixmap
+                original_size = pixmap.size()
+                frames = []
+                for i in range(10):
+                    angle = -5 * i
+                    transform = QTransform().rotate(angle)
+                    rotated = pixmap.transformed(transform, Qt.SmoothTransformation)
+                    canvas = QPixmap(original_size)
+                    canvas.fill(Qt.transparent)
+                    painter = QPainter(canvas)
+                    x = (original_size.width() - rotated.width()) // 2
+                    y = (original_size.height() - rotated.height()) // 2
+                    painter.drawPixmap(x, y, rotated)
+                    painter.end()
+                    frames.append(QIcon(canvas))
+                settings_btn._rot_frames = frames
+
             def _animate_frame():
+                frames = getattr(settings_btn, '_rot_frames', None)
+                if not frames:
+                    return
                 if settings_btn._rot_forward:
                     if settings_btn._rot_index < len(frames) - 1:
                         settings_btn._rot_index += 1
@@ -11203,6 +11269,7 @@ class GameLauncher(QWidget):
             original_leave = settings_btn.leaveEvent
             
             def new_enter(event):
+                _lazy_init_frames()
                 settings_btn._rot_forward = True
                 settings_btn._rot_timer.start()
                 original_enter(event)
@@ -11323,7 +11390,78 @@ class GameLauncher(QWidget):
         
         sliders_widget = QWidget()
         sliders_widget.setObjectName("cpuSlidersContainer")
-        sliders_widget.setStyleSheet("background: transparent;")
+        up_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "up-arrow-triangle.svg").replace("\\", "/")
+        down_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+        sliders_widget.setStyleSheet(f"""
+            QWidget#cpuSlidersContainer {{
+                background: transparent;
+            }}
+            QSpinBox {{
+                background: rgba(30, 33, 40, 0.9);
+                color: #e0e0e0;
+                border: 1px solid rgba(80, 80, 80, 0.4);
+                border-radius: 6px;
+                padding: 4px 8px;
+                font-size: 13px;
+            }}
+            QSpinBox:disabled {{
+                color: #666666;
+                background: rgba(20, 22, 28, 0.6);
+            }}
+            QSpinBox::up-button {{
+                width: 18px;
+                background: rgba(60, 64, 72, 0.8);
+                border: none;
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+            }}
+            QSpinBox::up-button:hover {{
+                background: rgba(255, 91, 6, 0.3);
+            }}
+            QSpinBox::up-arrow {{
+                image: url({up_arrow_path});
+                width: 10px;
+                height: 10px;
+            }}
+            QSpinBox::down-button {{
+                width: 18px;
+                background: rgba(60, 64, 72, 0.8);
+                border: none;
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+            }}
+            QSpinBox::down-button:hover {{
+                background: rgba(255, 91, 6, 0.3);
+            }}
+            QSpinBox::down-arrow {{
+                image: url({down_arrow_path});
+                width: 10px;
+                height: 10px;
+            }}
+            QSlider::groove:horizontal {{
+                height: 4px;
+                background: rgba(60, 64, 72, 0.8);
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: #e0e0e0;
+                width: 14px;
+                height: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+                border: none;
+            }}
+            QSlider::handle:horizontal:hover {{
+                background: #ffffff;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: rgba(255, 91, 6, 0.6);
+                border-radius: 2px;
+            }}
+            QSlider:disabled {{
+                opacity: 0.5;
+            }}
+        """)
         sliders_layout = QVBoxLayout(sliders_widget)
         sliders_layout.setContentsMargins(0, 0, 8, 0)
         sliders_layout.setSpacing(8)
@@ -11602,6 +11740,19 @@ class GameLauncher(QWidget):
         ]
         # (Tracking dict is initialized at the top of the function)
         
+        # Pre-cache chevron SVGs into memory to eliminate repeated disk I/O in loop
+        down_svg_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg")
+        right_svg_path = os.path.join(SCRIPT_DIR, "UI Icons", "right-arrow-triangle.svg")
+        down_svg_bytes = b""
+        right_svg_bytes = b""
+        try:
+            with open(down_svg_path, 'rb') as f:
+                down_svg_bytes = f.read()
+            with open(right_svg_path, 'rb') as f:
+                right_svg_bytes = f.read()
+        except Exception:
+            pass
+
         for idx, (icon, title, desc, group_id, sliders) in enumerate(slider_groups):
             # Main container with border
             group_container = QWidget()
@@ -11637,18 +11788,17 @@ class GameLauncher(QWidget):
             
             header_layout.addStretch()
             
-            # Chevron arrow (using SVG for sharpness)
+            # Chevron arrow (using SVG for sharpness, cached bytes for instant load)
             from PySide6.QtSvgWidgets import QSvgWidget
             chevron = QSvgWidget()
             chevron.setObjectName(f"cpuChevron_{group_id}")
             chevron.setFixedSize(16, 16)
-            
-            down_svg = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg")
-            right_svg = os.path.join(SCRIPT_DIR, "UI Icons", "right-arrow-triangle.svg")
-            chevron.setProperty("down_svg", down_svg)
-            chevron.setProperty("right_svg", right_svg)
-            
-            chevron.load(right_svg)
+            chevron.setProperty("down_svg_bytes", down_svg_bytes)
+            chevron.setProperty("right_svg_bytes", right_svg_bytes)
+            if right_svg_bytes:
+                chevron.load(right_svg_bytes)
+            else:
+                chevron.load(right_svg_path)
             
             chevron.setStyleSheet("background: transparent;")
             header_layout.addWidget(chevron)
@@ -11723,48 +11873,6 @@ class GameLauncher(QWidget):
                 spinbox.setMaximum(limits["max"])
                 spinbox.setValue(current_value)
                 spinbox.setFixedSize(80, 32)
-                up_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "up-arrow-triangle.svg").replace("\\", "/")
-                down_arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
-                spinbox.setStyleSheet(f"""
-                    QSpinBox {{
-                        background: rgba(30, 33, 40, 0.9);
-                        color: #e0e0e0;
-                        border: 1px solid rgba(80, 80, 80, 0.4);
-                        border-radius: 6px;
-                        padding: 4px 8px;
-                        font-size: 13px;
-                    }}
-                    QSpinBox::up-button {{
-                        width: 18px;
-                        background: rgba(60, 64, 72, 0.8);
-                        border: none;
-                        subcontrol-origin: border;
-                        subcontrol-position: top right;
-                    }}
-                    QSpinBox::up-button:hover {{
-                        background: rgba(255, 91, 6, 0.3);
-                    }}
-                    QSpinBox::up-arrow {{
-                        image: url({up_arrow_path});
-                        width: 10px;
-                        height: 10px;
-                    }}
-                    QSpinBox::down-button {{
-                        width: 18px;
-                        background: rgba(60, 64, 72, 0.8);
-                        border: none;
-                        subcontrol-origin: border;
-                        subcontrol-position: bottom right;
-                    }}
-                    QSpinBox::down-button:hover {{
-                        background: rgba(255, 91, 6, 0.3);
-                    }}
-                    QSpinBox::down-arrow {{
-                        image: url({down_arrow_path});
-                        width: 10px;
-                        height: 10px;
-                    }}
-                """)
                 control_row.addWidget(spinbox)
                 
                 # Slider
@@ -11774,19 +11882,6 @@ class GameLauncher(QWidget):
                 slider.setMaximum(limits["max"])
                 slider.setValue(current_value)
                 slider.setFixedHeight(20)
-                slider.setStyleSheet("""
-                    QSlider::groove:horizontal { height: 4px; background: rgba(60, 64, 72, 0.8); border-radius: 2px; }
-                    QSlider::handle:horizontal { 
-                        background: #e0e0e0; 
-                        width: 14px; 
-                        height: 14px; 
-                        margin: -5px 0; 
-                        border-radius: 7px;
-                        border: none;
-                    }
-                    QSlider::handle:horizontal:hover { background: #ffffff; }
-                    QSlider::sub-page:horizontal { background: rgba(255, 91, 6, 0.6); border-radius: 2px; }
-                """)
                 control_row.addWidget(slider, 1)
                 
                 # Connect checkbox to enable/disable slider + spinbox
@@ -11794,8 +11889,6 @@ class GameLauncher(QWidget):
                     def toggle(checked):
                         sp.setEnabled(checked)
                         sl.setEnabled(checked)
-                        opacity_style = "" if checked else "color: #666;"
-                        sp.setStyleSheet(sp.styleSheet().replace("color: #666;", "") + opacity_style)
                         # Save to settings
                         self._on_cpu_checkbox_toggled(k, checked)
                     return toggle
@@ -11870,9 +11963,13 @@ class GameLauncher(QWidget):
                         grp["anim"] = anim  # Keep reference
                         
                         # Chevron immediate update (down)
-                        down_svg = chevron_lbl.property("down_svg")
-                        if down_svg:
-                            chevron_lbl.load(down_svg)
+                        down_bytes = chevron_lbl.property("down_svg_bytes")
+                        if down_bytes:
+                            chevron_lbl.load(down_bytes)
+                        else:
+                            down_svg = chevron_lbl.property("down_svg")
+                            if down_svg:
+                                chevron_lbl.load(down_svg)
                     else:
                         # COLLAPSE: Animate height, then hide
                         current_height = content_w.height()
@@ -11887,9 +11984,13 @@ class GameLauncher(QWidget):
                         grp["anim"] = anim
                         
                         # Chevron immediate update (right)
-                        right_svg = chevron_lbl.property("right_svg")
-                        if right_svg:
-                            chevron_lbl.load(right_svg)
+                        right_bytes = chevron_lbl.property("right_svg_bytes")
+                        if right_bytes:
+                            chevron_lbl.load(right_bytes)
+                        else:
+                            right_svg = chevron_lbl.property("right_svg")
+                            if right_svg:
+                                chevron_lbl.load(right_svg)
                 
                 return toggle
             
@@ -11930,9 +12031,6 @@ class GameLauncher(QWidget):
         btn_layout.addWidget(apply_btn)
         
         layout.addLayout(btn_layout)
-        
-        # ===== PANEL BACKGROUND =====
-        self.cpu_panel.setStyleSheet("QWidget#cpuPanel { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a); }")
         
         # Add to stack (will be added at end, use insertWidget for specific position)
         if not hasattr(self, '_cpu_panel_insert_index'):
@@ -12279,7 +12377,10 @@ class GameLauncher(QWidget):
             print("[Power] Power mode: System Controlled")
     
     def _get_available_refresh_rates(self) -> list:
-        """Get available display refresh rates from Windows using EnumDisplaySettings API."""
+        """Get available display refresh rates from Windows using EnumDisplaySettings API (cached)."""
+        if hasattr(self, '_cached_refresh_rates') and self._cached_refresh_rates:
+            return self._cached_refresh_rates
+
         refresh_rates = []
         try:
             import ctypes
@@ -12342,7 +12443,8 @@ class GameLauncher(QWidget):
             # Fallback to common rates
             refresh_rates = [60, 144]
         
-        return refresh_rates if refresh_rates else [60]
+        self._cached_refresh_rates = refresh_rates if refresh_rates else [60]
+        return self._cached_refresh_rates
     
     def _show_helxail_info_dialog(self):
         """Show the HELXAIL first-time usage guide."""
@@ -20391,6 +20493,19 @@ if __name__ == "__main__":
     # with EnableHooking=0 is the official supported opt-out method.
     _exclude_from_rtss()
     
+    # Fast non-blocking AutoHotkey environment check (< 2ms)
+    try:
+        from ahk_detector import detect_user_ahk
+        ahk_status = detect_user_ahk(quick=True)
+        if ahk_status.get("installed"):
+            print(f"[Init] AutoHotkey detected: {ahk_status.get('path')} (v{ahk_status.get('version')}, source={ahk_status.get('source')})")
+        else:
+            print("[Init] AutoHotkey not detected in system.")
+    except Exception as e:
+        print(f"[Init] AutoHotkey splash detection notice: {e}")
+
+    update_splash(70, "Loading user interface...")
+
     # Create main window
     w = GameLauncher()
     

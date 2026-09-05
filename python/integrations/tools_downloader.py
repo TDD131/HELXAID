@@ -81,7 +81,15 @@ def get_ffmpeg_path() -> str:
 
 
 def get_ahk_path() -> str:
-    """Get path to AutoHotkey.exe in AppData tools or fallback plugins directory."""
+    """Get path to AutoHotkey.exe from detected user installation, AppData tools, or fallback plugins directory."""
+    try:
+        from ahk_detector import get_user_ahk_path
+        detected = get_user_ahk_path()
+        if detected and os.path.exists(detected):
+            return detected
+    except Exception:
+        pass
+
     appdata_ahk = os.path.join(AHK_DIR, "AutoHotkey.exe")
     if os.path.exists(appdata_ahk):
         return appdata_ahk
@@ -93,7 +101,13 @@ def get_ahk_path() -> str:
 
 
 def is_ahk_installed() -> bool:
-    """Check if AutoHotkey.exe exists in AppData tools or plugins."""
+    """Check if AutoHotkey.exe exists in user system, AppData tools, or plugins."""
+    try:
+        from ahk_detector import is_user_ahk_installed
+        if is_user_ahk_installed():
+            return True
+    except Exception:
+        pass
     return os.path.exists(get_ahk_path())
 
 
