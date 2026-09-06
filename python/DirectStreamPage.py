@@ -4563,20 +4563,18 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
         self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
 
     def _setup_ui(self):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        warning_icon_path = os.path.join(script_dir, "UI Icons", "warning-icon.svg").replace('\\', '/')
-
         self.setStyleSheet("""
             QWidget#directStreamSyncWarningOverlay {
-                background-color: rgba(0, 0, 0, 0.65);
+                background-color: rgba(0, 0, 0, 0.72);
             }
             QFrame#directStreamWarningCard {
-                background-color: rgba(18, 20, 27, 0.98);
+                background-color: #11131A;
                 border-radius: 14px;
             }
             QWidget#directStreamWarningTitleBar {
-                background: transparent;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+                background-color: #161822;
+                border-top-left-radius: 14px;
+                border-top-right-radius: 14px;
             }
         """)
 
@@ -4586,62 +4584,53 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
 
         self.card = QFrame()
         self.card.setObjectName("directStreamWarningCard")
-        self.card.setFixedSize(500, 270)
+        self.card.setFixedSize(560, 285)
 
         card_layout = QVBoxLayout(self.card)
-        card_layout.setContentsMargins(0, 0, 0, 18)
+        card_layout.setContentsMargins(0, 0, 0, 20)
         card_layout.setSpacing(14)
 
         # 1. Title Bar
         title_bar = QWidget()
         title_bar.setObjectName("directStreamWarningTitleBar")
-        title_bar.setFixedHeight(46)
+        title_bar.setFixedHeight(48)
         title_layout = QHBoxLayout(title_bar)
-        title_layout.setContentsMargins(20, 0, 16, 0)
+        title_layout.setContentsMargins(18, 0, 14, 0)
         title_layout.setSpacing(10)
 
         icon_lbl = QLabel()
         icon_lbl.setObjectName("directStreamWarningIcon")
-        icon_lbl.setFixedSize(20, 20)
-        if os.path.exists(warning_icon_path):
-            icon_lbl.setPixmap(QPixmap(warning_icon_path).scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        icon_lbl.setFixedSize(18, 18)
+        icon_lbl.setPixmap(render_colored_svg_pixmap("warning-icon.svg", 18, 18, "#FF5B06"))
         icon_lbl.setStyleSheet("background: transparent;")
-        title_layout.addWidget(icon_lbl)
+        title_layout.addWidget(icon_lbl, 0, Qt.AlignVCenter)
 
         title_lbl = QLabel("EXTENSION NOT SYNCHRONIZED")
         title_lbl.setObjectName("directStreamWarningTitle")
-        title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 900; letter-spacing: 0.5px; background: transparent;")
-        title_layout.addWidget(title_lbl)
+        title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11.5px; font-weight: 800; letter-spacing: 0.5px; background: transparent;")
+        title_layout.addWidget(title_lbl, 0, Qt.AlignVCenter)
 
-        # Amber Badge
+        # Amber Badge (Pill Badge with explicit height and VCenter alignment)
         badge_lbl = QLabel("OFFLINE CACHE")
         badge_lbl.setObjectName("directStreamWarningBadge")
-        badge_lbl.setStyleSheet("background-color: rgba(255, 91, 6, 0.15); color: #FF9100; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; border-radius: 4px; padding: 3px 8px; border: none;")
-        title_layout.addWidget(badge_lbl)
+        badge_lbl.setFixedHeight(22)
+        badge_lbl.setStyleSheet("background-color: rgba(255, 91, 6, 0.15); color: #FF9100; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 2px 8px; border: none;")
+        title_layout.addWidget(badge_lbl, 0, Qt.AlignVCenter)
 
-        title_layout.addStretch()
+        title_layout.addStretch(1)
 
-        close_btn = QPushButton("✕")
+        close_btn = SvgHoverButton("close-icon.svg", size=28, icon_size=12, idle_color="#7A7E8F", hover_color="#FFFFFF", idle_bg="transparent", hover_bg="#222533")
         close_btn.setObjectName("directStreamWarningCloseBtn")
-        close_btn.setFixedSize(26, 26)
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton#directStreamWarningCloseBtn {
-                background: transparent; color: #7A7E8F; font-size: 14px; font-weight: bold; border: none; border-radius: 13px;
-            }
-            QPushButton#directStreamWarningCloseBtn:hover {
-                background: rgba(255, 255, 255, 0.08); color: #FFFFFF;
-            }
-        """)
         close_btn.clicked.connect(self._on_proceed)
-        title_layout.addWidget(close_btn)
+        title_layout.addWidget(close_btn, 0, Qt.AlignVCenter)
 
         card_layout.addWidget(title_bar)
 
         # 2. Body Message
         body_widget = QWidget()
+        body_widget.setObjectName("directStreamWarningBodyWidget")
         body_layout = QVBoxLayout(body_widget)
-        body_layout.setContentsMargins(22, 4, 22, 4)
+        body_layout.setContentsMargins(24, 4, 24, 4)
         body_layout.setSpacing(8)
 
         msg_title = QLabel("Running on Last Known Saved State")
@@ -4655,29 +4644,68 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
         )
         msg_body.setObjectName("directStreamWarningBody")
         msg_body.setWordWrap(True)
-        msg_body.setStyleSheet("color: #A0A4B5; font-size: 11px; line-height: 1.45; background: transparent;")
+        msg_body.setStyleSheet("color: #A0A4B8; font-family: 'Orbitron', sans-serif; font-size: 10px; line-height: 1.5; background: transparent;")
         body_layout.addWidget(msg_body)
 
         card_layout.addWidget(body_widget, 1)
 
         # 3. Footer Action Buttons
         action_layout = QHBoxLayout()
-        action_layout.setContentsMargins(22, 0, 22, 0)
+        action_layout.setContentsMargins(24, 6, 24, 0)
         action_layout.setSpacing(12)
 
-        open_ext_btn = FadeHoverButton("Open Extension", is_secondary=True, border_radius=6.0)
+        open_ext_btn = QPushButton("Open Extension")
         open_ext_btn.setObjectName("directStreamOpenExtBtn")
-        open_ext_btn.setFixedHeight(34)
-        open_ext_btn.setFixedWidth(140)
+        open_ext_btn.setFixedHeight(36)
+        open_ext_btn.setFixedWidth(150)
+        open_ext_btn.setCursor(Qt.PointingHandCursor)
+        open_ext_btn.setStyleSheet("""
+            QPushButton#directStreamOpenExtBtn {
+                background-color: #181B26;
+                color: #BAC0D4;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 4px 16px;
+                border: none;
+            }
+            QPushButton#directStreamOpenExtBtn:hover {
+                background-color: #242838;
+                color: #FFFFFF;
+            }
+            QPushButton#directStreamOpenExtBtn:pressed {
+                background-color: #141620;
+            }
+        """)
         open_ext_btn.clicked.connect(self._open_extension)
         action_layout.addWidget(open_ext_btn)
 
         action_layout.addStretch()
 
-        proceed_btn = FadeHoverButton("Continue Playing", is_secondary=False, border_radius=6.0, color_mode="default")
+        proceed_btn = QPushButton("Continue Playing")
         proceed_btn.setObjectName("directStreamProceedBtn")
-        proceed_btn.setFixedHeight(34)
-        proceed_btn.setFixedWidth(145)
+        proceed_btn.setFixedHeight(36)
+        proceed_btn.setFixedWidth(160)
+        proceed_btn.setCursor(Qt.PointingHandCursor)
+        proceed_btn.setStyleSheet("""
+            QPushButton#directStreamProceedBtn {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 4px 18px;
+                border: none;
+            }
+            QPushButton#directStreamProceedBtn:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF6E20, stop:1 #FEB820);
+            }
+            QPushButton#directStreamProceedBtn:pressed {
+                background: #E04E00;
+            }
+        """)
         proceed_btn.clicked.connect(self._on_proceed)
         action_layout.addWidget(proceed_btn)
 

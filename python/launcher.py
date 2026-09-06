@@ -60,6 +60,7 @@ from PySide6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, QSize, QSizeF, QT
 from integrations.cpu_controller import is_uxtu_installed, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton, HoverCloseButton
 from DebugConsoleWidget import get_debug_console, toggle_debug_console
+from process_decoupler import launch_decoupled_process
 
 # Global Feature Flags
 ENABLE_DISCORD = True
@@ -4311,6 +4312,254 @@ class DraggableFloatingPanel(QFrame):
         if event.button() == Qt.LeftButton:
             self._is_dragging = False
             event.accept()
+
+
+class SteamLoginTrackerFloatingPanel(QFrame):
+    """
+    Sleek, Cyberpunk In-App Draggable Floating Panel for Steam Login Tracker.
+    Replaces native QMessageBox with a frameless, non-blocking glassmorphism QFrame
+    adhering strictly to HELXAID's design language:
+    - Less border, more background-color
+    - 100% Orbitron typography
+    - SVG iconography (steam-icon.svg, info-icon.svg)
+    - HoverCloseButton
+    - Draggable within parent launcher bounds
+    - Smooth fade-in and fade-out animations via QPropertyAnimation
+
+    Component Name: SteamLoginTrackerFloatingPanel
+    """
+    def __init__(self, launcher, parent=None):
+        super().__init__(parent or launcher)
+        from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QGraphicsOpacityEffect
+        from PySide6.QtGui import QPixmap
+
+        self.launcher = launcher
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("SteamLoginTrackerFloatingPanel")
+
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        steam_icon_path = os.path.join(script_dir, "UI Icons", "steam-icon.svg").replace('\\', '/')
+        info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg").replace('\\', '/')
+
+        self.setStyleSheet("""
+            QFrame#SteamLoginTrackerFloatingPanel {
+                background-color: rgba(12, 12, 16, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#steamTrackerTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#steamTrackerTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 1px;
+            }
+            QFrame#steamTrackerCard {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+            }
+            QLabel#steamTrackerBadgeIcon {
+                background: transparent;
+            }
+            QLabel#steamTrackerMessageLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                line-height: 1.4;
+            }
+            QLabel#steamTrackerTipLabel {
+                color: #A0A0B0;
+                font-size: 11px;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                line-height: 1.4;
+            }
+            QPushButton#steamTrackerOkBtn {
+                background-color: rgba(255, 91, 6, 0.25);
+                border: 1px solid #FF5B06;
+                border-radius: 8px;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 7px 26px;
+            }
+            QPushButton#steamTrackerOkBtn:hover {
+                background-color: rgba(255, 91, 6, 0.55);
+                border-color: #FF7324;
+            }
+            QPushButton#steamTrackerOkBtn:pressed {
+                background-color: #FF5B06;
+                color: #FFFFFF;
+            }
+        """)
+
+        self.setFixedSize(500, 225)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 16)
+        main_layout.setSpacing(0)
+
+        # 1. Title Bar (Draggable)
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("steamTrackerTitleBar")
+        self.title_bar.setFixedHeight(42)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(14, 0, 14, 0)
+        tb_layout.setSpacing(10)
+
+        # Steam icon in titlebar
+        title_icon_lbl = QLabel(self.title_bar)
+        title_icon_lbl.setObjectName("steamTrackerTitleIcon")
+        title_icon_lbl.setFixedSize(18, 18)
+        title_icon_lbl.setScaledContents(True)
+        if os.path.exists(steam_icon_path):
+            title_icon_lbl.setPixmap(QPixmap(steam_icon_path))
+        tb_layout.addWidget(title_icon_lbl, alignment=Qt.AlignVCenter)
+
+        title_lbl = QLabel("STEAM LOGIN TRACKER", self.title_bar)
+        title_lbl.setObjectName("steamTrackerTitleLabel")
+        tb_layout.addWidget(title_lbl, stretch=1, alignment=Qt.AlignVCenter)
+
+        self.close_btn = HoverCloseButton(size=20, icon_size=12, parent=self.title_bar)
+        self.close_btn.setObjectName("steamTrackerCloseBtn")
+        self.close_btn.clicked.connect(self.close_panel)
+        tb_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter)
+
+        main_layout.addWidget(self.title_bar)
+
+        # 2. Content Area
+        content_container = QWidget(self)
+        content_container.setObjectName("steamTrackerContentContainer")
+        content_outer_layout = QVBoxLayout(content_container)
+        content_outer_layout.setContentsMargins(16, 14, 16, 12)
+        content_outer_layout.setSpacing(12)
+
+        # Card containing info badge + texts
+        card = QFrame(content_container)
+        card.setObjectName("steamTrackerCard")
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(16, 14, 16, 14)
+        card_layout.setSpacing(14)
+
+        # Status badge icon (info-icon or steam-icon)
+        badge_lbl = QLabel(card)
+        badge_lbl.setObjectName("steamTrackerBadgeIcon")
+        badge_lbl.setFixedSize(36, 36)
+        badge_lbl.setScaledContents(True)
+        badge_icon_path = info_icon_path if os.path.exists(info_icon_path) else steam_icon_path
+        if os.path.exists(badge_icon_path):
+            badge_lbl.setPixmap(QPixmap(badge_icon_path))
+        card_layout.addWidget(badge_lbl, alignment=Qt.AlignVCenter)
+
+        # Text vertical layout
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+
+        msg_lbl = QLabel("HELXAID is launching Steam in the background.", card)
+        msg_lbl.setObjectName("steamTrackerMessageLabel")
+        msg_lbl.setWordWrap(True)
+        text_layout.addWidget(msg_lbl)
+
+        tip_lbl = QLabel("Please complete your profile login if prompted.", card)
+        tip_lbl.setObjectName("steamTrackerTipLabel")
+        tip_lbl.setWordWrap(True)
+        text_layout.addWidget(tip_lbl)
+
+        card_layout.addLayout(text_layout, stretch=1)
+        content_outer_layout.addWidget(card)
+
+        # 3. Action Button Row
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.addStretch()
+
+        self.ok_btn = QPushButton("OK", content_container)
+        self.ok_btn.setObjectName("steamTrackerOkBtn")
+        self.ok_btn.setCursor(Qt.PointingHandCursor)
+        self.ok_btn.clicked.connect(self.close_panel)
+        btn_layout.addWidget(self.ok_btn)
+
+        content_outer_layout.addLayout(btn_layout)
+        main_layout.addWidget(content_container, stretch=1)
+
+        # Entrance Animation (Fade-in & Fade-out)
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.anim.setDuration(220)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim.finished.connect(self._on_anim_finished)
+
+    def _on_anim_finished(self):
+        if self.anim.direction() == QPropertyAnimation.Backward:
+            self.deleteLater()
+
+    def show_panel(self):
+        """Position centered in parent and display with smooth fade in."""
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = max(0, (parent_rect.width() - self.width()) // 2)
+            y = max(0, (parent_rect.height() - self.height()) // 2)
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        self.anim.setDirection(QPropertyAnimation.Forward)
+        self.anim.start()
+
+    def show_centered(self):
+        """Alias for show_panel()."""
+        self.show_panel()
+
+    def close_panel(self):
+        """Close panel with smooth fade-out and cleanup."""
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.start()
+
+    def mousePressEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        from PySide6.QtCore import Qt, QPoint
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+            event.accept()
+
 
 class GameStatisticsFloatingPanel(QFrame):
     """
@@ -16756,7 +17005,7 @@ class GameLauncher(QWidget):
             print("[HELXAID] Cleaning up background hardware tools...")
             import subprocess
             subprocess.run(
-                ["taskkill", "/F", "/T", "/IM", "hwinfo.exe", "/IM", "librehwmon.exe", "/IM", "ryzenadj.exe"],
+                ["taskkill", "/F", "/IM", "hwinfo.exe", "/IM", "librehwmon.exe", "/IM", "ryzenadj.exe"],
                 cwd='C:\\', close_fds=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -19462,7 +19711,7 @@ class GameLauncher(QWidget):
             
         self._is_launching_game = True
         try:
-            clean_path = path.strip('"\'')
+            clean_path = os.path.normpath(path.strip('"\''))
             
             game_obj = None
             for g in self.data:
@@ -19480,35 +19729,26 @@ class GameLauncher(QWidget):
                         steam_exe = self._find_steam_exe()
                         if steam_exe:
                             try:
-                                # Method 1: Launch via Windows Shell COM.
-                                # Spawning through COM Shell.Application delegates the process
-                                # creation to explorer.exe, setting PPID = explorer.exe so Steam
-                                # NEVER appears inside HELXAID's Task Manager tree.
-                                spawned = False
-                                try:
-                                    import win32com.client
-                                    com_shell = win32com.client.Dispatch("Shell.Application")
-                                    com_shell.ShellExecute(steam_exe, "", os.path.dirname(steam_exe), "open", 1)
-                                    spawned = True
-                                except Exception:
-                                    pass
-                                
+                                # Decoupled Steam launch (PPID = explorer.exe, immune to IDE/Job Object termination)
+                                spawned, method, s_err = launch_decoupled_process(
+                                    steam_exe, "", os.path.dirname(steam_exe)
+                                )
                                 if not spawned:
-                                    # Method 2: Native ShellExecuteW fallback
-                                    import ctypes
-                                    ctypes.windll.shell32.ShellExecuteW(
-                                        None, "open", steam_exe, None, os.path.dirname(steam_exe), 1
-                                    )
+                                    print(f"[Pre-Launch] Steam decoupled launch notice ({method}): {s_err}")
+                                else:
+                                    print(f"[Pre-Launch] Steam spawned successfully via {method}")
                                 
-                                # Native UI Sync Barrier (Non-blocking notification)
-                                msg = QMessageBox(self)
-                                msg.setObjectName("SteamLoginPromptDialog")
-                                msg.setIcon(QMessageBox.Information)
-                                msg.setWindowTitle("Steam Login Tracker")
-                                msg.setText("HELXAID is launching Steam in the background.\n\nPlease complete your profile login if prompted.")
-                                msg.setStandardButtons(QMessageBox.Ok)
-                                msg.setWindowModality(Qt.NonModal)
-                                msg.show()
+                                # In-App Floating Panel (QFrame non-blocking overlay)
+                                try:
+                                    if hasattr(self, '_steam_tracker_panel') and self._steam_tracker_panel:
+                                        try:
+                                            self._steam_tracker_panel.close_panel()
+                                        except Exception:
+                                            pass
+                                    self._steam_tracker_panel = SteamLoginTrackerFloatingPanel(self)
+                                    self._steam_tracker_panel.show_centered()
+                                except Exception as p_err:
+                                    print(f"[Pre-Launch] Floating panel display error: {p_err}")
                             except Exception as e:
                                 print(f"[Pre-Launch] Steam spawn error: {e}")
                         else:
@@ -19527,35 +19767,13 @@ class GameLauncher(QWidget):
                 game_dir = os.path.dirname(clean_path)
                 launch_options = game_obj.get("launch_options", "") if game_obj else ""
                 
-                # Launch natively using Windows Shell COM (parented to explorer.exe)
-                # with fallback to ctypes ShellExecuteW
-                launched = False
-                try:
-                    import win32com.client
-                    com_shell = win32com.client.Dispatch("Shell.Application")
-                    com_shell.ShellExecute(clean_path, launch_options or "", game_dir, "open", 1)
-                    launched = True
-                except Exception:
-                    pass
-                
+                # Launch game decoupled from HELXAID process tree and Job Object
+                launched, method, l_err = launch_decoupled_process(
+                    clean_path, launch_options or "", game_dir
+                )
                 if not launched:
-                    import ctypes
-                    ctypes.windll.shell32.ShellExecuteW.argtypes = [
-                        ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, 
-                        ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_int
-                    ]
-                    result = ctypes.windll.shell32.ShellExecuteW(
-                        None, "open", clean_path, launch_options if launch_options else None, game_dir, 1
-                    )
-                    if result <= 32:
-                        if result == 5:
-                            result2 = ctypes.windll.shell32.ShellExecuteW(
-                                None, "runas", clean_path, launch_options if launch_options else None, game_dir, 1
-                            )
-                            if result2 <= 32:
-                                raise OSError(f"Failed to launch (runas error {result2})")
-                        else:
-                            raise OSError(f"Failed to launch (error {result})")
+                    raise OSError(f"Failed to launch via {method}: {l_err}")
+                print(f"[GameLaunch] '{os.path.basename(clean_path)}' launched successfully via {method}")
                 
                 # Update last_played timestamp for recently played feature
                 for game in self.data:
