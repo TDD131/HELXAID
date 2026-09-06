@@ -49,6 +49,118 @@ GOOGLE_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 GOOGLE_YOUTUBE_SCOPES = "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube"
 
 
+class YouTubeSyncLoopbackHandler(BaseHTTPRequestHandler):
+    """Handles Chrome Extension sync and status checks for YouTube session."""
+
+    def log_message(self, format, *args):
+        # Suppress noisy standard HTTP logs
+        return
+
+    def do_OPTIONS(self):
+        """CORS Preflight handler for Chrome Extension."""
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.end_headers()
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        
+        # 1. Health check endpoint for Chrome Extension
+        if parsed.path == "/api/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            is_yt = False
+            user_name = ""
+            try:
+                yt = YouTubeAccountEngine.get_instance()
+                yt.reload_session()
+                is_yt = yt.is_authenticated()
+                user_name = yt.get_user_name() if is_yt else ""
+            except Exception:
+                pass
+            res_obj = {
+                "status": "ok",
+                "app": "HELXAID",
+                "version": "1.0.0",
+                "youtube_synced": is_yt,
+                "user_name": user_name
+            }
+            self.wfile.write(json.dumps(res_obj).encode("utf-8"))
+            return
+
+        # 1b. Disconnect endpoint for extension
+        if parsed.path == "/api/disconnect_youtube":
+            try:
+                YouTubeAccountEngine.get_instance().disconnect()
+            except Exception:
+                pass
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b'{"success":true,"message":"Disconnected YouTube session"}')
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        
+        # 2. Chrome Extension Cookie Sync endpoint
+        if parsed.path == "/api/sync_cookies":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body.decode("utf-8"))
+                cookies = data.get("cookies", {})
+                browser = data.get("browser", "Chrome Extension")
+                
+                if cookies and isinstance(cookies, dict):
+                    account_name = (data.get("account_name") or data.get("user_name") or "").strip()
+                    email = (data.get("email") or "").strip()
+                    if account_name and email:
+                        user_name = f"{account_name} ({email})"
+                    elif account_name:
+                        user_name = account_name
+                    elif email:
+                        user_name = email
+                    else:
+                        user_name = f"Google / YouTube User ({browser})"
+
+                    yt_eng = YouTubeAccountEngine.get_instance()
+                    ok, msg = yt_eng.import_cookies_dict(cookies, user_name)
+                    if ok:
+                        yt_eng.fetch_account_info(async_call=True)
+                        yt_eng.cookiesReceived.emit(cookies)
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "success": True,
+                            "message": "YouTube Music session synchronized to HELXAID!",
+                            "user_name": yt_eng.get_user_name()
+                        }).encode("utf-8"))
+                        return
+            except Exception as e:
+                print(f"[YouTubeSyncServer] Error processing cookies: {e}")
+
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(b'{"success":false,"message":"Failed to import YouTube cookies"}')
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+
 class GoogleAuthCallbackHandler(BaseHTTPRequestHandler):
     """Handles OAuth redirect callback from browser for Google authentication."""
     def do_GET(self):
@@ -376,6 +488,7 @@ class YouTubeAccountEngine(QObject):
     sessionChanged = Signal(bool, str)  # (is_authenticated, user_display_name)
     accountDetailsUpdated = Signal(dict)  # (session_data)
     errorOccurred = Signal(str)
+    cookiesReceived = Signal(dict)
 
     CACHE_DIR = os.path.join(os.getenv("APPDATA", ""), "HELXAID", "cloud_cache")
     _instance: Optional['YouTubeAccountEngine'] = None
@@ -388,12 +501,34 @@ class YouTubeAccountEngine(QObject):
         self.current_state: Optional[str] = None
         self._playlist_tracks_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
         self._account_fetch_lock = threading.Lock()
+        self._daemon_server: Optional[HTTPServer] = None
+        self._daemon_thread: Optional[threading.Thread] = None
         os.makedirs(self.CACHE_DIR, exist_ok=True)
+
+        # Start persistent local sync server for Chrome Extension on port 8889
+        self._start_sync_daemon()
 
         if self.is_authenticated():
             # If account metadata is missing or still uses generic placeholder, resolve in background
             if not self.session_data.get("account_name") or "Google / YouTube User" in self.session_data.get("user_name", ""):
                 QTimer.singleShot(500, lambda: self.fetch_account_info(async_call=True))
+
+    def reload_session(self):
+        """Reload session from persistent storage."""
+        self.session_data = self._load_persisted_session()
+
+    def _start_sync_daemon(self, port: int = 8889):
+        """Start the persistent local sync daemon server on http://127.0.0.1:8889 for Chrome Extension."""
+        try:
+            class ReusableHTTPServer(HTTPServer):
+                allow_reuse_address = True
+
+            self._daemon_server = ReusableHTTPServer(("127.0.0.1", port), YouTubeSyncLoopbackHandler)
+            self._daemon_thread = threading.Thread(target=self._daemon_server.serve_forever, daemon=True, name="YouTubeSyncDaemon")
+            self._daemon_thread.start()
+            print(f"[YouTubeAccountEngine] Local sync server active on http://127.0.0.1:{port}")
+        except Exception as e:
+            print(f"[YouTubeAccountEngine] Daemon server notice: {e}")
 
     def get_cached_playlist_tracks(self, browse_id: str, max_age_sec: int = 86400) -> Optional[List[Dict[str, Any]]]:
         """Instant 0ms memory or <1ms persistent disk retrieval for playlists/mixes (TTL 24 hours)."""

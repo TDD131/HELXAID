@@ -12819,8 +12819,8 @@ class MusicPanelWidget(QWidget):
         
         # Ensure local sync daemon server is active early for Chrome Extension auto-sync
         try:
-            from FirebaseAuthEngine import FirebaseAuthEngine
-            FirebaseAuthEngine.get_instance()
+            from YouTubeAccountEngine import YouTubeAccountEngine
+            YouTubeAccountEngine.get_instance()
         except Exception:
             pass
         

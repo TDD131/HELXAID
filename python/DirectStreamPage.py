@@ -48,7 +48,6 @@ from YouTubeAccountEngine import (
 from SpotifyAccountEngine import (
     SpotifyAccountEngine, FetchSpotifyLikedSongsWorker, FetchSpotifyPlaylistsWorker, FetchSpotifyAlgorithmicFeedsWorker
 )
-from FirebaseAuthEngine import FirebaseAuthEngine
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton
 
 
@@ -1183,9 +1182,7 @@ class CloudProfileView(QWidget):
         self.setObjectName("cloudProfileView")
         self.setStyleSheet("QWidget#cloudProfileView { background: transparent; }")
         self._yt_sync_worker: Optional[SyncYTCookiesWorker] = None
-        FirebaseAuthEngine.get_instance().authStatusChanged.connect(self._on_fb_auth_status_changed)
-        FirebaseAuthEngine.get_instance().authError.connect(self._on_fb_auth_error)
-        FirebaseAuthEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)
+        YouTubeAccountEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)
         YouTubeAccountEngine.get_instance().sessionChanged.connect(lambda ok, u: self.refresh_state())
         YouTubeAccountEngine.get_instance().accountDetailsUpdated.connect(lambda d: self.refresh_state())
         self._setup_ui()
@@ -1194,14 +1191,6 @@ class CloudProfileView(QWidget):
         print("[CloudProfileView] YouTube session synchronized in real-time from Chrome Extension!")
         self.refresh_state()
         self.accountsChanged.emit()
-
-    def _on_fb_auth_status_changed(self, ok: bool, profile: dict):
-        self.refresh_state()
-        self.accountsChanged.emit()
-
-    def _on_fb_auth_error(self, err_msg: str):
-        print(f"[CloudProfile] Google Auth Error: {err_msg}")
-        self.refresh_state()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1300,70 +1289,26 @@ class CloudProfileView(QWidget):
         hero_info = QVBoxLayout()
         hero_info.setSpacing(3)
 
-        self.hero_user_name = QLabel("HELXAIC CLOUD USER", self.hero_card)
+        self.hero_user_name = QLabel("HELXAIC STREAMING IDENTITY", self.hero_card)
         self.hero_user_name.setObjectName("cloudHeroUserName")
         self.hero_user_name.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: 900;")
         hero_info.addWidget(self.hero_user_name)
 
-        self.hero_user_desc = QLabel("Link your Google / Gmail account for cloud backup, playlists, and settings sync.", self.hero_card)
+        self.hero_user_desc = QLabel("Sync YouTube Music or Spotify below to unlock cloud feeds, supermixes, and playlists.", self.hero_card)
         self.hero_user_desc.setObjectName("cloudHeroUserDesc")
         self.hero_user_desc.setStyleSheet("color: #BAC0D4; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 500;")
         hero_info.addWidget(self.hero_user_desc)
 
         hero_layout.addLayout(hero_info, stretch=1)
 
-        # Google Auth Actions
+        # Status Pill
         hero_actions = QHBoxLayout()
         hero_actions.setSpacing(8)
 
-        self.google_auth_btn = QPushButton("Sign In with Google", self.hero_card)
-        self.google_auth_btn.setObjectName("googleSignInBtn")
-        self.google_auth_btn.setFixedHeight(34)
-        self.google_auth_btn.setCursor(Qt.PointingHandCursor)
-        self.google_auth_btn.setIcon(QIcon(render_svg_pixmap(SVG_GOOGLE, 18, 18)))
-        self.google_auth_btn.setIconSize(QSize(18, 18))
-        self.google_auth_btn.setStyleSheet("""
-            QPushButton#googleSignInBtn {
-                background: #FFFFFF;
-                color: #1F1F1F;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 10px;
-                font-weight: 900;
-                border-radius: 6px;
-                padding: 4px 16px;
-                border: none;
-            }
-            QPushButton#googleSignInBtn:hover {
-                background: #F1F3F4;
-                color: #000000;
-            }
-        """)
-        self.google_auth_btn.clicked.connect(self._on_google_login_clicked)
-        hero_actions.addWidget(self.google_auth_btn)
-
-        self.google_logout_btn = QPushButton("Logout", self.hero_card)
-        self.google_logout_btn.setObjectName("googleLogoutBtn")
-        self.google_logout_btn.setFixedHeight(34)
-        self.google_logout_btn.setCursor(Qt.PointingHandCursor)
-        self.google_logout_btn.setStyleSheet("""
-            QPushButton#googleLogoutBtn {
-                background: #1A1D27;
-                color: #8C90A0;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 9px;
-                font-weight: bold;
-                border-radius: 6px;
-                padding: 4px 14px;
-                border: none;
-            }
-            QPushButton#googleLogoutBtn:hover {
-                color: #FF5252;
-                background: #242838;
-            }
-        """)
-        self.google_logout_btn.clicked.connect(self._on_google_logout_clicked)
-        self.google_logout_btn.hide()
-        hero_actions.addWidget(self.google_logout_btn)
+        self.hero_status_pill = QLabel("SESSION STATUS", self.hero_card)
+        self.hero_status_pill.setObjectName("cloudHeroStatusPill")
+        self.hero_status_pill.setStyleSheet("background: #141722; color: #8C90A0; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
+        hero_actions.addWidget(self.hero_status_pill)
 
         hero_layout.addLayout(hero_actions)
         layout.addWidget(self.hero_card)
@@ -1716,33 +1661,41 @@ class CloudProfileView(QWidget):
         self.refresh_state()
 
     def refresh_state(self):
-        fb = FirebaseAuthEngine.get_instance()
         yt = YouTubeAccountEngine.get_instance()
         sp = SpotifyAccountEngine.get_instance()
 
-        fb_active = fb.is_authenticated()
         yt_active = yt.is_authenticated()
         sp_active = sp.is_authenticated()
 
-        # Update Hero Card with Google / Firebase Identity
-        if fb_active:
-            name = fb.get_display_name()
-            email = fb.get_email()
-            self.hero_user_name.setText(f"{name} ({email})" if email else name)
-            self.hero_user_desc.setText("Google / Firebase Cloud Identity Active • Cloud Sync & Profiles Enabled")
-            self.google_auth_btn.hide()
-            self.google_logout_btn.show()
-
-            # Async avatar load
-            photo_url = fb.get_photo_url()
-            if photo_url:
-                self._load_remote_avatar(photo_url)
-        else:
-            self.hero_user_name.setText("HELXAIC CLOUD USER")
-            self.hero_user_desc.setText("Link your Google / Gmail account for cloud backup, playlists, and settings sync.")
+        # Update Hero Card based on active music services
+        if yt_active and sp_active:
+            yt_name = yt.get_user_name()
+            sp_name = sp.get_display_name()
+            self.hero_user_name.setText(f"{yt_name.upper()} • {sp_name.upper()}")
+            self.hero_user_desc.setText("YouTube Music & Spotify Active • Lossless Hybrid Stream Resolver Ready")
             self.hero_avatar_lbl.setPixmap(render_svg_pixmap(SVG_USER_AVATAR, 42, 42))
-            self.google_auth_btn.show()
-            self.google_logout_btn.hide()
+            self.hero_status_pill.setText("ALL SERVICES ACTIVE")
+            self.hero_status_pill.setStyleSheet("background: #0E2B18; color: #00E676; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
+        elif yt_active:
+            display_str = yt.get_account_display_str()
+            self.hero_user_name.setText(f"YOUTUBE: {display_str.upper()}")
+            self.hero_user_desc.setText("Active YouTube Music session synchronized via Chrome Extension")
+            self.hero_avatar_lbl.setPixmap(render_svg_pixmap("lighting-adaptive.svg", 42, 42))
+            self.hero_status_pill.setText("YOUTUBE SYNCED")
+            self.hero_status_pill.setStyleSheet("background: #2B1212; color: #FF5252; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
+        elif sp_active:
+            sp_name = sp.get_display_name()
+            self.hero_user_name.setText(f"SPOTIFY: {sp_name.upper()}")
+            self.hero_user_desc.setText("Active Spotify session synchronized via OAuth2 PKCE")
+            self.hero_avatar_lbl.setPixmap(render_svg_pixmap("spotify-icon.svg", 42, 42))
+            self.hero_status_pill.setText("SPOTIFY LINKED")
+            self.hero_status_pill.setStyleSheet("background: #0E2B18; color: #1DB954; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
+        else:
+            self.hero_user_name.setText("STANDALONE STREAMING MODE")
+            self.hero_user_desc.setText("Sync your YouTube Music or Spotify account below to unlock playlists, liked songs, and algorithmic mixes.")
+            self.hero_avatar_lbl.setPixmap(render_svg_pixmap(SVG_USER_AVATAR, 42, 42))
+            self.hero_status_pill.setText("OFFLINE / UNLINKED")
+            self.hero_status_pill.setStyleSheet("background: #161822; color: #8C90A0; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
 
         # Update YouTube Card
         if yt_active:
@@ -1815,24 +1768,16 @@ class CloudProfileView(QWidget):
             self.sp_disc_btn.hide()
 
         # Update Global Status
-        total_linked = sum([1 for x in [fb_active, yt_active, sp_active] if x])
-        if total_linked == 3:
-            self.global_status_pill.setText("ALL SERVICES LINKED (3/3)")
+        total_linked = sum([1 for x in [yt_active, sp_active] if x])
+        if total_linked == 2:
+            self.global_status_pill.setText("ALL SERVICES LINKED (2/2)")
             self.global_status_pill.setStyleSheet("background: #0E2B18; color: #00E676; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
         elif total_linked > 0:
-            self.global_status_pill.setText(f"CLOUD STATUS ({total_linked}/3)")
+            self.global_status_pill.setText(f"SERVICES LINKED ({total_linked}/2)")
             self.global_status_pill.setStyleSheet("background: #182032; color: #00E5FF; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
         else:
-            self.global_status_pill.setText("STANDALONE MODE (0/3)")
+            self.global_status_pill.setText("STANDALONE MODE (0/2)")
             self.global_status_pill.setStyleSheet("background: #161822; color: #8C90A0; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
-
-    def _on_google_login_clicked(self):
-        FirebaseAuthEngine.get_instance().start_google_login()
-
-    def _on_google_logout_clicked(self):
-        FirebaseAuthEngine.get_instance().logout()
-        self.refresh_state()
-        self.accountsChanged.emit()
 
     def _load_remote_avatar(self, url: str):
         def _fetch():
@@ -2024,25 +1969,12 @@ class StreamProfilePillButton(QPushButton):
         self.update_status()
 
     def update_status(self, is_active_panel: bool = False):
-        fb_auth = FirebaseAuthEngine.get_instance().is_authenticated()
         yt_auth = YouTubeAccountEngine.get_instance().is_authenticated()
         sp_auth = SpotifyAccountEngine.get_instance().is_authenticated()
 
         active_border = "border: 1px solid #FF5B06; background: #242838;" if is_active_panel else ""
 
-        if fb_auth:
-            self.setIcon(QIcon(render_svg_pixmap(SVG_GOOGLE, 16, 16)))
-            email = FirebaseAuthEngine.get_instance().get_email()
-            short_email = email.split("@")[0] if email else "Google"
-            self.setText(f"  {short_email}  ")
-            self.setStyleSheet(f"""
-                QPushButton#streamProfilePillButton {{
-                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(66, 133, 244, 0.5); border-radius: 15px; padding: 4px 12px;
-                    {active_border}
-                }}
-                QPushButton#streamProfilePillButton:hover {{ background: #202430; border: 1px solid #4285F4; }}
-            """)
-        elif yt_auth and sp_auth:
+        if yt_auth and sp_auth:
             self.setIcon(QIcon(render_svg_pixmap(SVG_USER_AVATAR, 16, 16)))
             self.setText("  Accounts: 2 Active  ")
             self.setStyleSheet(f"""
@@ -4818,9 +4750,8 @@ class DirectStreamPage(QWidget):
 
         YouTubeAccountEngine.get_instance().sessionChanged.connect(self._on_accounts_state_changed)
         YouTubeAccountEngine.get_instance().accountDetailsUpdated.connect(lambda d: self._on_accounts_state_changed())
+        YouTubeAccountEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)
         SpotifyAccountEngine.get_instance().authStatusChanged.connect(self._on_accounts_state_changed)
-        FirebaseAuthEngine.get_instance().authStatusChanged.connect(self._on_accounts_state_changed)
-        FirebaseAuthEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)
 
     def _init_ui(self):
         master_layout = QVBoxLayout(self)
