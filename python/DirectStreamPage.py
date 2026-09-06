@@ -758,8 +758,10 @@ class YouTubeCookieImportDialog(QDialog):
             ok, browser, cookies_dict = exporter.auto_import_youtube_cookies()
             if ok and cookies_dict:
                 user_name = f"Google / YouTube User ({browser.capitalize()})"
-                success, msg = YouTubeAccountEngine.get_instance().import_cookies_dict(cookies_dict, user_name)
+                yt_eng = YouTubeAccountEngine.get_instance()
+                success, msg = yt_eng.import_cookies_dict(cookies_dict, user_name)
                 if success:
+                    yt_eng.fetch_account_info(async_call=True)
                     self.status_lbl.setStyleSheet("color: #00E676; font-weight: bold; font-size: 11px;")
                     self.status_lbl.setText(f"✓ Successfully auto-synced YouTube session from {browser.capitalize()}!")
                     QTimer.singleShot(400, self.accept)
@@ -1184,6 +1186,8 @@ class CloudProfileView(QWidget):
         FirebaseAuthEngine.get_instance().authStatusChanged.connect(self._on_fb_auth_status_changed)
         FirebaseAuthEngine.get_instance().authError.connect(self._on_fb_auth_error)
         FirebaseAuthEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)
+        YouTubeAccountEngine.get_instance().sessionChanged.connect(lambda ok, u: self.refresh_state())
+        YouTubeAccountEngine.get_instance().accountDetailsUpdated.connect(lambda d: self.refresh_state())
         self._setup_ui()
 
     def _on_extension_cookies_received(self, cookies: dict):
@@ -1303,7 +1307,7 @@ class CloudProfileView(QWidget):
 
         self.hero_user_desc = QLabel("Link your Google / Gmail account for cloud backup, playlists, and settings sync.", self.hero_card)
         self.hero_user_desc.setObjectName("cloudHeroUserDesc")
-        self.hero_user_desc.setStyleSheet("color: #8C90A0; font-size: 11px;")
+        self.hero_user_desc.setStyleSheet("color: #BAC0D4; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 500;")
         hero_info.addWidget(self.hero_user_desc)
 
         hero_layout.addLayout(hero_info, stretch=1)
@@ -1420,9 +1424,44 @@ class CloudProfileView(QWidget):
 
         self.yt_status_lbl = QLabel("1-Click Smart Google sync from active browser session.", self.yt_card)
         self.yt_status_lbl.setObjectName("ytCloudCardStatus")
-        self.yt_status_lbl.setStyleSheet("color: #A0A4B5; font-size: 11px; line-height: 1.3;")
+        self.yt_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
         self.yt_status_lbl.setWordWrap(True)
         yt_layout.addWidget(self.yt_status_lbl)
+
+        # Synced Account Information Box (Shown when authenticated)
+        self.yt_account_box = QFrame(self.yt_card)
+        self.yt_account_box.setObjectName("ytCloudAccountBox")
+        self.yt_account_box.setStyleSheet("""
+            QFrame#ytCloudAccountBox {
+                background-color: #0E1017;
+                border-radius: 6px;
+            }
+        """)
+        yt_acc_layout = QHBoxLayout(self.yt_account_box)
+        yt_acc_layout.setContentsMargins(10, 8, 10, 8)
+        yt_acc_layout.setSpacing(10)
+
+        self.yt_account_avatar_lbl = QLabel(self.yt_account_box)
+        self.yt_account_avatar_lbl.setObjectName("ytCloudAccountAvatar")
+        self.yt_account_avatar_lbl.setPixmap(render_svg_pixmap(SVG_USER_AVATAR, 20, 20))
+        yt_acc_layout.addWidget(self.yt_account_avatar_lbl)
+
+        yt_acc_info_layout = QVBoxLayout()
+        yt_acc_info_layout.setSpacing(2)
+        self.yt_account_name_lbl = QLabel("SYNCED ACCOUNT", self.yt_account_box)
+        self.yt_account_name_lbl.setObjectName("ytCloudAccountName")
+        self.yt_account_name_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron'; font-size: 11px; font-weight: 800; letter-spacing: 0.5px;")
+
+        self.yt_account_sub_lbl = QLabel("Session active and synchronized", self.yt_account_box)
+        self.yt_account_sub_lbl.setObjectName("ytCloudAccountSub")
+        self.yt_account_sub_lbl.setStyleSheet("color: #00E5FF; font-family: 'Orbitron'; font-size: 11px; font-weight: 600; letter-spacing: 0.3px;")
+
+        yt_acc_info_layout.addWidget(self.yt_account_name_lbl)
+        yt_acc_info_layout.addWidget(self.yt_account_sub_lbl)
+        yt_acc_layout.addLayout(yt_acc_info_layout, stretch=1)
+
+        self.yt_account_box.hide()
+        yt_layout.addWidget(self.yt_account_box)
 
         # Feature pills
         yt_features = QHBoxLayout()
@@ -1430,7 +1469,7 @@ class CloudProfileView(QWidget):
         for idx, feat in enumerate(["Liked Songs (LM)", "Playlists", "Supermix"]):
             f_lbl = QLabel(feat, self.yt_card)
             f_lbl.setObjectName(f"ytCloudFeaturePill_{idx}")
-            f_lbl.setStyleSheet("background: #0E1015; color: #7E8292; font-size: 9px; border-radius: 4px; padding: 3px 6px;")
+            f_lbl.setStyleSheet("background: #0E1015; color: #9DA3B8; font-family: 'Orbitron'; font-size: 10px; font-weight: 600; border-radius: 4px; padding: 4px 8px;")
             yt_features.addWidget(f_lbl)
         yt_features.addStretch()
         yt_layout.addLayout(yt_features)
@@ -1487,8 +1526,10 @@ class CloudProfileView(QWidget):
         self.yt_disc_btn.setStyleSheet("""
             QPushButton {
                 background: #1A1D27;
-                color: #8C90A0;
-                font-size: 10px;
+                color: #A4A9BD;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 600;
                 border-radius: 6px;
                 padding: 4px 10px;
                 border: none;
@@ -1553,7 +1594,7 @@ class CloudProfileView(QWidget):
 
         self.sp_status_lbl = QLabel("1-Click OAuth2 PKCE connection.", self.sp_card)
         self.sp_status_lbl.setObjectName("spCloudCardStatus")
-        self.sp_status_lbl.setStyleSheet("color: #A0A4B5; font-size: 11px; line-height: 1.3;")
+        self.sp_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
         self.sp_status_lbl.setWordWrap(True)
         sp_layout.addWidget(self.sp_status_lbl)
 
@@ -1563,7 +1604,7 @@ class CloudProfileView(QWidget):
         for idx, feat in enumerate(["Liked Songs", "Top Seeds", "Hybrid Stream (<100ms)"]):
             f_lbl = QLabel(feat, self.sp_card)
             f_lbl.setObjectName(f"spCloudFeaturePill_{idx}")
-            f_lbl.setStyleSheet("background: #0E1015; color: #7E8292; font-size: 9px; border-radius: 4px; padding: 3px 6px;")
+            f_lbl.setStyleSheet("background: #0E1015; color: #9DA3B8; font-family: 'Orbitron'; font-size: 10px; font-weight: 600; border-radius: 4px; padding: 4px 8px;")
             sp_features.addWidget(f_lbl)
         sp_features.addStretch()
         sp_layout.addLayout(sp_features)
@@ -1598,8 +1639,10 @@ class CloudProfileView(QWidget):
         self.sp_disc_btn.setStyleSheet("""
             QPushButton {
                 background: #1A1D27;
-                color: #8C90A0;
-                font-size: 10px;
+                color: #A4A9BD;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 600;
                 border-radius: 6px;
                 padding: 4px 10px;
                 border: none;
@@ -1704,18 +1747,52 @@ class CloudProfileView(QWidget):
         # Update YouTube Card
         if yt_active:
             name = yt.get_user_name()
+            acc_name = yt.get_account_name()
+            acc_email = yt.get_account_email()
+            acc_handle = yt.get_account_handle()
+            display_str = yt.get_account_display_str()
+            browser_raw = (yt.session_data.get("browser") or "chrome").lower()
+            if "google_web" in browser_raw or "chrome" in browser_raw or "extension" in browser_raw:
+                browser_str = "Google Chrome"
+            elif "edge" in browser_raw:
+                browser_str = "Microsoft Edge"
+            elif "brave" in browser_raw:
+                browser_str = "Brave Browser"
+            elif "cookies_txt" in browser_raw:
+                browser_str = "Cookie Import"
+            else:
+                browser_str = yt.session_data.get("browser", "Browser").replace("_", " ").title()
+
             self.yt_badge.setText("LINKED")
             self.yt_badge.setStyleSheet("background-color: rgba(0, 230, 118, 0.12); color: #00E676; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
-            self.yt_status_lbl.setStyleSheet("color: #A0A4B5; font-size: 11px; line-height: 1.3;")
-            self.yt_status_lbl.setText(f"Connected as {name}. Session active and synchronized.")
+            self.yt_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
+            self.yt_status_lbl.setText(f"Connected as {display_str}. Session active and synchronized.")
+
+            if hasattr(self, 'yt_account_box'):
+                primary_name = acc_name or name
+                self.yt_account_name_lbl.setText(f"SYNCED: {primary_name.upper()}")
+
+                sub_items = []
+                if acc_handle:
+                    h_clean = acc_handle if acc_handle.startswith("@") else f"@{acc_handle}"
+                    sub_items.append(h_clean)
+                if acc_email and acc_email != primary_name and "@" in acc_email:
+                    sub_items.append(acc_email)
+                sub_items.append(browser_str)
+
+                self.yt_account_sub_lbl.setText(" • ".join(sub_items))
+                self.yt_account_box.show()
+
             self.yt_sync_btn.hide()
             self.yt_import_btn.hide()
             self.yt_disc_btn.show()
         else:
             self.yt_badge.setText("UNLINKED")
             self.yt_badge.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); color: #7A7E8F; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
-            self.yt_status_lbl.setStyleSheet("color: #A0A4B5; font-size: 11px; line-height: 1.3;")
+            self.yt_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
             self.yt_status_lbl.setText("1-Click Auto-Sync YouTube algorithms from your active browser session.")
+            if hasattr(self, 'yt_account_box'):
+                self.yt_account_box.hide()
             self.yt_sync_btn.show()
             self.yt_import_btn.show()
             self.yt_disc_btn.hide()
@@ -1725,14 +1802,14 @@ class CloudProfileView(QWidget):
             name = sp.get_display_name()
             self.sp_badge.setText("LINKED")
             self.sp_badge.setStyleSheet("background-color: rgba(29, 185, 84, 0.15); color: #1DB954; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
-            self.sp_status_lbl.setStyleSheet("color: #A0A4B5; font-size: 11px; line-height: 1.3;")
+            self.sp_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
             self.sp_status_lbl.setText(f"Connected as {name}. Lossless hybrid stream resolver ready.")
             self.sp_connect_btn.hide()
             self.sp_disc_btn.show()
         else:
             self.sp_badge.setText("UNLINKED")
             self.sp_badge.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); color: #7A7E8F; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
-            self.sp_status_lbl.setStyleSheet("color: #A0A4B5; font-size: 11px; line-height: 1.3;")
+            self.sp_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
             self.sp_status_lbl.setText("1-Click OAuth2 PKCE login. Spotify tracks are streamed in pristine quality.")
             self.sp_connect_btn.show()
             self.sp_disc_btn.hide()
@@ -4524,10 +4601,10 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
     """
     closed = Signal()
 
-    def __init__(self, parent_window, on_proceed_callback):
+    def __init__(self, parent_window, on_proceed_callback=None, on_proceed=None):
         super().__init__(parent_window)
         self.parent_window = parent_window
-        self.on_proceed_callback = on_proceed_callback
+        self.on_proceed_callback = on_proceed if on_proceed is not None else on_proceed_callback
         
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -4740,6 +4817,7 @@ class DirectStreamPage(QWidget):
         self._load_cloud_feeds()
 
         YouTubeAccountEngine.get_instance().sessionChanged.connect(self._on_accounts_state_changed)
+        YouTubeAccountEngine.get_instance().accountDetailsUpdated.connect(lambda d: self._on_accounts_state_changed())
         SpotifyAccountEngine.get_instance().authStatusChanged.connect(self._on_accounts_state_changed)
         FirebaseAuthEngine.get_instance().authStatusChanged.connect(self._on_accounts_state_changed)
         FirebaseAuthEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)

@@ -379,12 +379,35 @@ class CookieExporter:
         # Modern Chromium (v10 / v11 AES-256-GCM)
         if len(encrypted_value) >= 31 and (encrypted_value.startswith(b'v10') or encrypted_value.startswith(b'v11')):
             if master_key:
+                # 1. Cryptodome / Crypto (dynamic to avoid static IDE unresolved import warnings)
                 try:
-                    from Cryptodome.Cipher import AES
+                    import importlib
+                    AES = None
+                    for _pkg in ("Cryptodome.Cipher.AES", "Crypto.Cipher.AES"):
+                        try:
+                            _mod = importlib.import_module(_pkg)
+                            AES = getattr(_mod, "AES", _mod)
+                            if AES is not None:
+                                break
+                        except Exception:
+                            continue
+                    if AES is not None:
+                        nonce = encrypted_value[3:15]
+                        ciphertext = encrypted_value[15:-16]
+                        cipher = AES.new(master_key, AES.MODE_GCM, nonce)
+                        return cipher.decrypt(ciphertext).decode('utf-8', errors='ignore')
+                except Exception:
+                    pass
+
+                # 2. Windows native BCrypt CNG fallback (zero dependencies)
+                try:
+                    from YouTubeAccountEngine import _bcrypt_gcm_decrypt
                     nonce = encrypted_value[3:15]
                     ciphertext = encrypted_value[15:-16]
-                    cipher = AES.new(master_key, AES.MODE_GCM, nonce)
-                    return cipher.decrypt(ciphertext).decode('utf-8', errors='ignore')
+                    tag = encrypted_value[-16:]
+                    dec_bytes = _bcrypt_gcm_decrypt(master_key, nonce, ciphertext, tag)
+                    if dec_bytes:
+                        return dec_bytes.decode('utf-8', errors='ignore')
                 except Exception:
                     pass
             return ""

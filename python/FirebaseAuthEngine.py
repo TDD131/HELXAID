@@ -219,10 +219,22 @@ class FirebaseLoopbackHandler(BaseHTTPRequestHandler):
                 browser = data.get("browser", "Chrome Extension")
                 
                 if cookies and isinstance(cookies, dict):
-                    user_name = f"Google / YouTube User ({browser})"
+                    account_name = (data.get("account_name") or data.get("user_name") or "").strip()
+                    email = (data.get("email") or "").strip()
+                    if account_name and email:
+                        user_name = f"{account_name} ({email})"
+                    elif account_name:
+                        user_name = account_name
+                    elif email:
+                        user_name = email
+                    else:
+                        user_name = f"Google / YouTube User ({browser})"
+
                     from YouTubeAccountEngine import YouTubeAccountEngine
-                    ok, msg = YouTubeAccountEngine.get_instance().import_cookies_dict(cookies, user_name)
+                    yt_eng = YouTubeAccountEngine.get_instance()
+                    ok, msg = yt_eng.import_cookies_dict(cookies, user_name)
                     if ok:
+                        yt_eng.fetch_account_info(async_call=True)
                         FirebaseAuthEngine.get_instance().cookiesReceived.emit(cookies)
                         self.send_response(200)
                         self.send_header("Content-Type", "application/json")
@@ -231,7 +243,7 @@ class FirebaseLoopbackHandler(BaseHTTPRequestHandler):
                         self.wfile.write(json.dumps({
                             "success": True,
                             "message": "YouTube Music session synchronized to HELXAID!",
-                            "user_name": user_name
+                            "user_name": yt_eng.get_user_name()
                         }).encode("utf-8"))
                         return
             except Exception as e:

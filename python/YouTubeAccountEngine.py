@@ -24,13 +24,23 @@ import threading
 import sqlite3
 import urllib.request
 import urllib.parse
+# Dynamically resolve AES cipher (Cryptodome / Crypto) to avoid static IDE unresolved import warnings
+AES = None
 try:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    import importlib
+    for _pkg in ("Cryptodome.Cipher.AES", "Crypto.Cipher.AES"):
+        try:
+            _mod = importlib.import_module(_pkg)
+            AES = getattr(_mod, "AES", _mod)
+            if AES is not None:
+                break
+        except Exception:
+            continue
 except Exception:
-    AESGCM = None
+    AES = None
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, List, Any, Optional, Tuple, Callable
-from PySide6.QtCore import QObject, Signal, QThread, QSettings
+from PySide6.QtCore import QObject, Signal, QThread, QSettings, QTimer
 
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -117,6 +127,182 @@ def _dpapi_decrypt(encrypted_data: bytes) -> Optional[bytes]:
     return None
 
 
+def _bcrypt_gcm_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, tag: bytes) -> Optional[bytes]:
+    """
+    Decrypt AES-256-GCM using Windows native CNG (bcrypt.dll).
+    Zero external dependencies required (built into Windows 10/11).
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        bcrypt = ctypes.WinDLL("bcrypt.dll")
+
+        BCRYPT_AES_ALGORITHM = "AES"
+        BCRYPT_CHAINING_MODE = "ChainingMode"
+        BCRYPT_CHAIN_MODE_GCM = "ChainingModeGCM"
+        BCRYPT_AUTH_MODE_INFO_VERSION = 1
+
+        class BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.ULONG),
+                ("dwInfoVersion", wintypes.ULONG),
+                ("pbNonce", ctypes.c_void_p),
+                ("cbNonce", wintypes.ULONG),
+                ("pbAuthData", ctypes.c_void_p),
+                ("cbAuthData", wintypes.ULONG),
+                ("pbTag", ctypes.c_void_p),
+                ("cbTag", wintypes.ULONG),
+                ("pbMacContext", ctypes.c_void_p),
+                ("cbMacContext", wintypes.ULONG),
+                ("cbAAD", wintypes.ULONG),
+                ("cbData", ctypes.c_ulonglong),
+                ("dwFlags", wintypes.ULONG),
+            ]
+
+        hAlg = wintypes.HANDLE()
+        hKey = wintypes.HANDLE()
+
+        # Open AES provider
+        if bcrypt.BCryptOpenAlgorithmProvider(ctypes.byref(hAlg), ctypes.c_wchar_p(BCRYPT_AES_ALGORITHM), None, 0) != 0:
+            return None
+
+        try:
+            # Set chaining mode to GCM
+            chain_mode_buf = ctypes.create_unicode_buffer(BCRYPT_CHAIN_MODE_GCM)
+            if bcrypt.BCryptSetProperty(
+                hAlg,
+                ctypes.c_wchar_p(BCRYPT_CHAINING_MODE),
+                ctypes.cast(chain_mode_buf, ctypes.c_char_p),
+                ctypes.sizeof(chain_mode_buf),
+                0
+            ) != 0:
+                return None
+
+            # Generate symmetric key
+            key_buf = (ctypes.c_ubyte * len(key)).from_buffer_copy(key)
+            if bcrypt.BCryptGenerateSymmetricKey(hAlg, ctypes.byref(hKey), None, 0, key_buf, len(key), 0) != 0:
+                return None
+
+            try:
+                # Setup authenticated cipher mode info
+                nonce_buf = (ctypes.c_ubyte * len(nonce)).from_buffer_copy(nonce)
+                tag_buf = (ctypes.c_ubyte * len(tag)).from_buffer_copy(tag)
+
+                auth_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO()
+                auth_info.cbSize = ctypes.sizeof(BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO)
+                auth_info.dwInfoVersion = BCRYPT_AUTH_MODE_INFO_VERSION
+                auth_info.pbNonce = ctypes.cast(nonce_buf, ctypes.c_void_p)
+                auth_info.cbNonce = len(nonce)
+                auth_info.pbTag = ctypes.cast(tag_buf, ctypes.c_void_p)
+                auth_info.cbTag = len(tag)
+
+                cipher_buf = (ctypes.c_ubyte * len(ciphertext)).from_buffer_copy(ciphertext)
+                plain_buf = (ctypes.c_ubyte * len(ciphertext))()
+                cbResult = wintypes.ULONG(0)
+
+                status = bcrypt.BCryptDecrypt(
+                    hKey,
+                    cipher_buf,
+                    len(ciphertext),
+                    ctypes.byref(auth_info),
+                    None,
+                    0,
+                    plain_buf,
+                    len(ciphertext),
+                    ctypes.byref(cbResult),
+                    0
+                )
+                if status == 0:
+                    return bytes(plain_buf[:cbResult.value])
+            finally:
+                bcrypt.BCryptDestroyKey(hKey)
+        finally:
+            bcrypt.BCryptCloseAlgorithmProvider(hAlg, 0)
+    except Exception:
+        pass
+    return None
+
+
+def _decrypt_chromium_cookie_val(enc_val: bytes, aes_key: Optional[bytes] = None) -> Optional[str]:
+    """
+    Decrypts Chromium cookie value supporting both v10/v11 AES-256-GCM and legacy DPAPI.
+    Uses dynamic Cryptodome/Crypto, dynamic cryptography, or Windows native BCrypt fallback.
+    """
+    if not enc_val:
+        return None
+
+    # Modern Chromium v10 / v11 AES-GCM
+    if aes_key and len(enc_val) >= 31 and (enc_val.startswith(b'v10') or enc_val.startswith(b'v11')):
+        nonce = enc_val[3:15]
+        ciphertext = enc_val[15:-16]
+        tag = enc_val[-16:]
+
+        # 1. Cryptodome (standard in HELXAID) or Crypto (resolved dynamically to avoid static IDE unresolved import warnings)
+        global AES
+        if AES is None:
+            try:
+                import importlib
+                for _pkg in ("Cryptodome.Cipher.AES", "Crypto.Cipher.AES"):
+                    try:
+                        _mod = importlib.import_module(_pkg)
+                        AES = getattr(_mod, "AES", _mod)
+                        if AES is not None:
+                            break
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        if AES is not None:
+            try:
+                cipher = AES.new(aes_key, AES.MODE_GCM, nonce=nonce)
+                dec = cipher.decrypt(ciphertext)
+                if dec:
+                    return dec.decode('utf-8', errors='ignore')
+            except Exception:
+                pass
+
+        # 2. Dynamic cryptography fallback (imported dynamically to avoid static IDE unresolved import warnings)
+        try:
+            import importlib
+            mod = importlib.import_module("cryptography.hazmat.primitives.ciphers.aead")
+            aesgcm_cls = getattr(mod, "AESGCM", None)
+            if aesgcm_cls:
+                aesgcm = aesgcm_cls(aes_key)
+                dec = aesgcm.decrypt(nonce, enc_val[15:], None)
+                if dec:
+                    return dec.decode('utf-8', errors='ignore')
+        except Exception:
+            pass
+
+        # 3. Windows Native CNG (bcrypt.dll) fallback (Zero external dependencies)
+        try:
+            dec_bytes = _bcrypt_gcm_decrypt(aes_key, nonce, ciphertext, tag)
+            if dec_bytes:
+                return dec_bytes.decode('utf-8', errors='ignore')
+        except Exception:
+            pass
+
+    # Legacy DPAPI decryption
+    dec_bytes = _dpapi_decrypt(enc_val)
+    if dec_bytes:
+        try:
+            return dec_bytes.decode('utf-8', errors='ignore')
+        except Exception:
+            pass
+
+    # Plaintext fallback
+    try:
+        dec_str = enc_val.decode('utf-8')
+        if all(ord(c) < 128 or ord(c) > 31 for c in dec_str):
+            return dec_str
+    except Exception:
+        pass
+
+    return None
+
+
 def _copy_locked_file_win32(src_path: str, dst_path: str) -> bool:
     """Copy a file on Windows even if locked by an active browser process using backup semantics."""
     if not os.path.exists(src_path):
@@ -188,6 +374,7 @@ class YouTubeAccountEngine(QObject):
     """Singleton Controller for YouTube / YouTube Music Authentication & Feed Retrieval."""
 
     sessionChanged = Signal(bool, str)  # (is_authenticated, user_display_name)
+    accountDetailsUpdated = Signal(dict)  # (session_data)
     errorOccurred = Signal(str)
 
     CACHE_DIR = os.path.join(os.getenv("APPDATA", ""), "HELXAID", "cloud_cache")
@@ -200,7 +387,13 @@ class YouTubeAccountEngine(QObject):
         self.current_verifier: Optional[str] = None
         self.current_state: Optional[str] = None
         self._playlist_tracks_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        self._account_fetch_lock = threading.Lock()
         os.makedirs(self.CACHE_DIR, exist_ok=True)
+
+        if self.is_authenticated():
+            # If account metadata is missing or still uses generic placeholder, resolve in background
+            if not self.session_data.get("account_name") or "Google / YouTube User" in self.session_data.get("user_name", ""):
+                QTimer.singleShot(500, lambda: self.fetch_account_info(async_call=True))
 
     def get_cached_playlist_tracks(self, browse_id: str, max_age_sec: int = 86400) -> Optional[List[Dict[str, Any]]]:
         """Instant 0ms memory or <1ms persistent disk retrieval for playlists/mixes (TTL 24 hours)."""
@@ -340,6 +533,10 @@ class YouTubeAccountEngine(QObject):
                 if changed:
                     user_name = self.get_user_name()
                     self.sessionChanged.emit(self.is_authenticated(), user_name)
+                # Auto-heal account metadata if missing or generic
+                if self.is_authenticated():
+                    if not self.session_data.get("account_name") or "Google / YouTube User" in self.session_data.get("user_name", ""):
+                        self.fetch_account_info(async_call=True)
                 return self.is_authenticated()
         return False
 
@@ -379,6 +576,200 @@ class YouTubeAccountEngine(QObject):
 
     def get_avatar_url(self) -> str:
         return self.session_data.get("avatar_url", "")
+
+    def get_account_name(self) -> str:
+        """Return the resolved user or channel name."""
+        return self.session_data.get("account_name", "")
+
+    def get_account_email(self) -> str:
+        """Return the resolved Google account email if available."""
+        return self.session_data.get("email", "")
+
+    def get_account_handle(self) -> str:
+        """Return the resolved YouTube channel handle (e.g. @username) if available."""
+        return self.session_data.get("handle", "")
+
+    def get_account_display_str(self) -> str:
+        """Return a formatted account string: 'Name (@handle • email)' or best available combination."""
+        acc_name = (self.session_data.get("account_name") or "").strip()
+        email = (self.session_data.get("email") or "").strip()
+        handle = (self.session_data.get("handle") or "").strip()
+
+        # Clean generic placeholder names
+        if acc_name in ("Google / YouTube User", "YouTube Music User", "YouTube User"):
+            acc_name = ""
+
+        parts = []
+        if acc_name:
+            parts.append(acc_name)
+        if handle:
+            h_str = handle if handle.startswith("@") else f"@{handle}"
+            if h_str != acc_name:
+                parts.append(h_str)
+        if email:
+            parts.append(f"({email})" if parts else email)
+
+        if parts:
+            return " ".join(parts)
+        return self.get_user_name()
+
+    def fetch_account_info(self, async_call: bool = True) -> None:
+        """
+        Resolve genuine YouTube/Google account metadata (Channel Name, Email, Handle, Avatar)
+        via YouTube Innertube API and local browser profile discovery.
+        """
+        if not self.is_authenticated():
+            return
+
+        if async_call:
+            threading.Thread(target=self._fetch_account_info_sync, daemon=True).start()
+        else:
+            self._fetch_account_info_sync()
+
+    def _fetch_account_info_sync(self) -> None:
+        """Background worker to extract genuine account name, handle, and email."""
+        if not self.is_authenticated():
+            return
+
+        with self._account_fetch_lock:
+            if not self.is_authenticated():
+                return
+            try:
+                acc_name = (self.session_data.get("account_name") or "").strip()
+                email = ""
+                handle = (self.session_data.get("handle") or "").strip()
+                avatar_url = (self.session_data.get("avatar_url") or "").strip()
+
+                if acc_name in ("Google / YouTube User", "YouTube Music User", "YouTube User"):
+                    acc_name = ""
+
+                # 1. Tier 1: Authoritative Innertube account_menu API (Direct from YouTube Session)
+                try:
+                    headers = self.get_auth_headers(origin="https://music.youtube.com")
+                    if headers.get("Authorization") or headers.get("Cookie"):
+                        clients = [
+                            ("https://music.youtube.com/youtubei/v1/account/account_menu?prettyPrint=false", "WEB_REMIX", "1.20240901.01.00", "https://music.youtube.com"),
+                            ("https://www.youtube.com/youtubei/v1/account/account_menu?prettyPrint=false", "WEB", "2.20240901.01.00", "https://www.youtube.com")
+                        ]
+                        for endpoint, c_name, c_ver, orig in clients:
+                            try:
+                                auth_h = self.get_auth_headers(origin=orig)
+                                payload = {
+                                    "context": {
+                                        "client": {
+                                            "clientName": c_name,
+                                            "clientVersion": c_ver,
+                                            "hl": "en",
+                                            "gl": "US"
+                                        }
+                                    }
+                                }
+                                ctx = ssl._create_unverified_context()
+                                req = urllib.request.Request(
+                                    endpoint,
+                                    data=json.dumps(payload).encode("utf-8"),
+                                    headers=auth_h,
+                                    method="POST"
+                                )
+                                with urllib.request.urlopen(req, timeout=4.0, context=ctx) as resp:
+                                    if resp.status == 200:
+                                        res_json = json.loads(resp.read().decode("utf-8"))
+                                        
+                                        def _find_active_header(node):
+                                            if isinstance(node, dict):
+                                                if "activeAccountHeaderRenderer" in node:
+                                                    return node["activeAccountHeaderRenderer"]
+                                                for v in node.values():
+                                                    res = _find_active_header(v)
+                                                    if res:
+                                                        return res
+                                            elif isinstance(node, list):
+                                                for item in node:
+                                                    res = _find_active_header(item)
+                                                    if res:
+                                                        return res
+                                            return None
+
+                                        hdr = _find_active_header(res_json)
+                                        if hdr:
+                                            def _extract_text(obj):
+                                                if not obj or not isinstance(obj, dict):
+                                                    return ""
+                                                if "simpleText" in obj:
+                                                    return str(obj["simpleText"]).strip()
+                                                runs = obj.get("runs", [])
+                                                if runs and isinstance(runs, list):
+                                                    return "".join([r.get("text", "") for r in runs if isinstance(r, dict)]).strip()
+                                                return ""
+
+                                            yt_name = _extract_text(hdr.get("accountName"))
+                                            yt_handle = _extract_text(hdr.get("channelHandle"))
+                                            yt_email = _extract_text(hdr.get("email"))
+
+                                            if yt_name:
+                                                acc_name = yt_name
+                                            if yt_handle:
+                                                handle = yt_handle
+                                            if yt_email and "@" in yt_email:
+                                                email = yt_email
+
+                                            thumbs = hdr.get("accountPhoto", {}).get("thumbnails", [])
+                                            if thumbs and isinstance(thumbs, list):
+                                                avatar_url = thumbs[-1].get("url", "")
+
+                                            if acc_name or handle:
+                                                break
+                            except Exception:
+                                continue
+                except Exception as api_err:
+                    print(f"[YouTubeAccountEngine] Account menu API notice: {api_err}")
+
+                # 2. Tier 2: Local browser profile inspection - ONLY if profile strictly matches the account
+                if not email and acc_name:
+                    try:
+                        profiles = self.get_discovered_browser_profiles()
+                        clean_acc = acc_name.lower().strip()
+                        clean_handle = handle.replace("@", "").lower().strip()
+                        for prof in profiles:
+                            p_name = (prof.get("name") or "").lower().strip()
+                            p_email = (prof.get("email") or "").lower().strip()
+                            # Strict match check: profile name or email username must match acc_name or channel handle
+                            if (clean_acc and clean_acc == p_name) or (clean_handle and clean_handle in p_email):
+                                email = prof.get("email", "").strip()
+                                break
+                    except Exception as prof_err:
+                        print(f"[YouTubeAccountEngine] Local profile strict match notice: {prof_err}")
+
+                # 3. Save resolved account data if any information was identified
+                if acc_name or handle or email:
+                    display_parts = []
+                    if acc_name:
+                        display_parts.append(acc_name)
+                    if handle and handle != acc_name:
+                        display_parts.append(handle if handle.startswith("@") else f"@{handle}")
+                    if email:
+                        display_parts.append(f"({email})")
+
+                    best_user_name = " ".join(display_parts) if display_parts else (acc_name or self.get_user_name())
+
+                    self.session_data["user_name"] = best_user_name
+                    self.session_data["account_name"] = acc_name
+                    self.session_data["email"] = email
+                    self.session_data["handle"] = handle
+                    if avatar_url:
+                        self.session_data["avatar_url"] = avatar_url
+
+                    # Abort if user logged out or session invalidated while network call was in flight
+                    if not self.is_authenticated():
+                        print("[YouTubeAccountEngine] Session invalidated during fetch_account_info; aborting save.")
+                        return
+
+                    self._save_session_data(self.session_data)
+                    self.sessionChanged.emit(True, best_user_name)
+                    self.accountDetailsUpdated.emit(self.session_data)
+                    print(f"[YouTubeAccountEngine] Account metadata successfully resolved: name='{acc_name}', handle='{handle}', email='{email}'")
+            except Exception as e:
+                print(f"[YouTubeAccountEngine] fetch_account_info notice: {e}")
 
     def get_access_token(self) -> str:
         """Return valid access token, silently refreshing if expired or near expiry."""
@@ -563,6 +954,7 @@ class YouTubeAccountEngine(QObject):
         }
         self._save_session_data(self.session_data)
         self.sessionChanged.emit(True, user_name)
+        self.fetch_account_info(async_call=True)
         return True, f"Successfully authenticated as {user_name}!"
 
     @staticmethod
@@ -672,14 +1064,6 @@ class YouTubeAccountEngine(QObject):
         Directly extracts and decrypts YouTube/Google cookies from Chromium browsers on Windows,
         bypassing file lock issues even when the browser is actively open and playing audio.
         """
-        import base64
-        import sqlite3
-        import tempfile
-        try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-        except Exception:
-            AESGCM = None
-
         browser_paths = {
             "chrome": os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"),
             "edge": os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data"),
@@ -749,24 +1133,10 @@ class YouTubeAccountEngine(QObject):
                 for name, val, enc_val in rows:
                     if val:
                         cookies[name] = val
-                    elif enc_val and aes_key and AESGCM:
-                        try:
-                            if enc_val[:3] in (b'v10', b'v11'):
-                                nonce = enc_val[3:15]
-                                ciphertext = enc_val[15:]
-                                aesgcm = AESGCM(aes_key)
-                                dec = aesgcm.decrypt(nonce, ciphertext, None).decode('utf-8', errors='ignore')
-                                if dec:
-                                    cookies[name] = dec
-                        except Exception:
-                            pass
                     elif enc_val:
-                        dec = _dpapi_decrypt(enc_val)
+                        dec = _decrypt_chromium_cookie_val(enc_val, aes_key)
                         if dec:
-                            try:
-                                cookies[name] = dec.decode('utf-8', errors='ignore')
-                            except Exception:
-                                pass
+                            cookies[name] = dec
                 conn.close()
             except Exception:
                 pass
@@ -874,6 +1244,7 @@ class YouTubeAccountEngine(QObject):
                 }
                 self._save_session_data(self.session_data)
                 self.sessionChanged.emit(True, user_name)
+                self.fetch_account_info(async_call=True)
                 return True, f"Successfully synced YouTube session ({user_name})!", browser_clean
             elif profile_dir:
                 self.errorOccurred.emit(err or "Failed to extract session from selected profile.")
@@ -893,6 +1264,7 @@ class YouTubeAccountEngine(QObject):
             }
             self._save_session_data(self.session_data)
             self.sessionChanged.emit(True, user_name)
+            self.fetch_account_info(async_call=True)
             return True, f"Successfully synced YouTube session from Google Chrome ({user_name})!", "chrome"
 
         err_msg = "Google Chrome session database is locked while Chrome is running. Please use the HELXAID Chrome Extension to sync instantly!"
@@ -935,6 +1307,7 @@ class YouTubeAccountEngine(QObject):
             }
             self._save_session_data(self.session_data)
             self.sessionChanged.emit(True, user_name)
+            self.fetch_account_info(async_call=True)
             return True, f"Successfully imported YouTube session from {os.path.basename(file_path)}!"
         except Exception as e:
             return False, f"Failed to parse cookies.txt: {e}"
@@ -981,6 +1354,7 @@ class YouTubeAccountEngine(QObject):
             }
             self._save_session_data(self.session_data)
             self.sessionChanged.emit(True, user_name)
+            self.fetch_account_info(async_call=True)
             return True, "Successfully imported YouTube session cookies!"
         except Exception as e:
             return False, f"Failed to parse cookie string: {e}"
@@ -1001,16 +1375,17 @@ class YouTubeAccountEngine(QObject):
             pass
         self.sessionChanged.emit(False, "")
 
-    def get_auth_headers(self) -> Dict[str, str]:
+    def get_auth_headers(self, origin: str = "https://music.youtube.com") -> Dict[str, str]:
         """Generate official YouTube SAPISIDHASH or Bearer Authorization Headers for Innertube."""
-        origin = "https://music.youtube.com"
+        client_name = "1" if "www.youtube.com" in origin else "67"
+        client_version = "2.20240901.01.00" if "www.youtube.com" in origin else "1.20240901.01.00"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-            "X-YouTube-Client-Name": "67",  # YouTube Music Web
-            "X-YouTube-Client-Version": "1.20240901.01.00",
+            "X-YouTube-Client-Name": client_name,
+            "X-YouTube-Client-Version": client_version,
             "X-Origin": origin,
             "Origin": origin,
-            "Referer": "https://music.youtube.com/",
+            "Referer": f"{origin}/",
             "X-Goog-AuthUser": "0",
             "Content-Type": "application/json"
         }
