@@ -42,7 +42,43 @@ class AnimatedButton(QPushButton):
         self._gradient_direction = "horizontal"  # "horizontal" or "vertical"
         self._border_radius = None
         self._custom_font_size = None
+        self._idle_bg = None
+        self._draw_border = True
+        self._border_color = None
     
+    def setIdleBackground(self, color):
+        """Set idle base background color (QColor, tuple, or hex/rgba str)."""
+        if isinstance(color, str):
+            if color.startswith("rgba"):
+                import re
+                m = re.match(r"rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d\.]+))?\s*\)", color)
+                if m:
+                    r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                    a = float(m.group(4)) if m.group(4) is not None else 1.0
+                    self._idle_bg = QColor(r, g, b, int(a * 255 if a <= 1.0 else a))
+                else:
+                    self._idle_bg = QColor(color)
+            else:
+                self._idle_bg = QColor(color)
+        elif isinstance(color, (tuple, list)):
+            self._idle_bg = QColor(*color)
+        else:
+            self._idle_bg = color
+        self.update()
+
+    def setDrawBorder(self, draw: bool):
+        """Enable or disable border drawing."""
+        self._draw_border = bool(draw)
+        self.update()
+
+    def setBorderColor(self, color):
+        """Set border color (QColor or hex str)."""
+        if isinstance(color, str):
+            self._border_color = QColor(color)
+        else:
+            self._border_color = color
+        self.update()
+
     def setBorderRadius(self, radius: float):
         """Set custom corner radius for the button (e.g. 5.0 or 6.0)."""
         self._border_radius = float(radius)
@@ -143,7 +179,13 @@ class AnimatedButton(QPushButton):
             radius = min(4.0 if adjusted_rect.height() <= 32 else 12.0, adjusted_rect.height() / 2.0)
         
         if self._hover_mode == "fade":
-            # Fade hover mode: full-surface opacity fade matching FadeHoverButton / helxairo_editorDeleteKeyBtn
+            # 1. Base idle background (if specified)
+            if hasattr(self, '_idle_bg') and self._idle_bg is not None:
+                bg_path = QPainterPath()
+                bg_path.addRoundedRect(adjusted_rect, radius, radius)
+                painter.fillPath(bg_path, QBrush(self._idle_bg))
+            
+            # 2. Fade hover mode: full-surface opacity fade matching FadeHoverButton / helxairo_editorDeleteKeyBtn
             if self._fill_progress > 0.001:
                 if self._gradient_direction == "vertical":
                     gradient = QLinearGradient(0, 0, 0, rect.height())
@@ -163,29 +205,33 @@ class AnimatedButton(QPushButton):
                 painter.fillPath(path, QBrush(gradient))
                 painter.setOpacity(1.0)
             
-            # Draw border (fades out on hover so fully hovered state is borderless matching helxairo_editorModifyKeyBtn)
-            border_opacity = 1.0 - self._fill_progress
-            if border_opacity > 0.05:
-                border_color = QColor(255, 255, 255, int(150 * border_opacity))
-                pen = QPen(border_color)
-                pen.setWidth(1)
-                painter.setPen(pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRoundedRect(adjusted_rect, radius, radius)
+            # 3. Draw border (preserves border if _border_color set, or fades out if default)
+            if getattr(self, '_draw_border', True):
+                if hasattr(self, '_border_color') and self._border_color is not None:
+                    pen = QPen(self._border_color, 1)
+                    painter.setPen(pen)
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawRoundedRect(adjusted_rect, radius, radius)
+                else:
+                    border_opacity = 1.0 - self._fill_progress
+                    if border_opacity > 0.05:
+                        border_color = QColor(255, 255, 255, int(150 * border_opacity))
+                        pen = QPen(border_color, 1)
+                        painter.setPen(pen)
+                        painter.setBrush(Qt.NoBrush)
+                        painter.drawRoundedRect(adjusted_rect, radius, radius)
             
-            # Text stays crisp white Orbitron matching helxairo_editorModifyKeyBtn
-            painter.setPen(QColor(255, 255, 255))
+            # 4. Text: crisp Orbitron with smooth color transition (#e0e0e0 -> #ffffff)
+            text_val = int(224 + (255 - 224) * self._fill_progress)
+            painter.setPen(QColor(text_val, text_val, text_val))
             font = QFont("Orbitron")
             font.setBold(True)
             if hasattr(self, '_custom_pixel_size') and self._custom_pixel_size is not None:
                 font.setPixelSize(self._custom_pixel_size)
             elif self._custom_font_size is not None:
-                if self._custom_font_size <= 13:
-                    font.setPixelSize(self._custom_font_size)
-                else:
-                    font.setPointSize(self._custom_font_size)
+                font.setPixelSize(self._custom_font_size)
             elif adjusted_rect.height() <= 32:
-                font.setPixelSize(10)
+                font.setPixelSize(12)
             else:
                 font = self.font()
                 font.setFamily("Orbitron")

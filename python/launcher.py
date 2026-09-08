@@ -8140,6 +8140,8 @@ class GameLauncher(QWidget):
     _icon_cache_max_size = 40 # Limit cache to prevent RAM growth
     
     taskbar_button_clicked = Signal(int)
+    _session_stopped_signal = Signal()
+    _session_status_changed_signal = Signal()
     
     def _apply_dark_titlebar(self):
         """Apply Windows 10/11 immersive dark mode and custom title bar colors."""
@@ -8540,6 +8542,7 @@ class GameLauncher(QWidget):
         self.search_query = ""
         self.selected_game_index = -1
         self.game_buttons = []
+        self._session_lock = threading.RLock()
         self.current_session = None
         self._app_type_cache = {}
 
@@ -8739,6 +8742,12 @@ class GameLauncher(QWidget):
         self._process_scan_interval = 2.0  # Background scan interval in seconds (slows to 10s during gaming)
         self._in_game_mode = False  # True when user is actively playing a game
         self._process_cache_lock = threading.Lock()
+        self._scan_wake_event = threading.Event()
+        
+        # Thread-safe session lifecycle signals (dispatched from background ProcessScanner)
+        self._session_stopped_signal.connect(self._handle_game_stopped)
+        self._session_status_changed_signal.connect(self.populate_recently_played)
+        
         self._start_process_scan_thread()
         
         self.game_detection_timer = QTimer()
@@ -9727,20 +9736,24 @@ class GameLauncher(QWidget):
         # Statistics button (on the right)
         stats_btn = AnimatedButton("Stats")
         stats_btn.setObjectName("StatsBtn")
-        stats_btn.setFixedSize(80, 30)
+        stats_btn.setFixedSize(80, 40)
+        stats_btn.setCursor(Qt.PointingHandCursor)
+        stats_btn.setHoverMode("fade")
         stats_btn.setHoverGradient(['#F443A2', '#FE5500', '#FE0800', '#FFAB00'])  # Game panel gradient
+        stats_btn.setBorderRadius(6.0)
+        stats_btn.setFontSize(12)
+        stats_btn.setDrawBorder(False)
+        stats_btn.setIdleBackground(QColor(30, 32, 38, 220))
         stats_btn.clicked.connect(lambda: self.show_statistics_dashboard())
         stats_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(30, 30, 30, 0.9);
-                border: 1px solid #FF5B06;
-                border-radius: 5px;
-                padding: 3px 10px;
-                color: #e0e0e0;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background: rgba(255, 91, 6, 0.3);
+            QPushButton#StatsBtn, AnimatedButton#StatsBtn {
+                background: transparent;
+                border: none;
+                padding: 0;
+                min-width: 80px;
+                max-width: 80px;
+                min-height: 40px;
+                max-height: 40px;
             }
         """)
         sort_bar_layout.addWidget(stats_btn, 0, Qt.AlignVCenter)
@@ -9974,7 +9987,7 @@ class GameLauncher(QWidget):
                     border: none;
                     background: transparent;
                 }}
-                QPushButton#recentlyPlayedGameButton {{
+                QPushButton#recentlyPlayedGameButton, AnimatedButton#recentlyPlayedGameButton {{
                     border: none;
                     padding: 0;
                     background: transparent;
@@ -9983,9 +9996,19 @@ class GameLauncher(QWidget):
                     min-height: 44px;
                     max-height: 44px;
                 }}
-                QPushButton#recentlyPlayedGameButton:hover, QPushButton#recentlyPlayedGameButton:pressed {{
+                QPushButton#recentlyPlayedGameButton:hover, QPushButton#recentlyPlayedGameButton:pressed,
+                AnimatedButton#recentlyPlayedGameButton:hover, AnimatedButton#recentlyPlayedGameButton:pressed {{
                     border: none;
                     background: transparent;
+                }}
+                QPushButton#StatsBtn, AnimatedButton#StatsBtn {{
+                    background: transparent;
+                    border: none;
+                    padding: 0;
+                    min-width: 80px;
+                    max-width: 80px;
+                    min-height: 40px;
+                    max-height: 40px;
                 }}
                 QScrollArea {{
                     border: none;
@@ -11576,8 +11599,23 @@ class GameLauncher(QWidget):
         save_btn.setObjectName("cpuSavePresetButton")
         save_btn.setFixedSize(70, 38)
         save_btn.setCursor(Qt.PointingHandCursor)
+        save_btn.setHoverMode("fade")
         save_btn.setHoverGradient(['#FF5B06', '#FDA903'])  # Orange theme
-        save_btn.setStyleSheet("QPushButton { background: #FF5B06; color: #ffffff; border: none; border-radius: 10px; font-size: 12px; font-weight: 600; } QPushButton:hover { background: #FDA903; color: #1a1a1a; }")
+        save_btn.setBorderRadius(6.0)
+        save_btn.setDrawBorder(False)
+        save_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        save_btn.setFontSize(12)
+        save_btn.setStyleSheet("""
+            QPushButton#cpuSavePresetButton, AnimatedButton#cpuSavePresetButton {
+                background: transparent;
+                border: none;
+                padding: 0;
+                min-width: 70px;
+                max-width: 70px;
+                min-height: 38px;
+                max-height: 38px;
+            }
+        """)
         save_btn.clicked.connect(self._save_current_preset)
         preset_layout.addWidget(save_btn, 0, Qt.AlignVCenter)
         
@@ -12263,8 +12301,19 @@ class GameLauncher(QWidget):
         reset_btn.setObjectName("cpuResetButton")
         reset_btn.setFixedHeight(44)
         reset_btn.setCursor(Qt.PointingHandCursor)
+        reset_btn.setHoverMode("fade")
         reset_btn.setHoverGradient(['#FF5B06', '#FDA903'])  # Orange theme
-        reset_btn.setStyleSheet("QPushButton { background: transparent; color: #FDA903; border: 2px solid rgba(255, 91, 6, 0.5); border-radius: 12px; font-size: 13px; font-weight: 500; padding: 0 24px; } QPushButton:hover { background: rgba(255, 91, 6, 0.2); border-color: #FDA903; color: #e0e0e0; }")
+        reset_btn.setBorderRadius(6.0)
+        reset_btn.setDrawBorder(False)
+        reset_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        reset_btn.setFontSize(13)
+        reset_btn.setStyleSheet("""
+            QPushButton#cpuResetButton, AnimatedButton#cpuResetButton {
+                background: transparent;
+                border: none;
+                padding: 0 24px;
+            }
+        """)
         reset_btn.clicked.connect(self._reset_cpu_sliders)
         btn_layout.addWidget(reset_btn)
         
@@ -12274,8 +12323,19 @@ class GameLauncher(QWidget):
         apply_btn.setObjectName("cpuApplyButton")
         apply_btn.setFixedHeight(44)
         apply_btn.setCursor(Qt.PointingHandCursor)
-        apply_btn.setHoverGradient(['#FF5B06', '#FDA903', '#e0e0e0'])  # Orange gradient
-        apply_btn.setStyleSheet("QPushButton { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903); color: #1a1a1a; border: none; border-radius: 12px; font-size: 14px; font-weight: bold; padding: 0 32px; } QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:1 #FFD700); }")
+        apply_btn.setHoverMode("fade")
+        apply_btn.setHoverGradient(['#FF5B06', '#FDA903'])  # Orange gradient
+        apply_btn.setBorderRadius(6.0)
+        apply_btn.setDrawBorder(False)
+        apply_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        apply_btn.setFontSize(14)
+        apply_btn.setStyleSheet("""
+            QPushButton#cpuApplyButton, AnimatedButton#cpuApplyButton {
+                background: transparent;
+                border: none;
+                padding: 0 32px;
+            }
+        """)
         apply_btn.clicked.connect(self._apply_cpu_settings)
         btn_layout.addWidget(apply_btn)
         
@@ -13822,18 +13882,20 @@ class GameLauncher(QWidget):
                 if len(status_text) > 30:
                     status_text = status_text[:29] + "…"
                 
-                # Create currently playing label with pulsing green dot
+                # Create currently playing label with pulsing green/amber state
                 playing_label = QLabel(status_text)
                 playing_label.setObjectName("currentlyPlayingLabel")
                 playing_label.setStyleSheet(f"""
-                    QLabel {{
-                        font-size: 13px;
+                    QLabel#currentlyPlayingLabel {{
+                        font-family: 'Orbitron', sans-serif;
+                        font-size: 12px;
+                        font-weight: 700;
+                        letter-spacing: 0.5px;
                         color: {status_color};
-                        font-weight: bold;
-                        background: rgba(0, 0, 0, 0.65);
+                        background-color: rgba(18, 18, 18, 0.85);
                         border: none;
                         border-radius: 8px;
-                        padding: 5px 12px;
+                        padding: 6px 14px;
                     }}
                 """)
                 self.recently_played_layout.addWidget(playing_label)
@@ -13841,13 +13903,13 @@ class GameLauncher(QWidget):
                 # Add separator
                 separator = QLabel("|")
                 separator.setObjectName("recentlyPlayedSeparator")
-                separator.setStyleSheet("color: #555555; font-size: 16px; margin: 0 5px;")
+                separator.setStyleSheet("color: #444444; font-size: 14px; margin: 0 6px;")
                 self.recently_played_layout.addWidget(separator)
         
         # Add "Recently Played" label
         title_label = QLabel("Recently Played:")
         title_label.setObjectName("recentlyPlayedTitleLabel")
-        title_label.setStyleSheet("font-size: 13px; color: #FFFFFF; font-weight: bold;")
+        title_label.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 12px; color: #FFFFFF; font-weight: 700; letter-spacing: 0.5px;")
         self.recently_played_layout.addWidget(title_label)
         
         # Add each recently played game as a small clickable button
@@ -13864,6 +13926,9 @@ class GameLauncher(QWidget):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setHoverGradient(['#3A3D45', '#4A4D55'])
             btn.setHoverMode("fade")
+            btn.setBorderRadius(6.0)
+            btn.setDrawBorder(False)
+            btn.setIdleBackground(QColor(30, 32, 38, 220))
             btn.doubleClicked.connect(lambda p=game.get("exe", ""): self.launch_game(p))
             btn.setToolTip(f"Double-click to launch {game.get('name', '')}")
             self.recently_played_layout.addWidget(btn, 0, Qt.AlignVCenter)
@@ -15065,9 +15130,40 @@ class GameLauncher(QWidget):
         self._qs_bg_path.setReadOnly(True)
         bg_browse_btn = AnimatedButton("Browse...")
         bg_browse_btn.setObjectName("quickSettingsBgBrowseBtn")
+        bg_browse_btn.setFixedSize(85, 32)
+        bg_browse_btn.setCursor(Qt.PointingHandCursor)
+        bg_browse_btn.setHoverMode("fade")
+        bg_browse_btn.setHoverGradient(['#FF5B06', '#FDA903'])
+        bg_browse_btn.setBorderRadius(6.0)
+        bg_browse_btn.setDrawBorder(False)
+        bg_browse_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        bg_browse_btn.setFontSize(11)
+        bg_browse_btn.setStyleSheet("""
+            QPushButton#quickSettingsBgBrowseBtn, AnimatedButton#quickSettingsBgBrowseBtn {
+                background: transparent;
+                border: none;
+                padding: 0;
+            }
+        """)
         bg_browse_btn.clicked.connect(lambda: self._browse_qs_bg())
+
         bg_clear_btn = AnimatedButton("Clear")
         bg_clear_btn.setObjectName("quickSettingsBgClearBtn")
+        bg_clear_btn.setFixedSize(65, 32)
+        bg_clear_btn.setCursor(Qt.PointingHandCursor)
+        bg_clear_btn.setHoverMode("fade")
+        bg_clear_btn.setHoverGradient(['#3A3D45', '#4A4D55'])
+        bg_clear_btn.setBorderRadius(6.0)
+        bg_clear_btn.setDrawBorder(False)
+        bg_clear_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        bg_clear_btn.setFontSize(11)
+        bg_clear_btn.setStyleSheet("""
+            QPushButton#quickSettingsBgClearBtn, AnimatedButton#quickSettingsBgClearBtn {
+                background: transparent;
+                border: none;
+                padding: 0;
+            }
+        """)
         bg_clear_btn.clicked.connect(lambda: self._qs_bg_path.setText(""))
         
         bg_img_layout.addWidget(bg_img_label)
@@ -15193,17 +15289,19 @@ class GameLauncher(QWidget):
         
         check_update_btn = AnimatedButton("Check for Updates")
         check_update_btn.setObjectName("quickSettingsCheckUpdateBtn")
+        check_update_btn.setFixedHeight(30)
+        check_update_btn.setCursor(Qt.PointingHandCursor)
+        check_update_btn.setHoverMode("fade")
+        check_update_btn.setHoverGradient(['#FF5B06', '#FDA903'])
+        check_update_btn.setBorderRadius(6.0)
+        check_update_btn.setDrawBorder(False)
+        check_update_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        check_update_btn.setFontSize(11)
         check_update_btn.setStyleSheet("""
-            QPushButton {
-                background: #FF5B06;
-                color: white;
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: #FF7B36;
+            QPushButton#quickSettingsCheckUpdateBtn, AnimatedButton#quickSettingsCheckUpdateBtn {
+                background: transparent;
+                border: none;
+                padding: 0 14px;
             }
         """)
         check_update_btn.clicked.connect(self.check_for_updates)
@@ -15237,18 +15335,40 @@ class GameLauncher(QWidget):
         
         self.install_service_btn = AnimatedButton("Enable")
         self.install_service_btn.setObjectName("quickSettingsInstallServiceBtn")
+        self.install_service_btn.setFixedSize(70, 28)
+        self.install_service_btn.setCursor(Qt.PointingHandCursor)
+        self.install_service_btn.setHoverMode("fade")
+        self.install_service_btn.setHoverGradient(['#16A34A', '#22C55E'])
+        self.install_service_btn.setBorderRadius(6.0)
+        self.install_service_btn.setDrawBorder(False)
+        self.install_service_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        self.install_service_btn.setFontSize(11)
         self.install_service_btn.setStyleSheet("""
-            QPushButton { background: rgba(255, 255, 255, 0.1); color: white; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold; }
-            QPushButton:hover { background: rgba(255, 255, 255, 0.2); }
+            QPushButton#quickSettingsInstallServiceBtn, AnimatedButton#quickSettingsInstallServiceBtn {
+                background: transparent;
+                border: none;
+                padding: 0;
+            }
         """)
         self.install_service_btn.clicked.connect(self._install_helper_service)
         service_inner_layout.addWidget(self.install_service_btn)
         
         self.uninstall_service_btn = AnimatedButton("Disable")
         self.uninstall_service_btn.setObjectName("quickSettingsUninstallServiceBtn")
+        self.uninstall_service_btn.setFixedSize(70, 28)
+        self.uninstall_service_btn.setCursor(Qt.PointingHandCursor)
+        self.uninstall_service_btn.setHoverMode("fade")
+        self.uninstall_service_btn.setHoverGradient(['#DC2626', '#EF4444'])
+        self.uninstall_service_btn.setBorderRadius(6.0)
+        self.uninstall_service_btn.setDrawBorder(False)
+        self.uninstall_service_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        self.uninstall_service_btn.setFontSize(11)
         self.uninstall_service_btn.setStyleSheet("""
-            QPushButton { background: rgba(255, 91, 6, 0.2); color: #FDA903; border-radius: 4px; padding: 4px 10px; font-size: 11px; font-weight: bold; }
-            QPushButton:hover { background: rgba(255, 91, 6, 0.4); }
+            QPushButton#quickSettingsUninstallServiceBtn, AnimatedButton#quickSettingsUninstallServiceBtn {
+                background: transparent;
+                border: none;
+                padding: 0;
+            }
         """)
         self.uninstall_service_btn.clicked.connect(self._uninstall_helper_service)
         service_inner_layout.addWidget(self.uninstall_service_btn)
@@ -15312,34 +15432,46 @@ class GameLauncher(QWidget):
 
         uninstall_tools_btn = AnimatedButton("Uninstall External Tools")
         uninstall_tools_btn.setObjectName("quickSettingsUninstallToolsBtn")
+        uninstall_tools_btn.setFixedHeight(32)
+        uninstall_tools_btn.setCursor(Qt.PointingHandCursor)
+        uninstall_tools_btn.setHoverMode("fade")
+        uninstall_tools_btn.setHoverGradient(['#B91C1C', '#EF4444'])
+        uninstall_tools_btn.setBorderRadius(6.0)
+        uninstall_tools_btn.setDrawBorder(False)
+        uninstall_tools_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        uninstall_tools_btn.setFontSize(11)
         uninstall_tools_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(200, 40, 40, 0.7);
-                color: white;
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-size: 11px;
-                font-weight: bold;
+            QPushButton#quickSettingsUninstallToolsBtn, AnimatedButton#quickSettingsUninstallToolsBtn {
+                background: transparent;
+                border: none;
+                padding: 0 14px;
             }
-            QPushButton:hover { background: rgba(220, 60, 60, 0.9); }
-            QPushButton:disabled { background: rgba(80,80,80,0.4); color: #555555; }
+            QPushButton#quickSettingsUninstallToolsBtn:disabled, AnimatedButton#quickSettingsUninstallToolsBtn:disabled {
+                color: #666666;
+            }
         """)
         uninstall_tools_btn.clicked.connect(self.uninstall_external_tools)
         dev_btn_layout.addWidget(uninstall_tools_btn)
 
         reset_appdata_btn = AnimatedButton("Reset AppData (Clean Install)")
         reset_appdata_btn.setObjectName("quickSettingsResetAppDataBtn")
+        reset_appdata_btn.setFixedHeight(32)
+        reset_appdata_btn.setCursor(Qt.PointingHandCursor)
+        reset_appdata_btn.setHoverMode("fade")
+        reset_appdata_btn.setHoverGradient(['#C2410C', '#EA580C'])
+        reset_appdata_btn.setBorderRadius(6.0)
+        reset_appdata_btn.setDrawBorder(False)
+        reset_appdata_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        reset_appdata_btn.setFontSize(11)
         reset_appdata_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(180, 80, 20, 0.7);
-                color: white;
-                border-radius: 4px;
-                padding: 4px 10px;
-                font-size: 11px;
-                font-weight: bold;
+            QPushButton#quickSettingsResetAppDataBtn, AnimatedButton#quickSettingsResetAppDataBtn {
+                background: transparent;
+                border: none;
+                padding: 0 14px;
             }
-            QPushButton:hover { background: rgba(210, 100, 30, 0.9); }
-            QPushButton:disabled { background: rgba(80,80,80,0.4); color: #555555; }
+            QPushButton#quickSettingsResetAppDataBtn:disabled, AnimatedButton#quickSettingsResetAppDataBtn:disabled {
+                color: #666666;
+            }
         """)
         reset_appdata_btn.clicked.connect(self.reset_appdata_clean_install)
         dev_btn_layout.addWidget(reset_appdata_btn)
@@ -15447,8 +15579,46 @@ class GameLauncher(QWidget):
         btn_layout = QHBoxLayout()
         ok_btn = AnimatedButton("OK")
         ok_btn.setObjectName("quickSettingsOkBtn")
+        ok_btn.setFixedSize(85, 34)
+        ok_btn.setCursor(Qt.PointingHandCursor)
+        ok_btn.setHoverMode("fade")
+        ok_btn.setHoverGradient(['#FF5B06', '#FDA903'])
+        ok_btn.setBorderRadius(6.0)
+        ok_btn.setDrawBorder(False)
+        ok_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        ok_btn.setFontSize(12)
+        ok_btn.setStyleSheet("""
+            QPushButton#quickSettingsOkBtn, AnimatedButton#quickSettingsOkBtn {
+                background: transparent;
+                border: none;
+                padding: 0;
+                min-width: 85px;
+                max-width: 85px;
+                min-height: 34px;
+                max-height: 34px;
+            }
+        """)
         cancel_btn = AnimatedButton("Cancel")
         cancel_btn.setObjectName("quickSettingsCancelBtn")
+        cancel_btn.setFixedSize(85, 34)
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setHoverMode("fade")
+        cancel_btn.setHoverGradient(['#3A3D45', '#4A4D55'])
+        cancel_btn.setBorderRadius(6.0)
+        cancel_btn.setDrawBorder(False)
+        cancel_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        cancel_btn.setFontSize(12)
+        cancel_btn.setStyleSheet("""
+            QPushButton#quickSettingsCancelBtn, AnimatedButton#quickSettingsCancelBtn {
+                background: transparent;
+                border: none;
+                padding: 0;
+                min-width: 85px;
+                max-width: 85px;
+                min-height: 34px;
+                max-height: 34px;
+            }
+        """)
         btn_layout.addStretch()
         btn_layout.addWidget(ok_btn)
         btn_layout.addWidget(cancel_btn)
@@ -18001,37 +18171,39 @@ class GameLauncher(QWidget):
             return
         
         try:
-            # Use psutil to find and kill the process
+            # Use psutil to find and kill all tracked session processes and matching game binaries
             import psutil
             killed = False
+            target_pids = set(self.current_session.get("tracked_pids", {}).keys())
+            target_exes = set(self._get_game_exe_names(game))
+            
+            # Kill tracked PIDs first
+            for pid in list(target_pids):
+                try:
+                    if psutil.pid_exists(pid):
+                        p = psutil.Process(pid)
+                        p.kill()
+                        killed = True
+                        print(f"Killed tracked session process: PID {pid}")
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    pass
+            
+            # Also sweep for any matching process by executable name
             for proc in psutil.process_iter(['name', 'pid']):
                 try:
-                    if proc.info['name'].lower() == exe_name:
+                    p_name = (proc.info['name'] or '').lower()
+                    if p_name in target_exes:
                         proc.kill()
                         killed = True
-                        print(f"Killed process: {proc.info['name']} (PID: {proc.info['pid']})")
+                        print(f"Killed matching game process: {p_name} (PID: {proc.info['pid']})")
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     pass
             
             if not killed:
-                # Process not found - it may have already closed
-                print(f"Process {exe_name} not found - may have already closed")
+                print(f"No active processes found for {game_name} - may have already closed")
             
-            # Record play time
             elapsed = int(time.time() - self.current_session["start_time"])
-            game["play_time_seconds"] = game.get("play_time_seconds", 0) + elapsed
-            game["last_played"] = datetime.now().isoformat()
-            save_json(self.data)
-            print(f"Force ended: {game_name} (played {elapsed}s)")
-            
-            # Exit game mode and restore normal timers
-            self._exit_game_mode()
-            
-            # Clear session and update UI
-            self.current_session = None
-            self.end_game_btn.hide()
-            self.populate_recently_played()
-            self.update_discord_browsing()
+            self._handle_game_stopped()
             
             QMessageBox.information(self, "Game Ended", f"'{game_name}' session ended.\nPlay time recorded: {elapsed}s")
             
@@ -18094,24 +18266,10 @@ class GameLauncher(QWidget):
         (e.g. Minecraft at index 2) to always beat games later (e.g. WuWa at index 14)
         when both had matching processes due to contaminated game_exe fields.
         """
-        # Skip if already tracking a game launched from the launcher
-        if self.current_session and self.current_session.get("from_launcher"):
-            # Check if the launcher-started game is still running
-            game = self.current_session.get("game")
-            if game:
-                # Check both the launcher exe and the game exe (if different)
-                exe_names = self._get_game_exe_names(game)
-                game_still_running = any(self._is_process_running(name) for name in exe_names)
-                if not game_still_running:
-                    # Game launched from launcher has stopped
-                    self._handle_game_stopped()
-                else:
-                    # Game still running - refresh UI ONLY if status changed
-                    current_status = self._is_in_game_by_window_title(game)
-                    if self.current_session.get("last_status") != current_status:
-                        self.current_session["last_status"] = current_status
-                        self.populate_recently_played()
-            return
+        # If already tracking an active session, let the high-speed watchdog manage its lifecycle
+        with self._session_lock:
+            if self.current_session and not self.current_session.get("terminated"):
+                return
         
         # Get set of running process names
         running_exes = self._get_running_processes()
@@ -18145,25 +18303,9 @@ class GameLauncher(QWidget):
         
         # No candidates found
         if not candidates:
-            if self.current_session and not self.current_session.get("from_launcher"):
-                self._handle_game_stopped()
             return
         
-        # ===== PASS 2: Already tracking? Single match? Multiple? =====
-        
-        # Check if we're already tracking one of the candidates
-        if self.current_session:
-            current_game = self.current_session.get("game", {})
-            current_name = current_game.get("name", "")
-            for game, _ in candidates:
-                if game.get("name") == current_name:
-                    # Already tracking this game - refresh UI ONLY if status changed
-                    current_status = self._is_in_game_by_window_title(game)
-                    if self.current_session.get("last_status") != current_status:
-                        self.current_session["last_status"] = current_status
-                        self.populate_recently_played()
-                    return
-        
+        # ===== PASS 2: Single match? Multiple? =====
         # Single candidate - detect immediately (no ambiguity)
         if len(candidates) == 1:
             self._handle_detected_game(candidates[0][0])
@@ -18344,10 +18486,212 @@ class GameLauncher(QWidget):
         print(f"[Disambiguate] Selected: {best_game.get('name', '?')} (score={best_score})")
         return best_game
     
+    def _get_process_image_path_safe(self, pid: int) -> str:
+        """Safely retrieves the full executable path of a process, even if protected by anti-cheat.
+        
+        Uses Win32 QueryFullProcessImageNameW with PROCESS_QUERY_LIMITED_INFORMATION (0x1000).
+        Guarantees handle closure via try...finally to prevent Win32 handle leaks.
+        """
+        if not WINDOWS_API_AVAILABLE or pid <= 0:
+            return ""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            kernel32 = ctypes.windll.kernel32
+            h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h_proc:
+                return ""
+            try:
+                buffer = ctypes.create_unicode_buffer(1024)
+                size = wintypes.DWORD(len(buffer))
+                if kernel32.QueryFullProcessImageNameW(h_proc, 0, buffer, ctypes.byref(size)):
+                    return os.path.normpath(buffer.value).lower()
+                return ""
+            finally:
+                kernel32.CloseHandle(h_proc)
+        except Exception:
+            return ""
+
+    def _take_process_snapshot_win32(self):
+        """Ultra-fast (~14ms) native Win32 process enumeration using Toolhelp32Snapshot.
+        Returns: (name_set, pid_name_dict, ppid_dict)
+        """
+        if not WINDOWS_API_AVAILABLE:
+            return set(), {}, {}
+        try:
+            import ctypes
+            from ctypes import wintypes
+            class PROCESSENTRY32W(ctypes.Structure):
+                _fields_ = [
+                    ("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", wintypes.LONG),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", wintypes.WCHAR * 260)
+                ]
+            
+            TH32CS_SNAPPROCESS = 0x00000002
+            kernel32 = ctypes.windll.kernel32
+            h_snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+            if h_snap == -1 or not h_snap:
+                return set(), {}, {}
+            
+            entry = PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+            
+            name_set = set()
+            pid_name_dict = {}
+            ppid_dict = {}
+            
+            try:
+                if kernel32.Process32FirstW(h_snap, ctypes.byref(entry)):
+                    while True:
+                        pid = entry.th32ProcessID
+                        ppid = entry.th32ParentProcessID
+                        raw_name = entry.szExeFile
+                        if raw_name:
+                            name = raw_name.lower()
+                            name_set.add(name)
+                            pid_name_dict[pid] = name
+                            if ppid:
+                                ppid_dict[pid] = ppid
+                        if not kernel32.Process32NextW(h_snap, ctypes.byref(entry)):
+                            break
+            finally:
+                kernel32.CloseHandle(h_snap)
+                
+            return name_set, pid_name_dict, ppid_dict
+        except Exception:
+            return set(), {}, {}
+
+    def _evaluate_session_in_background(self, pid_name_dict: dict, ppid_dict: dict, path_dict: dict):
+        """Unified background watchdog evaluating session liveness and child adoption
+        using the fresh in-memory process snapshot. Runs on the ProcessScanner thread.
+        Zero psutil overhead, zero UI freezes, zero 'Not Responding' states!
+        """
+        with self._session_lock:
+            if not self.current_session or self.current_session.get("terminated"):
+                return
+            session = self.current_session
+        
+        now = time.time()
+        game = session.get("game", {})
+        game_name = game.get("name", "Unknown")
+        install_dir = session.get("install_dir", "")
+        exe_names = self._get_game_exe_names(game)
+        tracked_pids = session.setdefault("tracked_pids", {})
+        
+        # 1. Seed initial process if tracked_pids is empty (e.g. just launched)
+        if not tracked_pids:
+            for pid, name in pid_name_dict.items():
+                if name in SYSTEM_PROCESS_BLACKLIST:
+                    continue
+                if name in exe_names:
+                    tracked_pids[pid] = now
+                elif install_dir:
+                    paths = path_dict.get(name, set())
+                    if not paths:
+                        safe_p = self._get_process_image_path_safe(pid)
+                        if safe_p:
+                            paths = {safe_p}
+                    for pth in paths:
+                        if pth.lower().startswith(install_dir):
+                            tracked_pids[pid] = now
+                            break
+        
+        # 2. Child Process Adoption (during first 60s adoption window)
+        if now < session.get("adoption_deadline", 0):
+            newly_adopted_name = None
+            for pid, name in pid_name_dict.items():
+                if pid in tracked_pids or name in SYSTEM_PROCESS_BLACKLIST:
+                    continue
+                parent_pid = ppid_dict.get(pid)
+                is_child = parent_pid in tracked_pids if parent_pid else False
+                is_in_dir = False
+                if install_dir:
+                    paths = path_dict.get(name, set())
+                    if not paths:
+                        safe_p = self._get_process_image_path_safe(pid)
+                        if safe_p:
+                            paths = {safe_p}
+                    for pth in paths:
+                        if pth.lower().startswith(install_dir):
+                            is_in_dir = True
+                            break
+                if is_child or is_in_dir:
+                    tracked_pids[pid] = now
+                    # Add newly discovered binary to game_exe in library
+                    game_exe_str = game.get("game_exe", "")
+                    existing = set(x.strip().lower() for x in game_exe_str.split(",") if x.strip())
+                    main_exe = os.path.basename(game.get("exe", "")).lower()
+                    if name not in existing and name != main_exe:
+                        existing.add(name)
+                        game["game_exe"] = ", ".join(sorted(existing))
+                        newly_adopted_name = name
+                        print(f"[Watchdog] Adopted child process for {game_name}: {name} (PID {pid})")
+            
+            if newly_adopted_name:
+                try:
+                    save_json(self.data)
+                except Exception:
+                    pass
+        
+        # 3. Liveness Check: O(1) in-memory check against pid_name_dict
+        dead_pids = [pid for pid in tracked_pids if pid not in pid_name_dict]
+        for pid in dead_pids:
+            tracked_pids.pop(pid, None)
+        
+        is_alive = len(tracked_pids) > 0
+        
+        # Fallback check if tracked_pids was emptied prematurely:
+        if not is_alive:
+            for pid, name in pid_name_dict.items():
+                if name in exe_names and name not in SYSTEM_PROCESS_BLACKLIST:
+                    tracked_pids[pid] = now
+                    is_alive = True
+                    break
+        
+        if is_alive:
+            # Alive! Clear grace deadline
+            session["grace_deadline"] = None
+            
+            # Status check (game vs launcher)
+            current_status = self._is_in_game_by_window_title(game)
+            if session.get("last_status") != current_status:
+                session["last_status"] = current_status
+                # Notify UI thread via Qt Signal
+                self._session_status_changed_signal.emit()
+        else:
+            # No tracked processes alive
+            # Check if within adoption deadline or grace window
+            if now < session.get("adoption_deadline", 0):
+                if session.get("grace_deadline") is None:
+                    session["grace_deadline"] = now + 15.0
+                    print(f"[Watchdog] Launcher/process exited early for {game_name}. Entering 15s grace window...")
+                    return
+                elif now < session.get("grace_deadline", 0):
+                    # Still in grace window, waiting for child process to spawn
+                    return
+            
+            # Session finished!
+            print(f"[Watchdog] All processes ended for {game_name}. Stopping session.")
+            self._session_stopped_signal.emit()
+
+    def _session_watchdog_tick(self):
+        """Deprecated compatibility stub. Session evaluation now runs fully in background."""
+        pass
+
     def _start_process_scan_thread(self):
         """Start a daemon thread that periodically scans running processes
-        using psutil and caches the result. This keeps psutil OFF the UI thread
-        to prevent 'Not Responding' freezes.
+        using native Toolhelp32Snapshot (14ms) and caches the result. This keeps
+        all process scanning and session lifecycle tracking OFF the UI thread
+        to guarantee 0ms UI freeze and prevent 'Not Responding'.
         
         Caches four things:
           - _process_cache:          set of lowercase exe names
@@ -18359,39 +18703,57 @@ class GameLauncher(QWidget):
             import psutil
             while True:
                 try:
-                    name_set = set()
+                    # 1. Native Win32 Toolhelp32 snapshot (14ms for ~400 processes)
+                    name_set, pid_name_dict, ppid_dict = self._take_process_snapshot_win32()
+                    
+                    # Fallback to psutil only if Toolhelp snapshot failed (e.g. non-Windows)
+                    if not name_set:
+                        for p in psutil.process_iter(['name', 'ppid']):
+                            try:
+                                name = (p.info.get('name') or '').lower()
+                                ppid = p.info.get('ppid', 0)
+                                if name:
+                                    name_set.add(name)
+                                    pid_name_dict[p.pid] = name
+                                    if ppid:
+                                        ppid_dict[p.pid] = ppid
+                            except Exception:
+                                pass
+                    
+                    # Targeted path resolution for active games and candidate games
                     path_dict = {}
-                    ppid_dict = {}
-                    pid_name_dict = {}
-                    for p in psutil.process_iter(['name', 'exe', 'ppid']):
-                        try:
-                            info = p.info
-                            name = (info.get('name') or '').lower()
-                            exe_path = info.get('exe') or ''
-                            ppid = info.get('ppid', 0)
-                            
-                            if name:
-                                name_set.add(name)
-                                pid_name_dict[p.pid] = name
-                                # Group full paths by name for path-based disambiguation
-                                if exe_path:
-                                    path_dict.setdefault(name, set()).add(exe_path)
-                            
-                            # Store ppid mapping for child process awareness
-                            if ppid:
-                                ppid_dict[p.pid] = ppid
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
+                    target_exes = set()
+                    with self._session_lock:
+                        active_session = self.current_session
+                        if active_session and not active_session.get("terminated"):
+                            g = active_session.get("game", {})
+                            target_exes.update(self._get_game_exe_names(g))
+                    
+                    if target_exes:
+                        for pid, name in pid_name_dict.items():
+                            if name in target_exes:
+                                safe_path = self._get_process_image_path_safe(pid)
+                                if safe_path:
+                                    path_dict.setdefault(name, set()).add(safe_path)
                     
                     with self._process_cache_lock:
                         self._process_cache = name_set
                         self._process_path_cache = path_dict
                         self._process_ppid_cache = ppid_dict
                         self._process_pid_name_cache = pid_name_dict
+                    
+                    # 2. Unified background session watchdog evaluation
+                    self._evaluate_session_in_background(pid_name_dict, ppid_dict, path_dict)
+                    
                 except Exception:
                     pass
+                
                 interval = getattr(self, '_process_scan_interval', 2.0)
-                time.sleep(interval)  # Adaptive scan interval (2s normal, 10s during gaming)
+                if hasattr(self, '_scan_wake_event'):
+                    self._scan_wake_event.wait(timeout=interval)
+                    self._scan_wake_event.clear()
+                else:
+                    time.sleep(interval)
         
         t = threading.Thread(target=_scan_loop, daemon=True, name="ProcessScanner")
         t.start()
@@ -18585,6 +18947,30 @@ class GameLauncher(QWidget):
         game_exe_list = game.get("game_exe", "")
         launcher_exe = os.path.basename(game.get("exe", "")).lower()
         
+        # ===== STEP 0: Ultra-Fast O(1) Foreground Window Probe =====
+        # If the user is actively focused on a tracked game window,
+        # return immediately without running desktop-wide EnumWindows
+        if WINDOWS_API_AVAILABLE:
+            try:
+                import ctypes
+                from ctypes import wintypes
+                user32 = ctypes.windll.user32
+                hwnd = user32.GetForegroundWindow()
+                if hwnd and win32gui.IsWindowVisible(hwnd):
+                    fg_pid = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(fg_pid))
+                    if fg_pid.value:
+                        with self._session_lock:
+                            tracked_pids = dict(self.current_session.get("tracked_pids", {})) if self.current_session else {}
+                        if fg_pid.value in tracked_pids:
+                            title = win32gui.GetWindowText(hwnd) or ""
+                            title_lower = title.lower()
+                            if any(kw in title_lower for kw in LAUNCHER_TITLE_KEYWORDS):
+                                return "launcher"
+                            return "game"
+            except Exception:
+                pass
+        
         # ===== STEP 1: Special case for java.exe games (TLauncher/Minecraft) =====
         # Java-based games need exact window title matching because java.exe is
         # shared by many non-game applications
@@ -18686,35 +19072,61 @@ class GameLauncher(QWidget):
     
     def _handle_detected_game(self, game):
         """Handle when a game is detected running externally."""
-        game_name = game.get("name", "Unknown")
-        print(f"[Background Detection] Game detected: {game_name}")
-        
-        # Start tracking session (marked as NOT from launcher)
-        self.current_session = {
-            "game": game,
-            "start_time": time.time(),
-            "from_launcher": False
-        }
-        
-        # Enter throttled game mode to minimize RAM and CPU usage
-        self._enter_game_mode()
-        
-        # Update UI
-        self.end_game_btn.show()
-        self.populate_recently_played()  # Update Currently Playing label
-        
-        # Update Discord RPC if enabled
-        if self.discord_enabled:
-            self.update_discord_playing(game_name)
+        with self._session_lock:
+            if self.current_session and not self.current_session.get("terminated"):
+                if self.current_session.get("game", {}).get("name") == game.get("name"):
+                    return
+            
+            game_name = game.get("name", "Unknown")
+            print(f"[Watchdog] External game detected: {game_name}")
+            
+            # Seed initial matching PIDs from cache
+            tracked_pids = {}
+            exe_names = self._get_game_exe_names(game)
+            with self._process_cache_lock:
+                pid_name_cache = dict(self._process_pid_name_cache)
+            import psutil
+            for pid, name in pid_name_cache.items():
+                if name in exe_names:
+                    try:
+                        p = psutil.Process(pid)
+                        tracked_pids[pid] = p.create_time()
+                    except Exception:
+                        pass
+            
+            self.current_session = {
+                "game": game,
+                "start_time": time.time(),
+                "from_launcher": False,
+                "tracked_pids": tracked_pids,
+                "install_dir": self._get_game_install_dir(game),
+                "status": "game",
+                "adoption_deadline": time.time() + 60.0,
+                "grace_deadline": None,
+                "last_status": None,
+                "terminated": False
+            }
+            
+            # Enter throttled game mode to minimize RAM and CPU usage
+            self._enter_game_mode()
+            
+            # Update UI
+            self.end_game_btn.show()
+            self.populate_recently_played()  # Update Currently Playing label
+            
+            # Update Discord RPC if enabled
+            if self.discord_enabled:
+                self.update_discord_playing(game_name)
     
     def _enter_game_mode(self):
-        """Throttle background polling and aggressively trim RAM during gaming.
+        """Throttle external UI polling and aggressively trim RAM during gaming.
         
-        Reduces timer frequency from 2s to 10s to minimize CPU cycles while the user
-        is playing, and periodically trims Working Set to minimize memory footprint.
+        Reduces UI timer frequency from 2s to 10s to minimize CPU cycles while the user
+        is playing, keeps background 14ms scanner active at 2.5s, and periodically trims
+        Working Set to minimize memory footprint.
         """
         self._in_game_mode = True
-        self._process_scan_interval = 10.0  # Slow down background psutil thread
+        self._process_scan_interval = 2.5  # Responsive 14ms background process scan
         if hasattr(self, 'game_detection_timer'):
             self.game_detection_timer.setInterval(10000)  # Slow down UI timer to 10s
         
@@ -18729,7 +19141,7 @@ class GameLauncher(QWidget):
             self._in_game_trim_timer = QTimer(self)
             self._in_game_trim_timer.timeout.connect(self._cleanup_memory)
         self._in_game_trim_timer.start(30000)
-        print("[GameMode] Entered In-Game Low RAM Mode (10s scan interval, 30s memory trimming)")
+        print("[GameMode] Entered In-Game Low RAM Mode (2.5s scan interval, 30s memory trimming)")
 
     def _exit_game_mode(self):
         """Restore normal polling frequency and cleanup memory after game exits."""
@@ -18745,41 +19157,44 @@ class GameLauncher(QWidget):
         print("[GameMode] Exited In-Game Mode (restored 2s scan interval)")
     
     def _handle_game_stopped(self):
-        """Handle when a tracked game (external or launcher) stops."""
-        if not self.current_session:
-            return
-        
-        game = self.current_session.get("game")
-        if game:
-            # Calculate and save play time
-            elapsed = int(time.time() - self.current_session.get("start_time", time.time()))
-            if elapsed > 0:
-                game["play_time_seconds"] = game.get("play_time_seconds", 0) + elapsed
-                game["last_played"] = datetime.now().isoformat()
-                
-                # Add to session history
-                if "session_history" not in game:
-                    game["session_history"] = []
-                game["session_history"].append({
-                    "duration": elapsed,
-                    "date": datetime.now().isoformat()
-                })
-                
-                save_json(self.data)
-                game_name = game.get("name", "Unknown")
-                print(f"[Background Detection] Game stopped: {game_name} (played {elapsed}s)")
-        
-        # Exit game mode and restore timers
-        self._exit_game_mode()
-        
-        # Clear session and update UI
-        self.current_session = None
-        self.end_game_btn.hide()
-        self.populate_recently_played()  # Update to remove Currently Playing label
-        
-        # Update Discord RPC
-        if self.discord_enabled:
-            self.update_discord_browsing()
+        """Handle when a tracked game (external or launcher) stops cleanly and atomically."""
+        with self._session_lock:
+            if not self.current_session or self.current_session.get("terminated"):
+                return
+            
+            self.current_session["terminated"] = True
+            session = self.current_session
+            game = session.get("game")
+            if game:
+                # Calculate and save play time
+                elapsed = int(time.time() - session.get("start_time", time.time()))
+                if elapsed > 0:
+                    game["play_time_seconds"] = game.get("play_time_seconds", 0) + elapsed
+                    game["last_played"] = datetime.now().isoformat()
+                    
+                    # Add to session history
+                    if "session_history" not in game:
+                        game["session_history"] = []
+                    game["session_history"].append({
+                        "duration": elapsed,
+                        "date": datetime.now().isoformat()
+                    })
+                    
+                    save_json(self.data)
+                    game_name = game.get("name", "Unknown")
+                    print(f"[Watchdog] Game stopped: {game_name} (played {elapsed}s)")
+            
+            # Exit game mode and restore timers
+            self._exit_game_mode()
+            
+            # Clear session and update UI
+            self.current_session = None
+            self.end_game_btn.hide()
+            self.populate_recently_played()  # Update to remove Currently Playing label
+            
+            # Update Discord RPC
+            if self.discord_enabled:
+                self.update_discord_browsing()
 
 
     def animate_game_added(self, button):
@@ -19788,7 +20203,19 @@ class GameLauncher(QWidget):
                         save_json(self.data)
                         
                         # Track current session for live stats (marked as from launcher)
-                        self.current_session = {"game": game, "start_time": time.time(), "from_launcher": True}
+                        with self._session_lock:
+                            self.current_session = {
+                                "game": game,
+                                "start_time": time.time(),
+                                "from_launcher": True,
+                                "tracked_pids": {},
+                                "install_dir": self._get_game_install_dir(game),
+                                "status": "launcher",
+                                "adoption_deadline": time.time() + 60.0,
+                                "grace_deadline": None,
+                                "last_status": None,
+                                "terminated": False
+                            }
                         
                         # Enter throttled game mode to minimize RAM and CPU usage during gameplay
                         self._enter_game_mode()
@@ -19799,7 +20226,7 @@ class GameLauncher(QWidget):
                         # Update Discord Rich Presence to show playing this game
                         self.update_discord_playing(game.get("name", "Unknown"))
                         
-                        # Start play time tracking in background thread
+                        # Start play time tracking & PID seeder in background thread
                         self.start_play_time_tracking(clean_path, game)
                         
                         # Apply game booster optimizations if enabled
@@ -19873,118 +20300,10 @@ class GameLauncher(QWidget):
             print(f"[Booster] Error applying game booster: {e}")
     
     def start_play_time_tracking(self, path, game):
-        """Start background thread to track play time."""
-        exe_name = os.path.basename(path).lower()
-        start_time = time.time()
-        
-        # Get processes before launching to detect new ones later
-        processes_before = self._get_running_processes()
-        
-        def track_play_time():
-            """Monitor game process and record play time when it exits."""
-            time.sleep(5)  # Wait for game to fully start
-            
-            # Detect new processes (child processes spawned by the launcher)
-            processes_after = self._get_running_processes()
-            new_processes = processes_after - processes_before
-            
-            # Build the game's install directory path for path-based filtering
-            # Only learn processes whose exe path is under this directory
-            game_install_dir = os.path.dirname(os.path.abspath(path)).lower()
-            
-            # Collect exes already claimed by OTHER games in the library
-            # to prevent cross-contamination (e.g. WuWa's exes leaking into Minecraft)
-            other_game_exes = set()
-            for other_game in self.data:
-                if other_game.get("name") != game.get("name"):
-                    for e in self._get_game_exe_names(other_game):
-                        other_game_exes.add(e)
-            
-            detected_game_exes = []
-            for proc in new_processes:
-                proc_lower = proc.lower()
-                
-                # FILTER 1: Skip system processes (comprehensive blacklist)
-                if proc_lower in SYSTEM_PROCESS_BLACKLIST:
-                    continue
-                
-                # FILTER 2: Skip the launcher exe itself
-                if proc_lower == exe_name:
-                    continue
-                
-                # FILTER 3: Skip processes already owned by another game
-                # Prevents cross-game contamination from concurrent game launches
-                if proc_lower in other_game_exes:
-                    continue
-                
-                # FILTER 4: Path check — only learn processes running from
-                # the game's install directory tree. This is the strongest filter.
-                proc_paths = self._get_process_exe_path(proc_lower)
-                if proc_paths:
-                    # Process has known path(s) — require at least one under install dir
-                    if not any(p.lower().startswith(game_install_dir) for p in proc_paths):
-                        continue
-                
-                detected_game_exes.append(proc)
-            
-            # If we detected new game processes, save them
-            if detected_game_exes:
-                existing_game_exe = game.get("game_exe", "")
-                existing_exes = set(x.strip().lower() for x in existing_game_exe.split(",") if x.strip())
-                new_exes = [e for e in detected_game_exes if e.lower() not in existing_exes]
-                
-                if new_exes:
-                    # Add new detected exes to the game
-                    combined = list(existing_exes) + new_exes
-                    game["game_exe"] = ", ".join(combined)
-                    save_json(self.data)
-                    print(f"[Auto-detect] Saved game processes for {game.get('name', 'Unknown')}: {new_exes}")
-            
-            # Get all exe names to monitor (launcher + game processes)
-            exe_names_to_check = self._get_game_exe_names(game)
-            
-            while True:
-                try:
-                    # Check if any of the game's processes are still running
-                    game_running = False
-                    for check_exe in exe_names_to_check:
-                        if self._is_process_running(check_exe):
-                            game_running = True
-                            break
-                    
-                    if not game_running:
-                        # Game has exited - record play time
-                        elapsed = int(time.time() - start_time)
-                        game["play_time_seconds"] = game.get("play_time_seconds", 0) + elapsed
-                        
-                        # Record session to history for avg/longest calculation
-                        session_history = game.get("session_history", [])
-                        session_history.append({
-                            "duration": elapsed,
-                            "date": datetime.now().isoformat()
-                        })
-                        game["session_history"] = session_history
-                        
-                        save_json(self.data)
-                        print(f"Play time recorded: {elapsed}s for {game.get('name', 'Unknown')}")
-                        
-                        # Update Discord status back to browsing
-                        self.update_discord_browsing()
-                        
-                        # Clear current session tracking and restore UI / timer state
-                        self.current_session = None
-                        from PySide6.QtCore import QMetaObject, Qt
-                        QMetaObject.invokeMethod(self, "_exit_game_mode", Qt.QueuedConnection)
-                        QMetaObject.invokeMethod(self.end_game_btn, "hide", Qt.QueuedConnection)
-                        break
-                except Exception as e:
-                    print(f"Play time tracking error: {e}")
-                    break
-                
-                time.sleep(5)  # Check every 5 seconds
-        
-        thread = threading.Thread(target=track_play_time, daemon=True)
-        thread.start()
+        """Notify background ProcessScanner to immediately prioritize tracking this game session."""
+        self._process_scan_interval = 2.0
+        if hasattr(self, '_scan_wake_event'):
+            self._scan_wake_event.set()
 
     def launch_omen_hub(self):
         """Launch OMEN Gaming Hub via multiple robust fallbacks on Windows."""

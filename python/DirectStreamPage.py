@@ -48,7 +48,7 @@ from YouTubeAccountEngine import (
 from SpotifyAccountEngine import (
     SpotifyAccountEngine, FetchSpotifyLikedSongsWorker, FetchSpotifyPlaylistsWorker, FetchSpotifyAlgorithmicFeedsWorker
 )
-from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton
+from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton, HoverCloseButton
 
 
 # === SVG ASSET STRINGS (Zero Emoji Policy) ===
@@ -2190,7 +2190,9 @@ class StreamOmniSearchBar(QFrame):
             chip_btn.setCursor(Qt.PointingHandCursor)
             chip_btn.setHoverGradient(['#3A3D45', '#4A4D55'])
             chip_btn.setHoverMode("fade")
-            chip_btn.setBorderRadius(4.0)
+            chip_btn.setBorderRadius(6.0)
+            chip_btn.setDrawBorder(False)
+            chip_btn.setIdleBackground(QColor(30, 32, 38, 220))
             chip_btn.setFontSize(9)
             chip_btn.setFixedHeight(24)
             chip_width = fm.horizontalAdvance(label) + 24
@@ -4565,16 +4567,20 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
     def _setup_ui(self):
         self.setStyleSheet("""
             QWidget#directStreamSyncWarningOverlay {
-                background-color: rgba(0, 0, 0, 0.72);
+                background-color: rgba(6, 7, 10, 0.78);
             }
             QFrame#directStreamWarningCard {
-                background-color: #11131A;
+                background-color: #11131C;
                 border-radius: 14px;
             }
             QWidget#directStreamWarningTitleBar {
-                background-color: #161822;
+                background-color: #151824;
                 border-top-left-radius: 14px;
                 border-top-right-radius: 14px;
+            }
+            QFrame#directStreamWarningDetailsBox {
+                background-color: #161926;
+                border-radius: 10px;
             }
         """)
 
@@ -4584,18 +4590,18 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
 
         self.card = QFrame()
         self.card.setObjectName("directStreamWarningCard")
-        self.card.setFixedSize(560, 285)
+        self.card.setFixedSize(560, 315)
 
         card_layout = QVBoxLayout(self.card)
         card_layout.setContentsMargins(0, 0, 0, 20)
-        card_layout.setSpacing(14)
+        card_layout.setSpacing(0)
 
         # 1. Title Bar
         title_bar = QWidget()
         title_bar.setObjectName("directStreamWarningTitleBar")
         title_bar.setFixedHeight(48)
         title_layout = QHBoxLayout(title_bar)
-        title_layout.setContentsMargins(18, 0, 14, 0)
+        title_layout.setContentsMargins(20, 0, 16, 0)
         title_layout.setSpacing(10)
 
         icon_lbl = QLabel()
@@ -4607,95 +4613,145 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
 
         title_lbl = QLabel("EXTENSION NOT SYNCHRONIZED")
         title_lbl.setObjectName("directStreamWarningTitle")
-        title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11.5px; font-weight: 800; letter-spacing: 0.5px; background: transparent;")
+        title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 800; letter-spacing: 0.8px; background: transparent;")
         title_layout.addWidget(title_lbl, 0, Qt.AlignVCenter)
-
-        # Amber Badge (Pill Badge with explicit height and VCenter alignment)
-        badge_lbl = QLabel("OFFLINE CACHE")
-        badge_lbl.setObjectName("directStreamWarningBadge")
-        badge_lbl.setFixedHeight(22)
-        badge_lbl.setStyleSheet("background-color: rgba(255, 91, 6, 0.15); color: #FF9100; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 2px 8px; border: none;")
-        title_layout.addWidget(badge_lbl, 0, Qt.AlignVCenter)
 
         title_layout.addStretch(1)
 
-        close_btn = SvgHoverButton("close-icon.svg", size=28, icon_size=12, idle_color="#7A7E8F", hover_color="#FFFFFF", idle_bg="transparent", hover_bg="#222533")
+        close_btn = QPushButton()
         close_btn.setObjectName("directStreamWarningCloseBtn")
+        close_btn.setFixedSize(28, 28)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        close_icon_path = os.path.join(script_dir, "UI Icons", "close-icon.svg").replace('\\', '/')
+        if os.path.exists(close_icon_path):
+            close_btn.setIcon(QIcon(close_icon_path))
+            close_btn.setIconSize(QSize(12, 12))
         close_btn.clicked.connect(self._on_proceed)
+        close_btn.setStyleSheet("""
+            QPushButton#directStreamWarningCloseBtn {
+                background-color: rgba(255, 255, 255, 0.06);
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+            }
+            QPushButton#directStreamWarningCloseBtn:hover {
+                background-color: rgba(255, 91, 6, 0.25);
+            }
+            QPushButton#directStreamWarningCloseBtn:pressed {
+                background-color: rgba(255, 91, 6, 0.4);
+            }
+        """)
         title_layout.addWidget(close_btn, 0, Qt.AlignVCenter)
 
         card_layout.addWidget(title_bar)
 
-        # 2. Body Message
-        body_widget = QWidget()
-        body_widget.setObjectName("directStreamWarningBodyWidget")
-        body_layout = QVBoxLayout(body_widget)
-        body_layout.setContentsMargins(24, 4, 24, 4)
-        body_layout.setSpacing(8)
+        # 2. Body Container
+        body_container = QWidget()
+        body_container.setObjectName("directStreamWarningBodyContainer")
+        body_layout = QVBoxLayout(body_container)
+        body_layout.setContentsMargins(22, 16, 22, 14)
+        body_layout.setSpacing(12)
 
-        msg_title = QLabel("Running on Last Known Saved State")
-        msg_title.setObjectName("directStreamWarningSubheader")
-        msg_title.setStyleSheet("color: #FDA903; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold; background: transparent;")
-        body_layout.addWidget(msg_title)
+        # Inset Details Card
+        details_box = QFrame()
+        details_box.setObjectName("directStreamWarningDetailsBox")
+        details_layout = QVBoxLayout(details_box)
+        details_layout.setContentsMargins(16, 14, 16, 14)
+        details_layout.setSpacing(10)
 
-        msg_body = QLabel(
-            "HELXAID is currently streaming using your previously cached session because the Chrome Extension is offline or not yet connected in this run.\n\n"
-            "Public streams will play smoothly. To sync your live liked songs, personal playlists, and latest recommendations, please sync via the Chrome Extension."
-        )
-        msg_body.setObjectName("directStreamWarningBody")
-        msg_body.setWordWrap(True)
-        msg_body.setStyleSheet("color: #A0A4B8; font-family: 'Orbitron', sans-serif; font-size: 10px; line-height: 1.5; background: transparent;")
-        body_layout.addWidget(msg_body)
+        # Status subheader
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(8)
 
-        card_layout.addWidget(body_widget, 1)
+        status_dot = QLabel()
+        status_dot.setObjectName("directStreamWarningStatusDot")
+        status_dot.setFixedSize(8, 8)
+        status_dot.setStyleSheet("background-color: #FDA903; border-radius: 4px;")
+        status_row.addWidget(status_dot, 0, Qt.AlignVCenter)
 
-        # 3. Footer Action Buttons
+        status_title = QLabel("Operating in Fallback Mode")
+        status_title.setObjectName("directStreamWarningSubheader")
+        status_title.setStyleSheet("color: #FDA903; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; background: transparent;")
+        status_row.addWidget(status_title, 0, Qt.AlignVCenter)
+        status_row.addStretch(1)
+        details_layout.addLayout(status_row)
+
+        # Feature Row 1: Active Cached Streaming
+        feat1_row = QHBoxLayout()
+        feat1_row.setContentsMargins(0, 0, 0, 0)
+        feat1_row.setSpacing(10)
+
+        feat1_icon = QLabel()
+        feat1_icon.setObjectName("directStreamWarningFeat1Icon")
+        feat1_icon.setFixedSize(14, 14)
+        feat1_icon.setPixmap(render_colored_svg_pixmap("check-icon.svg", 14, 14, "#4EBA6F"))
+        feat1_icon.setStyleSheet("background: transparent;")
+        feat1_row.addWidget(feat1_icon, 0, Qt.AlignVCenter)
+
+        feat1_lbl = QLabel("Public streams will play smoothly using your cached session.")
+        feat1_lbl.setObjectName("directStreamWarningFeat1Text")
+        feat1_lbl.setStyleSheet("color: #C6CADB; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: 500; background: transparent;")
+        feat1_row.addWidget(feat1_lbl, 1, Qt.AlignVCenter)
+        details_layout.addLayout(feat1_row)
+
+        # Feature Row 2: Extension Sync Requirement
+        feat2_row = QHBoxLayout()
+        feat2_row.setContentsMargins(0, 0, 0, 0)
+        feat2_row.setSpacing(10)
+
+        feat2_icon = QLabel()
+        feat2_icon.setObjectName("directStreamWarningFeat2Icon")
+        feat2_icon.setFixedSize(14, 14)
+        feat2_icon.setPixmap(render_colored_svg_pixmap("tip-icon.svg", 14, 14, "#FDA903"))
+        feat2_icon.setStyleSheet("background: transparent;")
+        feat2_row.addWidget(feat2_icon, 0, Qt.AlignVCenter)
+
+        feat2_lbl = QLabel("Chrome Extension sync is required for live liked songs & personal playlists.")
+        feat2_lbl.setObjectName("directStreamWarningFeat2Text")
+        feat2_lbl.setStyleSheet("color: #8E94AA; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: 500; background: transparent;")
+        feat2_row.addWidget(feat2_lbl, 1, Qt.AlignVCenter)
+        details_layout.addLayout(feat2_row)
+
+        body_layout.addWidget(details_box)
+
+        # Helper note
+        helper_lbl = QLabel("You can start listening right now or sync the extension to link your full library.")
+        helper_lbl.setObjectName("directStreamWarningNote")
+        helper_lbl.setWordWrap(True)
+        helper_lbl.setStyleSheet("color: #71768C; font-family: 'Orbitron', sans-serif; font-size: 9.5px; background: transparent; padding-left: 2px;")
+        body_layout.addWidget(helper_lbl)
+
+        card_layout.addWidget(body_container, 1)
+
+        # 3. Footer Action Buttons (Using signature FadeHoverButton)
         action_layout = QHBoxLayout()
-        action_layout.setContentsMargins(24, 6, 24, 0)
+        action_layout.setContentsMargins(22, 0, 22, 0)
         action_layout.setSpacing(12)
 
-        open_ext_btn = QPushButton("Open Extension")
+        open_ext_btn = FadeHoverButton("Open Extension", is_secondary=True, border_radius=8.0)
         open_ext_btn.setObjectName("directStreamOpenExtBtn")
         open_ext_btn.setFixedHeight(36)
-        open_ext_btn.setFixedWidth(150)
-        open_ext_btn.setCursor(Qt.PointingHandCursor)
-        open_ext_btn.setStyleSheet("""
-            QPushButton#directStreamOpenExtBtn {
-                background-color: #181B26;
-                color: #BAC0D4;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 10px;
-                font-weight: bold;
-                border-radius: 6px;
-                padding: 4px 16px;
-                border: none;
-            }
-            QPushButton#directStreamOpenExtBtn:hover {
-                background-color: #242838;
-                color: #FFFFFF;
-            }
-            QPushButton#directStreamOpenExtBtn:pressed {
-                background-color: #141620;
-            }
-        """)
+        open_ext_btn.setFixedWidth(145)
         open_ext_btn.clicked.connect(self._open_extension)
         action_layout.addWidget(open_ext_btn)
 
-        action_layout.addStretch()
+        action_layout.addStretch(1)
 
         proceed_btn = QPushButton("Continue Playing")
         proceed_btn.setObjectName("directStreamProceedBtn")
         proceed_btn.setFixedHeight(36)
-        proceed_btn.setFixedWidth(160)
+        proceed_btn.setFixedWidth(165)
         proceed_btn.setCursor(Qt.PointingHandCursor)
         proceed_btn.setStyleSheet("""
             QPushButton#directStreamProceedBtn {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
                 color: #FFFFFF;
                 font-family: 'Orbitron', sans-serif;
-                font-size: 10px;
+                font-size: 10.5px;
                 font-weight: bold;
-                border-radius: 6px;
+                border-radius: 8px;
                 padding: 4px 18px;
                 border: none;
             }
