@@ -11979,454 +11979,6 @@ class AnimatedPillToggleWidget(QFrame):
         p.end()
 
 
-class FloatingUrlInputWidget(QFrame):
-    """
-    Floating URL input overlay matching HELXAID glassmorphism UI design system.
-    
-    Component Name: FloatingUrlInputWidget
-    """
-    url_submitted = Signal(str, str, str)
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("floatingUrlInput")
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self._is_closing = False
-        self._is_dragging = False
-        self._drag_start_pos = QPoint()
-        self.hide()
-        
-        # Load user's preferred stream mode (default: "buffer") and destination (default: "both")
-        from PySide6.QtCore import QSettings
-        settings = QSettings("TDD131", "HELXAID")
-        self._current_mode = settings.value("MusicPlayer/stream_mode", "buffer", type=str)
-        if self._current_mode not in ("buffer", "direct"):
-            self._current_mode = "buffer"
-            
-        self._current_dest = settings.value("MusicSettings/stream_default_destination", "both", type=str)
-        if self._current_dest not in ("both", "playlist", "library"):
-            self._current_dest = "both"
-            
-        self.setFixedSize(480, 146 if self._current_mode == "direct" else 116)
-        
-        # Glassmorphism floating panel design system
-        self.setStyleSheet("""
-            QFrame#floatingUrlInput {
-                background-color: rgba(14, 15, 20, 0.98);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 12px;
-            }
-            QWidget#floatingUrlTitleBar {
-                background-color: rgba(6, 6, 8, 0.85);
-                border-top-left-radius: 11px;
-                border-top-right-radius: 11px;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-            }
-            QLabel#floatingUrlTitleLabel {
-                color: #FFFFFF;
-                font-size: 11px;
-                font-weight: bold;
-                font-family: 'Orbitron', sans-serif;
-                background: transparent;
-                letter-spacing: 0.5px;
-            }
-            QPushButton#floatingUrlCloseBtn {
-                background: transparent;
-                border: none;
-                border-radius: 4px;
-                padding: 0px;
-                margin: 0px;
-                min-width: 22px;
-                max-width: 22px;
-                min-height: 22px;
-                max-height: 22px;
-            }
-            QPushButton#floatingUrlCloseBtn:hover {
-                background: rgba(255, 255, 255, 0.12);
-            }
-            QLineEdit#streamUrlInput {
-                background-color: rgba(30, 30, 30, 0.85);
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 5px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
-                padding: 0px 8px;
-                min-height: 28px;
-                max-height: 28px;
-                height: 28px;
-                selection-background-color: #ffffff;
-                selection-color: #000000;
-            }
-            QLineEdit#streamUrlInput:focus {
-                background-color: #383b41;
-                border: 1px solid rgba(255, 255, 255, 0.16);
-            }
-            QLineEdit#streamUrlInput::placeholder {
-                color: #70737d;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
-            }
-            QPushButton#btnSearchStream {
-                color: #FFFFFF;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
-                border: none;
-                border-radius: 5px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
-                font-weight: bold;
-                letter-spacing: 0.5px;
-                padding: 0px 14px;
-                min-height: 28px;
-                max-height: 28px;
-                height: 28px;
-            }
-            QPushButton#btnSearchStream:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF7326, stop:1 #FFBA24);
-            }
-            QPushButton#btnSearchStream:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #E04B00, stop:1 #E09000);
-            }
-            QLabel#streamErrorLabel {
-                color: #FF4D4D;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 9px;
-                font-weight: 600;
-                background: transparent;
-            }
-            QToolTip {
-                font-family: 'Orbitron', sans-serif;
-                font-size: 10px;
-                color: #EDEDED;
-                background-color: #121318;
-                border: 1px solid rgba(255, 91, 6, 0.45);
-                border-radius: 6px;
-                padding: 6px 10px;
-            }
-        """)
-        
-        try:
-            from PySide6.QtWidgets import QGraphicsDropShadowEffect
-            from PySide6.QtGui import QColor
-            shadow = QGraphicsDropShadowEffect(self)
-            shadow.setBlurRadius(24)
-            shadow.setColor(QColor(0, 0, 0, 180))
-            shadow.setOffset(0, 8)
-            self.setGraphicsEffect(shadow)
-        except Exception:
-            pass
-        
-        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel
-        from PySide6.QtGui import QPixmap, QIcon
-        from PySide6.QtCore import QSize
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        # Draggable Title Bar (32px)
-        self.title_bar = QWidget(self)
-        self.title_bar.setObjectName("floatingUrlTitleBar")
-        self.title_bar.setFixedHeight(32)
-        title_layout = QHBoxLayout(self.title_bar)
-        title_layout.setContentsMargins(12, 0, 10, 0)
-        title_layout.setSpacing(8)
-        title_layout.setAlignment(Qt.AlignVCenter)
-        
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        panel_icon_path = os.path.join(script_dir, "UI Icons", "open-browser.svg").replace('\\', '/')
-        
-        icon_lbl = QLabel(self.title_bar)
-        icon_lbl.setObjectName("floatingUrlIconLabel")
-        icon_lbl.setFixedSize(14, 14)
-        icon_lbl.setScaledContents(True)
-        if os.path.exists(panel_icon_path):
-            icon_lbl.setPixmap(QPixmap(panel_icon_path))
-        title_layout.addWidget(icon_lbl, 0, Qt.AlignVCenter)
-        
-        self.lbl_header = QLabel("OPEN STREAM URL", self.title_bar)
-        self.lbl_header.setObjectName("floatingUrlTitleLabel")
-        title_layout.addWidget(self.lbl_header, 0, Qt.AlignVCenter)
-        title_layout.addStretch(1)
-        
-        self.btn_close_header = QPushButton(self.title_bar)
-        self.btn_close_header.setObjectName("floatingUrlCloseBtn")
-        self.btn_close_header.setFixedSize(22, 22)
-        self.btn_close_header.setCursor(Qt.PointingHandCursor)
-        self.btn_close_header.setToolTip("Close (Esc / Ctrl+Y)")
-        self.btn_close_header.setIcon(_render_svg_icon_sharp(SVG_CLOSE_ICON, size=10, color="#FFFFFF"))
-        self.btn_close_header.setIconSize(QSize(10, 10))
-        self.btn_close_header.clicked.connect(self.close_panel)
-        title_layout.addWidget(self.btn_close_header, 0, Qt.AlignVCenter)
-        
-        layout.addWidget(self.title_bar)
-        
-        # Content Area
-        content_widget = QWidget(self)
-        content_widget.setObjectName("floatingUrlContentWidget")
-        content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(12, 6, 12, 8)
-        content_layout.setSpacing(5)
-        
-        # Row 1: Mode Switcher (Animated Sliding Pill Toggle)
-        mode_options = [("buffer", "Buffer Cache"), ("direct", "Direct Stream")]
-        mode_tooltips = [
-            "<b>BUFFER CACHE (Recommended for Gaming)</b><br>Downloads audio stream to local temp cache.<br>• 100% stutter-free & zero lag during gameplay<br>• Instant seeking without buffering delays<br>• Temp files auto-cleaned after 24h",
-            "<b>DIRECT STREAM (Instant Stream)</b><br>Streams audio directly without downloading to disk.<br>• Immediate playback startup with minimal disk usage<br>• Best for quick music preview and streaming"
-        ]
-        self.mode_toggle = AnimatedPillToggleWidget(
-            mode_options,
-            initial_key=self._current_mode,
-            tooltips=mode_tooltips,
-            parent=content_widget
-        )
-        self.mode_toggle.setObjectName("streamModeToggle")
-        self.mode_toggle.selectionChanged.connect(self._set_mode)
-        content_layout.addWidget(self.mode_toggle)
-        
-        # Row 2: Destination Switcher (Animated Sliding Pill Toggle below Mode Switcher)
-        dest_options = [("both", "Both (Save & Play)"), ("playlist", "Playlist Only"), ("library", "Library Only")]
-        dest_tooltips = [
-            "Save .hxstream to Media Library & Add to active playlist",
-            "Play stream in active playlist only (ephemeral, no file created)",
-            "Save .hxstream descriptor file to Media Library without playing now"
-        ]
-        self.dest_toggle = AnimatedPillToggleWidget(
-            dest_options,
-            initial_key=self._current_dest,
-            tooltips=dest_tooltips,
-            parent=content_widget
-        )
-        self.dest_toggle.setObjectName("streamDestToggle")
-        self.dest_toggle.selectionChanged.connect(self._set_dest)
-        if self._current_mode != "direct":
-            self.dest_toggle.hide()
-        content_layout.addWidget(self.dest_toggle)
-        
-        # Row 3: Input Field & Search Button
-        input_layout = QHBoxLayout()
-        input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(8)
-        
-        self.input_field = QLineEdit(content_widget)
-        self.input_field.setObjectName("streamUrlInput")
-        self.input_field.setPlaceholderText("Type media title or paste stream URL...")
-        self.input_field.setFixedHeight(28)
-        
-        self.btn_play = QPushButton("Search", content_widget)
-        self.btn_play.setObjectName("btnSearchStream")
-        self.btn_play.setFixedHeight(28)
-        self.btn_play.setFocusPolicy(Qt.NoFocus)
-        self.btn_play.setCursor(Qt.PointingHandCursor)
-        self.btn_play.setToolTip("Extract and play stream (Enter)")
-        
-        input_layout.addWidget(self.input_field)
-        input_layout.addWidget(self.btn_play)
-        content_layout.addLayout(input_layout)
-        
-        self.error_label = QLabel("", content_widget)
-        self.error_label.setObjectName("streamErrorLabel")
-        self.error_label.hide()
-        content_layout.addWidget(self.error_label)
-        
-        layout.addWidget(content_widget)
-        
-        self.btn_play.clicked.connect(self._submit)
-        self.input_field.returnPressed.connect(self._submit)
-        
-        # Install robust event filter for Spacebar and shortcut interception
-        self.input_field.installEventFilter(self)
-
-    def eventFilter(self, obj, event):
-        from PySide6.QtCore import QEvent
-        if obj == self.input_field:
-            if event.type() == QEvent.ShortcutOverride:
-                # Stop Qt shortcut system from stealing Space, Backspace, or letters while typing
-                if event.key() in (Qt.Key_Space, Qt.Key_Backspace, Qt.Key_Delete, Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End, Qt.Key_P, Qt.Key_N, Qt.Key_L, Qt.Key_F, Qt.Key_R):
-                    event.accept()
-                    return True
-            elif event.type() == QEvent.KeyPress:
-                if (event.key() == Qt.Key_Y and bool(event.modifiers() & Qt.ControlModifier)) or event.key() == Qt.Key_Escape:
-                    self.close_panel()
-                    return True
-                if event.key() == Qt.Key_Space:
-                    self.input_field.insert(" ")
-                    event.accept()
-                    return True
-        return super().eventFilter(obj, event)
-
-    def _set_mode(self, mode: str):
-        self._current_mode = mode
-        from PySide6.QtCore import QSettings, QVariantAnimation, QEasingCurve
-        settings = QSettings("TDD131", "HELXAID")
-        settings.setValue("MusicPlayer/stream_mode", mode)
-        
-        target_h = 146 if mode == "direct" else 116
-        if mode == "direct":
-            self.dest_toggle.show()
-            
-        if hasattr(self, '_h_anim') and self._h_anim.state() == QVariantAnimation.Running:
-            self._h_anim.stop()
-            
-        self._h_anim = QVariantAnimation(self)
-        self._h_anim.setDuration(180)
-        self._h_anim.setEasingCurve(QEasingCurve.OutCubic)
-        self._h_anim.setStartValue(self.height())
-        self._h_anim.setEndValue(target_h)
-        
-        def on_step(val):
-            self.setFixedHeight(int(val))
-            
-        def on_done():
-            self.setFixedHeight(target_h)
-            if mode != "direct":
-                self.dest_toggle.hide()
-                
-        self._h_anim.valueChanged.connect(on_step)
-        self._h_anim.finished.connect(on_done)
-        self._h_anim.start()
-        
-        self.input_field.setFocus()
-
-    def _set_dest(self, dest: str):
-        self._current_dest = dest
-        from PySide6.QtCore import QSettings
-        settings = QSettings("TDD131", "HELXAID")
-        settings.setValue("MusicSettings/stream_default_destination", dest)
-        self.input_field.setFocus()
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            title_rect = self.title_bar.rect()
-            title_mapped = self.title_bar.mapTo(self, title_rect.topLeft())
-            drag_area = QRect(title_mapped, self.title_bar.size())
-            click_pos = event.position().toPoint() if hasattr(event, 'position') else event.pos()
-            if drag_area.contains(click_pos):
-                self._is_dragging = True
-                global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
-                self._drag_start_pos = global_pos - self.frameGeometry().topLeft()
-                event.accept()
-                return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._is_dragging and event.buttons() & Qt.LeftButton:
-            global_pos = event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos()
-            self.move(global_pos - self._drag_start_pos)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._is_dragging = False
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event):
-        if (event.key() == Qt.Key_Y and bool(event.modifiers() & Qt.ControlModifier)) or event.key() == Qt.Key_Escape:
-            self.close_panel()
-            return
-        if event.key() == Qt.Key_Space:
-            self.input_field.insert(" ")
-            self.input_field.setFocus()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def show_panel(self):
-        self._is_closing = False
-        self.error_label.hide()
-        self.input_field.clear()
-        
-        from PySide6.QtCore import QSettings
-        settings = QSettings("TDD131", "HELXAID")
-        self._current_mode = settings.value("MusicPlayer/stream_mode", "buffer", type=str)
-        if self._current_mode not in ("buffer", "direct"):
-            self._current_mode = "buffer"
-        self._current_dest = settings.value("MusicSettings/stream_default_destination", "both", type=str)
-        if self._current_dest not in ("both", "playlist", "library"):
-            self._current_dest = "both"
-            
-        self.mode_toggle.set_value(self._current_mode, animate=False)
-        self.dest_toggle.set_value(self._current_dest, animate=False)
-        
-        self.setFixedSize(480, 146 if self._current_mode == "direct" else 116)
-        if self._current_mode == "direct":
-            self.dest_toggle.show()
-        else:
-            self.dest_toggle.hide()
-            
-        self.show()
-        self.raise_()
-        self.input_field.setFocus()
-        
-        target_x = max(10, (self.parent().width() - self.width()) // 2) if self.parent() else self.x()
-        target_y = max(10, (self.parent().height() - self.height()) // 2) if self.parent() else self.y()
-        self.move(target_x, target_y)
-            
-        from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
-        if hasattr(self, '_anim') and self._anim.state() == QPropertyAnimation.Running:
-            self._anim.stop()
-            
-        self._anim = QPropertyAnimation(self, b"pos")
-        self._anim.setDuration(250)
-        self._anim.setStartValue(QPoint(target_x, max(0, target_y - 25)))
-        self._anim.setEndValue(QPoint(target_x, target_y))
-        self._anim.setEasingCurve(QEasingCurve.OutBack)
-        self._anim.start()
-        
-    def close_panel(self):
-        if getattr(self, '_is_closing', False):
-            return
-        self._is_closing = True
-        from PySide6.QtCore import QPropertyAnimation, QEasingCurve, QPoint
-        if hasattr(self, '_anim') and self._anim.state() == QPropertyAnimation.Running:
-            self._anim.stop()
-            
-        self._anim = QPropertyAnimation(self, b"pos")
-        self._anim.setDuration(180)
-        self._anim.setStartValue(self.pos())
-        self._anim.setEndValue(QPoint(self.x(), 10))
-        self._anim.setEasingCurve(QEasingCurve.InBack)
-        
-        def on_finish():
-            self.hide()
-            self._is_closing = False
-            
-        self._anim.finished.connect(on_finish)
-        self._anim.start()
-        
-    def animate_out(self):
-        self.close_panel()
-
-    def _submit(self):
-        url = self.input_field.text().strip()
-        if url:
-            if "spotify.com" in url.lower():
-                self.error_label.setText("Spotify DRM Restricted. Type media title instead.")
-                self.error_label.show()
-                
-                import math
-                from PySide6.QtCore import QVariantAnimation
-                self._shake_var = QVariantAnimation(self)
-                self._shake_var.setDuration(400)
-                self._shake_var.setStartValue(0.0)
-                self._shake_var.setEndValue(1.0)
-                
-                base_x = self.x()
-                base_y = self.y()
-                
-                def on_shake(val):
-                    offset = math.sin(val * math.pi * 6) * 10 * (1 - val)
-                    self.move(int(base_x + offset), base_y)
-                    
-                self._shake_var.valueChanged.connect(on_shake)
-                self._shake_var.start()
-                return
-                
-            self.url_submitted.emit(url, self._current_mode, self._current_dest)
-            self.close_panel()
-
-
 class StreamLoadingOverlayWidget(QFrame):
     """
     Floating draggable loading overlay with progress bar and collapsible console for Stream extraction.
@@ -13584,10 +13136,6 @@ class MusicPanelWidget(QWidget):
 
     def keyPressEvent(self, event):
         """Handle keyboard shortcuts and media keys for music control."""
-        if hasattr(self, 'floating_url_input') and self.floating_url_input.isVisible():
-            super().keyPressEvent(event)
-            return
-
         from PySide6.QtWidgets import QApplication, QLineEdit, QTextEdit, QPlainTextEdit
         fw = QApplication.focusWidget()
         if isinstance(fw, (QLineEdit, QTextEdit, QPlainTextEdit)):
@@ -14338,10 +13886,6 @@ class MusicPanelWidget(QWidget):
         self.resume_banner.resume_clicked.connect(self._resume_playback_from_banner)
         self.resume_banner.resume_and_folder_clicked.connect(self._resume_and_open_folder)
         
-        # Floating URL Input
-        self.floating_url_input = FloatingUrlInputWidget(self)
-        self.floating_url_input.url_submitted.connect(self._process_url_stream_async)
-        
         # Loading Overlay for Streams
         self.stream_loading = StreamLoadingOverlayWidget(self)
         
@@ -14635,8 +14179,6 @@ class MusicPanelWidget(QWidget):
             else:
                 self.resume_banner.move(max(20, (self.width() - self.resume_banner.width()) // 2), 20)
             
-        if hasattr(self, 'floating_url_input') and self.floating_url_input.isVisible() and not getattr(self.floating_url_input, '_is_dragging', False):
-            self.floating_url_input.move(max(10, (self.width() - self.floating_url_input.width()) // 2), max(10, (self.height() - self.floating_url_input.height()) // 2))
         if hasattr(self, 'stream_loading') and self.stream_loading.isVisible() and not getattr(self.stream_loading, '_is_dragging', False):
             self.stream_loading.move(max(10, (self.width() - self.stream_loading.width()) // 2), max(10, (self.height() - self.stream_loading.height()) // 2))
             
@@ -15385,16 +14927,6 @@ class MusicPanelWidget(QWidget):
         # === Tools Menu ===
         tools_menu = menu_bar.addMenu("Tools")
         tools_menu.setObjectName("toolsMenu")
-        
-        # Play from URL (Stream)
-        self.action_play_url = QAction("URL Stream (Beta)", self)
-        self.action_play_url.setShortcut("Ctrl+Y")
-        self.action_play_url.setShortcutContext(Qt.ApplicationShortcut)
-        self.action_play_url.triggered.connect(self._prompt_play_url)
-        tools_menu.addAction(self.action_play_url)
-        self.addAction(self.action_play_url)
-        
-        tools_menu.addSeparator()
         
         # Universal Downloader
         self.action_download_universal = QAction("Universal Downloader (Beta)", self)
@@ -18061,11 +17593,11 @@ class MusicPanelWidget(QWidget):
             self._toggle_right_panel(1)
             
     def _prompt_play_url(self):
-        if hasattr(self, 'floating_url_input'):
-            if self.floating_url_input.isVisible() and not getattr(self.floating_url_input, '_is_closing', False):
-                self.floating_url_input.close_panel()
-            else:
-                self.floating_url_input.show_panel()
+        """Navigate directly to the Direct Stream sub-tab and focus the search/URL input."""
+        self._on_sidebar_nav("stream")
+        if hasattr(self, 'stream_page') and self.stream_page and hasattr(self.stream_page, 'input_edit'):
+            self.stream_page.input_edit.setFocus()
+            self.stream_page.input_edit.selectAll()
 
     def _process_url_stream_async(self, url, mode=None, destination=None):
         import threading
@@ -18329,7 +17861,7 @@ class MusicPanelWidget(QWidget):
         if raw_text.strip().startswith("http://") or raw_text.strip().startswith("https://"):
             if "spotify.com" in raw_text.lower():
                 from PySide6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Spotify DRM Restricted", "Spotify links cannot be downloaded due to strict DRM encryption.\n\nPRO TIP: Open the Stream URL box and type the Media Name to search and download it instead!")
+                QMessageBox.warning(self, "Spotify DRM Restricted", "Spotify links cannot be downloaded due to strict DRM encryption.\n\nPRO TIP: Open the Direct Stream sub-tab and search the track name to stream or save it instead!")
                 return
             self._process_url_stream_async(raw_text.strip())
             return

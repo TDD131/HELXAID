@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from smooth_scroll import SmoothScrollArea
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QObject, QPropertyAnimation, QEasingCurve, QPoint
 from PySide6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QLinearGradient
-from AnimatedButton import AnimatedCheckBox
+from AnimatedButton import AnimatedCheckBox, HoverCloseButton, FadeHoverButton
 
 # Paths
 if hasattr(sys, '_MEIPASS'):
@@ -198,9 +198,9 @@ def _load_helrcus_config():
             "pause_years": 1,
             "pause_until_date": "",
             "disable_auto_restart": False,
-            "active_hours_preset": "Customize",
-            "active_hours_start": 8,
-            "active_hours_end": 23,
+            "active_hours_preset": "Always Active",
+            "active_hours_start": 0,
+            "active_hours_end": 18,
             "metered_connection": False
         }
     }
@@ -726,7 +726,7 @@ class LockScreenOverlay(QWidget):
         title_row.setSpacing(8)
         title_row.setAlignment(Qt.AlignCenter)
         
-        lock_icon_path = os.path.join(SCRIPT_DIR, "UI Reguler", "lock.png")
+        lock_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "lock-icon.svg")
         if os.path.exists(lock_icon_path):
             lock_icon_label = QLabel()
             lock_icon_label.setObjectName("lockScreenIcon")
@@ -836,8 +836,16 @@ class LockScreenOverlay(QWidget):
 
 class HelrcusHotkeyGuidePanel(QFrame):
     """
-    Floating guide panel for HELRCUS Hotkey Validation Rules.
-    Matching HELXAIL floating guide style.
+    In-app Cyberpunk Floating Guide Panel for HELRCUS Hotkey Validation Rules.
+    Adheres strictly to HELXAID's signature floating panel design system:
+    - Less border, more background-color
+    - 100% Orbitron typography
+    - SVG iconography (info-icon.svg, close-icon.svg)
+    - In-app HoverCloseButton on custom draggable titlebar
+    - Dark glassmorphism with QGraphicsDropShadowEffect
+    - Structured cyberpunk cards and stealth micro-scrollbar
+    - Draggable within parent window bounds
+    - Full component names (setObjectName) for every element
     
     Component Name: HelrcusHotkeyGuidePanel
     """
@@ -847,167 +855,231 @@ class HelrcusHotkeyGuidePanel(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setObjectName("HelrcusHotkeyGuidePanel")
+        
         self._is_dragging = False
         self._drag_start_pos = QPoint(0, 0)
         
+        self.setFixedSize(550, 540)
+        
+        # Authentic HELXAID Floating Drop Shadow
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 220))
+        shadow.setOffset(0, 6)
+        self.setGraphicsEffect(shadow)
+        
         self.setStyleSheet("""
             QFrame#HelrcusHotkeyGuidePanel {
-                background-color: rgba(22, 22, 26, 0.98);
-                border: none;
+                background-color: rgba(12, 12, 16, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 14px;
             }
-            QWidget#GuideTitleBar {
-                background-color: rgba(14, 14, 16, 0.7);
-                border-top-left-radius: 14px;
-                border-top-right-radius: 14px;
-                border: none;
+            QWidget#helrcusGuideTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
             }
-            QLabel#GuideTitle {
+            QLabel#helrcusGuideTitleLabel {
                 color: #FFFFFF;
-                font-size: 14px;
-                font-weight: bold;
-                font-family: 'Orbitron';
+                font-size: 13px;
+                font-weight: 800;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 1px;
+            }
+            QScrollArea#helrcusGuideScrollArea {
+                background: transparent;
                 border: none;
+            }
+            QWidget#helrcusGuideScrollContent {
                 background: transparent;
             }
-            QPushButton#GuideCloseBtn {
+            QScrollArea#helrcusGuideScrollArea QScrollBar:vertical {
+                background: transparent;
+                width: 5px;
+                margin: 0px;
+                border: none;
+            }
+            QScrollArea#helrcusGuideScrollArea QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.12);
+                min-height: 20px;
+                border-radius: 2px;
+                border: none;
+            }
+            QScrollArea#helrcusGuideScrollArea QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 0.25);
+            }
+            QScrollArea#helrcusGuideScrollArea QScrollBar::add-line:vertical, 
+            QScrollArea#helrcusGuideScrollArea QScrollBar::sub-line:vertical,
+            QScrollArea#helrcusGuideScrollArea QScrollBar::add-page:vertical,
+            QScrollArea#helrcusGuideScrollArea QScrollBar::sub-page:vertical {
+                height: 0px;
+                width: 0px;
                 background: transparent;
                 border: none;
             }
-            QPushButton#GuideActionBtn {
-                background-color: rgba(255, 91, 6, 0.25);
-                color: #FF5B06;
-                border: none;
+            QFrame#helrcusGuideSummaryCard {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
-                padding: 7px 22px;
-                font-weight: bold;
+            }
+            QLabel#helrcusGuideSummaryLabel {
+                color: #C2C6D0;
+                font-family: 'Orbitron', sans-serif;
                 font-size: 12px;
-            }}
-            QPushButton#GuideActionBtn:hover {{
-                background-color: rgba(255, 91, 6, 0.45);
+                font-weight: 600;
+                background: transparent;
+                line-height: 1.5;
+            }
+            QFrame#helrcusGuideReqCard, QFrame#helrcusGuideForbiddenCard {
+                background: rgba(255, 255, 255, 0.025);
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                border-radius: 10px;
+            }
+            QLabel#helrcusGuideCardTitleLabel {
+                font-size: 13px;
+                font-weight: 800;
                 color: #FFFFFF;
-            }}
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 0.8px;
+            }
+            QLabel#helrcusGuideItemLabel {
+                color: #B8BCC8;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: 600;
+                background: transparent;
+            }
+            QWidget#helrcusGuideFooter {
+                background: transparent;
+                border-top: 1px solid rgba(255, 255, 255, 0.06);
+            }
         """)
         
-        self.setFixedSize(480, 340)
-        
         main_vbox = QVBoxLayout(self)
-        main_vbox.setContentsMargins(0, 0, 0, 16)
-        main_vbox.setSpacing(10)
+        main_vbox.setContentsMargins(0, 0, 0, 0)
+        main_vbox.setSpacing(0)
         
-        # Title bar (Draggable)
-        self.title_bar = QWidget()
-        self.title_bar.setObjectName("GuideTitleBar")
+        # 1. Title Bar (Draggable)
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("helrcusGuideTitleBar")
         self.title_bar.setFixedHeight(42)
         tb_layout = QHBoxLayout(self.title_bar)
-        tb_layout.setContentsMargins(16, 0, 12, 0)
+        tb_layout.setContentsMargins(14, 0, 14, 0)
+        tb_layout.setSpacing(10)
         
         info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg")
         if os.path.exists(info_icon_path):
-            icon_lbl = QLabel()
-            icon_lbl.setObjectName("GuideIcon")
-            icon_lbl.setPixmap(get_cached_pixmap(info_icon_path, 18, 18))
-            icon_lbl.setStyleSheet("background: transparent;")
-            tb_layout.addWidget(icon_lbl)
+            icon_lbl = QLabel(self.title_bar)
+            icon_lbl.setObjectName("helrcusGuideTitleIcon")
+            icon_lbl.setFixedSize(16, 16)
+            icon_lbl.setScaledContents(True)
+            icon_lbl.setPixmap(get_cached_pixmap(info_icon_path, 16, 16))
+            icon_lbl.setStyleSheet("background: transparent; border: none;")
+            tb_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
             
-        title_lbl = QLabel("Hotkey Validation Rules")
-        title_lbl.setObjectName("GuideTitle")
-        tb_layout.addWidget(title_lbl)
-        tb_layout.addStretch()
+        title_lbl = QLabel("HOTKEY VALIDATION RULES", self.title_bar)
+        title_lbl.setObjectName("helrcusGuideTitleLabel")
+        tb_layout.addWidget(title_lbl, stretch=1, alignment=Qt.AlignVCenter)
         
         main_vbox.addWidget(self.title_bar)
         
-        # Content body with SmoothScrollArea
-        content_container = QWidget()
-        content_container.setObjectName("GuideContentContainer")
-        body_vbox = QVBoxLayout(content_container)
-        body_vbox.setContentsMargins(16, 0, 16, 0)
-        body_vbox.setSpacing(0)
-        
-        rules_html = """
-        <p style='font-size: 12px; color: #aaa; line-height: 1.4; margin-bottom: 8px;'>
-        Standard rules to ensure custom hotkeys do not conflict with Windows OS:
-        </p>
-        <ul style='font-size: 12px; color: #e0e0e0; line-height: 1.7; margin-left: -15px;'>
-            <li><b>Modifier Required:</b> Must include <b>Ctrl</b>, <b>Alt</b>, or <b>Shift</b>.</li>
-            <li><b>Alphabet Only:</b> Base key must be a letter (<b>A – Z</b>).</li>
-            <li><b>No Windows Key:</b> Win / Meta key is forbidden.</li>
-            <li><b>No Function Keys:</b> <b>F1 – F12</b> keys are forbidden.</li>
-            <li><b>No Backspace / Delete / Enter:</b> Editing & Enter keys are forbidden.</li>
-            <li><b>No Num Lock / Numpad / Numbers:</b> Digits (0-9) & Numpad are forbidden.</li>
-            <li><b>No System Reserved Shortcuts:</b> Windows shortcuts (Ctrl+C, Alt+Tab, Alt+F4, Ctrl+Alt+Del, etc.) are forbidden.</li>
-            <li><b>No Conflicts:</b> Activation and Unlock hotkeys cannot be identical.</li>
-        </ul>
-        """
-        rules_lbl = QLabel(rules_html)
-        rules_lbl.setObjectName("GuideRulesLabel")
-        rules_lbl.setWordWrap(True)
-        rules_lbl.setStyleSheet("background: transparent;")
-        
-        self.scroll_area = SmoothScrollArea()
-        self.scroll_area.setObjectName("GuideScrollArea")
+        # 2. Content Area with SmoothScrollArea
+        self.scroll_area = SmoothScrollArea(self)
+        self.scroll_area.setObjectName("helrcusGuideScrollArea")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.NoFrame)
-        self.scroll_area.setStyleSheet("""
-            QScrollArea {
-                background: transparent;
-                border: none;
-            }
-            QScrollBar:vertical {
-                background: rgba(0, 0, 0, 0.2);
-                width: 8px;
-                border-radius: 4px;
-                margin: 2px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(255, 91, 6, 0.5);
-                border-radius: 4px;
-                min-height: 25px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(255, 91, 6, 0.8);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none;
-                height: 0;
-            }
-        """)
-        self.scroll_area.setWidget(rules_lbl)
-        body_vbox.addWidget(self.scroll_area, 1)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
-        main_vbox.addWidget(content_container, 1)
+        scroll_content = QWidget()
+        scroll_content.setObjectName("helrcusGuideScrollContent")
+        content_vbox = QVBoxLayout(scroll_content)
+        content_vbox.setContentsMargins(16, 12, 16, 10)
+        content_vbox.setSpacing(10)
         
-        # Action button (Got It)
-        action_row = QHBoxLayout()
-        action_row.setContentsMargins(20, 0, 20, 0)
-        action_row.addStretch()
+        # Summary Header Card
+        summary_card = QFrame(scroll_content)
+        summary_card.setObjectName("helrcusGuideSummaryCard")
+        summary_layout = QVBoxLayout(summary_card)
+        summary_layout.setContentsMargins(12, 8, 12, 8)
+        summary_layout.setSpacing(4)
         
-        got_it_btn = QPushButton("Got It")
-        got_it_btn.setObjectName("GuideActionBtn")
-        got_it_btn.setCursor(Qt.PointingHandCursor)
+        summary_lbl = QLabel("Standard validation rules to guarantee custom hotkeys operate reliably without conflicts against Windows OS shortcuts.", summary_card)
+        summary_lbl.setObjectName("helrcusGuideSummaryLabel")
+        summary_lbl.setWordWrap(True)
+        summary_layout.addWidget(summary_lbl)
+        content_vbox.addWidget(summary_card)
+        
+        # Card 1: Key Requirements
+        req_card = QFrame(scroll_content)
+        req_card.setObjectName("helrcusGuideReqCard")
+        req_layout = QVBoxLayout(req_card)
+        req_layout.setContentsMargins(14, 10, 14, 10)
+        req_layout.setSpacing(6)
+        
+        req_title = QLabel("KEY REQUIREMENTS", req_card)
+        req_title.setObjectName("helrcusGuideCardTitleLabel")
+        req_layout.addWidget(req_title)
+        
+        req_text = (
+            "<p style='margin: 0; font-size: 12px; line-height: 1.7;'>"
+            "<span style='color: #8E96A4; font-weight: bold;'>•</span> <b style='color: #FFFFFF; font-weight: 800;'>Modifier Required:</b> <span style='color: #B8BCC8; font-weight: 600;'>Must include </span><b style='color: #FFFFFF; font-weight: 800;'>Ctrl</b><span style='color: #B8BCC8; font-weight: 600;'>, </span><b style='color: #FFFFFF; font-weight: 800;'>Alt</b><span style='color: #B8BCC8; font-weight: 600;'>, or </span><b style='color: #FFFFFF; font-weight: 800;'>Shift</b>.<br>"
+            "<span style='color: #8E96A4; font-weight: bold;'>•</span> <b style='color: #FFFFFF; font-weight: 800;'>Alphabet Only:</b> <span style='color: #B8BCC8; font-weight: 600;'>Base key must be a single letter (</span><b style='color: #FFFFFF; font-weight: 800;'>A – Z</b><span style='color: #B8BCC8; font-weight: 600;'>).</span>"
+            "</p>"
+        )
+        req_lbl = QLabel(req_text, req_card)
+        req_lbl.setObjectName("helrcusGuideItemLabel")
+        req_lbl.setWordWrap(True)
+        req_layout.addWidget(req_lbl)
+        content_vbox.addWidget(req_card)
+        
+        # Card 2: Forbidden Keys & Conflicts
+        forbid_card = QFrame(scroll_content)
+        forbid_card.setObjectName("helrcusGuideForbiddenCard")
+        forbid_layout = QVBoxLayout(forbid_card)
+        forbid_layout.setContentsMargins(14, 10, 14, 10)
+        forbid_layout.setSpacing(6)
+        
+        forbid_title = QLabel("FORBIDDEN KEYS & CONFLICTS", forbid_card)
+        forbid_title.setObjectName("helrcusGuideCardTitleLabel")
+        forbid_layout.addWidget(forbid_title)
+        
+        forbid_text = (
+            "<p style='margin: 0; font-size: 12px; line-height: 1.7;'>"
+            "<span style='color: #8E96A4; font-weight: bold;'>•</span> <b style='color: #FFFFFF; font-weight: 800;'>No Windows Key:</b> <span style='color: #B8BCC8; font-weight: 600;'>Win / Meta key is forbidden.</span><br>"
+            "<span style='color: #8E96A4; font-weight: bold;'>•</span> <b style='color: #FFFFFF; font-weight: 800;'>No Function Keys:</b> <b style='color: #FFFFFF; font-weight: 800;'>F1 – F12</b> <span style='color: #B8BCC8; font-weight: 600;'>keys are forbidden.</span><br>"
+            "<span style='color: #8E96A4; font-weight: bold;'>•</span> <b style='color: #FFFFFF; font-weight: 800;'>No Editing Keys:</b> <span style='color: #B8BCC8; font-weight: 600;'>Editing & Enter keys (</span><b style='color: #FFFFFF; font-weight: 800;'>Backspace</b><span style='color: #B8BCC8; font-weight: 600;'>, </span><b style='color: #FFFFFF; font-weight: 800;'>Delete</b><span style='color: #B8BCC8; font-weight: 600;'>, </span><b style='color: #FFFFFF; font-weight: 800;'>Enter</b><span style='color: #B8BCC8; font-weight: 600;'>) are forbidden.</span><br>"
+            "<span style='color: #8E96A4; font-weight: bold;'>•</span> <b style='color: #FFFFFF; font-weight: 800;'>No Numbers / Numpad:</b> <span style='color: #B8BCC8; font-weight: 600;'>Digits (</span><b style='color: #FFFFFF; font-weight: 800;'>0 – 9</b><span style='color: #B8BCC8; font-weight: 600;'>) & Numpad keys are forbidden.</span><br>"
+            "<span style='color: #8E96A4; font-weight: bold;'>•</span> <b style='color: #FFFFFF; font-weight: 800;'>No System Reserved:</b> <span style='color: #B8BCC8; font-weight: 600;'>Windows shortcuts (</span><b style='color: #FFFFFF; font-weight: 800;'>Ctrl+C</b><span style='color: #B8BCC8; font-weight: 600;'>, </span><b style='color: #FFFFFF; font-weight: 800;'>Alt+Tab</b><span style='color: #B8BCC8; font-weight: 600;'>, </span><b style='color: #FFFFFF; font-weight: 800;'>Alt+F4</b><span style='color: #B8BCC8; font-weight: 600;'>, </span><b style='color: #FFFFFF; font-weight: 800;'>Ctrl+Alt+Del</b><span style='color: #B8BCC8; font-weight: 600;'>) are forbidden.</span><br>"
+            "<span style='color: #8E96A4; font-weight: bold;'>•</span> <b style='color: #FFFFFF; font-weight: 800;'>Conflict Prevention:</b> <span style='color: #B8BCC8; font-weight: 600;'>Activation and Unlock hotkeys cannot be identical.</span>"
+            "</p>"
+        )
+        forbid_lbl = QLabel(forbid_text, forbid_card)
+        forbid_lbl.setObjectName("helrcusGuideItemLabel")
+        forbid_lbl.setWordWrap(True)
+        forbid_layout.addWidget(forbid_lbl)
+        content_vbox.addWidget(forbid_card)
+        
+        self.scroll_area.setWidget(scroll_content)
+        main_vbox.addWidget(self.scroll_area, 1)
+        
+        # 3. Action Footer
+        footer_widget = QWidget(self)
+        footer_widget.setObjectName("helrcusGuideFooter")
+        footer_layout = QHBoxLayout(footer_widget)
+        footer_layout.setContentsMargins(16, 10, 16, 12)
+        footer_layout.setSpacing(10)
+        footer_layout.addStretch()
+        
+        got_it_btn = FadeHoverButton("GOT IT", is_secondary=False, border_radius=6.0, parent=footer_widget)
+        got_it_btn.setObjectName("helrcusGuideGotItBtn")
+        got_it_btn.setFixedSize(95, 34)
         got_it_btn.clicked.connect(self.close_panel)
-        action_row.addWidget(got_it_btn)
+        footer_layout.addWidget(got_it_btn)
         
-        main_vbox.addLayout(action_row)
-        
-        # Opacity & animation
-        self._opacity_effect = QGraphicsOpacityEffect(self)
-        self.setGraphicsEffect(self._opacity_effect)
-        self._opacity_effect.setOpacity(0.0)
-        
-        self._fade_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
-        self._fade_anim.setDuration(200)
-        self._fade_anim.setStartValue(0.0)
-        self._fade_anim.setEndValue(1.0)
-        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
-        
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.raise_()
-        self.activateWindow()
-        self._opacity_effect.setOpacity(0.0)
-        self._fade_anim.start()
+        main_vbox.addWidget(footer_widget)
         
     def close_panel(self):
         self.close()
@@ -1017,6 +1089,8 @@ class HelrcusHotkeyGuidePanel(QFrame):
             self._is_dragging = True
             self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
             event.accept()
+        else:
+            super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         if self._is_dragging and event.buttons() & Qt.LeftButton:
@@ -1028,6 +1102,8 @@ class HelrcusHotkeyGuidePanel(QFrame):
                 new_pos = QPoint(new_x, new_y)
             self.move(new_pos)
             event.accept()
+        else:
+            super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
         self._is_dragging = False
@@ -1765,30 +1841,26 @@ class WindowsUpdateControl:
             return False, str(e)
     @staticmethod
     def get_update_status():
-        """Get current Windows Update pause status."""
+        """Get current Windows Update pause status via native Win32 registry API (<0.1ms)."""
         try:
-            result = subprocess.run(
-                'reg query "HKLM\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings" /v PauseUpdatesExpiryTime',
-                shell=True, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            if result.returncode == 0 and "PauseUpdatesExpiryTime" in result.stdout:
-                # Extract the date
-                for line in result.stdout.split('\n'):
-                    if "PauseUpdatesExpiryTime" in line:
-                        parts = line.strip().split()
-                        if len(parts) >= 3:
-                            raw_date = parts[-1]
-                            try:
-                                # Standard registry format is "YYYY-MM-DDTHH:MM:SSZ"
-                                date_part = raw_date.split('T')[0]
-                                from datetime import datetime as _dt
-                                parsed = _dt.strptime(date_part, "%Y-%m-%d")
-                                return True, parsed.strftime("%d/%m/%Y")
-                            except Exception:
-                                return True, raw_date
+            import winreg
+            from datetime import datetime as _dt
+            access_mask = winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0)
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\WindowsUpdate\UX\Settings", 0, access_mask) as key:
+                raw_date, _ = winreg.QueryValueEx(key, "PauseUpdatesExpiryTime")
+                if raw_date:
+                    try:
+                        date_part = str(raw_date).split('T')[0]
+                        parsed = _dt.strptime(date_part, "%Y-%m-%d")
+                        return True, parsed.strftime("%d/%m/%Y")
+                    except Exception:
+                        return True, str(raw_date)
+            return False, "Not paused"
+        except (FileNotFoundError, OSError):
             return False, "Not paused"
         except Exception:
             return False, "Unknown"
+
 
 
 # ============================================
@@ -1810,20 +1882,21 @@ class WindowsCustomPanel(QWidget):
         super().__init__(parent)
         self.setObjectName("windowsCustomPanel")
         self._config = _load_helrcus_config()
-        self._ui_initialized = False
+        self._ui_initialized = True
         self._lock_overlay = None
+        
+        # Build UI and load state immediately in memory so page transitions are 0ms instant
+        self._setup_ui()
+        self._load_state()
         
         QTimer.singleShot(100, self._register_global_hotkey)
         lock_signals.show_password.connect(self._show_lock_overlay)
         lock_signals.hide_password.connect(self._hide_lock_overlay)
 
     def showEvent(self, event):
-        """Lazy load UI components on first tab display."""
+        """Refresh dynamic status on tab display."""
         super().showEvent(event)
-        if not self._ui_initialized:
-            self._ui_initialized = True
-            self._setup_ui()
-            self._load_state()
+        self._load_state()
 
     def _setup_ui(self):
         """Build the panel UI."""
@@ -1969,19 +2042,27 @@ class WindowsCustomPanel(QWidget):
             }}
             QScrollBar:vertical {{
                 background: transparent;
-                width: 10px;
-                border-radius: 5px;
+                width: 16px;
+                border-radius: 8px;
+                margin: 4px;
             }}
             QScrollBar::handle:vertical {{
-                background: rgba(255, 91, 6, 0.5);
-                border-radius: 5px;
-                min-height: 30px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06);
+                border-radius: 7px;
+                min-height: 40px;
+                border: 2px solid rgba(253, 169, 3, 0.8);
             }}
             QScrollBar::handle:vertical:hover {{
-                background: #FF5B06;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903);
+                border: 2px solid #FFFF00;
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0;
+                height: 0px;
+                background: none;
+                border: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: transparent;
             }}
             QSpinBox::up-button, QSpinBox::down-button {{
                 background: rgba(255, 91, 6, 0.3);
@@ -2057,6 +2138,30 @@ class WindowsCustomPanel(QWidget):
             QScrollArea > QWidget > QWidget {
                 background: transparent;
             }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 16px;
+                border-radius: 8px;
+                margin: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06);
+                border-radius: 7px;
+                min-height: 40px;
+                border: 2px solid rgba(253, 169, 3, 0.8);
+            }
+            QScrollBar::handle:vertical:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903);
+                border: 2px solid #FFFF00;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+                background: none;
+                border: none;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
         """)
         
         content = QWidget()
@@ -2082,7 +2187,7 @@ class WindowsCustomPanel(QWidget):
     def _setup_lock_screen_card(self, parent_layout):
         """Setup the Invisible Lock Screen feature card."""
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        lock_icon = os.path.join(script_dir, "UI Reguler", "lock.png")
+        lock_icon = os.path.join(script_dir, "UI Icons", "lock-icon.svg")
         
         card = FeatureCard(
             title="Invisible Lock Screen",
@@ -2211,9 +2316,9 @@ class WindowsCustomPanel(QWidget):
         
         info_icon_lbl = QLabel()
         info_icon_lbl.setObjectName("helrcusLockInfoIcon")
-        lock_key_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "lock-with-key.svg")
-        if os.path.exists(lock_key_icon_path):
-            info_icon_lbl.setPixmap(QPixmap(lock_key_icon_path).scaled(18, 18, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        lock_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "lock-icon.svg")
+        if os.path.exists(lock_icon_path):
+            info_icon_lbl.setPixmap(get_cached_pixmap(lock_icon_path, 18, 18))
             info_icon_lbl.setFixedSize(18, 18)
         info_icon_lbl.setStyleSheet("background: transparent;")
         
@@ -2246,7 +2351,7 @@ class WindowsCustomPanel(QWidget):
         self._lock_activate_btn.setObjectName("helrcusActivateLockBtn")
         self._lock_activate_btn.setFixedHeight(40)
         # Set lock icon on button
-        lock_btn_icon_path = os.path.join(script_dir, "UI Reguler", "lock.png")
+        lock_btn_icon_path = os.path.join(script_dir, "UI Icons", "lock-icon.svg")
         if os.path.exists(lock_btn_icon_path):
             self._lock_activate_btn.setIcon(QIcon(lock_btn_icon_path))
             self._lock_activate_btn.setIconSize(QSize(18, 18))
@@ -2264,11 +2369,11 @@ class WindowsCustomPanel(QWidget):
         hotkey_row = QHBoxLayout()
         hotkey_row.setSpacing(6)
         hotkey_row.setAlignment(Qt.AlignVCenter)
-        tips_icon_path = os.path.join(script_dir, "UI Reguler", "tips.png")
+        tips_icon_path = os.path.join(script_dir, "UI Icons", "tip-icon.svg")
         if os.path.exists(tips_icon_path):
             tips_icon = QLabel()
             tips_icon.setObjectName("helrcusLockTipsIcon")
-            tips_pix = QPixmap(tips_icon_path).scaled(14, 14, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            tips_pix = get_cached_pixmap(tips_icon_path, 14, 14)
             tips_icon.setPixmap(tips_pix)
             tips_icon.setFixedSize(14, 14)
             tips_icon.setStyleSheet("background: transparent;")
@@ -2291,7 +2396,7 @@ class WindowsCustomPanel(QWidget):
         """Setup the Windows Update control card."""
         script_dir = os.path.dirname(os.path.abspath(__file__))
         down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
-        update_icon = os.path.join(script_dir, "UI Reguler", "windowsIcon.png")
+        update_icon = os.path.join(script_dir, "UI Icons", "windowsIcon.png")
         
         card = FeatureCard(
             title="Windows Update Control",
@@ -2485,8 +2590,8 @@ class WindowsCustomPanel(QWidget):
         # Store styles and icons for toggling
         self._wu_primary_btn_style = _primary_btn_style
         self._wu_secondary_btn_style = _btn_style
-        self._wu_pause_icon_path = os.path.join(script_dir, "UI Reguler", "pauseRegular.png")
-        self._wu_resume_icon_path = os.path.join(script_dir, "UI Reguler", "loopRegular.png")
+        self._wu_pause_icon_path = os.path.join(script_dir, "UI Icons", "pause-icon.svg")
+        self._wu_resume_icon_path = os.path.join(script_dir, "UI Icons", "loop-icon.svg")
         
         self._toggle_update_btn = QPushButton()
         self._toggle_update_btn.setObjectName("helrcusToggleUpdateBtn")
@@ -2605,12 +2710,12 @@ class WindowsCustomPanel(QWidget):
         self._hours_preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self._hours_preset_combo.addItems(["Always Active", "8 Hours", "12 Hours", "18 Hours", "Customize"])
         # Set default selection from config
-        saved_preset = self._config["windows_update"].get("active_hours_preset", "Customize")
+        saved_preset = self._config["windows_update"].get("active_hours_preset", "Always Active")
         preset_idx = self._hours_preset_combo.findText(saved_preset)
         if preset_idx >= 0:
             self._hours_preset_combo.setCurrentIndex(preset_idx)
         else:
-            self._hours_preset_combo.setCurrentIndex(4)  # Default to Customize
+            self._hours_preset_combo.setCurrentIndex(0)  # Default to Always Active
         self._hours_preset_combo.setMinimumWidth(160)
         self._hours_preset_combo.setFixedHeight(36)
         self._hours_preset_combo.setStyleSheet(_combo_style)
@@ -2688,11 +2793,11 @@ class WindowsCustomPanel(QWidget):
         info_row = QHBoxLayout()
         info_row.setSpacing(6)
         info_row.setAlignment(Qt.AlignVCenter)
-        tips_icon_path = os.path.join(script_dir, "UI Reguler", "tips.png")
+        tips_icon_path = os.path.join(script_dir, "UI Icons", "tip-icon.svg")
         if os.path.exists(tips_icon_path):
             tips_icon2 = QLabel()
             tips_icon2.setObjectName("helrcusUpdateTipsIcon")
-            tips_pix2 = QPixmap(tips_icon_path).scaled(14, 14, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            tips_pix2 = get_cached_pixmap(tips_icon_path, 14, 14)
             tips_icon2.setPixmap(tips_pix2)
             tips_icon2.setFixedSize(14, 14)
             tips_icon2.setStyleSheet("background: transparent;")

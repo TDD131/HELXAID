@@ -8,7 +8,7 @@ Features:
 """
 from PySide6.QtCore import QVariantAnimation
 from PySide6.QtWidgets import QPushButton
-from PySide6.QtCore import QSize, QTimer, Property, QPropertyAnimation, QEasingCurve, Qt, QRectF, Signal
+from PySide6.QtCore import QSize, QTimer, Property, QPropertyAnimation, QEasingCurve, Qt, QRectF, Signal, QEvent
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QIcon, QLinearGradient, QFontMetrics, QFont
 
 
@@ -26,6 +26,7 @@ class AnimatedButton(QPushButton):
         self._fill_progress = 0.0  # 0 = no fill, 1 = fully filled
         self._animation = None
         self._is_text_button = True  # Will be determined based on icon
+        self._original_cursor = Qt.PointingHandCursor
         
         # Gradient colors for hover fill (list of RGB tuples)
         self._gradient_colors = self.DEFAULT_GRADIENT
@@ -45,6 +46,26 @@ class AnimatedButton(QPushButton):
         self._idle_bg = None
         self._draw_border = True
         self._border_color = None
+
+    def setCursor(self, cursor):
+        self._original_cursor = cursor
+        if not self.isEnabled():
+            super().setCursor(Qt.ArrowCursor)
+        else:
+            super().setCursor(cursor)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.EnabledChange:
+            if not self.isEnabled():
+                self._fill_progress = 0.0
+                if hasattr(self, '_fill_animation') and self._fill_animation:
+                    self._fill_animation.stop()
+                super().setCursor(Qt.ArrowCursor)
+            else:
+                orig = getattr(self, '_original_cursor', Qt.PointingHandCursor)
+                super().setCursor(orig)
+            self.update()
+        super().changeEvent(event)
     
     def setIdleBackground(self, color):
         """Set idle base background color (QColor, tuple, or hex/rgba str)."""
@@ -124,6 +145,9 @@ class AnimatedButton(QPushButton):
         
     def enterEvent(self, event):
         """Mouse enters button - start fill animation."""
+        if not self.isEnabled():
+            super().enterEvent(event)
+            return
         # Check if this is a text-only button or force fill is enabled
         if self.icon().isNull() or self._force_hover_fill:
             self._animate_fill(1.0)
@@ -131,6 +155,10 @@ class AnimatedButton(QPushButton):
     
     def leaveEvent(self, event):
         """Mouse leaves button - reverse fill animation."""
+        if not self.isEnabled():
+            self._fill_progress = 0.0
+            super().leaveEvent(event)
+            return
         if self.icon().isNull() or self._force_hover_fill:
             self._animate_fill(0.0)
         super().leaveEvent(event)
@@ -183,10 +211,15 @@ class AnimatedButton(QPushButton):
             if hasattr(self, '_idle_bg') and self._idle_bg is not None:
                 bg_path = QPainterPath()
                 bg_path.addRoundedRect(adjusted_rect, radius, radius)
-                painter.fillPath(bg_path, QBrush(self._idle_bg))
+                if not self.isEnabled():
+                    idle_c = QColor(self._idle_bg)
+                    idle_c.setAlpha(int(idle_c.alpha() * 0.4))
+                    painter.fillPath(bg_path, QBrush(idle_c))
+                else:
+                    painter.fillPath(bg_path, QBrush(self._idle_bg))
             
             # 2. Fade hover mode: full-surface opacity fade matching FadeHoverButton / helxairo_editorDeleteKeyBtn
-            if self._fill_progress > 0.001:
+            if self.isEnabled() and self._fill_progress > 0.001:
                 if self._gradient_direction == "vertical":
                     gradient = QLinearGradient(0, 0, 0, rect.height())
                 else:
@@ -213,17 +246,20 @@ class AnimatedButton(QPushButton):
                     painter.setBrush(Qt.NoBrush)
                     painter.drawRoundedRect(adjusted_rect, radius, radius)
                 else:
-                    border_opacity = 1.0 - self._fill_progress
+                    border_opacity = 1.0 - (self._fill_progress if self.isEnabled() else 0.0)
                     if border_opacity > 0.05:
-                        border_color = QColor(255, 255, 255, int(150 * border_opacity))
+                        border_color = QColor(255, 255, 255, int((150 if self.isEnabled() else 40) * border_opacity))
                         pen = QPen(border_color, 1)
                         painter.setPen(pen)
                         painter.setBrush(Qt.NoBrush)
                         painter.drawRoundedRect(adjusted_rect, radius, radius)
             
             # 4. Text: crisp Orbitron with smooth color transition (#e0e0e0 -> #ffffff)
-            text_val = int(224 + (255 - 224) * self._fill_progress)
-            painter.setPen(QColor(text_val, text_val, text_val))
+            if not self.isEnabled():
+                painter.setPen(QColor(102, 102, 102))
+            else:
+                text_val = int(224 + (255 - 224) * self._fill_progress)
+                painter.setPen(QColor(text_val, text_val, text_val))
             font = QFont("Orbitron")
             font.setBold(True)
             if hasattr(self, '_custom_pixel_size') and self._custom_pixel_size is not None:
@@ -242,10 +278,10 @@ class AnimatedButton(QPushButton):
             return
 
         # Calculate fill width based on progress
-        fill_width = int(rect.width() * self._fill_progress)
+        fill_width = int(rect.width() * self._fill_progress) if self.isEnabled() else 0
         
         # Draw background fill with gradient (sliding from left)
-        if fill_width > 0:
+        if self.isEnabled() and fill_width > 0:
             # Create horizontal gradient using custom colors
             gradient = QLinearGradient(0, 0, rect.width(), 0)
             colors = self._gradient_colors
@@ -269,9 +305,9 @@ class AnimatedButton(QPushButton):
             painter.setClipping(False)
         
         # Draw border (fades as fill progresses)
-        border_opacity = 1.0 - self._fill_progress
+        border_opacity = 1.0 - (self._fill_progress if self.isEnabled() else 0.0)
         if border_opacity > 0.05:
-            border_color = QColor(255, 255, 255, int(150 * border_opacity))
+            border_color = QColor(255, 255, 255, int((150 if self.isEnabled() else 40) * border_opacity))
             pen = QPen(border_color)
             pen.setWidth(1)
             painter.setPen(pen)
@@ -279,10 +315,13 @@ class AnimatedButton(QPushButton):
             painter.drawRoundedRect(adjusted_rect, radius, radius)
         
         # Draw text with color transition (white -> black)
-        text_r = int(255 * (1 - self._fill_progress) + 0 * self._fill_progress)
-        text_g = int(255 * (1 - self._fill_progress) + 0 * self._fill_progress)
-        text_b = int(255 * (1 - self._fill_progress) + 0 * self._fill_progress)
-        text_color = QColor(text_r, text_g, text_b)
+        if not self.isEnabled():
+            text_color = QColor(102, 102, 102)
+        else:
+            text_r = int(255 * (1 - self._fill_progress) + 0 * self._fill_progress)
+            text_g = int(255 * (1 - self._fill_progress) + 0 * self._fill_progress)
+            text_b = int(255 * (1 - self._fill_progress) + 0 * self._fill_progress)
+            text_color = QColor(text_r, text_g, text_b)
         
         if not self.text():
             # If no text but has an icon and forced fill, draw the icon
@@ -295,7 +334,10 @@ class AnimatedButton(QPushButton):
                     icon_size = QSize(20, 20)
                 
                 # Check if we should draw active or normal state based on hover
-                mode = QIcon.Active if self._fill_progress > 0.5 else QIcon.Normal
+                if not self.isEnabled():
+                    mode = QIcon.Disabled
+                else:
+                    mode = QIcon.Active if self._fill_progress > 0.5 else QIcon.Normal
                 pixmap = icon.pixmap(icon_size, mode, QIcon.On)
                 
                 # Center the icon
@@ -327,6 +369,9 @@ class AnimatedButton(QPushButton):
     # === Icon button click animations (bouncy pop) ===
     
     def mousePressEvent(self, event):
+        if not self.isEnabled():
+            event.ignore()
+            return
         # Only animate icon buttons when click animation is enabled
         if self._click_animation_enabled and not self.icon().isNull():
             if self._original_icon_size is None or self._original_icon_size.width() == 0:
@@ -339,6 +384,9 @@ class AnimatedButton(QPushButton):
         super().mousePressEvent(event)
     
     def mouseReleaseEvent(self, event):
+        if not self.isEnabled():
+            event.ignore()
+            return
         if self._click_animation_enabled and not self.icon().isNull():
             if self._original_icon_size and self._original_icon_size.width() > 0:
                 # Bounce back with overshoot (pop effect)
@@ -700,7 +748,30 @@ class FadeHoverButton(QPushButton):
         self._border_radius = radius
         self.update()
 
+    def setCursor(self, cursor):
+        self._original_cursor = cursor
+        if not self.isEnabled():
+            super().setCursor(Qt.ArrowCursor)
+        else:
+            super().setCursor(cursor)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.EnabledChange:
+            if not self.isEnabled():
+                self._hover_progress = 0.0
+                if hasattr(self, '_anim') and self._anim:
+                    self._anim.stop()
+                super().setCursor(Qt.ArrowCursor)
+            else:
+                orig = getattr(self, '_original_cursor', Qt.PointingHandCursor)
+                super().setCursor(orig)
+            self.update()
+        super().changeEvent(event)
+
     def enterEvent(self, event):
+        if not self.isEnabled():
+            super().enterEvent(event)
+            return
         self._anim.stop()
         self._anim.setStartValue(self._hover_progress)
         self._anim.setEndValue(1.0)
@@ -708,6 +779,10 @@ class FadeHoverButton(QPushButton):
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        if not self.isEnabled():
+            self._hover_progress = 0.0
+            super().leaveEvent(event)
+            return
         self._anim.stop()
         self._anim.setStartValue(self._hover_progress)
         self._anim.setEndValue(0.0)
@@ -918,6 +993,9 @@ class HoverCloseButton(QPushButton):
         return QIcon(pix)
 
     def enterEvent(self, event):
+        if not self.isEnabled():
+            super().enterEvent(event)
+            return
         super().enterEvent(event)
         self.setIcon(self._hover_icon)
 

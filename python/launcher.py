@@ -4732,7 +4732,7 @@ class GameStatisticsFloatingPanel(QFrame):
             box = QFrame()
             box_id = title.replace(' ', '_')
             box.setObjectName(f"statBox_{box_id}")
-            box.setStyleSheet("background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px;")
+            box.setStyleSheet(f"QFrame#statBox_{box_id} {{ background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; }}")
             b_layout = QVBoxLayout(box)
             b_layout.setContentsMargins(4, 8, 4, 8)
             b_layout.setSpacing(3)
@@ -4740,11 +4740,11 @@ class GameStatisticsFloatingPanel(QFrame):
             lbl_title = QLabel(title.upper())
             lbl_title.setObjectName(f"statBoxTitle_{box_id}")
             lbl_title.setAlignment(Qt.AlignCenter)
-            lbl_title.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 9px; color: #888888; font-weight: bold; background: transparent;")
+            lbl_title.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 9px; color: #888888; font-weight: bold; background: transparent; border: none;")
             lbl_val = QLabel(str(value))
             lbl_val.setObjectName(f"statBoxVal_{box_id}")
             lbl_val.setAlignment(Qt.AlignCenter)
-            lbl_val.setStyleSheet(f"font-family: 'Orbitron', sans-serif; font-size: 13px; color: {val_color}; font-weight: bold; background: transparent;")
+            lbl_val.setStyleSheet(f"font-family: 'Orbitron', sans-serif; font-size: 13px; color: {val_color}; font-weight: bold; background: transparent; border: none;")
             b_layout.addWidget(lbl_title)
             b_layout.addWidget(lbl_val)
             return box
@@ -7619,6 +7619,262 @@ class GameScanAlertFloatingPanel(QFrame):
             event.accept()
 
 
+class ForceEndGameFloatingPanel(QFrame):
+    """
+    In-app floating confirmation panel for force ending a game process.
+    Styled with dark glassmorphism, Orbitron font, and strictly adhering to HELXAID design system:
+    - Less border, more background-color
+    - 100% Orbitron typography
+    - SVG iconography (warning-icon.svg)
+    - HoverCloseButton
+    - Draggable within parent launcher bounds
+    - Smooth fade-in and fade-out animations via QPropertyAnimation
+    - Component names strictly set for all UI elements
+    """
+
+    def __init__(self, launcher, game, on_confirm=None, parent=None):
+        super().__init__(parent or launcher)
+        self.launcher = launcher
+        self.game = game
+        self.on_confirm = on_confirm
+
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("ForceEndGameFloatingPanel")
+
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        warning_icon = os.path.join(script_dir, "UI Icons", "warning-icon.svg").replace('\\', '/')
+        game_name = game.get("name", "Unknown Game") if isinstance(game, dict) else str(game)
+
+        self.setStyleSheet("""
+            QFrame#ForceEndGameFloatingPanel {
+                background-color: rgba(12, 12, 16, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#forceEndTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#forceEndTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 0.5px;
+            }
+            QFrame#forceEndCard {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+            }
+            QLabel#forceEndBadgeIcon {
+                background: transparent;
+            }
+            QLabel#forceEndPromptLabel {
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                background: transparent;
+                line-height: 1.4;
+            }
+            QLabel#forceEndWarningLabel {
+                color: #FF5B06;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                background: transparent;
+                line-height: 1.4;
+            }
+            QPushButton#forceEndConfirmBtn {
+                font-family: 'Orbitron', sans-serif;
+                font-weight: bold;
+                font-size: 12px;
+                color: #FFFFFF;
+                background-color: rgba(255, 91, 6, 0.85);
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton#forceEndConfirmBtn:hover {
+                background-color: #FF5B06;
+            }
+            QPushButton#forceEndCancelBtn {
+                font-family: 'Orbitron', sans-serif;
+                font-weight: bold;
+                font-size: 12px;
+                color: #E0E0E0;
+                background-color: #383b41;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton#forceEndCancelBtn:hover {
+                background-color: #4a4d55;
+                color: #FFFFFF;
+            }
+        """)
+
+        self.setFixedSize(470, 220)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 220))
+        shadow.setOffset(0, 6)
+        self.setGraphicsEffect(shadow)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 1. Title bar
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("forceEndTitleBar")
+        self.title_bar.setFixedHeight(42)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(14, 0, 14, 0)
+        tb_layout.setSpacing(10)
+
+        icon_lbl = QLabel()
+        icon_lbl.setObjectName("forceEndTitleIcon")
+        icon_lbl.setFixedSize(16, 16)
+        icon_lbl.setScaledContents(True)
+        if os.path.exists(warning_icon):
+            icon_lbl.setPixmap(QPixmap(warning_icon))
+        icon_lbl.setStyleSheet("background: transparent; border: none;")
+        tb_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
+
+        title_lbl = QLabel("FORCE END GAME")
+        title_lbl.setObjectName("forceEndTitleLabel")
+        tb_layout.addWidget(title_lbl, stretch=1, alignment=Qt.AlignVCenter)
+
+        main_layout.addWidget(self.title_bar)
+
+        # 2. Content Container & Card
+        content_container = QWidget()
+        content_container.setObjectName("forceEndContentContainer")
+        content_container_layout = QVBoxLayout(content_container)
+        content_container_layout.setContentsMargins(14, 14, 14, 10)
+        content_container_layout.setSpacing(10)
+
+        card = QFrame()
+        card.setObjectName("forceEndCard")
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(14, 12, 14, 12)
+        card_layout.setSpacing(14)
+
+        badge_lbl = QLabel()
+        badge_lbl.setObjectName("forceEndBadgeIcon")
+        badge_lbl.setFixedSize(32, 32)
+        badge_lbl.setScaledContents(True)
+        if os.path.exists(warning_icon):
+            badge_lbl.setPixmap(QPixmap(warning_icon))
+        badge_lbl.setStyleSheet("background: transparent; border: none;")
+        card_layout.addWidget(badge_lbl, alignment=Qt.AlignVCenter)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+
+        prompt_lbl = QLabel(f"Are you sure you want to force end '{game_name}'?")
+        prompt_lbl.setObjectName("forceEndPromptLabel")
+        prompt_lbl.setWordWrap(True)
+        text_layout.addWidget(prompt_lbl)
+
+        warning_lbl = QLabel("This will kill the process immediately.")
+        warning_lbl.setObjectName("forceEndWarningLabel")
+        warning_lbl.setWordWrap(True)
+        text_layout.addWidget(warning_lbl)
+
+        card_layout.addLayout(text_layout, stretch=1)
+        content_container_layout.addWidget(card)
+        main_layout.addWidget(content_container)
+
+        # 3. Footer Button Row
+        btn_container = QWidget()
+        btn_container.setObjectName("forceEndFooterContainer")
+        btn_layout = QHBoxLayout(btn_container)
+        btn_layout.setContentsMargins(14, 0, 14, 14)
+        btn_layout.setSpacing(10)
+
+        btn_layout.addStretch()
+
+        self.cancel_btn = FadeHoverButton("Cancel", is_secondary=True, border_radius=6.0)
+        self.cancel_btn.setObjectName("forceEndCancelBtn")
+        self.cancel_btn.setFixedSize(85, 34)
+        self.cancel_btn.clicked.connect(self.close_panel)
+        btn_layout.addWidget(self.cancel_btn)
+
+        self.confirm_btn = FadeHoverButton("Force End", is_secondary=False, border_radius=6.0)
+        self.confirm_btn.setObjectName("forceEndConfirmBtn")
+        self.confirm_btn.setFixedSize(110, 34)
+        self.confirm_btn.clicked.connect(self._on_confirm_clicked)
+        btn_layout.addWidget(self.confirm_btn)
+
+        main_layout.addWidget(btn_container)
+
+        # Entrance Animation
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.anim.setDuration(220)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim.finished.connect(self._on_anim_finished)
+
+    def _on_anim_finished(self):
+        if self.anim.direction() == QPropertyAnimation.Backward:
+            self.deleteLater()
+
+    def show_panel(self):
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = max(0, (parent_rect.width() - self.width()) // 2)
+            y = max(10, (parent_rect.height() - self.height()) // 2)
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        self.anim.setDirection(QPropertyAnimation.Forward)
+        self.anim.start()
+
+    def close_panel(self):
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.start()
+
+    def _on_confirm_clicked(self):
+        self.close_panel()
+        if self.on_confirm:
+            self.on_confirm()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+            event.accept()
+
+
 class HelxailInfoWizard(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -8382,9 +8638,47 @@ class GameLauncher(QWidget):
             self.switch_panel(index)
     
     def _focus_search(self):
-        """Global shortcut handler to focus and select the game search input (Ctrl+F)."""
+        """Shortcut handler to focus and select the game search input ('/').
+        Only works when the user is actively on the HELXAID page (Game Launcher, panel 0)
+        and not interacting with inputs, dialogs, or floating panels.
+        """
+        # 1. IMMUNITY / FOCUS CHECK: If already typing in an input field, insert '/' naturally
+        focus_widget = QApplication.focusWidget()
+        if focus_widget:
+            from PySide6.QtWidgets import QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox
+            if isinstance(focus_widget, (QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox)):
+                if isinstance(focus_widget, QLineEdit):
+                    focus_widget.insert("/")
+                elif isinstance(focus_widget, (QTextEdit, QPlainTextEdit)):
+                    focus_widget.insertPlainText("/")
+                return
+            
+            # Reject if the focused widget or any parent is capturing / recording hotkeys
+            w = focus_widget
+            while w:
+                if getattr(w, "_is_capturing", False) or getattr(w, "_recording", False):
+                    return
+                if isinstance(w, QFrame) and w.objectName().endswith("FloatingPanel"):
+                    return
+                if isinstance(w, QDialog):
+                    return
+                w = w.parent()
+
+        # 2. ACTIVE FLOATING PANELS CHECK: Do not focus search if an in-app floating panel is currently open
+        floating_panel_attrs = [
+            '_settings_floating_panel', '_stats_floating_panel', '_game_more_info_panel',
+            '_force_end_panel', '_scan_alert_panel', '_game_folders_panel',
+            '_steam_tracker_panel', '_game_edit_panel', '_game_delete_panel'
+        ]
+        for attr in floating_panel_attrs:
+            panel = getattr(self, attr, None)
+            if panel and panel.isVisible():
+                return
+
+        # 3. PAGE CHECK: STRICTLY only work if user is currently on the HELXAID page (index 0)
         if hasattr(self, 'content_stack') and self.content_stack.currentIndex() != 0:
-            self.switch_panel(0)
+            return
+
         if hasattr(self, 'search_input'):
             self.search_input.setFocus()
             self.search_input.selectAll()
@@ -8586,8 +8880,8 @@ class GameLauncher(QWidget):
         except Exception as e:
             print(f"[UILayoutVisualizer] Overlay init notice: {e}")
         
-        # Quick Search Global Shortcut (Ctrl+F)
-        self.search_shortcut = QShortcut(QKeySequence.Find, self)
+        # Quick Search Shortcut ("/")
+        self.search_shortcut = QShortcut(QKeySequence(Qt.Key_Slash), self)
         self.search_shortcut.activated.connect(self._focus_search)
         
         # Numerical shortcuts for sidebar navigation (1-7)
@@ -8970,7 +9264,7 @@ class GameLauncher(QWidget):
         self.wincustom_nav_btn.setCursor(Qt.PointingHandCursor)
         
         # Load windows custom icon or use fallback
-        wincustom_icon_path = os.path.join(script_dir, "UI Reguler", "windowsIcon.png")
+        wincustom_icon_path = os.path.join(script_dir, "UI Icons", "windowsIcon.png")
         if os.path.exists(wincustom_icon_path):
             wincustom_pixmap = QPixmap(wincustom_icon_path)
             wincustom_scaled = wincustom_pixmap.scaled(40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -9199,7 +9493,7 @@ class GameLauncher(QWidget):
         # Search box (to the left of the + button)
         self.search_input = QLineEdit()
         self.search_input.setObjectName("SearchInput")
-        self.search_input.setPlaceholderText("Search Games... (Ctrl+F)")
+        self.search_input.setPlaceholderText("Search Games... (/)")
         self.search_input.setFixedWidth(400)
         self.search_input.setFixedHeight(50)
         self.search_input.textChanged.connect(self.on_search_text_changed)
@@ -9761,20 +10055,24 @@ class GameLauncher(QWidget):
         # End Game button (for force-killing currently running game)
         self.end_game_btn = AnimatedButton("End Game")
         self.end_game_btn.setObjectName("endGameButton")
-        self.end_game_btn.setFixedSize(100, 30)
+        self.end_game_btn.setFixedSize(100, 40)
+        self.end_game_btn.setCursor(Qt.PointingHandCursor)
+        self.end_game_btn.setHoverMode("fade")
         self.end_game_btn.setHoverGradient(['#FF3333', '#FF6666'])  # Red theme for end game
+        self.end_game_btn.setBorderRadius(6.0)
+        self.end_game_btn.setFontSize(12)
+        self.end_game_btn.setDrawBorder(False)
+        self.end_game_btn.setIdleBackground(QColor(30, 32, 38, 220))
         self.end_game_btn.clicked.connect(self.force_end_game)
         self.end_game_btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(30, 30, 30, 0.9);
-                border: 1px solid #FF3333;
-                border-radius: 5px;
-                padding: 3px 10px;
-                color: #FF6666;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background: rgba(255, 51, 51, 0.3);
+            QPushButton#endGameButton, AnimatedButton#endGameButton {
+                background: transparent;
+                border: none;
+                padding: 0;
+                min-width: 100px;
+                max-width: 100px;
+                min-height: 40px;
+                max-height: 40px;
             }
         """)
         self.end_game_btn.hide()  # Hidden by default, shown when a game is running
@@ -9854,7 +10152,7 @@ class GameLauncher(QWidget):
         print(f"[TIMING] GameLauncher.__init__ DONE")
 
     def _idle_preload_panels(self):
-        """Preload heavy panels (HELXAIC & HELXAIL) during idle startup so page switches are 0ms instant."""
+        """Preload heavy panels (HELXAIC, HELXAIL, & HELRCUS) during idle startup so page switches are 0ms instant."""
         if not hasattr(self, 'music_panel'):
             try:
                 t0 = time.perf_counter()
@@ -9871,6 +10169,15 @@ class GameLauncher(QWidget):
                 print(f"[Preload] HELXAIL (CPU Controller) preloaded in {(time.perf_counter()-t0)*1000:.2f}ms during idle time")
             except Exception as e:
                 print(f"[Preload] CPU panel preload error: {e}")
+
+        # Preload HELRCUS (Windows Customization) during idle time for 0ms instant page switch
+        if not hasattr(self, 'wincustom_panel'):
+            try:
+                t0 = time.perf_counter()
+                self._setup_wincustom_panel()
+                print(f"[Preload] HELRCUS (Windows Customization) preloaded in {(time.perf_counter()-t0)*1000:.2f}ms during idle time")
+            except Exception as e:
+                print(f"[Preload] Windows Customization panel preload error: {e}")
 
     def open_launcher_youtube(self):
         QDesktopServices.openUrl(QUrl("https://rickrolled.com/"))
@@ -10001,12 +10308,11 @@ class GameLauncher(QWidget):
                     border: none;
                     background: transparent;
                 }}
-                QPushButton#StatsBtn, AnimatedButton#StatsBtn {{
+                QPushButton#StatsBtn, AnimatedButton#StatsBtn,
+                QPushButton#endGameButton, AnimatedButton#endGameButton {{
                     background: transparent;
                     border: none;
                     padding: 0;
-                    min-width: 80px;
-                    max-width: 80px;
                     min-height: 40px;
                     max-height: 40px;
                 }}
@@ -10589,11 +10895,11 @@ class GameLauncher(QWidget):
                     return
 
         
-        # Ctrl+F: Focus search
-        if event.modifiers() == Qt.ControlModifier and event.key() == Qt.Key_F:
-            self.search_input.setFocus()
-            self.search_input.selectAll()
-            return
+        # /: Focus search (only if on HELXAID page)
+        if event.key() == Qt.Key_Slash and event.modifiers() in (Qt.NoModifier, Qt.KeypadModifier):
+            if hasattr(self, 'content_stack') and self.content_stack.currentIndex() == 0:
+                self._focus_search()
+                return
         
         # Only handle navigation if we have games
         if not self.game_buttons:
@@ -14807,10 +15113,6 @@ class GameLauncher(QWidget):
                 # Only handle key press events on music panel (index 1)
                 if hasattr(self, 'content_stack') and hasattr(self, 'music_panel') and self.content_stack.currentWidget() == self.music_panel:
                     if hasattr(self, 'music_panel') and self.music_panel:
-                        # Skip if floating URL input is visible
-                        if hasattr(self.music_panel, 'floating_url_input') and self.music_panel.floating_url_input.isVisible():
-                            return False
-                            
                         focus_widget = QApplication.focusWidget()
                         
                         # Skip if typing in any text input, web engine view, or recording hotkeys
@@ -15128,9 +15430,10 @@ class GameLauncher(QWidget):
         self._qs_bg_path.setObjectName("quickSettingsBgPathInput")
         self._qs_bg_path.setText(self.settings.get("background_image", ""))
         self._qs_bg_path.setReadOnly(True)
+        self._qs_bg_path.setFixedHeight(36)
         bg_browse_btn = AnimatedButton("Browse...")
         bg_browse_btn.setObjectName("quickSettingsBgBrowseBtn")
-        bg_browse_btn.setFixedSize(85, 32)
+        bg_browse_btn.setFixedSize(100, 36)
         bg_browse_btn.setCursor(Qt.PointingHandCursor)
         bg_browse_btn.setHoverMode("fade")
         bg_browse_btn.setHoverGradient(['#FF5B06', '#FDA903'])
@@ -15143,13 +15446,17 @@ class GameLauncher(QWidget):
                 background: transparent;
                 border: none;
                 padding: 0;
+                min-width: 100px;
+                max-width: 100px;
+                min-height: 36px;
+                max-height: 36px;
             }
         """)
         bg_browse_btn.clicked.connect(lambda: self._browse_qs_bg())
 
         bg_clear_btn = AnimatedButton("Clear")
         bg_clear_btn.setObjectName("quickSettingsBgClearBtn")
-        bg_clear_btn.setFixedSize(65, 32)
+        bg_clear_btn.setFixedSize(80, 36)
         bg_clear_btn.setCursor(Qt.PointingHandCursor)
         bg_clear_btn.setHoverMode("fade")
         bg_clear_btn.setHoverGradient(['#3A3D45', '#4A4D55'])
@@ -15162,6 +15469,10 @@ class GameLauncher(QWidget):
                 background: transparent;
                 border: none;
                 padding: 0;
+                min-width: 80px;
+                max-width: 80px;
+                min-height: 36px;
+                max-height: 36px;
             }
         """)
         bg_clear_btn.clicked.connect(lambda: self._qs_bg_path.setText(""))
@@ -15335,7 +15646,7 @@ class GameLauncher(QWidget):
         
         self.install_service_btn = AnimatedButton("Enable")
         self.install_service_btn.setObjectName("quickSettingsInstallServiceBtn")
-        self.install_service_btn.setFixedSize(70, 28)
+        self.install_service_btn.setFixedSize(85, 34)
         self.install_service_btn.setCursor(Qt.PointingHandCursor)
         self.install_service_btn.setHoverMode("fade")
         self.install_service_btn.setHoverGradient(['#16A34A', '#22C55E'])
@@ -15348,6 +15659,10 @@ class GameLauncher(QWidget):
                 background: transparent;
                 border: none;
                 padding: 0;
+                min-width: 85px;
+                max-width: 85px;
+                min-height: 34px;
+                max-height: 34px;
             }
         """)
         self.install_service_btn.clicked.connect(self._install_helper_service)
@@ -15355,7 +15670,7 @@ class GameLauncher(QWidget):
         
         self.uninstall_service_btn = AnimatedButton("Disable")
         self.uninstall_service_btn.setObjectName("quickSettingsUninstallServiceBtn")
-        self.uninstall_service_btn.setFixedSize(70, 28)
+        self.uninstall_service_btn.setFixedSize(85, 34)
         self.uninstall_service_btn.setCursor(Qt.PointingHandCursor)
         self.uninstall_service_btn.setHoverMode("fade")
         self.uninstall_service_btn.setHoverGradient(['#DC2626', '#EF4444'])
@@ -15368,6 +15683,10 @@ class GameLauncher(QWidget):
                 background: transparent;
                 border: none;
                 padding: 0;
+                min-width: 85px;
+                max-width: 85px;
+                min-height: 34px;
+                max-height: 34px;
             }
         """)
         self.uninstall_service_btn.clicked.connect(self._uninstall_helper_service)
@@ -18148,34 +18467,41 @@ class GameLauncher(QWidget):
             self.update_discord_music(is_playing=False)
     
     def force_end_game(self):
-        """Force end the currently running game."""
+        """Force end the currently running game with an in-app glassmorphic floating panel."""
         if not self.current_session:
-            QMessageBox.information(self, "No Game Running", "No game is currently running.")
+            self.show_scan_alert("No Game Running", "No game is currently running.", icon_name="info-icon.svg")
             return
         
-        game = self.current_session["game"]
-        game_name = game.get("name", "Unknown")
-        exe_path = game.get("exe", "")
-        exe_name = os.path.basename(exe_path).lower() if exe_path else ""
+        game = self.current_session.get("game", {})
         
-        # Confirm with user
-        reply = QMessageBox.question(
-            self,
-            "Force End Game",
-            f"Are you sure you want to force end '{game_name}'?\n\nThis will kill the process immediately.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+        if hasattr(self, '_force_end_panel') and self._force_end_panel is not None:
+            try:
+                self._force_end_panel.close()
+            except:
+                pass
+        
+        self._force_end_panel = ForceEndGameFloatingPanel(
+            self, game, on_confirm=lambda: self._execute_force_end(game), parent=self
         )
-        
-        if reply != QMessageBox.Yes:
+        self._force_end_panel.show_panel()
+
+    def _execute_force_end(self, game):
+        """Execute the actual kill logic for force ending a game."""
+        if not self.current_session:
             return
+            
+        game_name = game.get("name", "Unknown") if isinstance(game, dict) else str(game)
+        exe_path = game.get("exe", "") if isinstance(game, dict) else ""
+        exe_name = os.path.basename(exe_path).lower() if exe_path else ""
         
         try:
             # Use psutil to find and kill all tracked session processes and matching game binaries
             import psutil
             killed = False
-            target_pids = set(self.current_session.get("tracked_pids", {}).keys())
-            target_exes = set(self._get_game_exe_names(game))
+            target_pids = set(self.current_session.get("tracked_pids", {}).keys()) if self.current_session else set()
+            target_exes = set(self._get_game_exe_names(game)) if hasattr(self, "_get_game_exe_names") else set()
+            if exe_name:
+                target_exes.add(exe_name)
             
             # Kill tracked PIDs first
             for pid in list(target_pids):
@@ -18202,15 +18528,15 @@ class GameLauncher(QWidget):
             if not killed:
                 print(f"No active processes found for {game_name} - may have already closed")
             
-            elapsed = int(time.time() - self.current_session["start_time"])
+            elapsed = int(time.time() - self.current_session["start_time"]) if (self.current_session and "start_time" in self.current_session) else 0
             self._handle_game_stopped()
             
-            QMessageBox.information(self, "Game Ended", f"'{game_name}' session ended.\nPlay time recorded: {elapsed}s")
+            self.show_scan_alert("Game Ended", f"'{game_name}' session ended.\nPlay time recorded: {elapsed}s", icon_name="check-icon.svg")
             
         except psutil.AccessDenied:
-            QMessageBox.warning(self, "Access Denied", f"Cannot end '{game_name}'.\n\nThe game may require administrator privileges to terminate.")
+            self.show_scan_alert("Access Denied", f"Cannot end '{game_name}'.\n\nThe game may require administrator privileges to terminate.", icon_name="warning-icon.svg")
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Error: {e}")
+            self.show_scan_alert("Error", f"Error: {e}", icon_name="warning-icon.svg")
     
     def connect_and_check_running_games(self):
         """Connect to Discord and check if any games are currently running."""
