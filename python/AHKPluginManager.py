@@ -167,11 +167,15 @@ class AHKPluginManager:
 
         # Start process
         try:
-            # Use CREATE_NO_WINDOW to hide the console if running from a script
+            # Use CREATE_NO_WINDOW and SW_HIDE to hide the console if running from a script
             CREATE_NO_WINDOW = 0x08000000
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
             self._process = subprocess.Popen(
                 [self.ahk_exe_path, self.script_path],
-                creationflags=CREATE_NO_WINDOW
+                creationflags=CREATE_NO_WINDOW,
+                startupinfo=startupinfo
             )
             print(f"[AHKPluginManager] Spawned AutoHotkey process (PID: {self._process.pid})")
         except Exception as e:

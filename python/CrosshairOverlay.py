@@ -30,6 +30,7 @@ class CrosshairOverlay(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("CrosshairOverlay")
         
         # Get screen dimensions
         screen = QApplication.primaryScreen().geometry()
@@ -85,6 +86,7 @@ class CrosshairOverlay(QWidget):
         try:
             # Create OpenGL widget
             self._gl_widget = CrosshairGL(self.settings, self)
+            self._gl_widget.setObjectName("CrosshairGLWidget")
             
             # Layout to host GL widget
             layout = QVBoxLayout(self)

@@ -567,24 +567,36 @@ class AnimatedCheckBox(QAbstractButton):
             self._anim.setEndValue(target)
             self._anim.start()
 
-    def setCheckState(self, state: int):
+    def setCheckState(self, state: int, animate: bool = True):
         """Set state: 0=Unchecked, 1=PartiallyChecked (-), 2=Checked (v)."""
         self._check_state = state
         is_chk = (state != 0)
         self.blockSignals(True)
         super().setChecked(is_chk)
         self.blockSignals(False)
-        self._animate_to(1.0 if is_chk else 0.0)
+        if animate:
+            self._animate_to(1.0 if is_chk else 0.0)
+        else:
+            if hasattr(self, '_anim') and self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._progress = 1.0 if is_chk else 0.0
+            self.update()
 
     def checkState(self) -> int:
         return getattr(self, '_check_state', 2 if self.isChecked() else 0)
 
-    def setChecked(self, checked: bool):
+    def setChecked(self, checked: bool, animate: bool = True):
         self._check_state = 2 if checked else 0
         self.blockSignals(True)
         super().setChecked(checked)
         self.blockSignals(False)
-        self._animate_to(1.0 if checked else 0.0)
+        if animate:
+            self._animate_to(1.0 if checked else 0.0)
+        else:
+            if hasattr(self, '_anim') and self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._progress = 1.0 if checked else 0.0
+            self.update()
 
     def sizeHint(self):
         from PySide6.QtCore import QSize

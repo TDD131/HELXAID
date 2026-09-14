@@ -2143,7 +2143,8 @@ class StreamOmniSearchBar(QFrame):
         self.input_edit.setStyleSheet("""
             QLineEdit#streamSearchInput {
                 background: transparent; border: none; color: #FFFFFF; font-size: 11px;
-                font-family: 'Orbitron', sans-serif; font-weight: bold; selection-background-color: #FF5B06;
+                font-family: 'Orbitron', sans-serif; font-weight: bold;
+                selection-background-color: #ffffff; selection-color: #000000;
                 padding: 0px;
             }
         """)

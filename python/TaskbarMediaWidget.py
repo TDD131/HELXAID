@@ -262,17 +262,17 @@ class MiniSpectrumVisualizer(QWidget):
                 from AudioSpectrumEngine import AudioSpectrumEngine
                 self._engine = AudioSpectrumEngine.get_instance()
 
-            import numpy as np
             spec, _ = self._engine.get_spectrum_snapshot(64)
             n_spec = len(spec)
             if n_spec >= self._bar_count:
                 # Downsample 64 frequency bins into 7 bars covering Sub-Bass to Treble
-                indices = np.linspace(0, n_spec - 1, self._bar_count + 1).astype(int)
+                step = (n_spec - 1) / float(self._bar_count)
+                indices = [int(round(i * step)) for i in range(self._bar_count + 1)]
                 for i in range(self._bar_count):
                     st = indices[i]
                     en = max(st + 1, indices[i + 1])
                     chunk = spec[st:en]
-                    val = float(np.max(chunk)) if len(chunk) > 0 else 0.0
+                    val = float(max(chunk)) if len(chunk) > 0 else 0.0
                     
                     target = min(1.0, max(0.12, val * 1.25))
                     diff = target - self._bar_heights[i]

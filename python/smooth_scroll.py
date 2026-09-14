@@ -11,8 +11,8 @@ Usage:
     scroll.setWidget(your_content_widget)
 """
 
-from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout, QLabel, QApplication
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer
+from PySide6.QtWidgets import QScrollArea, QWidget, QVBoxLayout, QLabel, QApplication, QListWidget, QAbstractItemView
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, QEvent
 from PySide6.QtGui import QWheelEvent
 import time
 
@@ -116,6 +116,105 @@ class SmoothScrollArea(QScrollArea):
         self._animation.setEndValue(int(self._target))
         self._animation.start()
         
+        event.accept()
+
+
+class SmoothListWidget(QListWidget):
+    """
+    QListWidget with signature HELXAID dynamic smooth scrolling (momentum + cubic easing).
+    Uses ScrollPerPixel for fluid, non-jittery scrolling.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        
+        self._animation = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        
+        self._target = 0
+        self._last_wheel_time = 0
+        self._velocity = 0
+        self._scroll_enabled = True
+        
+        self.verticalScrollBar().sliderPressed.connect(self._animation.stop)
+        
+        if self.viewport():
+            self.viewport().installEventFilter(self)
+
+    def set_scroll_enabled(self, enabled: bool):
+        self._scroll_enabled = enabled
+        if not enabled:
+            self._animation.stop()
+            self._target = 0
+            self.verticalScrollBar().setValue(0)
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        else:
+            self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+    def eventFilter(self, watched, event):
+        if watched == self.viewport() and event.type() == QEvent.Wheel:
+            self._handle_wheel(event)
+            return True
+        return super().eventFilter(watched, event)
+
+    def wheelEvent(self, event: QWheelEvent):
+        self._handle_wheel(event)
+
+    def _handle_wheel(self, event: QWheelEvent):
+        if not getattr(self, '_scroll_enabled', True):
+            event.accept()
+            return
+
+        delta = event.angleDelta().y()
+        if delta == 0:
+            event.accept()
+            return
+
+        scrollbar = self.verticalScrollBar()
+        min_val = scrollbar.minimum()
+        max_val = scrollbar.maximum()
+
+        current_time = time.time() * 1000  # ms
+        time_diff = current_time - self._last_wheel_time
+        self._last_wheel_time = current_time
+
+        scroll_amount = -delta * 0.45
+
+        if time_diff < 100:
+            self._velocity = min(self._velocity + abs(scroll_amount) * 0.3, 800)
+        else:
+            self._velocity = abs(scroll_amount)
+
+        if self._animation.state() == QPropertyAnimation.Running:
+            remaining = self._target - scrollbar.value()
+            self._target = scrollbar.value() + scroll_amount + remaining * 0.6
+        else:
+            self._target = scrollbar.value() + scroll_amount
+
+        if self._velocity > 200:
+            boost = (self._velocity / 200) * 0.25
+            self._target = scrollbar.value() + scroll_amount * (1 + boost)
+
+        self._target = max(min_val, min(max_val, self._target))
+
+        base_duration = 180
+        velocity_factor = min(self._velocity / 300, 2.0)
+        duration = int(base_duration + (velocity_factor * 100))
+
+        if self._velocity > 500:
+            self._animation.setEasingCurve(QEasingCurve.OutExpo)
+        elif self._velocity > 300:
+            self._animation.setEasingCurve(QEasingCurve.OutQuart)
+        else:
+            self._animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        self._animation.stop()
+        self._animation.setDuration(duration)
+        self._animation.setStartValue(scrollbar.value())
+        self._animation.setEndValue(int(self._target))
+        self._animation.start()
+
         event.accept()
 
 

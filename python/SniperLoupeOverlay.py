@@ -138,6 +138,9 @@ class SniperLoupeOverlay(QWidget):
                     self.settings.update(saved)
             except Exception as e:
                 print(f"[SniperLoupe] Error loading settings: {e}")
+        # Always enforce disabled state on launch (tactical magnifier triggers on demand)
+        self.settings["enabled"] = False
+        self.is_active = False
 
     def save_settings(self):
         """Save settings to user AppData."""
@@ -145,8 +148,10 @@ class SniperLoupeOverlay(QWidget):
         os.makedirs(appdata_dir, exist_ok=True)
         settings_path = os.path.join(appdata_dir, "sniper_loupe_settings.json")
         try:
+            save_data = dict(self.settings)
+            save_data["enabled"] = False  # Never persist enabled state across sessions
             with open(settings_path, 'w', encoding='utf-8') as f:
-                json.dump(self.settings, f, indent=2)
+                json.dump(save_data, f, indent=2)
         except Exception as e:
             print(f"[SniperLoupe] Error saving settings: {e}")
 

@@ -43,6 +43,15 @@ class NoScrollComboBox(QComboBox):
     def wheelEvent(self, event):
         event.ignore()
 
+    def showPopup(self):
+        try:
+            popup = self.view().window()
+            popup.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+            popup.setAttribute(Qt.WA_TranslucentBackground, True)
+        except Exception:
+            pass
+        super().showPopup()
+
 
 class EyedropperOverlay(QWidget):
     """Full-screen overlay for picking colors from screen with zoom preview."""
@@ -51,6 +60,7 @@ class EyedropperOverlay(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("eyedropperOverlay")
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
@@ -205,6 +215,7 @@ class HorizontalSpinBox(QFrame):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("horizontalSpinBox")
         self._value = 0
         self._min = -100
         self._max = 100
@@ -221,6 +232,7 @@ class HorizontalSpinBox(QFrame):
         
         # Value display
         self._value_edit = QLabel("0")
+        self._value_edit.setObjectName("horizontalSpinBoxValueLabel")
         self._value_edit.setAlignment(Qt.AlignCenter)
         self._value_edit.setMinimumWidth(50)
         self._value_edit.setFixedHeight(32)
@@ -238,6 +250,7 @@ class HorizontalSpinBox(QFrame):
         
         # Plus button (increase)
         self._plus_btn = QPushButton("+")
+        self._plus_btn.setObjectName("horizontalSpinBoxPlusBtn")
         self._plus_btn.setFixedSize(32, 32)
         self._plus_btn.clicked.connect(self._increment)
         self._plus_btn.setStyleSheet(self._button_style())
@@ -245,6 +258,7 @@ class HorizontalSpinBox(QFrame):
         
         # Minus button (decrease)
         self._minus_btn = QPushButton("-")
+        self._minus_btn.setObjectName("horizontalSpinBoxMinusBtn")
         self._minus_btn.setFixedSize(32, 32)
         self._minus_btn.clicked.connect(self._decrement)
         self._minus_btn.setStyleSheet(self._button_style())
@@ -310,6 +324,7 @@ class AnimatedComboBox(QComboBox):
         
         # Custom arrow label
         self._arrow_label = QLabel(self)
+        self._arrow_label.setObjectName("animatedComboArrowLabel")
         self._arrow_label.setFixedSize(12, 12)
         self._arrow_label.setStyleSheet("background: transparent;")
         self._update_arrow_blend()
@@ -584,10 +599,12 @@ class CrosshairWidget(QWidget):
         title_section.setSpacing(4)
         
         header_text = QLabel("HELXAIR")
+        header_text.setObjectName("crosshairHeaderTitle")
         header_text.setStyleSheet("font-size: 28px; font-weight: 600; color: #DDE6ED; letter-spacing: 1px;")
         title_section.addWidget(header_text)
         
         subtitle = QLabel("Custom Crosshair Overlay")
+        subtitle.setObjectName("crosshairHeaderSubtitle")
         subtitle.setStyleSheet("font-size: 12px; color: #9DB2BF; letter-spacing: 0.5px;")
         title_section.addWidget(subtitle)
         
@@ -606,6 +623,7 @@ class CrosshairWidget(QWidget):
         
         # Scroll area for settings
         scroll = SmoothScrollArea()
+        scroll.setObjectName("crosshairScrollArea")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setStyleSheet("""
@@ -622,16 +640,19 @@ class CrosshairWidget(QWidget):
         """)
         
         scroll_content = QWidget()
+        scroll_content.setObjectName("crosshairScrollContent")
         scroll_content.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
         scroll_layout.setSpacing(16)
         
         # === ENABLE/TOGGLE SECTION ===
         toggle_group = QGroupBox("Quick Controls")
+        toggle_group.setObjectName("crosshairQuickControlsGroup")
         toggle_group.setStyleSheet(self._group_style())
         toggle_layout = QHBoxLayout(toggle_group)
         
         self.enable_btn = QPushButton("Enable Crosshair")
+        self.enable_btn.setObjectName("crosshairEnableBtn")
         self.enable_btn.setCheckable(True)
         self.enable_btn.setFixedWidth(190)
         self.enable_btn.setStyleSheet(self._toggle_btn_style())
@@ -639,6 +660,7 @@ class CrosshairWidget(QWidget):
         toggle_layout.addWidget(self.enable_btn)
         
         hotkey_label = QLabel("Hotkey: Ctrl+Shift+C")
+        hotkey_label.setObjectName("crosshairHotkeyLabel")
         hotkey_label.setStyleSheet("color: #888; font-size: 12px;")
         toggle_layout.addWidget(hotkey_label)
         toggle_layout.addStretch()
@@ -647,17 +669,21 @@ class CrosshairWidget(QWidget):
         
         # === SHAPE SECTION ===
         shape_group = QGroupBox("Shape")
+        shape_group.setObjectName("crosshairShapeGroup")
         shape_group.setStyleSheet(self._group_style())
         shape_layout = QVBoxLayout(shape_group)
         
-        self.shape_combo = AnimatedComboBox()
+        self.shape_combo = NoScrollComboBox()
+        self.shape_combo.setObjectName("crosshairShapeCombo")
         self.shape_combo.addItems(["Dot", "Cross", "Circle", "T-Shape", "Custom Image"])
-        self.shape_combo.setStyleSheet(self._animated_combo_style())
+        self.shape_combo.setFixedHeight(30)
+        self.shape_combo.setStyleSheet(self._combo_style())
         self.shape_combo.currentTextChanged.connect(self._on_shape_change)
         shape_layout.addWidget(self.shape_combo)
         
         # Custom image button
         self.custom_img_btn = QPushButton("Load Custom Image...")
+        self.custom_img_btn.setObjectName("crosshairCustomImgBtn")
         self.custom_img_btn.setStyleSheet(self._btn_style())
         self.custom_img_btn.clicked.connect(self._load_custom_image)
         self.custom_img_btn.hide()
@@ -665,6 +691,7 @@ class CrosshairWidget(QWidget):
         
         # Custom image smooth toggle (anti-aliasing)
         self.custom_smooth_check = AnimatedCheckBox("Smooth Image (Anti-Aliasing)")
+        self.custom_smooth_check.setObjectName("crosshairCustomSmoothCheck")
         self.custom_smooth_check.setChecked(True)
         self.custom_smooth_check.toggled.connect(lambda s: self._update_setting("custom_antialiasing", bool(s)))
         self.custom_smooth_check.hide()
@@ -674,22 +701,28 @@ class CrosshairWidget(QWidget):
         
         # === COLOR SECTION ===
         color_group = QGroupBox("Colors")
+        color_group.setObjectName("crosshairColorGroup")
         color_group.setStyleSheet(self._group_style())
         color_layout = QGridLayout(color_group)
         
         # Main color
-        color_layout.addWidget(QLabel("Main Color:"), 0, 0)
+        lbl_main_color = QLabel("Main Color:")
+        lbl_main_color.setObjectName("crosshairMainColorLabel")
+        color_layout.addWidget(lbl_main_color, 0, 0)
         self.main_color_btn = ColorButton("#00FF00")
+        self.main_color_btn.setObjectName("crosshairMainColorBtn")
         self.main_color_btn.colorChanged.connect(lambda c: self._update_setting("color", c))
         color_layout.addWidget(self.main_color_btn, 0, 1)
         
         # Outline
         self.outline_check = AnimatedCheckBox("Outline")
+        self.outline_check.setObjectName("crosshairOutlineCheck")
         self.outline_check.setChecked(True)
         self.outline_check.toggled.connect(lambda s: self._update_setting("outline_enabled", bool(s)))
         color_layout.addWidget(self.outline_check, 1, 0)
         
         self.outline_color_btn = ColorButton("#000000")
+        self.outline_color_btn.setObjectName("crosshairOutlineColorBtn")
         self.outline_color_btn.colorChanged.connect(lambda c: self._update_setting("outline_color", c))
         color_layout.addWidget(self.outline_color_btn, 1, 1)
         
@@ -697,46 +730,59 @@ class CrosshairWidget(QWidget):
         
         # === SIZE & THICKNESS SECTION ===
         size_group = QGroupBox("Size and Thickness")
+        size_group.setObjectName("crosshairSizeThicknessGroup")
         size_group.setStyleSheet(self._group_style())
         size_layout = QGridLayout(size_group)
         
         # Size slider
-        size_layout.addWidget(QLabel("Size:"), 0, 0)
+        lbl_size = QLabel("Size:")
+        lbl_size.setObjectName("crosshairSizeLabel")
+        size_layout.addWidget(lbl_size, 0, 0)
         self.size_slider = NoScrollSlider(Qt.Horizontal)
+        self.size_slider.setObjectName("crosshairSizeSlider")
         self.size_slider.setRange(5, 100)
         self.size_slider.setValue(20)
         self.size_slider.setStyleSheet(self._slider_style())
         self.size_slider.valueChanged.connect(lambda v: self._update_setting("size", v))
         size_layout.addWidget(self.size_slider, 0, 1)
         self.size_label = QLabel("20")
+        self.size_label.setObjectName("crosshairSizeValLabel")
         self.size_label.setFixedWidth(35)
         self.size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.size_slider.valueChanged.connect(lambda v: self.size_label.setText(str(v)))
         size_layout.addWidget(self.size_label, 0, 2)
         
         # Thickness slider
-        size_layout.addWidget(QLabel("Thickness:"), 1, 0)
+        lbl_thickness = QLabel("Thickness:")
+        lbl_thickness.setObjectName("crosshairThicknessLabel")
+        size_layout.addWidget(lbl_thickness, 1, 0)
         self.thickness_slider = NoScrollSlider(Qt.Horizontal)
+        self.thickness_slider.setObjectName("crosshairThicknessSlider")
         self.thickness_slider.setRange(1, 10)
         self.thickness_slider.setValue(2)
         self.thickness_slider.setStyleSheet(self._slider_style())
         self.thickness_slider.valueChanged.connect(lambda v: self._update_setting("thickness", v))
         size_layout.addWidget(self.thickness_slider, 1, 1)
         self.thickness_label = QLabel("2")
+        self.thickness_label.setObjectName("crosshairThicknessValLabel")
         self.thickness_label.setFixedWidth(35)
         self.thickness_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.thickness_slider.valueChanged.connect(lambda v: self.thickness_label.setText(str(v)))
         size_layout.addWidget(self.thickness_label, 1, 2)
         
         # Gap slider
-        size_layout.addWidget(QLabel("Center Gap:"), 2, 0)
+        lbl_gap = QLabel("Center Gap:")
+        lbl_gap.setObjectName("crosshairGapLabel")
+        size_layout.addWidget(lbl_gap, 2, 0)
         self.gap_slider = NoScrollSlider(Qt.Horizontal)
+        self.gap_slider.setObjectName("crosshairGapSlider")
         self.gap_slider.setRange(0, 20)
         self.gap_slider.setValue(4)
         self.gap_slider.setStyleSheet(self._slider_style())
         self.gap_slider.valueChanged.connect(lambda v: self._update_setting("gap", v))
         size_layout.addWidget(self.gap_slider, 2, 1)
         self.gap_label = QLabel("4")
+        self.gap_label.setObjectName("crosshairGapValLabel")
         self.gap_label.setFixedWidth(35)
         self.gap_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.gap_slider.valueChanged.connect(lambda v: self.gap_label.setText(str(v)))
@@ -746,17 +792,22 @@ class CrosshairWidget(QWidget):
         
         # === OPACITY SECTION ===
         opacity_group = QGroupBox("Opacity")
+        opacity_group.setObjectName("crosshairOpacityGroup")
         opacity_group.setStyleSheet(self._group_style())
         opacity_layout = QHBoxLayout(opacity_group)
         
-        opacity_layout.addWidget(QLabel("Opacity:"))
+        lbl_opacity = QLabel("Opacity:")
+        lbl_opacity.setObjectName("crosshairOpacityLabel")
+        opacity_layout.addWidget(lbl_opacity)
         self.opacity_slider = NoScrollSlider(Qt.Horizontal)
+        self.opacity_slider.setObjectName("crosshairOpacitySlider")
         self.opacity_slider.setRange(10, 100)
         self.opacity_slider.setValue(100)
         self.opacity_slider.setStyleSheet(self._slider_style())
         self.opacity_slider.valueChanged.connect(lambda v: self._update_setting("opacity", v))
         opacity_layout.addWidget(self.opacity_slider)
         self.opacity_label = QLabel("100%")
+        self.opacity_label.setObjectName("crosshairOpacityValLabel")
         self.opacity_label.setFixedWidth(40)
         self.opacity_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.opacity_slider.valueChanged.connect(lambda v: self.opacity_label.setText(f"{v}%"))
@@ -766,22 +817,28 @@ class CrosshairWidget(QWidget):
         
         # === CENTER DOT SECTION ===
         dot_group = QGroupBox("Center Dot")
+        dot_group.setObjectName("crosshairDotGroup")
         dot_group.setStyleSheet(self._group_style())
         dot_layout = QGridLayout(dot_group)
         
         self.dot_check = AnimatedCheckBox("Show Center Dot")
+        self.dot_check.setObjectName("crosshairDotCheck")
         self.dot_check.setChecked(True)
         self.dot_check.toggled.connect(lambda s: self._update_setting("dot_enabled", bool(s)))
         dot_layout.addWidget(self.dot_check, 0, 0, 1, 2)
         
-        dot_layout.addWidget(QLabel("Dot Size:"), 1, 0)
+        lbl_dot_size = QLabel("Dot Size:")
+        lbl_dot_size.setObjectName("crosshairDotSizeLabel")
+        dot_layout.addWidget(lbl_dot_size, 1, 0)
         self.dot_size_slider = NoScrollSlider(Qt.Horizontal)
+        self.dot_size_slider.setObjectName("crosshairDotSizeSlider")
         self.dot_size_slider.setRange(2, 20)
         self.dot_size_slider.setValue(4)
         self.dot_size_slider.setStyleSheet(self._slider_style())
         self.dot_size_slider.valueChanged.connect(lambda v: self._update_setting("dot_size", v))
         dot_layout.addWidget(self.dot_size_slider, 1, 1)
         self.dot_size_label = QLabel("4")
+        self.dot_size_label.setObjectName("crosshairDotSizeValLabel")
         self.dot_size_label.setFixedWidth(35)
         self.dot_size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.dot_size_slider.valueChanged.connect(lambda v: self.dot_size_label.setText(str(v)))
@@ -791,14 +848,18 @@ class CrosshairWidget(QWidget):
         
         # === POSITION & ROTATION SECTION ===
         pos_group = QGroupBox("Position & Rotation")
+        pos_group.setObjectName("crosshairPositionGroup")
         pos_group.setStyleSheet(self._group_style())
         pos_layout = QGridLayout(pos_group)
         pos_layout.setVerticalSpacing(8)
         pos_layout.setColumnStretch(1, 1)
         
         # X Offset - inline layout
-        pos_layout.addWidget(QLabel("X Offset:"), 0, 0, Qt.AlignVCenter)
+        lbl_x_offset = QLabel("X Offset:")
+        lbl_x_offset.setObjectName("crosshairXOffsetLabel")
+        pos_layout.addWidget(lbl_x_offset, 0, 0, Qt.AlignVCenter)
         self.x_offset_value = QLineEdit("0")
+        self.x_offset_value.setObjectName("crosshairXOffsetValue")
         self.x_offset_value.setValidator(QIntValidator(-500, 500, self))
         self.x_offset_value.setAlignment(Qt.AlignCenter)
         self.x_offset_value.setFixedHeight(40)
@@ -809,6 +870,7 @@ class CrosshairWidget(QWidget):
         
         # X Plus (Right Arrow: +1px X)
         x_plus = QPushButton()
+        x_plus.setObjectName("crosshairXPlusBtn")
         x_plus.setToolTip("Increase X Offset (+1px Right)")
         x_plus.setMinimumSize(40, 40)
         x_plus.setMaximumWidth(40)
@@ -824,6 +886,7 @@ class CrosshairWidget(QWidget):
         
         # X Minus (Left Arrow: -1px X)
         x_minus = QPushButton()
+        x_minus.setObjectName("crosshairXMinusBtn")
         x_minus.setToolTip("Decrease X Offset (-1px Left)")
         x_minus.setMinimumSize(40, 40)
         x_minus.setMaximumWidth(40)
@@ -838,8 +901,11 @@ class CrosshairWidget(QWidget):
         pos_layout.addWidget(x_minus, 0, 3)
         
         # Y Offset - inline layout
-        pos_layout.addWidget(QLabel("Y Offset:"), 1, 0, Qt.AlignVCenter)
+        lbl_y_offset = QLabel("Y Offset:")
+        lbl_y_offset.setObjectName("crosshairYOffsetLabel")
+        pos_layout.addWidget(lbl_y_offset, 1, 0, Qt.AlignVCenter)
         self.y_offset_value = QLineEdit("0")
+        self.y_offset_value.setObjectName("crosshairYOffsetValue")
         self.y_offset_value.setValidator(QIntValidator(-500, 500, self))
         self.y_offset_value.setAlignment(Qt.AlignCenter)
         self.y_offset_value.setFixedHeight(40)
@@ -850,6 +916,7 @@ class CrosshairWidget(QWidget):
         
         # Y Plus (Down Arrow: +1px Y)
         y_plus = QPushButton()
+        y_plus.setObjectName("crosshairYPlusBtn")
         y_plus.setToolTip("Increase Y Offset (+1px Down)")
         y_plus.setMinimumSize(40, 40)
         y_plus.setMaximumWidth(40)
@@ -865,6 +932,7 @@ class CrosshairWidget(QWidget):
         
         # Y Minus (Up Arrow: -1px Y)
         y_minus = QPushButton()
+        y_minus.setObjectName("crosshairYMinusBtn")
         y_minus.setToolTip("Decrease Y Offset (-1px Up)")
         y_minus.setMinimumSize(40, 40)
         y_minus.setMaximumWidth(40)
@@ -883,14 +951,18 @@ class CrosshairWidget(QWidget):
         self._offset_y = 0
         
         # Rotation
-        pos_layout.addWidget(QLabel("Rotation:"), 2, 0)
+        lbl_rotation = QLabel("Rotation:")
+        lbl_rotation.setObjectName("crosshairRotationLabel")
+        pos_layout.addWidget(lbl_rotation, 2, 0)
         self.rotation_slider = NoScrollSlider(Qt.Horizontal)
+        self.rotation_slider.setObjectName("crosshairRotationSlider")
         self.rotation_slider.setRange(0, 360)
         self.rotation_slider.setValue(0)
         self.rotation_slider.setStyleSheet(self._slider_style())
         self.rotation_slider.valueChanged.connect(lambda v: self._update_setting("rotation", v))
         pos_layout.addWidget(self.rotation_slider, 2, 1, 1, 2)
         self.rotation_label = QLabel("0°")
+        self.rotation_label.setObjectName("crosshairRotationValLabel")
         self.rotation_label.setFixedWidth(35)
         self.rotation_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.rotation_slider.valueChanged.connect(lambda v: self.rotation_label.setText(f"{v}°"))
@@ -1375,10 +1447,10 @@ class CrosshairWidget(QWidget):
             # Sync initial crosshair offset to loupe
             self.sniper_loupe.set_offsets(self._offset_x, self._offset_y)
 
-            if ls.get("enabled", False):
-                self.sniper_loupe.show_loupe()
-                self.loupe_enable_btn.setChecked(True)
-                self.loupe_enable_btn.setText("Sniper Loupe Active")
+            # Loupe starts disabled by default; reflects live state if already active
+            is_active = getattr(self.sniper_loupe, 'is_active', False)
+            self.loupe_enable_btn.setChecked(is_active)
+            self.loupe_enable_btn.setText("Sniper Loupe Active" if is_active else "Enable Sniper Loupe")
     
     def cleanup(self):
         """Cleanup resources on close."""
@@ -1407,16 +1479,18 @@ class CrosshairWidget(QWidget):
     def _group_style(self):
         return """
             QGroupBox {
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
                 font-weight: 600;
                 font-size: 14px;
                 color: #FDA903;
                 background-color: rgba(255, 255, 255, 0.04);
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 14px;
                 margin-top: 12px;
                 padding: 16px 12px 12px 12px;
             }
             QGroupBox::title {
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
                 subcontrol-origin: margin;
                 left: 16px;
                 padding: 0 8px;
@@ -1469,53 +1543,59 @@ class CrosshairWidget(QWidget):
         """
     
     def _combo_style(self):
-        return """
-            QComboBox {
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        down_arrow_path = os.path.join(script_dir, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
+        return f"""
+            QComboBox {{
                 background: rgba(255, 255, 255, 0.1);
                 border: none;
-                border-radius: 10px;
-                padding: 10px 14px;
+                border-radius: 8px;
+                padding: 3px 26px 3px 10px;
                 color: #e0e0e0;
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
+                font-size: 12px;
                 font-weight: 500;
-            }
-            QComboBox:hover {
+            }}
+            QComboBox:hover {{
                 background: rgba(255, 255, 255, 0.2);
-            }
-            QComboBox::drop-down {
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 24px;
                 border: none;
-                width: 30px;
                 background: transparent;
-            }
-            QComboBox::down-arrow {
-                image: url(python/down-arrow.png);
+            }}
+            QComboBox::down-arrow,
+            QComboBox::down-arrow:on,
+            QComboBox::down-arrow:open {{
+                image: url('{down_arrow_path}');
                 width: 10px;
                 height: 10px;
-            }
-            QComboBox::down-arrow:on {
-                image: url(python/up-arrow.png);
-                width: 10px;
-                height: 10px;
-            }
-            QComboBox QAbstractItemView {
-                background: rgba(25, 28, 36, 0.85);
-                color: #e0e0e0;
+                top: 0px;
+                left: 0px;
+            }}
+            QComboBox QAbstractItemView {{
+                background: #1e2128;
                 border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
-                outline: 0px;
                 padding: 4px;
-            }
-            QComboBox QAbstractItemView::item {
-                min-height: 28px;
+                outline: 0px;
+                font-family: 'Orbitron', 'Segoe UI', sans-serif;
+                font-size: 12px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 26px;
                 padding: 4px 8px;
                 background: transparent;
                 color: #e0e0e0;
                 border-radius: 4px;
-            }
+            }}
             QComboBox QAbstractItemView::item:hover,
-            QComboBox QAbstractItemView::item:selected {
+            QComboBox QAbstractItemView::item:selected {{
                 background-color: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
-            }
+            }}
         """
     
     def _animated_combo_style(self):

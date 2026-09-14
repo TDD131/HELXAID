@@ -124,24 +124,127 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 return p
         return None
 
+    def get_throttlestop_path(self, explicit_path=None):
+        if explicit_path and os.path.exists(explicit_path):
+            return explicit_path
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = os.path.dirname(script_dir)
+        exe_dir = os.path.dirname(sys.executable)
+        
+        paths_to_check = [
+            os.path.join(base_dir, "assets", "throttlestop", "ThrottleStop.exe"),
+            os.path.join(exe_dir, "assets", "throttlestop", "ThrottleStop.exe"),
+            os.path.join(base_dir, "tools", "throttlestop", "ThrottleStop.exe"),
+            os.path.join(exe_dir, "tools", "throttlestop", "ThrottleStop.exe"),
+            os.path.join(os.environ.get('APPDATA', ''), "HELXAID", "tools", "throttlestop", "ThrottleStop.exe"),
+        ]
+
+        users_dir = "C:\\Users"
+        if os.path.exists(users_dir):
+            try:
+                for u in os.listdir(users_dir):
+                    if u.lower() in ["public", "default", "default user", "all users"]:
+                        continue
+                    p = os.path.join(users_dir, u, "AppData", "Roaming", "HELXAID", "tools", "throttlestop", "ThrottleStop.exe")
+                    if os.path.exists(p):
+                        paths_to_check.append(p)
+            except Exception:
+                pass
+        
+        for p in paths_to_check:
+            if p and os.path.exists(p):
+                return p
+        return None
+
+    def _apply_intel_throttlestop_service(self, profile, explicit_path=None):
+        ts_path = self.get_throttlestop_path(explicit_path)
+        if not ts_path:
+            return {"status": "success", "message": "Intel CPU detected. ThrottleStop not found; power managed via Windows Power Scheme."}
+
+        ini_path = os.path.join(os.path.dirname(ts_path), "ThrottleStop.ini")
+        try:
+            from integrations.cpu_controller import update_throttlestop_ini
+            update_throttlestop_ini(ini_path, profile)
+        except Exception:
+            try:
+                pl1 = int(profile.get("pl1_limit", 45))
+                pl2 = int(profile.get("pl2_limit", 65))
+                tau = int(profile.get("tau_duration", 28))
+                temp = int(profile.get("temp_limit", 90))
+                epp = int(profile.get("epp_value", 84))
+                dts = max(0, min(40, 100 - temp))
+                updates = {
+                    "PL1_1": str(pl1), "PL2_1": str(pl2), "TurboTime_1": str(tau),
+                    "SpeedShift_1": str(epp), "DTS_1": str(dts), "Clamp_1": "1",
+                    "TPL_1": "1", "Profile": "1", "NotificationDisabled": "1",
+                    "StartMinimized": "1", "MinimizeOnClose": "1"
+                }
+                existing_lines = []
+                if os.path.exists(ini_path):
+                    with open(ini_path, "r", encoding="utf-8", errors="ignore") as f:
+                        existing_lines = f.readlines()
+                new_lines = []
+                applied = set()
+                for line in existing_lines:
+                    s = line.strip()
+                    if "=" in s and not s.startswith(("#", ";", "[")):
+                        k, _ = s.split("=", 1)
+                        k = k.strip()
+                        if k in updates:
+                            new_lines.append(f"{k}={updates[k]}\n")
+                            applied.add(k)
+                            continue
+                    new_lines.append(line)
+                for k, v in updates.items():
+                    if k not in applied:
+                        new_lines.append(f"{k}={v}\n")
+                tmp_p = ini_path + ".tmp"
+                with open(tmp_p, "w", encoding="utf-8") as f:
+                    f.writelines(new_lines)
+                os.replace(tmp_p, ini_path)
+            except Exception as write_err:
+                print(f"[HelperService] Error writing ThrottleStop.ini: {write_err}")
+
+        # Terminate any running ThrottleStop to reload fresh INI
+        try:
+            subprocess.run(["taskkill.exe", "/F", "/IM", "ThrottleStop.exe"],
+                           capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            time.sleep(0.05)
+        except Exception:
+            pass
+
+        # Spawn ThrottleStop.exe -b
+        try:
+            subprocess.Popen([ts_path, "-b"], cwd=os.path.dirname(ts_path), creationflags=subprocess.CREATE_NO_WINDOW)
+            return {"status": "success", "message": "Applied Intel power limits via ThrottleStop (Zero-UAC)."}
+        except Exception as spawn_err:
+            return {"status": "error", "message": f"Failed to spawn ThrottleStop: {spawn_err}"}
+
     def process_command(self, payload_str):
         try:
             data = json.loads(payload_str)
             action = data.get("action")
+
+            if action == "apply_intel":
+                profile = data.get("profile", {})
+                explicit_path = data.get("throttlestop_path")
+                return self._apply_intel_throttlestop_service(profile, explicit_path)
             
             if action == "apply_cpu":
                 profile = data.get("profile", {})
                 if not profile:
                     return {"status": "error", "message": "No profile data provided."}
                 
-                # Check CPU vendor - skip RyzenAdj on Intel CPUs
+                # Check CPU vendor - route to ThrottleStop on Intel CPUs
                 try:
                     import winreg
                     key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
                     vendor_id, _ = winreg.QueryValueEx(key, "VendorIdentifier")
                     winreg.CloseKey(key)
                     if "INTEL" in str(vendor_id).upper() or "GENUINEINTEL" in str(vendor_id).upper():
-                        return {"status": "success", "message": "Intel CPU detected. Zero-UAC active for system features; CPU power managed via Windows Power Scheme."}
+                        explicit_ts = data.get("throttlestop_path")
+                        return self._apply_intel_throttlestop_service(profile, explicit_ts)
                 except Exception:
                     pass
 

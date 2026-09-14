@@ -23,9 +23,9 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QApplication, QDialog
 )
 from smooth_scroll import SmoothScrollArea
-from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QObject, QPropertyAnimation, QEasingCurve, QPoint
-from PySide6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QLinearGradient
-from AnimatedButton import AnimatedCheckBox, HoverCloseButton, FadeHoverButton
+from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QObject, QPropertyAnimation, QEasingCurve, QPoint, QAbstractNativeEventFilter
+from PySide6.QtGui import QColor, QFont, QIcon, QPixmap, QPainter, QLinearGradient, QTransform
+from AnimatedButton import AnimatedButton, AnimatedCheckBox, HoverCloseButton, FadeHoverButton
 
 # Paths
 if hasattr(sys, '_MEIPASS'):
@@ -198,10 +198,15 @@ def _load_helrcus_config():
             "pause_years": 1,
             "pause_until_date": "",
             "disable_auto_restart": False,
-            "active_hours_preset": "Always Active",
+            "active_hours_preset": "Always Active (Max 18h)",
             "active_hours_start": 0,
             "active_hours_end": 18,
             "metered_connection": False
+        },
+        "module_settings": {
+            "init_at_main_initialize": True,
+            "startup_hotkeys": True,
+            "keep_in_memory": True
         }
     }
     try:
@@ -288,10 +293,40 @@ def _parse_hotkey_string(hotkey_str):
     return modifiers, vk_code
 
 
+class HelrcusGlobalHotkeyEventFilter(QAbstractNativeEventFilter):
+    """
+    Application-wide native event filter for HELRCUS Global Activation Hotkey.
+    Catches WM_HOTKEY (0x0312) messages across any window/thread state
+    and routes them directly to WindowsCustomPanel._activate_lock_screen().
+    
+    Component Name: HelrcusGlobalHotkeyEventFilter
+    """
+    def __init__(self, panel):
+        super().__init__()
+        import weakref
+        self._panel_ref = weakref.ref(panel)
+
+    def nativeEventFilter(self, eventType, message):
+        try:
+            msg_ptr = int(message)
+            msg = ctypes.wintypes.MSG.from_address(msg_ptr)
+            if msg.message == 0x0312:  # WM_HOTKEY
+                panel = self._panel_ref()
+                if panel is not None and hasattr(panel, "_activation_hotkey_id"):
+                    if msg.wParam == panel._activation_hotkey_id:
+                        print(f"[HELRCUS] Caught global activation hotkey (id={panel._activation_hotkey_id}) in nativeEventFilter!", flush=True)
+                        QTimer.singleShot(0, panel._activate_lock_screen)
+                        return True, 0
+        except Exception:
+            pass
+        return False, 0
+
+
 class HotkeyRecordButton(QPushButton):
     """
     A button that records a hotkey when clicked.
-    Click to start recording, press a key, it captures it.
+    Click to start recording, press modifiers and letter, it captures it.
+    Equipped with Win32 WH_KEYBOARD_LL low-level hook & real-time visual chord feedback.
     
     Component Name: HotkeyRecordButton
     """
@@ -299,20 +334,34 @@ class HotkeyRecordButton(QPushButton):
     hotkeyChanged = Signal(str)
     recordingStarted = Signal()
     recordingStopped = Signal()
+    _preview_changed = Signal(str)
+    _commit_signal = Signal(str)
+    _prompt_signal = Signal(str)
+    _cancel_signal = Signal()
     
     def __init__(self, default_key: str = "Ctrl+Alt+L", parent=None, min_keys=3, forbidden_keys=None):
         super().__init__(parent)
-        self.setObjectName("hotkeyRecordBtn")
+        self.setObjectName("helrcusActivationHotkeyBtn")
         self._recording = False
         self._hook = None
         self._hook_proc_ref = None
+        self._prompt_timer = None
+        self._active_held_keys = []
         self._min_keys = min_keys
         self._forbidden_keys = forbidden_keys or []
         self._hotkey = default_key
         self.setText(default_key.upper())
         self.setFixedWidth(160)
+        self.setFixedHeight(32)
+        self.setCursor(Qt.PointingHandCursor)
         self.setToolTip("Click to record a new activation hotkey")
         self.clicked.connect(self._start_recording)
+
+        self._preview_changed.connect(self._on_preview_changed, Qt.QueuedConnection)
+        self._commit_signal.connect(self._validate_and_commit, Qt.QueuedConnection)
+        self._prompt_signal.connect(self._show_prompt, Qt.QueuedConnection)
+        self._cancel_signal.connect(self._cancel_recording, Qt.QueuedConnection)
+
         self._update_style()
         
     def setForbiddenKeys(self, keys: list):
@@ -322,28 +371,43 @@ class HotkeyRecordButton(QPushButton):
         if self._recording:
             self.setStyleSheet("""
                 QPushButton {
-                    background: #FF5B06;
-                    color: white;
+                    background-color: rgba(255, 91, 6, 0.9);
+                    color: #ffffff;
                     border: none;
-                    padding: 8px;
                     border-radius: 6px;
-                    font-weight: bold;
+                    padding: 0px 10px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 12px;
+                    font-weight: 700;
+                    letter-spacing: 1px;
                 }
             """)
         else:
             self.setStyleSheet("""
                 QPushButton {
-                    background: rgba(255, 255, 255, 0.1);
+                    background-color: rgba(255, 255, 255, 0.08);
                     color: #e0e0e0;
                     border: none;
-                    padding: 8px;
-                    border-radius: 10px;
+                    border-radius: 6px;
+                    padding: 0px 10px;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 12px;
+                    font-weight: 700;
+                    letter-spacing: 1px;
                 }
                 QPushButton:hover {
-                    background: rgba(255, 255, 255, 0.2);
-                    color: white;
+                    background-color: rgba(255, 91, 6, 0.35);
+                    color: #ffffff;
+                }
+                QPushButton:pressed {
+                    background-color: rgba(255, 91, 6, 0.6);
                 }
             """)
+
+    @Slot(str)
+    def _on_preview_changed(self, text: str):
+        if self._recording:
+            self.setText(text.upper())
 
     def _install_hook(self):
         if self._hook is not None:
@@ -368,13 +432,17 @@ class HotkeyRecordButton(QPushButton):
             self._user32_dll.UnhookWindowsHookEx.restype = wintypes.BOOL
             self._user32_dll.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, ctypes.POINTER(KBDLLHOOKSTRUCT)]
             self._user32_dll.CallNextHookEx.restype = ctypes.c_longlong
+            self._user32_dll.GetAsyncKeyState.argtypes = [ctypes.c_int]
+            self._user32_dll.GetAsyncKeyState.restype = ctypes.c_short
+            self._user32_dll.GetKeyState.argtypes = [ctypes.c_int]
+            self._user32_dll.GetKeyState.restype = ctypes.c_short
 
             def _low_level_kb_proc(nCode, wParam, lParam):
                 if nCode >= 0 and self._recording:
                     vk = lParam.contents.vkCode
-                    scan = lParam.contents.scanCode
                     flags = lParam.contents.flags
 
+                    # Win Key swallowed
                     if vk in (0x5B, 0x5C):
                         if wParam in (0x0100, 0x0104):
                             try:
@@ -382,41 +450,92 @@ class HotkeyRecordButton(QPushButton):
                                 self._user32_dll.keybd_event(0xE8, 0, 2, 0)
                             except Exception:
                                 pass
+                            self._prompt_signal.emit("No Win Key!")
                         return 1
 
+                    # Escape cancels recording
                     if vk == 0x1B:
                         if wParam in (0x0100, 0x0104):
-                            QTimer.singleShot(0, self._cancel_recording)
+                            self._cancel_signal.emit()
                         return 1
 
-                    is_modifier = vk in (0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5)
+                    # Real-time modifier tracking
+                    MODIFIER_KEYS = {
+                        0x11: "Ctrl", 0xA2: "Ctrl", 0xA3: "Ctrl",
+                        0x12: "Alt", 0xA4: "Alt", 0xA5: "Alt",
+                        0x10: "Shift", 0xA0: "Shift", 0xA1: "Shift",
+                    }
+                    if vk in MODIFIER_KEYS:
+                        mod_name = MODIFIER_KEYS[vk]
+                        if wParam in (0x0100, 0x0104):  # Key down
+                            if mod_name not in self._active_held_keys:
+                                self._active_held_keys.append(mod_name)
+                            preview = " + ".join(self._active_held_keys) + " + ..."
+                            self._preview_changed.emit(preview)
+                        elif wParam in (0x0101, 0x0105):  # Key up
+                            if mod_name in self._active_held_keys:
+                                self._active_held_keys.remove(mod_name)
+                            if self._active_held_keys:
+                                preview = " + ".join(self._active_held_keys) + " + ..."
+                                self._preview_changed.emit(preview)
+                            else:
+                                self._preview_changed.emit("Press key...")
+                        return 1
 
+                    # Non-modifier key handling on key down
                     if wParam in (0x0100, 0x0104):
-                        if is_modifier:
+                        # F1-F24 restricted
+                        if 0x70 <= vk <= 0x87:
+                            self._prompt_signal.emit("No F1-F12 Keys!")
+                            return 1
+
+                        # Numbers / Numpad restricted
+                        if (0x30 <= vk <= 0x39) or (0x60 <= vk <= 0x69):
+                            self._prompt_signal.emit("No Numbers!")
+                            return 1
+
+                        # Enter, Backspace, Delete restricted
+                        if vk in (0x0D, 0x08, 0x2E):
+                            self._prompt_signal.emit("No Enter/Del!")
+                            return 1
+
+                        # Alphabet A-Z allowed
+                        if 0x41 <= vk <= 0x5A:
+                            char = chr(vk).upper()
+                            detected_mods = set(self._active_held_keys)
+                            if flags & 0x20:
+                                detected_mods.add("Alt")
+                            try:
+                                if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
+                                    detected_mods.add("Ctrl")
+                                if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
+                                    detected_mods.add("Alt")
+                                if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
+                                    detected_mods.add("Shift")
+                                if (self._user32_dll.GetKeyState(0x11) & 0x8000) or (self._user32_dll.GetKeyState(0xA2) & 0x8000) or (self._user32_dll.GetKeyState(0xA3) & 0x8000):
+                                    detected_mods.add("Ctrl")
+                                if (self._user32_dll.GetKeyState(0x12) & 0x8000) or (self._user32_dll.GetKeyState(0xA4) & 0x8000) or (self._user32_dll.GetKeyState(0xA5) & 0x8000):
+                                    detected_mods.add("Alt")
+                                if (self._user32_dll.GetKeyState(0x10) & 0x8000) or (self._user32_dll.GetKeyState(0xA0) & 0x8000) or (self._user32_dll.GetKeyState(0xA1) & 0x8000):
+                                    detected_mods.add("Shift")
+                            except Exception:
+                                pass
+
+                            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in detected_mods]
+                            if not mods:
+                                self._prompt_signal.emit("Add Ctrl/Alt/Shift!")
+                                return 1
+
+                            full_key = "+".join(mods) + "+" + char
+                            self._commit_signal.emit(full_key)
                             return 1
                         else:
-                            # Must be A-Z for HELRCUS
-                            if 0x41 <= vk <= 0x5A:
-                                char = chr(vk).upper()
-                                mods = []
-                                if (self._user32_dll.GetAsyncKeyState(0x11) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA2) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA3) & 0x8000):
-                                    mods.append("Ctrl")
-                                if (self._user32_dll.GetAsyncKeyState(0x10) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA0) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA1) & 0x8000):
-                                    mods.append("Shift")
-                                if (self._user32_dll.GetAsyncKeyState(0x12) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA4) & 0x8000) or (self._user32_dll.GetAsyncKeyState(0xA5) & 0x8000):
-                                    mods.append("Alt")
-
-                                if not mods:
-                                    QTimer.singleShot(0, lambda: self._show_prompt("Add Ctrl/Alt/Shift!"))
-                                    return 1
-
-                                full_key = "+".join(mods) + "+" + char
-                                QTimer.singleShot(0, lambda k=full_key: self._validate_and_commit(k))
-                            else:
-                                QTimer.singleShot(0, lambda: self._show_prompt("A-Z Letters Only!"))
+                            self._prompt_signal.emit("A-Z Letters Only!")
                             return 1
+
                     elif wParam in (0x0101, 0x0105):
                         return 1
+
                 return self._user32_dll.CallNextHookEx(self._hook, nCode, wParam, lParam)
 
             self._hook_proc_ref = HOOKPROC(_low_level_kb_proc)
@@ -438,37 +557,66 @@ class HotkeyRecordButton(QPushButton):
             self._hook_proc_ref = None
 
     def _start_recording(self):
+        if self._recording:
+            self._cancel_recording()
+            return
+        if self._prompt_timer and self._prompt_timer.isActive():
+            self._prompt_timer.stop()
+        self._active_held_keys = []
         self._recording = True
         self.setText("Press key...")
         self._update_style()
         self.setFocus()
         self.grabKeyboard()
-        self.grabMouse()
         self._install_hook()
         self.recordingStarted.emit()
 
+    def mousePressEvent(self, event):
+        if self._recording:
+            self._cancel_recording()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    @Slot()
     def _cancel_recording(self):
         self._remove_hook()
         try:
             self.releaseKeyboard()
-            self.releaseMouse()
         except Exception:
             pass
+        if self._prompt_timer and self._prompt_timer.isActive():
+            self._prompt_timer.stop()
+        self._active_held_keys = []
         self._recording = False
         self.setText(self._hotkey.upper())
         self._update_style()
         self.recordingStopped.emit()
 
-    def _show_prompt(self, text: str):
+    @Slot(str)
+    def _show_prompt(self, text: str, auto_reset_to_key: bool = False):
+        if self._prompt_timer and self._prompt_timer.isActive():
+            self._prompt_timer.stop()
         self.setText(text)
+        self._prompt_timer = QTimer(self)
+        self._prompt_timer.setSingleShot(True)
+        if auto_reset_to_key or not self._recording:
+            self._prompt_timer.timeout.connect(lambda: self.setText(self._hotkey.upper()))
+        else:
+            self._prompt_timer.timeout.connect(
+                lambda: self.setText("Press key...") if self._recording else self.setText(self._hotkey.upper())
+            )
+        self._prompt_timer.start(1500)
 
+    @Slot(str)
     def _validate_and_commit(self, full_key: str):
         self._remove_hook()
         try:
             self.releaseKeyboard()
-            self.releaseMouse()
         except Exception:
             pass
+
+        self._active_held_keys = []
 
         # Rule 7: No Windows reserved system shortcuts
         RESERVED_WIN_SHORTCUTS = {
@@ -478,16 +626,36 @@ class HotkeyRecordButton(QPushButton):
             "CTRL+ALT+DEL", "CTRL+SHIFT+ESC", "CTRL+ESC"
         }
         if full_key.upper() in RESERVED_WIN_SHORTCUTS:
-            self.setText("Reserved Windows!")
             self._recording = False
             self._update_style()
+            self._show_prompt("Reserved Windows!", auto_reset_to_key=True)
             self.recordingStopped.emit()
             return
-            
+
+        # Check forbidden keys (e.g. cross-validation against unlock hotkey)
+        if self._forbidden_keys and full_key.upper() in [k.upper() for k in self._forbidden_keys]:
+            self._recording = False
+            self._update_style()
+            self._show_prompt("Already In Use!", auto_reset_to_key=True)
+            target_w = self.window() if self.window() else self
+            try:
+                from MacroSettingsPanel import FloatingToast
+                other_name = "Unlock Hotkey" if self.objectName() == "helrcusActivationHotkeyBtn" else "Activation Hotkey"
+                FloatingToast.show_toast(
+                    target_w,
+                    "Shortcut Conflict",
+                    f"'{full_key}' is already assigned to {other_name}."
+                )
+            except Exception:
+                pass
+            self.recordingStopped.emit()
+            return
+
         # Rule 8: Global Shortcut Conflict Validation across HELXAID
         try:
             from MacroSettingsPanel import validate_shortcut_conflict, FloatingToast
-            is_valid, conflict_owner = validate_shortcut_conflict(full_key, owner_id="helrcus_lock")
+            owner_id = "helrcus_lock" if self.objectName() == "helrcusActivationHotkeyBtn" else "helrcus_unlock"
+            is_valid, conflict_owner = validate_shortcut_conflict(full_key, owner_id=owner_id)
             if not is_valid:
                 target_w = self.window() if self.window() else self
                 FloatingToast.show_toast(
@@ -495,19 +663,17 @@ class HotkeyRecordButton(QPushButton):
                     "Shortcut Conflict",
                     f"'{full_key}' is already assigned to {conflict_owner}. Please choose another hotkey."
                 )
-                self.setText("Already In Use!")
                 self._recording = False
                 self._update_style()
+                self._show_prompt("Already In Use!", auto_reset_to_key=True)
                 self.recordingStopped.emit()
                 return
-        except Exception:
-            if full_key.upper() in [k.upper() for k in self._forbidden_keys]:
-                self.setText("Already In Use!")
-                self._recording = False
-                self._update_style()
-                self.recordingStopped.emit()
-                return
-            
+        except Exception as e:
+            print(f"[HotkeyRecordButton] Conflict check error: {e}")
+
+        if self._prompt_timer and self._prompt_timer.isActive():
+            self._prompt_timer.stop()
+
         self._hotkey = full_key
         self.setText(full_key.upper())
         self._recording = False
@@ -523,89 +689,98 @@ class HotkeyRecordButton(QPushButton):
                 event.accept()
                 return
 
-            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta):
+            if (event.modifiers() & Qt.MetaModifier) or key in (Qt.Key_Meta, Qt.Key_Super_L, Qt.Key_Super_R):
+                self._show_prompt("No Win Key!")
                 event.accept()
                 return
-                
-            if (event.modifiers() & Qt.MetaModifier) or key in (Qt.Key_Meta, Qt.Key_Super_L, Qt.Key_Super_R):
-                self.setText("No Win Key!")
+
+            if key in (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt):
+                mod_name = "Ctrl" if key == Qt.Key_Control else ("Alt" if key == Qt.Key_Alt else "Shift")
+                if mod_name not in self._active_held_keys:
+                    self._active_held_keys.append(mod_name)
+                preview = " + ".join(self._active_held_keys) + " + ..."
+                self._on_preview_changed(preview)
                 event.accept()
                 return
 
             if Qt.Key_F1 <= key <= Qt.Key_F24:
-                self.setText("No F1-F12 Keys!")
+                self._show_prompt("No F1-F12 Keys!")
                 event.accept()
                 return
 
             if key in (Qt.Key_Backspace, Qt.Key_Delete, Qt.Key_Return, Qt.Key_Enter):
-                self.setText("No Enter/Del!")
+                self._show_prompt("No Enter/Del!")
                 event.accept()
                 return
 
             if key in (Qt.Key_NumLock, 0x01000035):
-                self.setText("No Num Lock!")
+                self._show_prompt("No Num Lock!")
                 event.accept()
                 return
 
-            key_name = self._key_to_name(key).upper()
-            if (Qt.Key_0 <= key <= Qt.Key_9) or (event.modifiers() & Qt.KeypadModifier) or "KP" in key_name or key_name.isdigit():
-                self.setText("No Numbers!")
+            if (Qt.Key_0 <= key <= Qt.Key_9) or (event.modifiers() & Qt.KeypadModifier):
+                self._show_prompt("No Numbers!")
                 event.accept()
                 return
 
-            if not (Qt.Key_A <= key <= Qt.Key_Z):
-                self.setText("A-Z Letters Only!")
+            if Qt.Key_A <= key <= Qt.Key_Z:
+                char = chr(key).upper()
+            elif event.text() and len(event.text()) == 1 and ('a' <= event.text().lower() <= 'z'):
+                char = event.text().upper()
+            else:
+                self._show_prompt("A-Z Letters Only!")
                 event.accept()
                 return
 
-            modifiers = []
+            detected_mods = set(self._active_held_keys)
             if event.modifiers() & Qt.ControlModifier:
-                modifiers.append("Ctrl")
-            if event.modifiers() & Qt.ShiftModifier:
-                modifiers.append("Shift")
+                detected_mods.add("Ctrl")
             if event.modifiers() & Qt.AltModifier:
-                modifiers.append("Alt")
-                
-            if not modifiers:
-                self.setText("Add Ctrl/Alt/Shift!")
+                detected_mods.add("Alt")
+            if event.modifiers() & Qt.ShiftModifier:
+                detected_mods.add("Shift")
+            try:
+                u = ctypes.windll.user32
+                if (u.GetAsyncKeyState(0x11) & 0x8000) or (u.GetAsyncKeyState(0xA2) & 0x8000) or (u.GetAsyncKeyState(0xA3) & 0x8000):
+                    detected_mods.add("Ctrl")
+                if (u.GetAsyncKeyState(0x12) & 0x8000) or (u.GetAsyncKeyState(0xA4) & 0x8000) or (u.GetAsyncKeyState(0xA5) & 0x8000):
+                    detected_mods.add("Alt")
+                if (u.GetAsyncKeyState(0x10) & 0x8000) or (u.GetAsyncKeyState(0xA0) & 0x8000) or (u.GetAsyncKeyState(0xA1) & 0x8000):
+                    detected_mods.add("Shift")
+            except Exception:
+                pass
+
+            mods = [m for m in ("Ctrl", "Alt", "Shift") if m in detected_mods]
+            if not mods:
+                self._show_prompt("Add Ctrl/Alt/Shift!")
                 event.accept()
                 return
-                
-            full_key = "+".join(modifiers) + "+" + key_name
+
+            full_key = "+".join(mods) + "+" + char
             self._validate_and_commit(full_key)
             event.accept()
         else:
             super().keyPressEvent(event)
-            
-    def focusOutEvent(self, event):
+
+    def keyReleaseEvent(self, event):
         if self._recording:
-            self._cancel_recording()
+            key = event.key()
+            if key in (Qt.Key_Control, Qt.Key_Alt, Qt.Key_Shift):
+                mod_name = "Ctrl" if key == Qt.Key_Control else ("Alt" if key == Qt.Key_Alt else "Shift")
+                if mod_name in self._active_held_keys:
+                    self._active_held_keys.remove(mod_name)
+                if self._active_held_keys:
+                    self._on_preview_changed(" + ".join(self._active_held_keys) + " + ...")
+                else:
+                    self._on_preview_changed("Press key...")
+                event.accept()
+                return
+        super().keyReleaseEvent(event)
+
+    def focusOutEvent(self, event):
+        # Do not cancel recording on focusOutEvent because Alt key triggers temporary focus loss in Windows
         super().focusOutEvent(event)
-        
-    def _key_to_name(self, key: int) -> str:
-        """Convert Qt key code to key name."""
-        key_map = {
-            Qt.Key_F1: "F1", Qt.Key_F2: "F2", Qt.Key_F3: "F3", Qt.Key_F4: "F4",
-            Qt.Key_F5: "F5", Qt.Key_F6: "F6", Qt.Key_F7: "F7", Qt.Key_F8: "F8",
-            Qt.Key_F9: "F9", Qt.Key_F10: "F10", Qt.Key_F11: "F11", Qt.Key_F12: "F12",
-            Qt.Key_Escape: "Esc", Qt.Key_Tab: "Tab", Qt.Key_Backspace: "Backspace",
-            Qt.Key_Return: "Enter", Qt.Key_Enter: "Enter", Qt.Key_Space: "Space",
-            Qt.Key_Insert: "Insert", Qt.Key_Delete: "Delete", Qt.Key_Home: "Home",
-            Qt.Key_End: "End", Qt.Key_PageUp: "PageUp", Qt.Key_PageDown: "PageDown",
-            Qt.Key_Left: "Left", Qt.Key_Right: "Right", Qt.Key_Up: "Up", Qt.Key_Down: "Down",
-            Qt.Key_CapsLock: "CapsLock", Qt.Key_NumLock: "NumLock",
-            Qt.Key_Pause: "Pause", Qt.Key_Print: "PrintScreen",
-        }
-        
-        if key in key_map:
-            return key_map[key]
-        elif 65 <= key <= 90:  # A-Z
-            return chr(key).upper()
-        elif Qt.Key_0 <= key <= Qt.Key_9:
-            return chr(key)
-        else:
-            return f"Key{key}"
-            
+
     def hotkey(self) -> str:
         return self._hotkey
         
@@ -1083,6 +1258,319 @@ class HelrcusHotkeyGuidePanel(QFrame):
         
     def close_panel(self):
         self.close()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and hasattr(self, "title_bar") and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        super().mouseReleaseEvent(event)
+
+
+class HelrcusSettingsFloatingPanel(QFrame):
+    """
+    In-app Cyberpunk Floating Settings Panel for HELRCUS Module.
+    Configures module-level behaviors:
+    1. Initialize at Main Initialize (Preload during software startup, default ON)
+    2. Register Hotkeys on Startup (Activate Invisible Lock shortcuts at boot, default ON)
+    3. Keep in Memory on Tab Switch (Preserve widget tree in memory, default ON)
+    4. Reset HELRCUS Settings to Default
+    
+    Adheres strictly to HELXAID's signature floating panel design system:
+    - Less use border, more use background-color
+    - 100% Orbitron typography
+    - Vector SVG iconography (settings-icon.svg)
+    - Dark glassmorphism with QGraphicsDropShadowEffect
+    - Smooth draggable header with boundary clamp
+    - Complete component names (setObjectName) for every element
+    
+    Component Name: HelrcusSettingsFloatingPanel
+    """
+    def __init__(self, panel, parent=None):
+        super().__init__(parent or panel)
+        self.panel = panel
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("HelrcusSettingsFloatingPanel")
+        
+        self._is_dragging = False
+        self._drag_start_pos = QPoint(0, 0)
+        
+        self.setFixedSize(540, 390)
+        
+        # Authentic HELXAID Floating Drop Shadow
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 220))
+        shadow.setOffset(0, 6)
+        self.setGraphicsEffect(shadow)
+        
+        script_dir = SCRIPT_DIR
+        
+        self.setStyleSheet("""
+            QFrame#HelrcusSettingsFloatingPanel {
+                background-color: rgba(12, 12, 16, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#helrcusSettingsTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#helrcusSettingsTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: 800;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 1px;
+            }
+            QScrollArea#helrcusSettingsScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QWidget#helrcusSettingsScrollContent {
+                background: transparent;
+            }
+            QScrollArea#helrcusSettingsScrollArea QScrollBar:vertical {
+                background: transparent;
+                width: 5px;
+                margin: 0px;
+                border: none;
+            }
+            QScrollArea#helrcusSettingsScrollArea QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.12);
+                min-height: 20px;
+                border-radius: 2px;
+                border: none;
+            }
+            QScrollArea#helrcusSettingsScrollArea QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 0.25);
+            }
+            QScrollArea#helrcusSettingsScrollArea QScrollBar::add-line:vertical, 
+            QScrollArea#helrcusSettingsScrollArea QScrollBar::sub-line:vertical,
+            QScrollArea#helrcusSettingsScrollArea QScrollBar::add-page:vertical,
+            QScrollArea#helrcusSettingsScrollArea QScrollBar::sub-page:vertical {
+                height: 0px;
+                width: 0px;
+                background: transparent;
+                border: none;
+            }
+            QFrame#helrcusSettingsCard {
+                background-color: rgba(255, 255, 255, 0.03);
+                border: none;
+                border-radius: 10px;
+            }
+            QLabel#helrcusSettingsCardTitleLabel {
+                font-size: 12px;
+                font-weight: 800;
+                color: #FF5B06;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 0.5px;
+            }
+            QLabel#helrcusSettingsDescLabel {
+                color: #888888;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                background: transparent;
+                padding-left: 26px;
+            }
+            QWidget#helrcusSettingsFooter {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-bottom-left-radius: 13px;
+                border-bottom-right-radius: 13px;
+                border-top: 1px solid rgba(255, 255, 255, 0.08);
+            }
+        """)
+        
+        main_vbox = QVBoxLayout(self)
+        main_vbox.setContentsMargins(0, 0, 0, 0)
+        main_vbox.setSpacing(0)
+        
+        # 1. Title Bar (Draggable)
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("helrcusSettingsTitleBar")
+        self.title_bar.setFixedHeight(42)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(14, 0, 14, 0)
+        tb_layout.setSpacing(10)
+        
+        settings_icon_path = os.path.join(script_dir, "UI Icons", "settings-icon.svg")
+        if os.path.exists(settings_icon_path):
+            icon_lbl = QLabel(self.title_bar)
+            icon_lbl.setObjectName("helrcusSettingsTitleIcon")
+            icon_lbl.setFixedSize(16, 16)
+            icon_lbl.setScaledContents(True)
+            icon_lbl.setPixmap(get_cached_pixmap(settings_icon_path, 16, 16))
+            icon_lbl.setStyleSheet("background: transparent; border: none;")
+            tb_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
+            
+        title_lbl = QLabel("HELRCUS SETTINGS", self.title_bar)
+        title_lbl.setObjectName("helrcusSettingsTitleLabel")
+        tb_layout.addWidget(title_lbl, stretch=1, alignment=Qt.AlignVCenter)
+        
+        main_vbox.addWidget(self.title_bar)
+        
+        # 2. Scroll Area
+        scroll_area = SmoothScrollArea(self)
+        scroll_area.setObjectName("helrcusSettingsScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        scroll_content = QWidget()
+        scroll_content.setObjectName("helrcusSettingsScrollContent")
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setContentsMargins(14, 14, 14, 14)
+        content_layout.setSpacing(12)
+        
+        # Read initial values from panel._config
+        cfg = getattr(panel, "_config", {})
+        mod_cfg = cfg.get("module_settings", {})
+        
+        val_init_main = mod_cfg.get("init_at_main_initialize", True)
+        val_startup_hotkeys = mod_cfg.get("startup_hotkeys", True)
+        val_keep_memory = mod_cfg.get("keep_in_memory", True)
+        
+        # CARD 1: STARTUP & LIFECYCLE
+        card1 = QFrame()
+        card1.setObjectName("helrcusSettingsCard")
+        c1_layout = QVBoxLayout(card1)
+        c1_layout.setContentsMargins(14, 12, 14, 14)
+        c1_layout.setSpacing(8)
+        
+        t1_label = QLabel("STARTUP & LIFECYCLE")
+        t1_label.setObjectName("helrcusSettingsCardTitleLabel")
+        c1_layout.addWidget(t1_label)
+        
+        # Item 1: Initialize at Main Initialize
+        self.init_at_main_cb = AnimatedCheckBox("Initialize at Main Initialize")
+        self.init_at_main_cb.setObjectName("helrcusInitAtMainCheckBox")
+        self.init_at_main_cb.setChecked(val_init_main)
+        c1_layout.addWidget(self.init_at_main_cb)
+        
+        init_desc = QLabel("Preload HELRCUS during software startup for 0ms instant tab switching")
+        init_desc.setObjectName("helrcusSettingsDescLabel")
+        init_desc.setWordWrap(True)
+        c1_layout.addWidget(init_desc)
+        
+        c1_layout.addSpacing(4)
+        
+        # Item 2: Register Hotkeys on Startup
+        self.startup_hotkeys_cb = AnimatedCheckBox("Register Hotkeys on Startup")
+        self.startup_hotkeys_cb.setObjectName("helrcusStartupHotkeysCheckBox")
+        self.startup_hotkeys_cb.setChecked(val_startup_hotkeys)
+        c1_layout.addWidget(self.startup_hotkeys_cb)
+        
+        hotkeys_desc = QLabel("Register Invisible Lock global shortcuts immediately on launcher launch")
+        hotkeys_desc.setObjectName("helrcusSettingsDescLabel")
+        hotkeys_desc.setWordWrap(True)
+        c1_layout.addWidget(hotkeys_desc)
+        
+        c1_layout.addSpacing(4)
+        
+        # Item 3: Keep in Memory on Tab Switch
+        self.keep_in_memory_cb = AnimatedCheckBox("Keep in Memory on Tab Switch")
+        self.keep_in_memory_cb.setObjectName("helrcusKeepInMemoryCheckBox")
+        self.keep_in_memory_cb.setChecked(val_keep_memory)
+        c1_layout.addWidget(self.keep_in_memory_cb)
+        
+        memory_desc = QLabel("Preserve widget tree in memory for zero-lag page navigation")
+        memory_desc.setObjectName("helrcusSettingsDescLabel")
+        memory_desc.setWordWrap(True)
+        c1_layout.addWidget(memory_desc)
+        
+        content_layout.addWidget(card1)
+        
+        # CARD 2: MAINTENANCE
+        card2 = QFrame()
+        card2.setObjectName("helrcusSettingsCard")
+        c2_layout = QVBoxLayout(card2)
+        c2_layout.setContentsMargins(14, 12, 14, 14)
+        c2_layout.setSpacing(8)
+        
+        t2_label = QLabel("MAINTENANCE")
+        t2_label.setObjectName("helrcusSettingsCardTitleLabel")
+        c2_layout.addWidget(t2_label)
+        
+        # Item 6: Reset Button
+        reset_btn = FadeHoverButton("Reset HELRCUS Settings to Default", is_secondary=True, border_radius=6.0)
+        reset_btn.setObjectName("helrcusResetDefaultsBtn")
+        reset_btn.setFixedHeight(32)
+        reset_btn.clicked.connect(self._reset_to_defaults)
+        c2_layout.addWidget(reset_btn)
+        
+        content_layout.addWidget(card2)
+        content_layout.addStretch()
+        
+        scroll_area.setWidget(scroll_content)
+        main_vbox.addWidget(scroll_area)
+        
+        # 3. Footer Bar
+        footer_widget = QWidget(self)
+        footer_widget.setObjectName("helrcusSettingsFooter")
+        footer_layout = QHBoxLayout(footer_widget)
+        footer_layout.setContentsMargins(16, 10, 16, 12)
+        footer_layout.setSpacing(10)
+        footer_layout.addStretch()
+        
+        ok_btn = FadeHoverButton("OK", is_secondary=False, border_radius=6.0, parent=footer_widget)
+        ok_btn.setObjectName("helrcusSettingsOkBtn")
+        ok_btn.setFixedSize(85, 34)
+        ok_btn.clicked.connect(self.save_and_close)
+        footer_layout.addWidget(ok_btn)
+        
+        cancel_btn = FadeHoverButton("CANCEL", is_secondary=True, border_radius=6.0, parent=footer_widget)
+        cancel_btn.setObjectName("helrcusSettingsCancelBtn")
+        cancel_btn.setFixedSize(85, 34)
+        cancel_btn.clicked.connect(self.close_panel)
+        footer_layout.addWidget(cancel_btn)
+        
+        main_vbox.addWidget(footer_widget)
+
+    def _reset_to_defaults(self):
+        """Reset checkboxes to default values (1=ON, 2=ON, 3=ON)."""
+        self.init_at_main_cb.setChecked(True)
+        self.startup_hotkeys_cb.setChecked(True)
+        self.keep_in_memory_cb.setChecked(True)
+
+    def save_and_close(self):
+        """Save settings to config and close floating panel."""
+        if "module_settings" not in self.panel._config:
+            self.panel._config["module_settings"] = {}
+        self.panel._config["module_settings"]["init_at_main_initialize"] = self.init_at_main_cb.isChecked()
+        self.panel._config["module_settings"]["startup_hotkeys"] = self.startup_hotkeys_cb.isChecked()
+        self.panel._config["module_settings"]["keep_in_memory"] = self.keep_in_memory_cb.isChecked()
+        
+        self.panel._save_config()
+        self.close_panel()
+
+    def close_panel(self):
+        self.close()
+        if hasattr(self.panel, "_settings_panel") and self.panel._settings_panel is self:
+            self.panel._settings_panel = None
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and hasattr(self, "title_bar") and self.title_bar.geometry().contains(event.pos()):
@@ -1861,6 +2349,20 @@ class WindowsUpdateControl:
         except Exception:
             return False, "Unknown"
 
+    @staticmethod
+    def get_auto_restart_status():
+        """Get current NoAutoRebootWithLoggedOnUsers status from registry (<0.1ms)."""
+        try:
+            import winreg
+            access_mask = winreg.KEY_READ | getattr(winreg, "KEY_WOW64_64KEY", 0)
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU", 0, access_mask) as key:
+                val, _ = winreg.QueryValueEx(key, "NoAutoRebootWithLoggedOnUsers")
+                return int(val) == 1
+        except (FileNotFoundError, OSError):
+            return False
+        except Exception:
+            return False
+
 
 
 # ============================================
@@ -1884,6 +2386,8 @@ class WindowsCustomPanel(QWidget):
         self._config = _load_helrcus_config()
         self._ui_initialized = True
         self._lock_overlay = None
+        self._native_hotkey_filter = None
+        self._registered_hotkey_hwnd = None
         
         # Build UI and load state immediately in memory so page transitions are 0ms instant
         self._setup_ui()
@@ -2114,6 +2618,100 @@ class WindowsCustomPanel(QWidget):
         header_card_layout.addLayout(title_section)
         header_card_layout.addStretch()
         
+        # Settings button (opens HelrcusSettingsFloatingPanel, styled identically to cpuSettingsBtn)
+        settings_btn = AnimatedButton("")
+        settings_btn.setObjectName("helrcusHeaderSettingsBtn")
+        settings_btn.setFixedSize(50, 50)
+        settings_btn.setCursor(Qt.PointingHandCursor)
+        settings_btn.setToolTip("HELRCUS Settings")
+        
+        icon_path = os.path.join(script_dir, "UI Icons", "setting-icon.png")
+        if not os.path.exists(icon_path):
+            icon_path = os.path.join(script_dir, "UI Icons", "settings-icon.svg")
+            
+        if os.path.exists(icon_path):
+            settings_btn.setIcon(QIcon(icon_path))
+            settings_btn.setIconSize(QSize(50, 50))
+            
+        settings_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 10px;
+            }
+        """)
+        
+        # Setup animated icon rotation on hover matching cpuSettingsBtn (lazy initialized on first hover)
+        if os.path.exists(icon_path):
+            settings_btn._rot_frames = None
+            settings_btn._rot_index = 0
+            settings_btn._rot_forward = True
+            settings_btn._rot_timer = QTimer(settings_btn)
+            settings_btn._rot_timer.setInterval(20)  # 20ms per frame = ~200ms total
+            
+            def _lazy_init_frames():
+                if getattr(settings_btn, '_rot_frames', None) is not None:
+                    return
+                full_pixmap = QPixmap(icon_path)
+                target_size = QSize(50, 50)
+                pixmap = full_pixmap.scaled(target_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                del full_pixmap
+                original_size = pixmap.size()
+                frames = []
+                for i in range(10):
+                    angle = -5 * i
+                    transform = QTransform().rotate(angle)
+                    rotated = pixmap.transformed(transform, Qt.SmoothTransformation)
+                    canvas = QPixmap(original_size)
+                    canvas.fill(Qt.transparent)
+                    painter = QPainter(canvas)
+                    x = (original_size.width() - rotated.width()) // 2
+                    y = (original_size.height() - rotated.height()) // 2
+                    painter.drawPixmap(x, y, rotated)
+                    painter.end()
+                    frames.append(QIcon(canvas))
+                settings_btn._rot_frames = frames
+
+            def _animate_frame():
+                frames = getattr(settings_btn, '_rot_frames', None)
+                if not frames:
+                    return
+                if settings_btn._rot_forward:
+                    if settings_btn._rot_index < len(frames) - 1:
+                        settings_btn._rot_index += 1
+                        settings_btn.setIcon(frames[settings_btn._rot_index])
+                    else:
+                        settings_btn._rot_timer.stop()
+                else:
+                    if settings_btn._rot_index > 0:
+                        settings_btn._rot_index -= 1
+                        settings_btn.setIcon(frames[settings_btn._rot_index])
+                    else:
+                        settings_btn._rot_timer.stop()
+            
+            settings_btn._rot_timer.timeout.connect(_animate_frame)
+            
+            # Override enter/leave events
+            original_enter = settings_btn.enterEvent
+            original_leave = settings_btn.leaveEvent
+            
+            def new_enter(event):
+                _lazy_init_frames()
+                settings_btn._rot_forward = True
+                settings_btn._rot_timer.start()
+                original_enter(event)
+            
+            def new_leave(event):
+                settings_btn._rot_forward = False
+                settings_btn._rot_timer.start()
+                original_leave(event)
+            
+            settings_btn.enterEvent = new_enter
+            settings_btn.leaveEvent = new_leave
+            
+        settings_btn.clicked.connect(self._show_helrcus_settings_dialog)
+        header_card_layout.addWidget(settings_btn, alignment=Qt.AlignVCenter)
+        
         header_container.setStyleSheet("""
             QWidget#headerCard {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
@@ -2242,7 +2840,9 @@ class WindowsCustomPanel(QWidget):
         hotkey_lbl = QLabel("Activation Hotkey:")
         hotkey_lbl.setObjectName("helrcusActivationHotkeyLabel")
         hotkey_lbl.setFixedWidth(140)
-        hotkey_lbl.setStyleSheet("font-size: 12px;")
+        hotkey_lbl.setFixedHeight(34)
+        hotkey_lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        hotkey_lbl.setStyleSheet("font-size: 12px; margin: 0px; background: transparent;")
         
         self._activation_hotkey_btn = HotkeyRecordButton(self._config["lock_screen"].get("hotkey", "Ctrl+Alt+L"))
         self._activation_hotkey_btn.setObjectName("helrcusActivationHotkeyBtn")
@@ -2254,7 +2854,9 @@ class WindowsCustomPanel(QWidget):
         
         hotkey_hint = QLabel("(Global activation)")
         hotkey_hint.setObjectName("helrcusActivationHotkeyHint")
-        hotkey_hint.setStyleSheet("color: #666; font-size: 10px;")
+        hotkey_hint.setFixedHeight(24)
+        hotkey_hint.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        hotkey_hint.setStyleSheet("color: #666; font-size: 10px; margin: 0px; padding: 0px; background: transparent;")
         
         rules_info_btn = QPushButton()
         rules_info_btn.setObjectName("helrcusRulesInfoBtn")
@@ -2265,18 +2867,18 @@ class WindowsCustomPanel(QWidget):
             rules_info_btn.setIcon(QIcon(os.path.join(script_dir, "UI Icons", "info-icon.svg")))
             rules_info_btn.setIconSize(QSize(16, 16))
             rules_info_btn.setStyleSheet("""
-                QPushButton { background: transparent; border: none; }
+                QPushButton { background: transparent; border: none; padding: 0px; margin: 0px; }
                 QPushButton:hover { background: rgba(255, 255, 255, 0.1); border-radius: 12px; }
             """)
         else:
             rules_info_btn.setText("ℹ")
-            rules_info_btn.setStyleSheet("background: transparent; border: none; color: #FF5B06; font-size: 14px;")
+            rules_info_btn.setStyleSheet("background: transparent; border: none; color: #FF5B06; font-size: 14px; padding: 0px; margin: 0px;")
         rules_info_btn.clicked.connect(self._show_hotkey_rules_dialog)
         
-        hotkey_row.addWidget(hotkey_lbl)
-        hotkey_row.addWidget(self._activation_hotkey_btn)
-        hotkey_row.addWidget(hotkey_hint)
-        hotkey_row.addWidget(rules_info_btn)
+        hotkey_row.addWidget(hotkey_lbl, 0, Qt.AlignVCenter)
+        hotkey_row.addWidget(self._activation_hotkey_btn, 0, Qt.AlignVCenter)
+        hotkey_row.addWidget(hotkey_hint, 0, Qt.AlignVCenter)
+        hotkey_row.addWidget(rules_info_btn, 0, Qt.AlignVCenter)
         hotkey_row.addStretch()
         controls_layout.addLayout(hotkey_row)
         
@@ -2287,7 +2889,9 @@ class WindowsCustomPanel(QWidget):
         unlock_lbl = QLabel("Unlock Hotkey:")
         unlock_lbl.setObjectName("helrcusUnlockHotkeyLabel")
         unlock_lbl.setFixedWidth(140)
-        unlock_lbl.setStyleSheet("font-size: 12px;")
+        unlock_lbl.setFixedHeight(34)
+        unlock_lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        unlock_lbl.setStyleSheet("font-size: 12px; margin: 0px; background: transparent;")
         
         self._unlock_hotkey_btn = HotkeyRecordButton(self._config["lock_screen"].get("unlock_hotkey", "Ctrl+Shift+L"))
         self._unlock_hotkey_btn.setObjectName("helrcusUnlockHotkeyBtn")
@@ -2297,11 +2901,13 @@ class WindowsCustomPanel(QWidget):
         
         unlock_hint = QLabel("(Unlock when active)")
         unlock_hint.setObjectName("helrcusUnlockHotkeyHint")
-        unlock_hint.setStyleSheet("color: #666; font-size: 10px;")
+        unlock_hint.setFixedHeight(24)
+        unlock_hint.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        unlock_hint.setStyleSheet("color: #666; font-size: 10px; margin: 0px; padding: 0px; background: transparent;")
         
-        unlock_row.addWidget(unlock_lbl)
-        unlock_row.addWidget(self._unlock_hotkey_btn)
-        unlock_row.addWidget(unlock_hint)
+        unlock_row.addWidget(unlock_lbl, 0, Qt.AlignVCenter)
+        unlock_row.addWidget(self._unlock_hotkey_btn, 0, Qt.AlignVCenter)
+        unlock_row.addWidget(unlock_hint, 0, Qt.AlignVCenter)
         unlock_row.addStretch()
         controls_layout.addLayout(unlock_row)
         
@@ -2350,6 +2956,7 @@ class WindowsCustomPanel(QWidget):
         self._lock_activate_btn = QPushButton("  Activate Lock Screen")
         self._lock_activate_btn.setObjectName("helrcusActivateLockBtn")
         self._lock_activate_btn.setFixedHeight(40)
+        self._lock_activate_btn.setFocusPolicy(Qt.NoFocus)
         # Set lock icon on button
         lock_btn_icon_path = os.path.join(script_dir, "UI Icons", "lock-icon.svg")
         if os.path.exists(lock_btn_icon_path):
@@ -2619,8 +3226,13 @@ class WindowsCustomPanel(QWidget):
         self._no_restart_cb.toggled.connect(self._on_auto_restart_changed)
         controls_layout.addWidget(self._no_restart_cb)
         
-        # --- Active Hours ---
-        hours_row = QHBoxLayout()
+        # --- Active Hours Container ---
+        self._active_hours_container = QFrame()
+        self._active_hours_container.setObjectName("helrcusActiveHoursContainer")
+        self._active_hours_container.setStyleSheet("background: transparent; border: none; margin: 0px;")
+        
+        hours_row = QHBoxLayout(self._active_hours_container)
+        hours_row.setContentsMargins(0, 0, 0, 0)
         hours_row.setSpacing(10)
         hours_row.setAlignment(Qt.AlignVCenter)
         
@@ -2635,13 +3247,11 @@ class WindowsCustomPanel(QWidget):
         _combo_style = f"""
             QComboBox {{
                 background: rgba(255, 255, 255, 0.1);
-                color: #e0e0e0;
                 border: none;
-                border-radius: 10px;
-                padding-left: 12px;
-                padding-right: 30px;
-                padding-top: 6px;
-                padding-bottom: 6px;
+                border-radius: 8px;
+                padding: 3px 26px 3px 10px;
+                color: #e0e0e0;
+                font-family: 'Orbitron', sans-serif;
                 font-size: 12px;
                 font-weight: 500;
                 selection-background-color: #ffffff;
@@ -2651,7 +3261,7 @@ class WindowsCustomPanel(QWidget):
                 background: rgba(255, 255, 255, 0.1);
                 color: #ffffff;
                 border: none;
-                border-radius: 10px;
+                border-radius: 8px;
                 selection-background-color: #ffffff;
                 selection-color: #000000;
             }}
@@ -2659,6 +3269,7 @@ class WindowsCustomPanel(QWidget):
                 background: transparent;
                 color: #ffffff;
                 border: none;
+                font-family: 'Orbitron', sans-serif;
                 selection-background-color: #ffffff;
                 selection-color: #000000;
             }}
@@ -2684,12 +3295,14 @@ class WindowsCustomPanel(QWidget):
                 height: 10px;
             }}
             QComboBox QAbstractItemView {{
-                background: rgba(18, 20, 26, 0.65);
-                color: #e0e0e0;
-                border: 1px solid rgba(255, 255, 255, 0.15);
+                background: #1e2128;
+                border: 1px solid rgba(255, 255, 255, 0.12);
                 border-radius: 8px;
                 padding: 4px;
                 outline: 0px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                color: #e0e0e0;
             }}
             QComboBox QAbstractItemView::item {{
                 min-height: 26px;
@@ -2697,29 +3310,78 @@ class WindowsCustomPanel(QWidget):
                 background: transparent;
                 color: #e0e0e0;
                 border-radius: 4px;
+                font-family: 'Orbitron', sans-serif;
             }}
             QComboBox QAbstractItemView::item:hover,
             QComboBox QAbstractItemView::item:selected {{
                 background-color: rgba(255, 255, 255, 0.12);
                 color: #ffffff;
             }}
+            QComboBox QAbstractItemView QScrollBar:vertical,
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 6px;
+                margin: 4px 2px 4px 0px;
+                border: none;
+            }}
+            QComboBox QAbstractItemView QScrollBar::handle:vertical,
+            QScrollBar::handle:vertical {{
+                background: rgba(255, 255, 255, 0.2);
+                min-height: 24px;
+                border-radius: 3px;
+                border: none;
+            }}
+            QComboBox QAbstractItemView QScrollBar::handle:vertical:hover,
+            QScrollBar::handle:vertical:hover {{
+                background: #FF5B06;
+            }}
+            QComboBox QAbstractItemView QScrollBar::handle:vertical:pressed,
+            QScrollBar::handle:vertical:pressed {{
+                background: #FDA903;
+            }}
+            QComboBox QAbstractItemView QScrollBar::add-line:vertical,
+            QComboBox QAbstractItemView QScrollBar::sub-line:vertical,
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0px;
+                width: 0px;
+                background: transparent;
+                border: none;
+            }}
+            QComboBox QAbstractItemView QScrollBar::add-page:vertical,
+            QComboBox QAbstractItemView QScrollBar::sub-page:vertical,
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background: transparent;
+                border: none;
+            }}
         """
         
         self._hours_preset_combo = QComboBox()
         self._hours_preset_combo.setObjectName("helrcusHoursPresetCombo")
         self._hours_preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-        self._hours_preset_combo.addItems(["Always Active", "8 Hours", "12 Hours", "18 Hours", "Customize"])
-        # Set default selection from config
-        saved_preset = self._config["windows_update"].get("active_hours_preset", "Always Active")
+        self._hours_preset_combo.addItems(["Always Active (Max 18h)", "8 Hours", "12 Hours", "18 Hours", "Customize"])
+        # Set default selection from config (backward-compatible with legacy "Always Active")
+        saved_preset = self._config["windows_update"].get("active_hours_preset", "Always Active (Max 18h)")
+        if saved_preset == "Always Active":
+            saved_preset = "Always Active (Max 18h)"
         preset_idx = self._hours_preset_combo.findText(saved_preset)
         if preset_idx >= 0:
             self._hours_preset_combo.setCurrentIndex(preset_idx)
         else:
-            self._hours_preset_combo.setCurrentIndex(0)  # Default to Always Active
-        self._hours_preset_combo.setMinimumWidth(160)
+            self._hours_preset_combo.setCurrentIndex(0)  # Default to Always Active (Max 18h)
+        self._hours_preset_combo.setMinimumWidth(185)
         self._hours_preset_combo.setFixedHeight(36)
         self._hours_preset_combo.setStyleSheet(_combo_style)
+        self._hours_preset_combo.setToolTip(
+            "Windows limits Active Hours to a maximum of 18 hours (e.g. 12:00 AM - 6:00 PM).\n"
+            "To completely prevent automatic restarts 24/7, check 'Disable automatic restart after updates' above."
+        )
         self._hours_preset_combo.currentIndexChanged.connect(self._on_hours_preset_changed)
+        if self._hours_preset_combo.view() is not None:
+            self._hours_preset_combo.view().setObjectName("helrcusHoursPresetView")
+            if self._hours_preset_combo.view().verticalScrollBar() is not None:
+                self._hours_preset_combo.view().verticalScrollBar().setObjectName("helrcusHoursPresetScrollBar")
         
         # Custom duration container widget
         self._custom_hours_widget = QWidget()
@@ -2774,15 +3436,23 @@ class WindowsCustomPanel(QWidget):
         self._apply_hours_btn.setFixedWidth(90)
         self._apply_hours_btn.setStyleSheet(_primary_btn_style)
         self._apply_hours_btn.setCursor(Qt.PointingHandCursor)
+        self._apply_hours_btn.setToolTip("Apply Active Hours to Windows Registry.")
         self._apply_hours_btn.clicked.connect(self._apply_active_hours)
         
-        hours_row.setContentsMargins(0, 0, 0, 0)
         hours_row.addWidget(hours_lbl, 0, Qt.AlignVCenter)
         hours_row.addWidget(self._hours_preset_combo, 0, Qt.AlignVCenter)
         hours_row.addWidget(self._custom_hours_widget, 0, Qt.AlignVCenter)
         hours_row.addWidget(self._apply_hours_btn, 0, Qt.AlignVCenter)
         hours_row.addStretch()
-        controls_layout.addLayout(hours_row)
+        
+        # Opacity effect for dimming / dark overlay state when Disable Auto-Restart is checked
+        self._active_hours_opacity = QGraphicsOpacityEffect(self._active_hours_container)
+        self._active_hours_container.setGraphicsEffect(self._active_hours_opacity)
+        
+        controls_layout.addWidget(self._active_hours_container)
+        
+        # Apply initial active hours dimmed state based on auto-restart toggle
+        self._update_active_hours_state(self._no_restart_cb.isChecked(), animate=False)
         
         # Hide custom duration selectors if not Customize
         self._custom_hours_widget.setVisible(self._hours_preset_combo.currentText() == "Customize")
@@ -2802,7 +3472,7 @@ class WindowsCustomPanel(QWidget):
             tips_icon2.setFixedSize(14, 14)
             tips_icon2.setStyleSheet("background: transparent;")
             info_row.addWidget(tips_icon2)
-        info_note = QLabel("Pause & active hours changes take effect immediately. Some options require admin privileges.")
+        info_note = QLabel("Pause & active hours take effect immediately. Note: Windows caps Active Hours at 18h max (e.g. 12 AM - 6 PM). For 24/7 protection, check 'Disable automatic restart' above.")
         info_note.setObjectName("helrcusUpdateInfoNote")
         info_note.setStyleSheet("color: #666; font-size: 11px; font-style: italic;")
         info_note.setWordWrap(True)
@@ -2838,6 +3508,27 @@ class WindowsCustomPanel(QWidget):
             (rect.height() - self._guide_panel.height()) // 2
         )
         self._guide_panel.show()
+
+    def _show_helrcus_settings_dialog(self):
+        """Display the floating HELRCUS Module Settings panel."""
+        if getattr(self, "_settings_panel", None) is not None:
+            try:
+                self._settings_panel.close()
+            except Exception:
+                pass
+            self._settings_panel = None
+            
+        parent_win = self.window()
+        self._settings_panel = HelrcusSettingsFloatingPanel(self, parent_win)
+        
+        # Center inside parent window
+        rect = parent_win.rect()
+        self._settings_panel.move(
+            max(0, (rect.width() - self._settings_panel.width()) // 2),
+            max(0, (rect.height() - self._settings_panel.height()) // 2)
+        )
+        self._settings_panel.show()
+        self._settings_panel.raise_()
 
     def _on_opacity_changed(self, value):
         """Handle opacity slider change."""
@@ -2892,6 +3583,8 @@ class WindowsCustomPanel(QWidget):
             self._lock_status.setStyleSheet("color: #FF5B06; font-size: 12px; font-weight: 500;")
         if hasattr(self, "_lock_activate_btn") and self._lock_activate_btn is not None:
             self._lock_activate_btn.setText("  Lock Screen Active...")
+            self._lock_activate_btn.clearFocus()
+            self.setFocus()
             self._lock_activate_btn.setEnabled(False)
         
         # Poll for deactivation
@@ -2913,6 +3606,7 @@ class WindowsCustomPanel(QWidget):
             if hasattr(self, "_lock_activate_btn") and self._lock_activate_btn is not None:
                 self._lock_activate_btn.setText("  Activate Lock Screen")
                 self._lock_activate_btn.setEnabled(True)
+                self._lock_activate_btn.clearFocus()
             self._hide_lock_overlay()
     
     def _update_toggle_button_ui(self, is_paused):
@@ -3002,13 +3696,51 @@ class WindowsCustomPanel(QWidget):
     
     def _on_auto_restart_changed(self, state):
         """Handle auto-restart checkbox."""
-        if state:
+        is_checked = bool(state)
+        if is_checked:
             success, msg = WindowsUpdateControl.disable_auto_restart()
         else:
             success, msg = WindowsUpdateControl.enable_auto_restart()
         
-        self._config["windows_update"]["disable_auto_restart"] = bool(state)
+        self._config["windows_update"]["disable_auto_restart"] = is_checked
         self._save_config()
+        self._update_active_hours_state(is_checked, animate=True)
+        
+        if hasattr(self, "_update_status") and self._update_status is not None:
+            if success:
+                status_text = "● Auto-restart disabled (NoAutoRebootWithLoggedOnUsers = 1)" if is_checked else "● Auto-restart enabled (policy removed)"
+                self._update_status.setText(status_text)
+                self._update_status.setStyleSheet("color: #4CAF50; font-size: 12px; font-weight: 500;")
+            else:
+                self._update_status.setText(f"● Error updating auto-restart policy: {msg}")
+                self._update_status.setStyleSheet("color: #e74c3c; font-size: 12px; font-weight: 500;")
+
+    def _update_active_hours_state(self, is_no_restart: bool, animate: bool = True):
+        """Update Active Hours container opacity and interaction when auto-restart is disabled."""
+        if not hasattr(self, "_active_hours_container") or not hasattr(self, "_active_hours_opacity"):
+            return
+        
+        target_opacity = 0.35 if is_no_restart else 1.0
+        self._active_hours_container.setEnabled(not is_no_restart)
+        
+        if is_no_restart:
+            self._active_hours_container.setToolTip("Active hours are bypassed because automatic restart is disabled.")
+        else:
+            self._active_hours_container.setToolTip("")
+            
+        if not animate:
+            self._active_hours_opacity.setOpacity(target_opacity)
+            return
+            
+        if not hasattr(self, "_active_hours_anim") or self._active_hours_anim is None:
+            self._active_hours_anim = QPropertyAnimation(self._active_hours_opacity, b"opacity", self)
+            self._active_hours_anim.setDuration(220)
+            self._active_hours_anim.setEasingCurve(QEasingCurve.OutCubic)
+            
+        self._active_hours_anim.stop()
+        self._active_hours_anim.setStartValue(self._active_hours_opacity.opacity())
+        self._active_hours_anim.setEndValue(target_opacity)
+        self._active_hours_anim.start()
     
     def _on_hours_preset_changed(self, index):
         """Handle active hours preset changes."""
@@ -3050,6 +3782,42 @@ class WindowsCustomPanel(QWidget):
 
         line_edit.editingFinished.connect(on_editing_finished)
 
+        # Setup combo popup view and its vertical scrollbar
+        view = combo.view()
+        if view is not None:
+            combo_name = combo.objectName() or "timeCombo"
+            view.setObjectName(f"{combo_name}View")
+            vbar = view.verticalScrollBar()
+            if vbar is not None:
+                vbar.setObjectName(f"{combo_name}ScrollBar")
+                vbar.setStyleSheet("""
+                    QScrollBar:vertical {
+                        background: transparent;
+                        width: 6px;
+                        margin: 4px 2px 4px 0px;
+                        border: none;
+                    }
+                    QScrollBar::handle:vertical {
+                        background: rgba(255, 255, 255, 0.2);
+                        min-height: 24px;
+                        border-radius: 3px;
+                        border: none;
+                    }
+                    QScrollBar::handle:vertical:hover {
+                        background: #FF5B06;
+                    }
+                    QScrollBar::handle:vertical:pressed {
+                        background: #FDA903;
+                    }
+                    QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+                    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                        height: 0px;
+                        width: 0px;
+                        background: transparent;
+                        border: none;
+                    }
+                """)
+
     @staticmethod
     def _parse_hour(combo):
         """Parse hour integer (0-23) from a combo box whether selected or typed manually."""
@@ -3071,7 +3839,7 @@ class WindowsCustomPanel(QWidget):
         """Apply active hours setting based on preset or custom values."""
         preset = self._hours_preset_combo.currentText()
         
-        if preset == "Always Active":
+        if preset in ("Always Active", "Always Active (Max 18h)"):
             start = 0
             end = 18
         elif preset == "8 Hours":
@@ -3088,6 +3856,15 @@ class WindowsCustomPanel(QWidget):
             end = self._parse_hour(self._hours_end)
             
         success, msg = WindowsUpdateControl.set_active_hours(start, end)
+        
+        if hasattr(self, "_update_status") and self._update_status is not None:
+            if success:
+                display_end = "00:00" if end == 0 else f"{end:02d}:00"
+                self._update_status.setText(f"● Active hours applied: {start:02d}:00 - {display_end} (Max 18h)")
+                self._update_status.setStyleSheet("color: #4CAF50; font-size: 12px; font-weight: 500;")
+            else:
+                self._update_status.setText(f"● Error applying active hours: {msg}")
+                self._update_status.setStyleSheet("color: #e74c3c; font-size: 12px; font-weight: 500;")
         
         self._config["windows_update"]["active_hours_preset"] = preset
         self._config["windows_update"]["active_hours_start"] = start
@@ -3112,31 +3889,87 @@ class WindowsCustomPanel(QWidget):
                 self._lock_status.setStyleSheet("color: #FF5B06; font-size: 12px; font-weight: 500;")
             if hasattr(self, "_lock_activate_btn") and self._lock_activate_btn is not None:
                 self._lock_activate_btn.setText("  Lock Screen Active...")
+                self._lock_activate_btn.clearFocus()
                 self._lock_activate_btn.setEnabled(False)
+
+        # Synchronize auto-restart checkbox with actual Windows Registry state
+        if hasattr(self, "_no_restart_cb") and self._no_restart_cb is not None:
+            reg_disabled = WindowsUpdateControl.get_auto_restart_status()
+            cfg_disabled = self._config["windows_update"].get("disable_auto_restart", False)
+            
+            # If config is True but registry key is missing, enforce it into registry
+            if cfg_disabled and not reg_disabled:
+                WindowsUpdateControl.disable_auto_restart()
+                reg_disabled = True
+            elif not cfg_disabled and reg_disabled:
+                self._config["windows_update"]["disable_auto_restart"] = True
+                self._save_config()
+                cfg_disabled = True
+                
+            effective_state = bool(cfg_disabled or reg_disabled)
+            self._no_restart_cb.setChecked(effective_state)
+            self._update_active_hours_state(effective_state, animate=False)
 
     def _register_global_hotkey(self):
         """Register the global activation hotkey."""
         self._unregister_global_hotkey()
         
+        # Check module_settings for startup_hotkeys
+        if not self._config.get("module_settings", {}).get("startup_hotkeys", True):
+            print("[HELRCUS] Global hotkey registration disabled in module settings.")
+            return
+        
         hotkey_str = self._config["lock_screen"].get("hotkey", "Ctrl+Alt+L")
         modifiers, vk_code = _parse_hotkey_string(hotkey_str)
         
         if modifiers is not None and vk_code is not None:
-            hwnd = int(self.winId())
+            top_win = self.window()
+            hwnd = int(top_win.winId()) if top_win is not None else int(self.winId())
             user32 = ctypes.windll.user32
             self._activation_hotkey_id = 54321
-            success = user32.RegisterHotKey(hwnd, self._activation_hotkey_id, modifiers, vk_code)
+            self._registered_hotkey_hwnd = hwnd
+            
+            # MOD_NOREPEAT (0x4000) prevents key auto-repeat spam
+            MOD_NOREPEAT = 0x4000
+            fs_modifiers = modifiers | MOD_NOREPEAT
+            success = user32.RegisterHotKey(hwnd, self._activation_hotkey_id, fs_modifiers, vk_code)
             if not success:
-                print(f"[HELRCUS] Failed to register global activation hotkey: {hotkey_str}")
+                # Fallback without MOD_NOREPEAT
+                success = user32.RegisterHotKey(hwnd, self._activation_hotkey_id, modifiers, vk_code)
+                
+            if not success:
+                print(f"[HELRCUS] Failed to register global activation hotkey: {hotkey_str} on HWND {hex(hwnd)}")
             else:
-                print(f"[HELRCUS] Registered global activation hotkey: {hotkey_str}")
+                print(f"[HELRCUS] Registered global activation hotkey: {hotkey_str} on HWND {hex(hwnd)}")
+
+            # Install application-level native event filter
+            app = QApplication.instance()
+            if app is not None and self._native_hotkey_filter is None:
+                self._native_hotkey_filter = HelrcusGlobalHotkeyEventFilter(self)
+                app.installNativeEventFilter(self._native_hotkey_filter)
+                print("[HELRCUS] Installed HelrcusGlobalHotkeyEventFilter on QApplication.")
 
     def _unregister_global_hotkey(self):
-        """Unregister the global activation hotkey."""
+        """Unregister the global activation hotkey and clean up native filter."""
         if hasattr(self, "_activation_hotkey_id"):
-            hwnd = int(self.winId())
-            user32 = ctypes.windll.user32
-            user32.UnregisterHotKey(hwnd, self._activation_hotkey_id)
+            hwnd = getattr(self, "_registered_hotkey_hwnd", None)
+            if hwnd is None:
+                top_win = self.window()
+                hwnd = int(top_win.winId()) if top_win is not None else int(self.winId())
+            try:
+                user32 = ctypes.windll.user32
+                user32.UnregisterHotKey(hwnd, self._activation_hotkey_id)
+            except Exception:
+                pass
+                
+        if getattr(self, "_native_hotkey_filter", None) is not None:
+            try:
+                app = QApplication.instance()
+                if app is not None:
+                    app.removeNativeEventFilter(self._native_hotkey_filter)
+            except Exception:
+                pass
+            self._native_hotkey_filter = None
 
     def _on_activation_hotkey_changed(self, value):
         """Handle activation hotkey change."""
@@ -3156,17 +3989,20 @@ class WindowsCustomPanel(QWidget):
             self._hotkey_info.setText(f"Press {value} to unlock → Windows Lock Screen will appear")
 
     def nativeEvent(self, eventType, message):
-        """Handle native Windows events for global hotkeys."""
-        if eventType == b"windows_generic_MSG":
-            msg = ctypes.wintypes.MSG.from_address(int(message))
+        """Handle native Windows events for global hotkeys (Layer 2 backup)."""
+        try:
+            msg_ptr = int(message)
+            msg = ctypes.wintypes.MSG.from_address(msg_ptr)
             if msg.message == 0x0312:  # WM_HOTKEY
                 if hasattr(self, "_activation_hotkey_id") and msg.wParam == self._activation_hotkey_id:
                     self._activate_lock_screen()
                     return True, 0
+        except Exception:
+            pass
         return super().nativeEvent(eventType, message)
 
     def closeEvent(self, event):
-        """Clean up hotkeys and timers when window is closed."""
+        """Clean up hotkeys, event filter, and timers when window is closed."""
         if hasattr(self, "_lock_poll_timer") and self._lock_poll_timer is not None:
             self._lock_poll_timer.stop()
         self._unregister_global_hotkey()

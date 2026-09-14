@@ -319,7 +319,7 @@ class LauncherBridge:
         return macro.id
         
     def create_quick_autoclicker(self, button: str = "left", interval_ms: int = 100, 
-                                  trigger_key: str = "f6", profile_id: str = "default", name: str = None):
+                                  trigger_key: str = "f6", profile_id: str = "default", name: str = None, execution_mode: str = "standard"):
         """Convenience method to create an auto-clicker toggle."""
         from ..macros.toggle_macro import ToggleMacro
         from ..macros.base_macro import MacroTrigger, MacroAction, TriggerType, ActionType
@@ -346,6 +346,7 @@ class LauncherBridge:
         macro = ToggleMacro(
             id=f"autoclicker_{uuid.uuid4().hex[:6]}",
             name=macro_name,
+            execution_mode=execution_mode,
             trigger=MacroTrigger(
                 type=TriggerType.KEYBOARD_KEY,
                 key=trigger_key,

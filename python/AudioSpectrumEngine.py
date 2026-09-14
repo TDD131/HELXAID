@@ -13,7 +13,19 @@ import time
 import math
 import threading
 from typing import Tuple, Optional, Any
-import numpy as np
+
+_np = None
+def _get_numpy():
+    global _np
+    if _np is None:
+        import numpy as _np
+    return _np
+
+class _NumpyProxy:
+    def __getattr__(self, name):
+        return getattr(_get_numpy(), name)
+
+np = _NumpyProxy()
 
 # Try importing the high-performance C++ Native Module
 _NATIVE_ENGINE = None
@@ -158,7 +170,7 @@ class AudioSpectrumEngine:
         if self._use_native and _NATIVE_ENGINE:
             _NATIVE_ENGINE.set_eco_mode(self._eco_mode)
 
-    def _compute_log_bands(self, num_bins: int, fft_size: int, sample_rate: int) -> np.ndarray:
+    def _compute_log_bands(self, num_bins: int, fft_size: int, sample_rate: int) -> Any:
         """Compute logarithmic bin edges tuned for musical frequencies (28Hz to 16kHz)."""
         min_freq = 28.0
         max_freq = 16000.0
@@ -231,7 +243,7 @@ class AudioSpectrumEngine:
         """
         if self._use_native and _NATIVE_ENGINE:
             spec_list, peaks_list = _NATIVE_ENGINE.get_spectrum_snapshot(num_bars)
-            return np.asarray(spec_list, dtype=np.float32), np.asarray(peaks_list, dtype=np.float32)
+            return spec_list, peaks_list
 
         with self._lock:
             if self._spectrum is None:

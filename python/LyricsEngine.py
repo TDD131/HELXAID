@@ -18,7 +18,7 @@ import ssl
 import hashlib
 import html
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Callable
 from PySide6.QtCore import QThread, Signal
 
 
@@ -52,6 +52,8 @@ class LyricData:
     has_netease_romaji: bool = False
     has_translation: bool = False
     genius_url: str = ""
+    romaji_status: str = "none"         # 'available' | 'rate_limited' | 'failed' | 'none'
+    romaji_attempt_ts: float = 0.0      # Timestamp of last enrichment attempt
 
 
 class LRCParser:
@@ -224,7 +226,9 @@ class LyricsCacheManager:
                     has_genius_romaji=data.get('has_genius_romaji', False) or any(bool(l.genius_romaji) for l in lines),
                     has_netease_romaji=data.get('has_netease_romaji', False) or any(bool(l.netease_romaji) for l in lines),
                     has_translation=data.get('has_translation', False) or any(bool(l.raw_translation) for l in lines),
-                    genius_url=data.get('genius_url', '')
+                    genius_url=data.get('genius_url', ''),
+                    romaji_status=data.get('romaji_status', 'none'),
+                    romaji_attempt_ts=data.get('romaji_attempt_ts', 0.0)
                 )
             except Exception:
                 return None
@@ -235,6 +239,7 @@ class LyricsCacheManager:
             return
         key = self._hash_key(title, artist, duration)
         file_path = os.path.join(self.cache_dir, f"{key}.json")
+        tmp_path = f"{file_path}.{os.getpid()}.tmp"
         try:
             payload = {
                 'title': data.title,
@@ -250,6 +255,8 @@ class LyricsCacheManager:
                 'has_netease_romaji': getattr(data, 'has_netease_romaji', False),
                 'has_translation': getattr(data, 'has_translation', False),
                 'genius_url': getattr(data, 'genius_url', ''),
+                'romaji_status': getattr(data, 'romaji_status', 'none'),
+                'romaji_attempt_ts': getattr(data, 'romaji_attempt_ts', 0.0),
                 'lines': [{
                     'time_ms': l.time_ms,
                     'text': l.text,
@@ -261,10 +268,17 @@ class LyricsCacheManager:
                     'raw_translation': getattr(l, 'raw_translation', None)
                 } for l in data.lines]
             }
-            with open(file_path, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, file_path)
         except Exception:
-            pass
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
 
     def delete(self, title: str, artist: str, duration: float):
         key = self._hash_key(title, artist, duration)
@@ -960,16 +974,91 @@ def is_instrumental_line(text: Optional[str]) -> bool:
     )
 
 
+class RomajiCircuitBreaker:
+    """
+    Thread-safe circuit breaker protecting external transliteration endpoints.
+    States: CLOSED (normal), OPEN (cooldown active), HALF_OPEN (probe allowed).
+    """
+    STATE_CLOSED = "CLOSED"
+    STATE_OPEN = "OPEN"
+    STATE_HALF_OPEN = "HALF_OPEN"
+
+    def __init__(self, initial_cooldown: float = 600.0, max_cooldown: float = 3600.0):
+        import threading
+        self._lock = threading.Lock()
+        self._state = self.STATE_CLOSED
+        self._cooldown_until = 0.0
+        self._initial_cooldown = initial_cooldown
+        self._max_cooldown = max_cooldown
+        self._current_cooldown = initial_cooldown
+        self._consecutive_failures = 0
+
+    def can_execute(self) -> bool:
+        with self._lock:
+            now = time.time()
+            if self._state == self.STATE_OPEN:
+                if now >= self._cooldown_until:
+                    self._state = self.STATE_HALF_OPEN
+                    return True
+                return False
+            return True
+
+    def record_success(self):
+        with self._lock:
+            self._state = self.STATE_CLOSED
+            self._consecutive_failures = 0
+            self._current_cooldown = self._initial_cooldown
+
+    def record_rate_limit(self, retry_after: Optional[float] = None):
+        with self._lock:
+            self._state = self.STATE_OPEN
+            self._consecutive_failures += 1
+            if retry_after and retry_after > 0:
+                duration = min(retry_after, self._max_cooldown)
+            else:
+                duration = min(self._current_cooldown * (1.5 ** (self._consecutive_failures - 1)), self._max_cooldown)
+            self._current_cooldown = duration
+            self._cooldown_until = time.time() + duration
+            print(f"[Lyrics] Romaji circuit breaker tripped (HTTP 429). Cooldown: {int(duration)}s (until {time.strftime('%H:%M:%S', time.localtime(self._cooldown_until))})")
+
+    def record_network_error(self):
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= 3:
+                self._state = self.STATE_OPEN
+                self._cooldown_until = time.time() + 60.0
+                print("[Lyrics] Romaji circuit breaker tripped (repetitive network errors). Cooldown: 60s")
+
+    def get_remaining_cooldown(self) -> int:
+        with self._lock:
+            if self._state == self.STATE_OPEN:
+                return max(0, int(self._cooldown_until - time.time()))
+            return 0
+
+    def is_active(self) -> bool:
+        with self._lock:
+            return self._state == self.STATE_OPEN and time.time() < self._cooldown_until
+
+
 class GoogleRomajiClient:
-    """High-speed client utilizing Google Translate's AI Romanization engine (dt=rm)."""
+    """High-speed resilient client utilizing Google Translate's AI Romanization engine (dt=rm)."""
     BASE_URL = "https://translate.googleapis.com/translate_a/single"
     USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    DELIMITER = " ||| "
+    DELIMITER = " ⟦#⟧ "
+    breaker = RomajiCircuitBreaker()
 
     @classmethod
-    def _fetch_romaji_chunk(cls, text_chunk: str) -> Optional[str]:
+    def _fetch_romaji_chunk(cls, text_chunk: str) -> Tuple[Optional[str], int]:
+        """
+        Fetches romaji transliteration for a single text chunk.
+        Returns: (romaji_text, http_status_code)
+        """
         if not text_chunk or not text_chunk.strip():
-            return None
+            return None, 200
+
+        if not cls.breaker.can_execute():
+            return None, 429
+
         params = {
             'client': 'gtx',
             'sl': 'auto',
@@ -979,62 +1068,110 @@ class GoogleRomajiClient:
         }
         url = f"{cls.BASE_URL}?{urllib.parse.urlencode(params)}"
         req = urllib.request.Request(url, headers={'User-Agent': cls.USER_AGENT})
-        ctx = ssl._create_unverified_context()
+        ctx = ssl.create_default_context()
         try:
-            with urllib.request.urlopen(req, timeout=4.5, context=ctx) as resp:
+            with urllib.request.urlopen(req, timeout=3.5, context=ctx) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode('utf-8'))
+                    cls.breaker.record_success()
                     if data and isinstance(data, list) and data[0]:
                         last_item = data[0][-1]
                         if isinstance(last_item, list) and len(last_item) >= 4 and last_item[3]:
-                            return str(last_item[3])
+                            return str(last_item[3]), 200
+                    return None, 200
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                retry_after = None
+                try:
+                    ra_hdr = e.headers.get('Retry-After')
+                    if ra_hdr:
+                        retry_after = float(ra_hdr)
+                except Exception:
+                    pass
+                cls.breaker.record_rate_limit(retry_after)
+                print(f"[Lyrics] Google Romaji chunk fetch rate-limited: HTTP Error 429")
+                return None, 429
+            elif e.code in (403, 503):
+                cls.breaker.record_rate_limit(300.0)
+                print(f"[Lyrics] Google Romaji chunk fetch denied: HTTP Error {e.code}")
+                return None, e.code
+            else:
+                print(f"[Lyrics] Google Romaji HTTP error: {e}")
+                return None, e.code
+        except urllib.error.URLError as e:
+            cls.breaker.record_network_error()
+            print(f"[Lyrics] Google Romaji network error: {e}")
+            return None, 0
         except Exception as e:
             print(f"[Lyrics] Google Romaji chunk fetch failed: {e}")
-        return None
+            return None, -1
+        return None, 200
 
     @classmethod
-    def fetch_romaji_for_lines(cls, raw_lines: List[str]) -> List[Optional[str]]:
+    def fetch_romaji_for_lines(cls, raw_lines: List[str], cancellation_check: Optional[Callable[[], bool]] = None) -> List[Optional[str]]:
         """
-        Translates a list of plain lines to Romanized text via batch chunking.
+        Translates a list of plain lines to Romanized text via throttled batch chunking.
         Returns a list of equal length to raw_lines.
         """
         if not raw_lines:
             return []
 
+        if not cls.breaker.can_execute():
+            return [None] * len(raw_lines)
+
         results: List[Optional[str]] = [None] * len(raw_lines)
-        CHUNK_SIZE = 25
+        CHUNK_SIZE = 12
 
         for i in range(0, len(raw_lines), CHUNK_SIZE):
+            if cancellation_check and cancellation_check():
+                print("[Lyrics] Google Romaji batch aborted: cancellation requested")
+                return results
+
             chunk_slice = raw_lines[i:i + CHUNK_SIZE]
             joined = cls.DELIMITER.join(chunk_slice)
-            romaji_raw = cls._fetch_romaji_chunk(joined)
+            romaji_raw, status = cls._fetch_romaji_chunk(joined)
+
+            # If rate-limited or network offline, immediately stop processing subsequent chunks
+            if status == 429:
+                if not cls.breaker.is_active():
+                    cls.breaker.record_rate_limit()
+                break
+            elif status in (403, 503, 0):
+                break
+
             if romaji_raw:
-                # Split using regex delimiter pattern
-                parts = re.split(r'\s*\|\s*\|\s*\|\s*', romaji_raw)
+                # Split using regex delimiter pattern matching new marker or legacy marker
+                parts = re.split(r'\s*⟦#⟧\s*|\s*\|\s*\|\s*\|\s*', romaji_raw)
                 if len(parts) == len(chunk_slice):
                     for j, part in enumerate(parts):
                         results[i + j] = parts[j].strip()
                 else:
-                    # Fallback: if split count mismatched, try line-by-line or assign sequentially
                     for j in range(min(len(parts), len(chunk_slice))):
                         results[i + j] = parts[j].strip()
-            else:
-                # If chunk failed completely, try individual lines for this chunk
-                for j, single_l in enumerate(chunk_slice):
-                    if single_l and single_l.strip():
-                        single_roma = cls._fetch_romaji_chunk(single_l)
-                        if single_roma:
-                            results[i + j] = single_roma.strip()
+
+            # Polite inter-chunk delay to respect Google's token bucket
+            if i + CHUNK_SIZE < len(raw_lines):
+                if cancellation_check and cancellation_check():
+                    return results
+                time.sleep(0.250)
 
         return results
 
     @classmethod
-    def enrich_lyrics(cls, data: LyricData) -> bool:
+    def enrich_lyrics(cls, data: LyricData, cancellation_check: Optional[Callable[[], bool]] = None) -> bool:
         """
         Enriches LyricData in-place by attaching Google AI Romanized text to each LyricLine.
         Sets line.google_romaji, line.romaji, and fallback line.translation.
         """
         if not data or not data.lines:
+            return False
+
+        if cancellation_check and cancellation_check():
+            return False
+
+        if not cls.breaker.can_execute():
+            data.romaji_status = "rate_limited"
+            data.romaji_attempt_ts = time.time()
             return False
 
         # Filter out instrumental / placeholder lines for Romanization
@@ -1049,8 +1186,10 @@ class GoogleRomajiClient:
         if not vocal_texts:
             return False
 
-        romaji_results = cls.fetch_romaji_for_lines(vocal_texts)
+        romaji_results = cls.fetch_romaji_for_lines(vocal_texts, cancellation_check=cancellation_check)
         if not romaji_results:
+            data.romaji_attempt_ts = time.time()
+            data.romaji_status = "rate_limited" if cls.breaker.is_active() else "failed"
             return False
 
         enriched_count = 0
@@ -1064,12 +1203,15 @@ class GoogleRomajiClient:
                     data.lines[line_idx].translation = roma
                 enriched_count += 1
 
+        data.romaji_attempt_ts = time.time()
         if enriched_count > 0:
             data.has_google_romaji = True
             data.has_romaji = True
+            data.romaji_status = "available"
             print(f"[Lyrics] Successfully enriched '{data.title}' with Google AI Romaji ({enriched_count} lines)")
             return True
 
+        data.romaji_status = "rate_limited" if cls.breaker.is_active() else "failed"
         return False
 
 
@@ -1139,27 +1281,46 @@ class LyricsFetchWorker(QThread):
         self.track = track
         self.cache_mgr = cache_mgr
         self.provider = (provider or "auto").lower().strip()
+        self._is_cancelled = False
+
+    def cancel(self):
+        """Signal this worker and any associated background enrichment to abort immediately."""
+        self._is_cancelled = True
+
+    def is_cancelled(self) -> bool:
+        return self._is_cancelled
 
     def _enrich_with_google_romaji(self, data: LyricData, title: str, artist: str):
         """Enrich LyricData with Google AI Romanized lines for CJK / non-Latin lyrics."""
-        if not data or not data.lines:
+        if self._is_cancelled or not data or not data.lines:
             return
         if getattr(data, 'has_google_romaji', False):
             return
         if not needs_cjk_romaji(title, data.lines):
             return
 
+        # Check negative cache cooldown: if failed or rate_limited recently, skip
+        romaji_status = getattr(data, 'romaji_status', 'none')
+        attempt_ts = getattr(data, 'romaji_attempt_ts', 0.0)
+        now = time.time()
+        if romaji_status == "rate_limited" and (now - attempt_ts < 600.0):
+            return
+        if romaji_status == "failed" and (now - attempt_ts < 3600.0):
+            return
+
         try:
-            success = GoogleRomajiClient.enrich_lyrics(data)
-            if success:
+            success = GoogleRomajiClient.enrich_lyrics(data, cancellation_check=self.is_cancelled)
+            if success and not self._is_cancelled:
                 self.cache_mgr.put(title, artist, self.track.get('duration', 0.0), data)
                 self.lyricsReady.emit(self.request_id, data)
+            elif not success and not self._is_cancelled:
+                self.cache_mgr.put(title, artist, self.track.get('duration', 0.0), data)
         except Exception as e:
-            print(f"[Lyrics] Google Romaji enrichment failed for '{title}': {e}")
+            print(f"[Lyrics] Google Romaji enrichment notice for '{title}': {e}")
 
     def _enrich_with_genius_romaji(self, data: LyricData, title: str, artist: str):
         """Enrich LyricData with Genius Romanized lines only if track actually contains CJK lyrics."""
-        if not data or not data.lines:
+        if self._is_cancelled or not data or not data.lines:
             return
         if getattr(data, 'has_genius_romaji', False):
             return
@@ -1168,16 +1329,18 @@ class LyricsFetchWorker(QThread):
 
         try:
             res = GeniusClient.search_romanized_url(title, artist)
-            if res:
+            if res and not self._is_cancelled:
                 url, g_title = res
                 g_lines = GeniusClient.fetch_romanized_lines(url)
-                if g_lines:
+                if g_lines and not self._is_cancelled:
                     success = RomajiAlignmentEngine.align_genius_romaji(data.lines, g_lines)
                     if success:
                         data.has_genius_romaji = True
                         data.has_romaji = True
                         data.genius_url = url
                         print(f"[Lyrics] Successfully enriched '{title}' with Genius Romanized ({len(g_lines)} lines) from '{url}'")
+                        self.cache_mgr.put(title, artist, self.track.get('duration', 0.0), data)
+                        self.lyricsReady.emit(self.request_id, data)
         except Exception as e:
             print(f"[Lyrics] Genius enrichment failed for '{title}': {e}")
 
@@ -1296,11 +1459,23 @@ class LyricsFetchWorker(QThread):
                 self.lyricsReady.emit(self.request_id, cached)
                 # If cached lyrics has CJK text but no Google Romaji yet, enrich in background
                 if needs_cjk_romaji(title, cached.lines) and not getattr(cached, 'has_google_romaji', False):
-                    import threading
-                    def _bg_cached_enrich():
-                        self._enrich_with_google_romaji(cached, title, artist)
-                        self._enrich_with_genius_romaji(cached, title, artist)
-                    threading.Thread(target=_bg_cached_enrich, daemon=True).start()
+                    romaji_status = getattr(cached, 'romaji_status', 'none')
+                    attempt_ts = getattr(cached, 'romaji_attempt_ts', 0.0)
+                    now = time.time()
+                    should_enrich = True
+                    if romaji_status == "rate_limited" and (now - attempt_ts < 600.0):
+                        should_enrich = False
+                    elif romaji_status == "failed" and (now - attempt_ts < 3600.0):
+                        should_enrich = False
+
+                    if should_enrich and not self._is_cancelled:
+                        import threading
+                        def _bg_cached_enrich():
+                            if not self._is_cancelled:
+                                self._enrich_with_google_romaji(cached, title, artist)
+                            if not self._is_cancelled:
+                                self._enrich_with_genius_romaji(cached, title, artist)
+                        threading.Thread(target=_bg_cached_enrich, daemon=True).start()
                 return
 
             # Step 4-6: High-Speed Parallel Online Race across LRCLIB + Musixmatch + NetEase (~200ms - 400ms)
@@ -1384,11 +1559,13 @@ class LyricsFetchWorker(QThread):
                 self.lyricsReady.emit(self.request_id, online_data)
                 
                 # Asynchronously enrich with Google AI Romaji & Genius in background if CJK detected
-                if needs_cjk_romaji(title, online_data.lines):
+                if needs_cjk_romaji(title, online_data.lines) and not self._is_cancelled:
                     import threading
                     def _bg_enrich():
-                        self._enrich_with_google_romaji(online_data, title, artist)
-                        self._enrich_with_genius_romaji(online_data, title, artist)
+                        if not self._is_cancelled:
+                            self._enrich_with_google_romaji(online_data, title, artist)
+                        if not self._is_cancelled:
+                            self._enrich_with_genius_romaji(online_data, title, artist)
                     threading.Thread(target=_bg_enrich, daemon=True).start()
                 return
 

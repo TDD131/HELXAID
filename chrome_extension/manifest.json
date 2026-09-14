@@ -13,7 +13,8 @@
   "host_permissions": [
     "*://*.youtube.com/*",
     "*://*.google.com/*",
-    "http://127.0.0.1:8889/*"
+    "http://127.0.0.1:8889/*",
+    "http://127.0.0.1:49152/*"
   ],
   "action": {
     "default_popup": "popup.html",

@@ -1,51 +1,27 @@
 [
   {
-    "id": "autoclicker_21d7df",
-    "name": "Clicker P1",
+    "id": "autoclicker_b7baf3",
+    "name": "Auto-Clicker (entot",
     "type": "ToggleMacro",
     "enabled": true,
     "description": "",
     "trigger": {
       "type": "keyboard_key",
       "event": "down",
-      "key": "f8"
+      "key": "f8",
+      "hotkey": "f8"
     },
     "conditions": [],
     "layer": "default",
     "allow_overlap": false,
     "is_toggle": true,
-    "on_action": null,
-    "repeat_action": {
-      "type": "mouse_click",
-      "button": "Left Click"
-    },
-    "repeat_interval_ms": 500,
-    "hold_key": null,
-    "hold_button": null,
-    "on_activate_actions": [],
-    "on_deactivate_actions": []
-  },
-  {
-    "id": "autoclicker_2039d9",
-    "name": "Auto-Clicker (Left Click)",
-    "type": "ToggleMacro",
-    "enabled": true,
-    "description": "",
-    "trigger": {
-      "type": "keyboard_key",
-      "event": "down",
-      "key": "f8"
-    },
-    "conditions": [],
-    "layer": "default",
-    "allow_overlap": false,
-    "is_toggle": true,
+    "execution_mode": "standard",
     "on_action": null,
     "repeat_action": {
       "type": "mouse_click",
       "button": "left"
     },
-    "repeat_interval_ms": 500,
+    "repeat_interval_ms": 1,
     "hold_key": null,
     "hold_button": null,
     "on_activate_actions": [],

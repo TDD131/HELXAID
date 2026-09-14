@@ -110,3 +110,39 @@ chrome.cookies.onChanged.addListener((changeInfo) => {
     }
   }
 });
+
+// Real-time Bridge: Auto-sync whenever HELXAID desktop app performs Main Initialize
+function initHelxaidBridge() {
+  try {
+    const ws = new WebSocket("ws://127.0.0.1:49152");
+
+    ws.onopen = () => {
+      console.log("[HELXAID Sync] Connected to HELXAID desktop WebSocket bridge.");
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.event === "MAIN_INITIALIZE") {
+          console.log("[HELXAID Sync] Received MAIN_INITIALIZE event from desktop, auto-pushing YouTube session...");
+          syncToHelxaid(true);
+        }
+      } catch (err) {
+        console.warn("[HELXAID Sync] Error handling bridge message:", err);
+      }
+    };
+
+    ws.onclose = () => {
+      // Reconnect after 3 seconds if HELXAID restarts or comes online later
+      setTimeout(initHelxaidBridge, 3000);
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+  } catch (e) {
+    setTimeout(initHelxaidBridge, 5000);
+  }
+}
+
+initHelxaidBridge();

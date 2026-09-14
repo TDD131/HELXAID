@@ -526,10 +526,11 @@ def download_stream_background(target_url_or_query: str, stream_url: str, on_fin
             with urllib.request.urlopen(req, timeout=20, context=ctx) as resp:
                 with open(temp_path, 'wb') as out_f:
                     while True:
-                        chunk = resp.read(128 * 1024)
+                        chunk = resp.read(64 * 1024)
                         if not chunk:
                             break
                         out_f.write(chunk)
+                        time.sleep(0.005)  # Cooperatively yield Python GIL to 60 FPS visualizer & GUI
             
             if os.path.exists(temp_path) and os.path.getsize(temp_path) > 100 * 1024:
                 if os.path.exists(final_path):

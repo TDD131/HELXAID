@@ -389,11 +389,13 @@ class InputListener:
     def _mouse_hook_proc(self, n_code: int, w_param: int, l_param: int) -> int:
         """Low-level mouse hook procedure."""
         if n_code >= 0 and self._running:
-            data = ctypes.cast(l_param, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-            
-            # Check if this is an injected event (our own simulation)
-            if data.flags & (self.INJECTED_FLAG | self.INJECTED_LOWER):
+            # Ultra-fast check of injected flag without allocating MSLLHOOKSTRUCT
+            # MSLLHOOKSTRUCT offset of flags: pt.x (4) + pt.y (4) + mouseData (4) = 12 bytes
+            flags = wintypes.DWORD.from_address(l_param + 12).value
+            if flags & (self.INJECTED_FLAG | self.INJECTED_LOWER):
                 return self._user32.CallNextHookEx(self._mouse_hook, n_code, w_param, l_param)
+
+            data = ctypes.cast(l_param, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
             
             # PERFORMANCE OPTIMIZATION: Skip mouse move events if not requested.
             # Processing every pixel of movement in a low-level hook can cause hardware lag.

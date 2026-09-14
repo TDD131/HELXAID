@@ -74,14 +74,27 @@ except Exception:
     PIL_AVAILABLE = False
 
 
+_AUDIO_PLAYBACK_ACTIVE = False
+
+def set_audio_playback_active(active: bool):
+    global _AUDIO_PLAYBACK_ACTIVE
+    _AUDIO_PLAYBACK_ACTIVE = bool(active)
+
+def is_audio_playback_active() -> bool:
+    return _AUDIO_PLAYBACK_ACTIVE
+
+
 def trim_current_process_memory():
     """
-    Instantly trim working set memory of HELXAID process.
-    Releases unused pages (post-extraction/yt-dlp/FFmpeg setup) back to OS.
+    Trim working set memory of HELXAID process.
+    Strictly guarded to NEVER run EmptyWorkingSet during active audio playback
+    or active visualizer rendering to prevent catastrophic hard page faults.
     """
     try:
         import gc
         gc.collect()
+        if _AUDIO_PLAYBACK_ACTIVE:
+            return
         if sys.platform == 'win32':
             import ctypes
             h_proc = ctypes.windll.kernel32.GetCurrentProcess()
@@ -10677,6 +10690,7 @@ class PlaylistTable(QWidget):
             track_item = QTreeWidgetItem(parent)
             track_item.setFlags(track_item.flags() & ~Qt.ItemIsDropEnabled)
             track_item.setData(0, Qt.UserRole, orig_idx)
+            track_item.setData(1, Qt.UserRole + 1, num_str)
             num_text = ">" if is_playing else num_str
             track_item.setText(0, " " + num_text)
             track_item.setTextAlignment(0, Qt.AlignLeft | Qt.AlignVCenter)
@@ -10775,7 +10789,47 @@ class PlaylistTable(QWidget):
         self.tree.setUpdatesEnabled(True)
             
     def highlight_playing(self, index: int):
+        prev_index = getattr(self, '_current_index', -1)
         self._current_index = index
+        
+        # Fast in-place row highlight if tree items already exist
+        if self.tree.topLevelItemCount() > 0:
+            def _find_item_by_idx(root, target_idx):
+                count = root.topLevelItemCount() if hasattr(root, 'topLevelItemCount') else root.childCount()
+                for i in range(count):
+                    it = root.topLevelItem(i) if hasattr(root, 'topLevelItem') else root.child(i)
+                    if it.data(0, Qt.UserRole) == target_idx:
+                        return it
+                    if it.data(0, Qt.UserRole) == "folder":
+                        sub = _find_item_by_idx(it, target_idx)
+                        if sub:
+                            return sub
+                return None
+
+            prev_item = _find_item_by_idx(self.tree, prev_index) if prev_index >= 0 else None
+            new_item = _find_item_by_idx(self.tree, index) if index >= 0 else None
+
+            if prev_item and prev_item != new_item:
+                for col in range(4):
+                    prev_item.setBackground(col, QColor(0, 0, 0, 0))
+                orig_num = prev_item.data(1, Qt.UserRole + 1)
+                num_disp = str(orig_num) if orig_num is not None else ""
+                prev_item.setText(0, f" {num_disp}" if num_disp else "  ")
+                prev_item.setForeground(0, QColor("#888888"))
+
+            if new_item:
+                for col in range(4):
+                    new_item.setBackground(col, QColor(255, 91, 6, 38))
+                new_item.setText(0, " >")
+                new_item.setForeground(0, QColor("#FF5B06"))
+                
+                # Auto-expand parent folder if item is inside one
+                p = new_item.parent()
+                if p and not p.isExpanded():
+                    p.setExpanded(True)
+                return
+
+        # Fallback to full render if tree is empty or item not found
         self._render_tracks()
         
         # Auto-expand the folder of the currently playing track
@@ -10783,13 +10837,50 @@ class PlaylistTable(QWidget):
             playing_track = self._tracks[index]
             playing_group = playing_track.get('playlist_group')
             if playing_group:
-                # Find the folder item in the tree
                 for i in range(self.tree.topLevelItemCount()):
                     item = self.tree.topLevelItem(i)
                     if item.data(0, Qt.UserRole) == "folder" and item.text(1) == playing_group:
                         if not item.isExpanded():
                             item.setExpanded(True)
                         break
+
+    def update_track_metadata_inplace(self, index: int, title: str, artist: str = "", duration: Any = None):
+        """Update a specific track's display text and duration in-place without rebuilding the QTreeWidget."""
+        if not (0 <= index < len(self._tracks)):
+            return
+        track = self._tracks[index]
+        if title:
+            track['title'] = title
+        if artist:
+            track['artist'] = artist
+        if duration is not None:
+            track['duration'] = duration
+            
+        def _search_item(root):
+            count = root.topLevelItemCount() if hasattr(root, 'topLevelItemCount') else root.childCount()
+            for i in range(count):
+                it = root.topLevelItem(i) if hasattr(root, 'topLevelItem') else root.child(i)
+                if it.data(0, Qt.UserRole) == index:
+                    return it
+                if it.data(0, Qt.UserRole) == "folder":
+                    sub = _search_item(it)
+                    if sub:
+                        return sub
+            return None
+
+        item = _search_item(self.tree)
+        if item:
+            if title:
+                item.setText(1, title)
+                item.setToolTip(1, title)
+            if duration is not None:
+                try:
+                    dur_sec = float(duration)
+                    mins = int(dur_sec // 60)
+                    secs = int(dur_sec % 60)
+                    item.setText(3, f"{mins}:{secs:02d}")
+                except Exception:
+                    pass
     
     def get_next_index(self, current_index: int) -> int:
         if not self._sorted_indices:
@@ -12504,13 +12595,17 @@ class MusicPanelWidget(QWidget):
         # Restore last state synchronously during initialization for solid single-pass state restoration
         self._load_last_state()
         
-        # Connect to app exit signal for final state save
+        # Connect to app exit signal for final state save and service cleanup
         app = QApplication.instance()
         if app:
-            app.aboutToQuit.connect(self._save_state)
+            app.aboutToQuit.connect(self._on_app_about_to_quit)
         
         # Start global media key listener and taskbar widget (ready quickly after UI init)
         QTimer.singleShot(100, self._setup_media_key_service)
+        
+        # Initialize Chrome Extension Sync Bridge for one-time main initialize resync
+        self._chrome_bridge = None
+        QTimer.singleShot(1200, self._init_chrome_bridge)
         
         # Ensure local sync daemon server is active early for Chrome Extension auto-sync
         try:
@@ -12586,7 +12681,14 @@ class MusicPanelWidget(QWidget):
 
 
     def schedule_ram_trim(self, delay_ms: int = 2000):
-        """Schedule a debounced working set memory trim."""
+        """Schedule a debounced working set memory trim, strictly suppressed during active playback."""
+        from PySide6.QtMultimedia import QMediaPlayer
+        is_playing = getattr(self, '_is_playing', False) or (
+            hasattr(self, '_player') and self._player and self._player.playbackState() == QMediaPlayer.PlayingState
+        )
+        if is_playing:
+            set_audio_playback_active(True)
+            return
         if hasattr(self, '_ram_trim_timer'):
             self._ram_trim_timer.start(delay_ms)
 
@@ -14656,18 +14758,19 @@ class MusicPanelWidget(QWidget):
     def _on_media_status(self, status):
         """Handle media status changes (for end-of-track, auto-play, and loop handling)."""
         # Guarantee auto-play when a new track finishes buffering/loading
-        if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
+        if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia, QMediaPlayer.BufferingMedia):
             should_play = (getattr(self, '_playback_intent', '') == 'play') or getattr(self, '_switching_track', False)
             if should_play:
                 if hasattr(self, '_player') and self._player:
                     if not self._player.source().isEmpty() and self._player.playbackState() != QMediaPlayer.PlayingState:
                         self._player.play()
-                self.player_bar.set_playing(True)
-                self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
-                if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
-                    self._taskbar_media_widget.set_playback_state(True)
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(500, lambda: setattr(self, '_switching_track', False))
+                if hasattr(self, '_player') and self._player and self._player.playbackState() == QMediaPlayer.PlayingState:
+                    self.player_bar.set_playing(True)
+                    self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
+                    if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+                        self._taskbar_media_widget.set_playback_state(True)
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(500, lambda: setattr(self, '_switching_track', False))
 
         if status == QMediaPlayer.EndOfMedia:
             # If crossfade handled the transition, don't do auto-next
@@ -14720,6 +14823,52 @@ class MusicPanelWidget(QWidget):
                 self._discord.set_playing(title, artist)
             else:
                 self._discord.set_paused(title, artist)
+                
+    def _on_app_about_to_quit(self):
+        """Cleanup background services and save state on app quit."""
+        try:
+            self._save_state()
+        except Exception:
+            pass
+        if hasattr(self, '_chrome_bridge') and self._chrome_bridge:
+            try:
+                self._chrome_bridge.stop()
+            except Exception:
+                pass
+
+    def _init_chrome_bridge(self):
+        """Initialize Chrome Extension Sync Bridge for main initialize resync."""
+        try:
+            from integrations.chrome_sync_bridge import ChromeSyncBridge
+            self._chrome_bridge = ChromeSyncBridge(
+                host="127.0.0.1",
+                port=49152,
+                get_init_payload_cb=self._get_chrome_sync_init_payload
+            )
+            self._chrome_bridge.start()
+        except Exception as e:
+            print(f"[MusicPanel] ChromeSyncBridge init error: {e}")
+            self._chrome_bridge = None
+
+    def _get_chrome_sync_init_payload(self) -> dict:
+        """Compile initial track and stream state for Chrome Extension resync."""
+        active_track = {}
+        if hasattr(self, '_playlist') and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
+            trk = self._playlist[self._current_index]
+            if isinstance(trk, dict):
+                active_track = {
+                    "title": trk.get('title', ''),
+                    "artist": trk.get('artist', ''),
+                    "original_url": trk.get('original_url') or trk.get('path', ''),
+                    "stream_url": trk.get('stream_url', ''),
+                    "duration_ms": trk.get('duration_ms', 0),
+                    "is_online": bool(trk.get('is_online') or trk.get('is_stream'))
+                }
+        return {
+            "action": "RESYNC",
+            "ready": True,
+            "active_track": active_track
+        }
     
     def _pause_resume_timer(self):
         """Pause the last-time-played resume countdown timer while menus/modals are active."""
@@ -15765,6 +15914,7 @@ class MusicPanelWidget(QWidget):
                 self._stream_request_id = 0
             self._stream_request_id += 1
             self._stream_error_retry_count = 0
+            self._stop_stream_watchdog()
             
             # Subdue overlapping QMediaPlayer triggers and active crossfade
             if getattr(self, '_crossfade_active', False):
@@ -15857,8 +16007,7 @@ class MusicPanelWidget(QWidget):
                     self._smtc_service.update_metadata(title=title, artist=artist, thumbnail_path=thumb)
                     self._smtc_service.set_playback_status(is_playing=True)
                     
-                # Schedule debounced RAM trim after playback starts
-                self.schedule_ram_trim(2000)
+                set_audio_playback_active(True)
             else:
                 print(f"File not found: {path}")
     
@@ -15888,6 +16037,40 @@ class MusicPanelWidget(QWidget):
             self._play_track(self._current_index)
             return
             
+        # Handle user toggling during active track buffering / loading
+        if getattr(self, '_switching_track', False):
+            if getattr(self, '_playback_intent', '') == 'play':
+                # User wants to pause/cancel buffering
+                self._playback_intent = "pause"
+                self._stop_stream_watchdog()
+                if hasattr(self, '_player') and self._player:
+                    self._player.pause()
+                self.player_bar.set_playing(False)
+                if hasattr(self, '_playlist') and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
+                    trk = self._playlist[self._current_index]
+                    if isinstance(trk, dict):
+                        t_title = trk.get('title', 'Stream')
+                        t_artist = trk.get('artist', '')
+                        sub = f"{t_artist} • Paused" if t_artist else "Paused"
+                        self.player_bar.set_track_info(t_title, sub)
+                return
+            else:
+                # User wants to resume playing
+                self._playback_intent = "play"
+                if hasattr(self, '_player') and self._player:
+                    self._player.play()
+                if hasattr(self, '_playlist') and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
+                    trk = self._playlist[self._current_index]
+                    if isinstance(trk, dict):
+                        t_title = trk.get('title', 'Stream')
+                        t_artist = trk.get('artist', '')
+                        sub = f"{t_artist} • Buffering..." if t_artist else "Buffering..."
+                        self.player_bar.set_track_info(t_title, sub)
+                        if trk.get('stream_url'):
+                            req_id = getattr(self, '_stream_request_id', 0)
+                            self._start_stream_watchdog(trk.get('stream_url'), trk, req_id)
+                return
+
         if self._player.playbackState() == QMediaPlayer.PlayingState:
             self._playback_intent = "pause"
             self._player.pause()
@@ -16217,34 +16400,148 @@ class MusicPanelWidget(QWidget):
             self.player_bar.set_track_info(title, status_sub)
         QTimer.singleShot(0, restore)
         
+    def _stop_stream_watchdog(self):
+        """Safely stop and cleanup stream playback watchdog timer."""
+        if hasattr(self, '_stream_watchdog_timer') and self._stream_watchdog_timer:
+            try:
+                self._stream_watchdog_timer.stop()
+                self._stream_watchdog_timer.deleteLater()
+            except Exception:
+                pass
+            self._stream_watchdog_timer = None
+
+    def _recover_stream_playback(self, track):
+        """Initiate recovery for a stalled or failed stream."""
+        from PySide6.QtCore import QTimer
+        
+        if getattr(self, '_is_auto_recovering', False):
+            return
+            
+        retry_count = getattr(self, '_stream_error_retry_count', 0)
+        title = track.get('title', 'Stream') if isinstance(track, dict) else 'Stream'
+        if retry_count >= 3:
+            print(f"[Stream Auto-Recovery] Max retry attempts (3) reached for '{title}'. Stopping recovery.")
+            self._is_auto_recovering = False
+            self._switching_track = False
+            self.player_bar.set_track_info(title, "Playback Failed • Stream Stalled")
+            self.player_bar.set_playing(False)
+            return
+
+        self._is_auto_recovering = True
+        self._stream_error_retry_count = retry_count + 1
+        saved_pos = self._player.position() if hasattr(self, '_player') else 0
+        
+        print(f"[Stream Auto-Recovery] Attempt {self._stream_error_retry_count}/3: Reconnecting stream at {saved_pos}ms...")
+        raw_url = track.get('original_url') or track.get('path', '') if isinstance(track, dict) else ''
+        try:
+            from fast_stream_resolver import report_stream_playback_failure, invalidate_cached_stream, prepare_ytdlp_target
+            target_url = prepare_ytdlp_target(raw_url)
+            report_stream_playback_failure(target_url)
+            invalidate_cached_stream(target_url)
+            if raw_url != target_url:
+                report_stream_playback_failure(raw_url)
+                invalidate_cached_stream(raw_url)
+        except Exception as e:
+            print(f"[Stream Auto-Recovery] Cache invalidation notice: {e}")
+
+        if isinstance(track, dict):
+            track.pop('stream_url', None)
+        
+        def _recover():
+            self._load_and_play_stream(track, start_pos=saved_pos, force_fallback=True)
+        QTimer.singleShot(100, _recover)
+
+    def _start_stream_watchdog(self, stream_url, track, request_id):
+        """Start adaptive polling watchdog to guarantee stream playback even if platform events miss."""
+        from PySide6.QtCore import QTimer
+        from PySide6.QtMultimedia import QMediaPlayer
+        
+        self._stop_stream_watchdog()
+        self._stream_watchdog_ticks = 0
+        self._stream_watchdog_timer = QTimer(self)
+        self._stream_watchdog_timer.setInterval(350)
+        
+        title = track.get('title', 'Unknown Stream') if isinstance(track, dict) else 'Unknown Stream'
+        artist = track.get('artist', '') if isinstance(track, dict) else ''
+
+        def _watchdog_tick():
+            if request_id != getattr(self, '_stream_request_id', 0):
+                self._stop_stream_watchdog()
+                return
+            if getattr(self, '_playback_intent', '') != 'play':
+                self._stop_stream_watchdog()
+                return
+            if not hasattr(self, '_player') or not self._player:
+                self._stop_stream_watchdog()
+                return
+                
+            if self._player.playbackState() == QMediaPlayer.PlayingState:
+                # Successfully playing!
+                set_audio_playback_active(True)
+                self.player_bar.set_playing(True)
+                self.player_bar.set_track_info(title, artist)
+                self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
+                if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+                    self._taskbar_media_widget.set_playback_state(True)
+                self._switching_track = False
+                self._stop_stream_watchdog()
+                return
+                
+            self._stream_watchdog_ticks += 1
+            # Re-kick play() periodically while buffering / paused
+            if self._player.playbackState() != QMediaPlayer.PlayingState:
+                self._player.play()
+                
+            # Timeout after 24 ticks (~8.4 seconds)
+            if self._stream_watchdog_ticks >= 24:
+                print(f"[FastStream] Stream watchdog reached 8.4s timeout for '{title}', initiating auto-recovery...")
+                self._stop_stream_watchdog()
+                if not getattr(self, '_is_auto_recovering', False):
+                    self._recover_stream_playback(track)
+
+        self._stream_watchdog_timer.timeout.connect(_watchdog_tick)
+        self._stream_watchdog_timer.start()
+
     def _play_resolved_stream(self, stream_url, track, request_id, start_pos=0):
         """Play the resolved direct stream URL with QMediaPlayer."""
         from PySide6.QtCore import QUrl, QTimer
+        from PySide6.QtMultimedia import QMediaPlayer
         
         # Abort overlapping race condition requests (e.g if user presses Next 5 times very fast)
         if request_id != getattr(self, '_stream_request_id', 0):
             print(f"[MusicPanel] Ignoring obsolete stream request #{request_id} (active: {getattr(self, '_stream_request_id', 0)})")
             return
             
-        title = track.get('title', 'Unknown Stream')
-        artist = track.get('artist', '')
+        title = track.get('title', 'Unknown Stream') if isinstance(track, dict) else 'Unknown Stream'
+        artist = track.get('artist', '') if isinstance(track, dict) else ''
         
         print(f"Playing resolved stream: {title} (start_pos: {start_pos}ms)")
         
         self._playback_intent = "play"
         self._is_auto_recovering = False
         self._stream_error_retry_count = 0
-        self.player_bar.set_track_info(title, artist)
-        self.player_bar.set_playing(True)
-        self.table.highlight_playing(self._current_index)
+        
+        # UI reflects buffering state, NOT premature playing state
+        status_sub = f"{artist} • Buffering..." if artist else "Buffering..."
+        self.player_bar.set_track_info(title, status_sub)
+        self.player_bar.set_playing(False)  # Remains Play icon until playback actually starts
+        
+        # In-place metadata update if title or duration resolved by yt-dlp, avoiding full tree re-render
+        if hasattr(self.table, 'update_track_metadata_inplace'):
+            self.table.update_track_metadata_inplace(self._current_index, title, artist, track.get('duration'))
+        else:
+            self.table.highlight_playing(self._current_index)
         
         self._switching_track = True
         self._prefetch_triggered_for_current = False
         
-        # Complete media pipeline flush to clear any broken demuxer / socket error state from previous song
+        # Stop existing watchdog if running
+        self._stop_stream_watchdog()
+        
+        # Safely stop existing active audio without destructive synchronous setSource(QUrl())
         try:
-            self._player.stop()
-            self._player.setSource(QUrl())
+            if self._player.playbackState() == QMediaPlayer.PlayingState:
+                self._player.stop()
         except Exception:
             pass
             
@@ -16254,62 +16551,59 @@ class MusicPanelWidget(QWidget):
 
         # Dedicated auto-play enforcer when media backend finishes buffering/loading
         def _on_stream_media_status(status):
-            from PySide6.QtMultimedia import QMediaPlayer
-            if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
+            if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia, QMediaPlayer.BufferingMedia):
                 if hasattr(self, '_player') and self._player:
-                    if getattr(self, '_playback_intent', '') == 'play' and not self._player.source().isEmpty() and self._player.playbackState() != QMediaPlayer.PlayingState:
-                        self._player.play()
-                    self.player_bar.set_playing(True)
-                    self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
-                    if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
-                        self._taskbar_media_widget.set_playback_state(True)
-                # Release transition lock only after audio playback is actually running
-                if hasattr(self, '_player') and self._player and self._player.playbackState() == QMediaPlayer.PlayingState:
-                    QTimer.singleShot(400, lambda: setattr(self, '_switching_track', False))
-                    try:
-                        self._player.mediaStatusChanged.disconnect(_on_stream_media_status)
-                    except Exception:
-                        pass
+                    if getattr(self, '_playback_intent', '') == 'play':
+                        if self._player.playbackState() != QMediaPlayer.PlayingState:
+                            self._player.play()
+                        if self._player.playbackState() == QMediaPlayer.PlayingState:
+                            set_audio_playback_active(True)
+                            self.player_bar.set_playing(True)
+                            self.player_bar.set_track_info(title, artist)
+                            self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
+                            if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+                                self._taskbar_media_widget.set_playback_state(True)
+                            self._switching_track = False
+                            self._stop_stream_watchdog()
+                            try:
+                                self._player.mediaStatusChanged.disconnect(_on_stream_media_status)
+                            except Exception:
+                                pass
 
         try:
             self._player.mediaStatusChanged.connect(_on_stream_media_status)
         except Exception:
             pass
 
-        # Watchdogs to ensure audio starts even if mediaStatusChanged is skipped by platform backend
-        def _verify_stream_playing():
-            if hasattr(self, '_player') and self._player:
-                from PySide6.QtMultimedia import QMediaPlayer
-                if getattr(self, '_playback_intent', '') == 'play' and self._player.playbackState() != QMediaPlayer.PlayingState:
-                    self._player.play()
-                self.player_bar.set_playing(True)
-                self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
-                if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
-                    self._taskbar_media_widget.set_playback_state(True)
+        # Start adaptive watchdog to kick and confirm playback (polls every 350ms up to 8.4s)
+        self._start_stream_watchdog(stream_url, track, request_id)
 
-        QTimer.singleShot(150, _verify_stream_playing)
-        QTimer.singleShot(450, _verify_stream_playing)
-        QTimer.singleShot(900, _verify_stream_playing)
-        QTimer.singleShot(1800, _verify_stream_playing)
-
-        # Background progressive audio download with instant seamless local handoff
+        # Deferred background progressive audio download with cooperative GIL yielding (waits 3.5s)
         if stream_url.startswith('http'):
-            try:
-                from fast_stream_resolver import download_stream_background
-                raw_target = track.get('original_url') or track.get('path', '') or stream_url
+            def _start_deferred_download():
+                if request_id != getattr(self, '_stream_request_id', 0):
+                    return
+                try:
+                    from fast_stream_resolver import download_stream_background
+                    raw_target = track.get('original_url') or track.get('path', '') or stream_url
 
-                def _on_cached_ready(cached_vid, local_path):
-                    from PySide6.QtCore import QTimer
-                    def _apply():
-                        self._handoff_to_local_cache(cached_vid, local_path)
-                    QTimer.singleShot(0, _apply)
+                    def _on_cached_ready(cached_vid, local_path):
+                        from PySide6.QtCore import QTimer
+                        def _apply():
+                            self._handoff_to_local_cache(cached_vid, local_path)
+                        QTimer.singleShot(0, _apply)
 
-                download_stream_background(raw_target, stream_url, on_finished=_on_cached_ready)
-            except Exception:
-                pass
+                    download_stream_background(raw_target, stream_url, on_finished=_on_cached_ready)
+                except Exception:
+                    pass
+
+            QTimer.singleShot(3500, _start_deferred_download)
         
+        # Only reload lyrics if title changed significantly from placeholder
         if hasattr(self, 'lyrics_page') and self.lyrics_page:
-            self.lyrics_page.load_track(track)
+            curr_lyr_track = getattr(self.lyrics_page, 'current_track', {}) or {}
+            if curr_lyr_track.get('title') != title:
+                self.lyrics_page.load_track(track)
             
         if start_pos > 0:
             target_ms = int(start_pos)
@@ -16334,7 +16628,7 @@ class MusicPanelWidget(QWidget):
                     pass
             
             def on_status(status):
-                if status == QMediaPlayer.LoadedMedia or status == QMediaPlayer.BufferedMedia:
+                if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia, QMediaPlayer.BufferingMedia):
                     apply_seek()
             
             try:
@@ -16346,26 +16640,27 @@ class MusicPanelWidget(QWidget):
             # Safety fallback seek
             QTimer.singleShot(600, apply_seek)
             
-        QTimer.singleShot(1500, lambda: setattr(self, '_switching_track', False))
         self._save_state()
         self._update_discord(title, artist, is_playing=True)
         
-        # Background pre-fetching of next track in playlist (C++ 0ms instant Next play)
-        try:
-            from fast_stream_resolver import prefetch_track
-            next_idx = self._current_index + 1
-            if hasattr(self, '_playlist') and 0 <= next_idx < len(self._playlist):
-                next_t = self._playlist[next_idx]
-                if isinstance(next_t, dict) and (next_t.get('is_online') or next_t.get('is_stream')):
-                    prefetch_track(next_t)
-        except Exception:
-            pass
-            
-        # Schedule debounced RAM trim after stream playback starts
-        self.schedule_ram_trim(2000)
+        # Deferred background pre-fetching of next track in playlist (waits 15s to keep startup quiescent)
+        def _start_deferred_prefetch():
+            if request_id != getattr(self, '_stream_request_id', 0):
+                return
+            try:
+                from fast_stream_resolver import prefetch_track
+                next_idx = self._current_index + 1
+                if hasattr(self, '_playlist') and 0 <= next_idx < len(self._playlist):
+                    next_t = self._playlist[next_idx]
+                    if isinstance(next_t, dict) and (next_t.get('is_online') or next_t.get('is_stream')):
+                        prefetch_track(next_t)
+            except Exception:
+                pass
+
+        QTimer.singleShot(15000, _start_deferred_prefetch)
 
     def _handoff_to_local_cache(self, vid: str, local_path: str):
-        """Seamlessly handoff active remote HTTP playback to local disk cache without interrupting audio."""
+        """Associate downloaded audio cache with track for instant future replays and offline fallback."""
         if not hasattr(self, '_player') or not os.path.exists(local_path):
             return
         if not hasattr(self, '_playlist') or not (0 <= getattr(self, '_current_index', -1) < len(self._playlist)):
@@ -16377,27 +16672,11 @@ class MusicPanelWidget(QWidget):
         if curr_vid != vid:
             return
 
-        # Check if already playing from local file
-        curr_source = self._player.source().toString()
-        if not curr_source.startswith("http"):
-            return
-
-        cur_pos = self._player.position()
-        should_play = (self._player.playbackState() == QMediaPlayer.PlayingState) or (getattr(self, '_playback_intent', '') == 'play')
-        
+        # Register local cache for seamless repeat plays and fallback without interrupting active audio
+        curr_track['local_cached_path'] = local_path
         from PySide6.QtCore import QUrl
-        self._player.setSource(QUrl.fromLocalFile(local_path))
-        self._set_current_media_local_path(local_path)
-        if cur_pos > 0:
-            self._player.setPosition(cur_pos)
-        if should_play:
-            self._player.play()
-            self.player_bar.set_playing(True)
-            
-        title = curr_track.get('title', 'Unknown')
-        artist = curr_track.get('artist', '')
-        self.player_bar.set_track_info(title, artist)
-        print(f"[FastStream] Seamlessly upgraded active playback to local disk cache (100% socket-drop immune)")
+        curr_track['stream_url'] = QUrl.fromLocalFile(local_path).toString()
+        print(f"[FastStream Cache] Local audio cache ready for '{curr_track.get('title', 'Stream')}': {local_path}")
 
     def eventFilter(self, obj, event):
         """Event filter for fullscreen key and mouse events."""
@@ -16649,22 +16928,37 @@ class MusicPanelWidget(QWidget):
 
             print(f"[Prefetch] Background pre-resolving upcoming track #{next_idx+1}: '{next_track.get('title', target)}'...")
             
-            if hasattr(self, '_prefetch_worker') and self._prefetch_worker and self._prefetch_worker.isRunning():
-                self._prefetch_worker.cancel()
-                self._prefetch_worker.wait(100)
+            prev_worker = getattr(self, '_prefetch_worker', None)
+            if prev_worker is not None:
+                try:
+                    if prev_worker.isRunning():
+                        prev_worker.cancel()
+                        prev_worker.wait(100)
+                except (RuntimeError, AttributeError):
+                    pass
+                self._prefetch_worker = None
 
-            worker = StreamPrefetchWorker(next_idx, target, parent=self)
-            self._prefetch_worker = worker
+            try:
+                worker = StreamPrefetchWorker(next_idx, target, parent=self)
+                self._prefetch_worker = worker
 
-            def on_resolved(idx, res):
-                if 0 <= idx < len(self._playlist):
-                    trk = self._playlist[idx]
-                    trk['stream_url'] = res.get('stream_url')
-                    print(f"[Prefetch] Pre-resolved successfully for #{idx+1}: '{res.get('title')}'")
+                def on_resolved(idx, res):
+                    if 0 <= idx < len(self._playlist):
+                        trk = self._playlist[idx]
+                        trk['stream_url'] = res.get('stream_url')
+                        print(f"[Prefetch] Pre-resolved successfully for #{idx+1}: '{res.get('title')}'")
 
-            worker.resolved.connect(on_resolved)
-            worker.finished.connect(worker.deleteLater)
-            worker.start()
+                def on_finished():
+                    if getattr(self, '_prefetch_worker', None) is worker:
+                        self._prefetch_worker = None
+
+                worker.resolved.connect(on_resolved)
+                worker.finished.connect(on_finished)
+                worker.finished.connect(worker.deleteLater)
+                worker.start()
+            except Exception as e:
+                print(f"[Prefetch] Failed to spawn prefetch worker: {e}")
+                self._prefetch_worker = None
     
     def _on_state(self, state):
         if not hasattr(self, 'player_bar') or self.player_bar is None:
@@ -17341,10 +17635,16 @@ class MusicPanelWidget(QWidget):
                 'visualizer_adaptive_top': getattr(self.visualizer_bg, '_color_top', QColor()).name() if hasattr(self, 'visualizer_bg') and hasattr(self.visualizer_bg, '_color_top') else ''
             }
             
-            with open(self._config_path, 'w', encoding='utf-8') as f:
-                json.dump(state, f, indent=2, ensure_ascii=False)
+            def _async_save(cfg_path, data):
+                try:
+                    with open(cfg_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                except Exception:
+                    pass
+            import threading
+            threading.Thread(target=_async_save, args=(self._config_path, state), daemon=True).start()
             
-            print(f"Saved state: {current_track_path.encode('ascii', 'replace').decode('ascii')}")
+            print(f"Saved state (async): {current_track_path.encode('ascii', 'replace').decode('ascii')}")
         except Exception as e:
             print(f"Failed to save state: {e}")
     

@@ -4,6 +4,7 @@ Macro Engine Module
 Central coordinator for macro execution, state management, and event routing.
 """
 
+import ctypes
 import asyncio
 import threading
 from dataclasses import dataclass, field
@@ -120,6 +121,7 @@ class MacroEngine:
         
         # Toggle states (for toggle macros)
         self._toggle_states: Dict[str, bool] = {}
+        self._physical_keys_down: Set[int] = set()
         self._active_layer = "default"
         
         # Native optimization
@@ -144,6 +146,11 @@ class MacroEngine:
             
         self._running = True
         
+        try:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+        except Exception:
+            pass
+
         # Start async event loop in separate thread
         self._async_loop = asyncio.new_event_loop()
         self._async_thread = threading.Thread(
@@ -176,6 +183,11 @@ class MacroEngine:
         if self._async_thread:
             self._async_thread.join(timeout=1.0)
             
+        try:
+            ctypes.windll.winmm.timeEndPeriod(1)
+        except Exception:
+            pass
+
         print("[MacroEngine] Stopped")
         
     def _run_async_loop(self):
@@ -333,14 +345,27 @@ class MacroEngine:
         if not self._running:
             return False
             
+        is_repeat = False
+        if event.type == EventType.KEY_DOWN:
+            if event.key_code in self._physical_keys_down:
+                is_repeat = True
+            else:
+                self._physical_keys_down.add(event.key_code)
+        elif event.type == EventType.KEY_UP:
+            self._physical_keys_down.discard(event.key_code)
+
         # NATIVE PATH: Fast C++ matching
         native_ev = self.input_listener.current_native_event
         if native_ev and self._native_engine:
             macro_id = self._native_engine.check_match_keyboard(native_ev, self._active_layer)
             if macro_id:
+                macro = self._macros.get(macro_id)
+                # Filter OS keyboard auto-repeat for toggle macros (only fire on initial rising-edge press)
+                if is_repeat and getattr(macro, 'is_toggle', False):
+                    return True
                 self._trigger_macro(macro_id, InputEvent(keyboard=event))
                 return True
-            
+
         # FAST PATH: Check key_code, lowercase key_name, and raw key_name in dictionary
         k_name = event.key_name.lower().strip() if event.key_name else ""
         bindings_code = self._bindings["keyboard"].get(event.key_code, [])
@@ -365,6 +390,12 @@ class MacroEngine:
                 continue
             if binding.event_type == "up" and event.type != EventType.KEY_UP:
                 continue
+
+            # Filter OS keyboard auto-repeat for toggle macros (only fire on initial rising-edge press)
+            if is_repeat and binding.event_type == "down":
+                macro = self._macros.get(binding.macro_id)
+                if macro and getattr(macro, 'is_toggle', False):
+                    continue
                 
             # Check conditions
             if not self._check_conditions(binding.conditions):
@@ -421,6 +452,7 @@ class MacroEngine:
             trigger_event=trigger_event,
             modifiers=self.input_listener.get_modifier_state()
         )
+        self._running_contexts[macro_id] = context  # Store context immediately for zero-delay cancellation
         
         # Schedule async execution
         if self._async_loop:
@@ -455,6 +487,7 @@ class MacroEngine:
         finally:
             self._running_macros.pop(macro_id, None)
             self._running_contexts.pop(macro_id, None)  # Cleanup context
+            self._toggle_states[macro_id] = False
             
             if self._on_macro_end:
                 self._on_macro_end(macro_id, self._macro_states[macro_id])
@@ -466,10 +499,16 @@ class MacroEngine:
         if context:
             context.cancelled = True
         
-        # Then cancel the asyncio task
+        # Then cancel the asyncio task thread-safely
         task = self._running_macros.get(macro_id)
         if task:
-            task.cancel()
+            if self._async_loop and self._async_loop.is_running():
+                try:
+                    self._async_loop.call_soon_threadsafe(task.cancel)
+                except Exception:
+                    task.cancel()
+            else:
+                task.cancel()
             
         self._toggle_states.pop(macro_id, None)
         

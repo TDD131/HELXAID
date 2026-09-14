@@ -798,17 +798,25 @@ class LyricsWidget(QWidget):
         # If user explicitly selected google and current_data lacks google_romaji, trigger on-demand background fetch
         if mode == "google" and self.current_data and not getattr(self.current_data, 'has_google_romaji', False):
             from LyricsEngine import GoogleRomajiClient
-            import threading
-            def _bg_manual_google():
-                success = GoogleRomajiClient.enrich_lyrics(self.current_data)
-                if success:
-                    if self.current_track:
-                        title = self.current_track.get('title', '')
-                        artist = self.current_track.get('artist', '')
-                        duration = self.current_track.get('duration', 0.0)
-                        self.cache_mgr.put(title, artist, duration, self.current_data)
-                    QTimer.singleShot(0, self._apply_subtext_mode)
-            threading.Thread(target=_bg_manual_google, daemon=True).start()
+            if not GoogleRomajiClient.breaker.can_execute():
+                rem = GoogleRomajiClient.breaker.get_remaining_cooldown()
+                print(f"[Lyrics] Google Romaji cooldown active ({rem}s remaining). Using available alternative romaji.")
+            else:
+                import threading
+                req_id = getattr(self, 'active_request_id', 0)
+                def _bg_manual_google():
+                    success = GoogleRomajiClient.enrich_lyrics(
+                        self.current_data,
+                        cancellation_check=lambda: getattr(self, 'active_request_id', 0) != req_id
+                    )
+                    if success and getattr(self, 'active_request_id', 0) == req_id:
+                        if self.current_track:
+                            title = self.current_track.get('title', '')
+                            artist = self.current_track.get('artist', '')
+                            duration = self.current_track.get('duration', 0.0)
+                            self.cache_mgr.put(title, artist, duration, self.current_data)
+                        QTimer.singleShot(0, self._apply_subtext_mode)
+                threading.Thread(target=_bg_manual_google, daemon=True).start()
 
         self._apply_subtext_mode()
 
@@ -1008,6 +1016,7 @@ class LyricsWidget(QWidget):
         # Stop previous worker if active
         if self.current_worker and self.current_worker.isRunning():
             try:
+                self.current_worker.cancel()
                 self.current_worker.disconnect()
             except Exception:
                 pass

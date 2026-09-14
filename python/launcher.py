@@ -23,6 +23,13 @@ from datetime import datetime
 os.environ.setdefault("QT_LOGGING_RULES", "qt.multimedia*=false;qt.multimedia.ffmpeg*=false;*.debug=false")
 os.environ.setdefault("AV_LOG_FORCE_NOCOLOR", "1")
 
+# Restrict numerical BLAS/LAPACK libraries from pre-allocating massive thread pools and memory arenas (~400MB)
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 # Suppress FFmpeg report file generation
 os.environ.pop("FFREPORT", None)
 
@@ -54,9 +61,9 @@ from PySide6.QtWidgets import (
     QProgressBar, QComboBox, QGroupBox, QSystemTrayIcon, QFormLayout, QStackedWidget, QFrame, QToolTip,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QListWidget, QListWidgetItem
 )
-from smooth_scroll import SmoothScrollArea
-from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDesktopServices, QLinearGradient, QImage, QFont, QFontMetrics, QShortcut, QKeySequence
-from PySide6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread
+from smooth_scroll import SmoothScrollArea, SmoothListWidget
+from PySide6.QtGui import QPixmap, QIcon, QPainter, QPainterPath, QColor, QDesktopServices, QLinearGradient, QImage, QFont, QFontMetrics, QShortcut, QKeySequence, QPen, QBrush
+from PySide6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, QSize, QSizeF, QTimer, QPropertyAnimation, QEasingCurve, QUrl, Signal, Slot, QEvent, QThread, QVariantAnimation
 from integrations.cpu_controller import is_uxtu_installed, CPUControlSettings, SAFETY_LIMITS, get_default_profile, validate_value, DEFAULT_UXTU_PATH, apply_settings_direct
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton, HoverCloseButton
 from DebugConsoleWidget import get_debug_console, toggle_debug_console
@@ -172,6 +179,14 @@ class TaskbarEventFilter(QAbstractNativeEventFilter):
                         if hasattr(parent.music_panel, '_player') and parent.music_panel._player:
                             parent.music_panel._player.stop()
                         return True, 1
+            
+            # Intercept HELRCUS Global Activation Hotkey (WM_HOTKEY)
+            WM_HOTKEY = 0x0312
+            if msg.message == WM_HOTKEY and msg.wParam == 54321:
+                parent = self._win_ref()
+                if parent and hasattr(parent, 'wincustom_panel') and hasattr(parent.wincustom_panel, '_activate_lock_screen'):
+                    parent.wincustom_panel._activate_lock_screen()
+                    return True, 0
         except Exception as e:
             print(f"[Taskbar ERROR] Layer 1 Filter Error: {e}")
         return False, 0
@@ -2150,13 +2165,32 @@ SYSTEM_PROCESS_BLACKLIST = {
     # CEF / WebView helpers used by many game launchers
     "msedgewebview2.exe",
     "cef.exe", "cefsharp.browsersubprocess.exe",
+    # Roblox / Bloxstrap crash reporters and background watchers
+    "robloxcrashhandler.exe", "robloxcrashhandler64.exe", "robloxplayerlauncher.exe",
+    # Windows error reporting / crashpad handlers
+    "werfault.exe", "werfaultsecure.exe", "wermgr.exe", "crashpad_handler.exe",
+    # Other game launcher background handlers
+    "riotclientcrashhandler.exe", "eadesktop.exe", "link2ea.exe",
 }
+
+def is_blacklisted_process(name: str) -> bool:
+    """Check if a process name is a Windows service, runtime host, or orphan crash reporter."""
+    if not name:
+        return True
+    n = name.lower().strip()
+    if n in SYSTEM_PROCESS_BLACKLIST:
+        return True
+    # Catch any generic crash reporters, bug reports, and error watchdogs
+    if any(pat in n for pat in ("crashhandler", "crashreport", "errorreport", "crashpad", "bugreport", "werfault")):
+        return True
+    return False
 
 DEFAULT_SETTINGS = {
     "background_image": "",
     "background_mode": "fill",  # fill, fit, stretch, tile, center, span
     "auto_palette": True,
     "show_hidden_games": False,
+    "hidden_scan_games": [],
     "watch_folders": [],
     "steam_custom_folders": [],
     "icon_scale": 1,
@@ -4564,12 +4598,13 @@ class SteamLoginTrackerFloatingPanel(QFrame):
 class GameStatisticsFloatingPanel(QFrame):
     """
     Sleek, Cyberpunk In-App Draggable Floating Panel for Game Statistics Dashboard.
-    Matching HELXAID UI design system (Orbitron font, dark theme, smooth animations).
+    Styled with standard neutral glassmorphism and Orbitron typography.
     
     Component Name: GameStatisticsFloatingPanel
     """
     def __init__(self, launcher, parent=None):
-        super().__init__(parent or launcher)
+        target_parent = parent or launcher
+        super().__init__(target_parent)
         self.launcher = launcher
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -4584,8 +4619,8 @@ class GameStatisticsFloatingPanel(QFrame):
         
         self.setStyleSheet(f"""
             QFrame#GameStatisticsFloatingPanel {{
-                background-color: rgba(12, 12, 16, 0.98);
-                border: 1px solid rgba(255, 255, 255, 0.08);
+                background-color: rgba(14, 16, 22, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.10);
                 border-radius: 14px;
             }}
             QWidget#statsTitleBar {{
@@ -4610,12 +4645,12 @@ class GameStatisticsFloatingPanel(QFrame):
                 background: transparent;
             }}
             QFrame#statsSummaryCard {{
-                background: rgba(255, 255, 255, 0.03);
+                background-color: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 12px;
             }}
             QFrame#statsMostPlayedCard {{
-                background: rgba(255, 255, 255, 0.03);
+                background-color: rgba(255, 255, 255, 0.03);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 12px;
             }}
@@ -4630,13 +4665,6 @@ class GameStatisticsFloatingPanel(QFrame):
         """)
         
         self.setFixedSize(630, 580)
-        
-        # Drop shadow for depth
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(28)
-        shadow.setColor(QColor(0, 0, 0, 220))
-        shadow.setOffset(0, 6)
-        self.setGraphicsEffect(shadow)
         
         # Build layout
         main_layout = QVBoxLayout(self)
@@ -4674,6 +4702,7 @@ class GameStatisticsFloatingPanel(QFrame):
         
         scroll_content = QWidget()
         scroll_content.setObjectName("statsScrollWidget")
+        scroll_content.setAttribute(Qt.WA_StyledBackground, True)
         content_layout = QVBoxLayout(scroll_content)
         content_layout.setContentsMargins(14, 12, 14, 8)
         content_layout.setSpacing(12)
@@ -4732,7 +4761,7 @@ class GameStatisticsFloatingPanel(QFrame):
             box = QFrame()
             box_id = title.replace(' ', '_')
             box.setObjectName(f"statBox_{box_id}")
-            box.setStyleSheet(f"QFrame#statBox_{box_id} {{ background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; }}")
+            box.setStyleSheet(f"QFrame#statBox_{box_id} {{ background-color: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 8px; }}")
             b_layout = QVBoxLayout(box)
             b_layout.setContentsMargins(4, 8, 4, 8)
             b_layout.setSpacing(3)
@@ -4930,18 +4959,20 @@ class GameStatisticsFloatingPanel(QFrame):
                 font-family: 'Orbitron', sans-serif;
                 font-weight: bold;
                 font-size: 12px;
-                color: #E0E0E0;
-                background-color: #3a3d45;
-                border: none;
+                color: #FFFFFF;
+                background-color: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.18);
                 border-radius: 6px;
                 letter-spacing: 1px;
             }
             QPushButton#statsFooterCloseBtn:hover {
-                background-color: #4a4d55;
+                background-color: rgba(255, 255, 255, 0.16);
+                border: 1px solid rgba(255, 255, 255, 0.28);
                 color: #FFFFFF;
             }
             QPushButton#statsFooterCloseBtn:pressed {
                 background-color: #FF5B06;
+                border: 1px solid #FF5B06;
                 color: #FFFFFF;
             }
         """)
@@ -4957,14 +4988,27 @@ class GameStatisticsFloatingPanel(QFrame):
         self.anim.setStartValue(0.0)
         self.anim.setEndValue(1.0)
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
-        self.anim.finished.connect(self._on_anim_finished)
 
-    def _on_anim_finished(self):
-        if self.anim.direction() == QPropertyAnimation.Backward:
-            self.deleteLater()
+    def _on_in_anim_finished(self):
+        """Detach graphics effect to avoid Windows DWM raster buffer ghosting (HELXAIC fix)."""
+        self.setGraphicsEffect(None)
+
+    def _finish_close(self):
+        self.hide()
+        self.setGraphicsEffect(None)
+        self.close()
+        self.deleteLater()
+
+    def closeEvent(self, event):
+        self._is_closing = True
+        if hasattr(self.launcher, "_stats_floating_panel") and self.launcher._stats_floating_panel is self:
+            self.launcher._stats_floating_panel = None
+        self.hide()
+        event.accept()
 
     def show_panel(self):
         """Position centered in parent and display with smooth fade in."""
+        self._is_closing = False
         if self.parent():
             parent_rect = self.parent().rect()
             x = max(0, (parent_rect.width() - self.width()) // 2)
@@ -4972,13 +5016,61 @@ class GameStatisticsFloatingPanel(QFrame):
             self.move(x, y)
         self.show()
         self.raise_()
-        self.anim.setDirection(QPropertyAnimation.Forward)
-        self.anim.start()
+        if hasattr(self, "anim") and self.anim:
+            try:
+                self.anim.stop()
+                if not self.graphicsEffect():
+                    self.opacity_effect = QGraphicsOpacityEffect(self)
+                    self.setGraphicsEffect(self.opacity_effect)
+                    self.anim.setTargetObject(self.opacity_effect)
+                self.opacity_effect.setOpacity(0.0)
+                self.anim.setDuration(220)
+                self.anim.setStartValue(0.0)
+                self.anim.setEndValue(1.0)
+                self.anim.setDirection(QPropertyAnimation.Forward)
+                try:
+                    self.anim.finished.disconnect()
+                except Exception:
+                    pass
+                self.anim.finished.connect(self._on_in_anim_finished)
+                self.anim.start()
+            except Exception:
+                self.setGraphicsEffect(None)
+        else:
+            self.setGraphicsEffect(None)
 
     def close_panel(self):
         """Close panel with smooth fade-out and cleanup."""
-        self.anim.setDirection(QPropertyAnimation.Backward)
-        self.anim.start()
+        if getattr(self, "_is_closing", False):
+            return
+        self._is_closing = True
+        
+        # Detach from launcher immediately
+        if hasattr(self.launcher, "_stats_floating_panel") and self.launcher._stats_floating_panel is self:
+            self.launcher._stats_floating_panel = None
+
+        if hasattr(self, "anim") and self.anim:
+            try:
+                self.anim.stop()
+                if not self.graphicsEffect():
+                    self.opacity_effect = QGraphicsOpacityEffect(self)
+                    self.setGraphicsEffect(self.opacity_effect)
+                    self.anim.setTargetObject(self.opacity_effect)
+                self.opacity_effect.setOpacity(1.0)
+                self.anim.setDuration(160)
+                self.anim.setStartValue(1.0)
+                self.anim.setEndValue(0.0)
+                self.anim.setDirection(QPropertyAnimation.Forward)
+                try:
+                    self.anim.finished.disconnect()
+                except Exception:
+                    pass
+                self.anim.finished.connect(self._finish_close)
+                self.anim.start()
+                return
+            except Exception:
+                pass
+        self._finish_close()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
@@ -5072,7 +5164,7 @@ class GameSettingsFloatingPanel(QFrame):
                 font-size: 13px;
                 font-weight: bold;
                 padding-left: 8px;
-                padding-right: 24px;
+                padding-right: 0px;
             }}
             QSpinBox#settingsIconSizeSpinBox QLineEdit {{
                 background: transparent;
@@ -5083,7 +5175,8 @@ class GameSettingsFloatingPanel(QFrame):
                 font-family: 'Orbitron', sans-serif;
                 font-size: 13px;
                 font-weight: bold;
-                selection-background-color: #FF5B06;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
             }}
             QSpinBox#settingsIconSizeSpinBox::up-button {{
                 subcontrol-origin: border;
@@ -7057,14 +7150,135 @@ class GameFoldersFloatingPanel(QFrame):
             event.accept()
 
 
+class GameScanHiddenTabSwitcher(QWidget):
+    """
+    Smooth 2-segment animated sliding pill switcher for Active vs Show Hidden games.
+    Component Name: BossKeyDecoyTabFrame
+    """
+    toggled = Signal(bool)
+    modeChanged = Signal(str)
+
+    def __init__(self, parent=None, initial_show_hidden=False):
+        super().__init__(parent)
+        self.setObjectName("BossKeyDecoyTabFrame")
+        self.setFixedSize(200, 48)
+        self.setCursor(Qt.PointingHandCursor)
+        self._modes = ["active", "hidden"]
+        self._labels = ["Active", "Show Hidden"]
+        self._current_mode = "hidden" if initial_show_hidden else "active"
+        self._slide_progress = 1.0 if initial_show_hidden else 0.0
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+
+    def isChecked(self) -> bool:
+        """Returns True if Show Hidden mode is active."""
+        return self._current_mode == "hidden"
+
+    def setChecked(self, checked: bool, animate: bool = True):
+        mode = "hidden" if checked else "active"
+        self.set_mode(mode, animate=animate)
+
+    def set_mode(self, mode: str, animate: bool = True):
+        if mode not in self._modes:
+            mode = "active"
+        target = float(self._modes.index(mode))
+        if mode == self._current_mode and self._slide_progress == target:
+            return
+        self._current_mode = mode
+
+        if not animate:
+            if self._anim.state() == QVariantAnimation.Running:
+                self._anim.stop()
+            self._slide_progress = target
+            self.update()
+            self.toggled.emit(self.isChecked())
+            self.modeChanged.emit(self._current_mode)
+            return
+
+        if self._anim.state() == QVariantAnimation.Running:
+            self._anim.stop()
+        self._anim.setStartValue(self._slide_progress)
+        self._anim.setEndValue(target)
+        self._anim.start()
+        self.toggled.emit(self.isChecked())
+        self.modeChanged.emit(self._current_mode)
+
+    def get_mode(self) -> str:
+        return self._current_mode
+
+    def _on_anim_step(self, value):
+        self._slide_progress = float(value)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            w = self.width()
+            click_x = event.position().x() if hasattr(event, 'position') else event.x()
+            segment_w = max(1.0, w / 2.0)
+            idx = max(0, min(1, int(click_x / segment_w)))
+            self.set_mode(self._modes[idx])
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.TextAntialiasing, True)
+
+        w = float(self.width())
+        h = float(self.height())
+
+        # 1. Dark container track matching secondary buttons
+        adjusted_rect = QRectF(0.5, 0.5, w - 1.0, h - 1.0)
+        p.setPen(QPen(QColor(255, 255, 255, 26), 1))
+        p.setBrush(QBrush(QColor(30, 32, 38, 220)))
+        p.drawRoundedRect(adjusted_rect, 6.0, 6.0)
+
+        # Clip so sliding pill perfectly conforms to the 6px track corners without shrinking in height
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(adjusted_rect, 6.0, 6.0)
+        p.setClipPath(clip_path)
+
+        # 2. Sliding pill geometry: full 48px height matching Select All & Deselect All
+        pill_w = w / 2.0
+        pill_h = h
+        pill_x = self._slide_progress * pill_w
+        pill_y = 0.0
+
+        # 3. Draw sliding orange gradient pill matching BossKeyDecoyTabFrame
+        gradient = QLinearGradient(pill_x, pill_y, pill_x + pill_w, pill_y)
+        gradient.setColorAt(0.0, QColor("#FF5B06"))
+        gradient.setColorAt(1.0, QColor("#FDA903"))
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(gradient))
+        p.drawRoundedRect(QRectF(pill_x, pill_y, pill_w, pill_h), 6.0, 6.0)
+
+        # 4. Draw Tab Texts with smooth color interpolation and vertically centered alignment
+        p.setFont(QFont("Orbitron", 9, QFont.Bold))
+        for i, lbl in enumerate(self._labels):
+            seg_x = i * pill_w
+            rect = QRectF(seg_x, 0.0, pill_w, h)
+            dist = abs(self._slide_progress - float(i))
+            weight = max(0.0, min(1.0, 1.0 - dist))
+            r = int(140 + (0 - 140) * weight)
+            g = int(140 + (0 - 140) * weight)
+            b = int(140 + (0 - 140) * weight)
+            p.setPen(QColor(r, g, b))
+            p.drawText(rect, Qt.AlignCenter, lbl)
+
+
 class GameScanSelectionFloatingPanel(QFrame):
     """In-app floating panel for selecting and adding detected games from scans."""
 
-    def __init__(self, launcher, title, games, on_accept_callback, parent=None, icon_name="folder-load.svg"):
+    def __init__(self, launcher, title, games, on_accept_callback, parent=None, icon_name="folder-load.svg", show_hidden_initial=False):
         super().__init__(parent or launcher)
         self.launcher = launcher
         self.games = games
         self.on_accept_callback = on_accept_callback
+        self.show_hidden_initial = show_hidden_initial
 
         self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -7076,6 +7290,9 @@ class GameScanSelectionFloatingPanel(QFrame):
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         panel_icon = os.path.join(script_dir, "UI Icons", icon_name).replace('\\', '/')
+        self.eye_open_icon = os.path.join(script_dir, "UI Icons", "eye-open.svg").replace('\\', '/')
+        self.eye_closed_icon = os.path.join(script_dir, "UI Icons", "eye-closed.svg").replace('\\', '/')
+        self.eye_closed_dimmed_icon = self._get_dimmed_icon(self.eye_closed_icon, QColor(130, 130, 130))
 
         self.setStyleSheet(f"""
             QFrame#GameScanSelectionFloatingPanel {{
@@ -7154,6 +7371,8 @@ class GameScanSelectionFloatingPanel(QFrame):
                 background-color: #3a3d45;
                 border: none;
                 border-radius: 6px;
+                padding: 0px;
+                margin: 0px;
             }}
             QPushButton#gameScanSelectAllBtn:hover, QPushButton#gameScanSelectNoneBtn:hover {{
                 background-color: #4a4d55;
@@ -7186,7 +7405,7 @@ class GameScanSelectionFloatingPanel(QFrame):
             }}
         """)
 
-        self.setFixedSize(540, 480)
+        self.setFixedSize(560, 490)
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(28)
@@ -7234,7 +7453,7 @@ class GameScanSelectionFloatingPanel(QFrame):
         self.header_lbl.setObjectName("gameScanHeaderLabel")
         card_layout.addWidget(self.header_lbl)
 
-        self.list_widget = QListWidget()
+        self.list_widget = SmoothListWidget()
         self.list_widget.setObjectName("gameScanListWidget")
         card_layout.addWidget(self.list_widget, stretch=1)
 
@@ -7247,23 +7466,29 @@ class GameScanSelectionFloatingPanel(QFrame):
         separator.setStyleSheet("background-color: rgba(255, 255, 255, 0.08); border: none;")
         card_layout.addWidget(separator)
 
-        # Inner Action Row
+        # Inner Action Row: Select All | Show Hidden Games checkbox | Deselect All
         inner_btn_row = QHBoxLayout()
-        inner_btn_row.setSpacing(8)
+        inner_btn_row.setContentsMargins(0, 0, 0, 0)
+        inner_btn_row.setSpacing(10)
+        inner_btn_row.setAlignment(Qt.AlignVCenter)
 
         select_all_btn = FadeHoverButton("Select All", is_secondary=True, border_radius=6.0)
         select_all_btn.setObjectName("gameScanSelectAllBtn")
-        select_all_btn.setFixedSize(105, 28)
+        select_all_btn.setFixedSize(142, 48)
         select_all_btn.clicked.connect(self.select_all)
+
+        self.show_hidden_cb = GameScanHiddenTabSwitcher(parent=self, initial_show_hidden=self.show_hidden_initial)
+        self.show_hidden_cb.setObjectName("BossKeyDecoyTabFrame")
+        self.show_hidden_cb.toggled.connect(self._on_toggle_show_hidden)
 
         select_none_btn = FadeHoverButton("Deselect All", is_secondary=True, border_radius=6.0)
         select_none_btn.setObjectName("gameScanSelectNoneBtn")
-        select_none_btn.setFixedSize(115, 28)
+        select_none_btn.setFixedSize(142, 48)
         select_none_btn.clicked.connect(self.select_none)
 
         inner_btn_row.addWidget(select_all_btn)
+        inner_btn_row.addWidget(self.show_hidden_cb)
         inner_btn_row.addWidget(select_none_btn)
-        inner_btn_row.addStretch()
         card_layout.addLayout(inner_btn_row)
 
         card_container_layout.addWidget(card)
@@ -7303,32 +7528,292 @@ class GameScanSelectionFloatingPanel(QFrame):
         self.anim.setEasingCurve(QEasingCurve.OutCubic)
         self.anim.finished.connect(self._on_anim_finished)
 
+    def _get_dimmed_icon(self, icon_path, color=None):
+        """Render a SVG icon tinted with a darker tone via QPainter without altering the file on disk."""
+        if color is None:
+            color = QColor(130, 130, 130)
+        if not os.path.exists(icon_path):
+            return QIcon()
+        try:
+            base_icon = QIcon(icon_path)
+            pix = base_icon.pixmap(QSize(36, 36))
+            if pix.isNull():
+                return base_icon
+            tinted = QPixmap(pix.size())
+            tinted.fill(Qt.transparent)
+            p = QPainter(tinted)
+            p.setRenderHint(QPainter.Antialiasing, True)
+            p.drawPixmap(0, 0, pix)
+            mode = getattr(QPainter.CompositionMode, "CompositionMode_SourceIn", None)
+            if mode is None and hasattr(QPainter, "CompositionMode_SourceIn"):
+                mode = QPainter.CompositionMode_SourceIn
+            if mode is not None:
+                p.setCompositionMode(mode)
+            p.fillRect(tinted.rect(), color)
+            p.end()
+            return QIcon(tinted)
+        except Exception:
+            return QIcon(icon_path)
+
+    def _norm_exe(self, game):
+        if not game:
+            return ""
+        if isinstance(game, dict):
+            exe = game.get("exe", "")
+        elif isinstance(game, (tuple, list)) and len(game) > 1:
+            exe = game[1]
+        else:
+            exe = str(game)
+        if not exe:
+            return ""
+        try:
+            return os.path.normcase(os.path.abspath(exe))
+        except Exception:
+            return os.path.normcase(exe)
+
+    def _is_hidden(self, game):
+        if hasattr(self.launcher, "is_scan_game_hidden"):
+            return self.launcher.is_scan_game_hidden(game)
+        norm = self._norm_exe(game)
+        if not norm:
+            return False
+        hidden = self.launcher.settings.get("hidden_scan_games", []) if hasattr(self.launcher, "settings") else []
+        return norm in [os.path.normcase(os.path.abspath(h)) if os.path.isabs(h) else os.path.normcase(h) for h in hidden]
+
+    def _apply_hidden_visibility(self, show_hidden: bool):
+        visible_count = 0
+        hidden_count = sum(1 for _, _, is_hidden in self.checkboxes if is_hidden)
+
+        for cb, _, is_hidden in self.checkboxes:
+            item = getattr(cb, "_list_item", None)
+            if item:
+                should_hide = is_hidden and not show_hidden
+                item.setHidden(should_hide)
+                if not should_hide:
+                    visible_count += 1
+            elif not (is_hidden and not show_hidden):
+                visible_count += 1
+
+        if hidden_count > 0:
+            self.header_lbl.setText(f"Found {visible_count} game{'s' if visible_count != 1 else ''} ({hidden_count} hidden). Select games to add:")
+        else:
+            self.header_lbl.setText(f"Found {visible_count} game{'s' if visible_count != 1 else ''}. Select games to add:")
+        self._update_add_button_text()
+
+        # Clamp smooth scroll position if out of bounds after hiding
+        if hasattr(self.list_widget, "_target"):
+            max_scroll = self.list_widget.verticalScrollBar().maximum()
+            if self.list_widget._target > max_scroll:
+                self.list_widget._target = max_scroll
+                self.list_widget.verticalScrollBar().setValue(max_scroll)
+
+    def _on_toggle_show_hidden(self, checked):
+        self._apply_hidden_visibility(bool(checked))
+
+    def _update_row_state(self, cb, g, new_hidden):
+        name = getattr(cb, "_game_name", "")
+        action_btn = getattr(cb, "_action_btn", None)
+        row_card = getattr(cb, "_row_card", None)
+        item = getattr(cb, "_list_item", None)
+        i = getattr(cb, "_index", 0)
+
+        # 1. Update cb display name & style
+        display_name = f"{name}  [HIDDEN]" if new_hidden else name
+        cb.setText(display_name)
+        if new_hidden:
+            cb.setStyleSheet("color: #777777; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+        else:
+            cb.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+
+        # 2. Update row_card style
+        if row_card:
+            if new_hidden:
+                row_card.setStyleSheet(f"QFrame#scanItemCard_{i} {{ background-color: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 8px; }}")
+            else:
+                row_card.setStyleSheet(f"QFrame#scanItemCard_{i} {{ background-color: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; }} QFrame#scanItemCard_{i}:hover {{ background-color: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12); }}")
+
+        # 3. Update action_btn icon, style & tooltip
+        if action_btn:
+            if new_hidden:
+                closed_icon = getattr(self, "eye_closed_dimmed_icon", None) or self._get_dimmed_icon(self.eye_closed_icon, QColor(130, 130, 130))
+                action_btn.setIcon(closed_icon)
+                action_btn.setIconSize(QSize(18, 18))
+                action_btn.setStyleSheet(
+                    f"QPushButton#scanGameActionBtn_{i} {{"
+                    "    background-color: rgba(34, 197, 94, 0.15);"
+                    "    border: none;"
+                    "    border-radius: 6px;"
+                    "    padding: 0px;"
+                    "    margin: 0px;"
+                    "}"
+                    f"QPushButton#scanGameActionBtn_{i}:hover {{"
+                    "    background-color: rgba(34, 197, 94, 0.30);"
+                    "}"
+                )
+                action_btn.setToolTip("Unhide this game")
+            else:
+                if os.path.exists(self.eye_open_icon):
+                    action_btn.setIcon(QIcon(self.eye_open_icon))
+                    action_btn.setIconSize(QSize(18, 18))
+                action_btn.setStyleSheet(
+                    f"QPushButton#scanGameActionBtn_{i} {{"
+                    "    background-color: rgba(255, 255, 255, 0.06);"
+                    "    border: none;"
+                    "    border-radius: 6px;"
+                    "    padding: 0px;"
+                    "    margin: 0px;"
+                    "}"
+                    f"QPushButton#scanGameActionBtn_{i}:hover {{"
+                    "    background-color: rgba(239, 68, 68, 0.25);"
+                    "}"
+                )
+                action_btn.setToolTip("Hide this game from scan results")
+
+        # 4. Update entry in self.checkboxes
+        for idx, (existing_cb, existing_game, _) in enumerate(self.checkboxes):
+            if existing_cb is cb:
+                self.checkboxes[idx] = (cb, existing_game, new_hidden)
+                break
+
+        # 5. Visibility based on mode
+        show_hidden = getattr(self, "show_hidden_cb", None) and self.show_hidden_cb.isChecked()
+        if item:
+            should_hide = new_hidden and not show_hidden
+            item.setHidden(should_hide)
+
+        # 6. Clamp scroll position if hiding reduced height
+        if hasattr(self.list_widget, "_target"):
+            max_scroll = self.list_widget.verticalScrollBar().maximum()
+            if self.list_widget._target > max_scroll:
+                self.list_widget._target = max_scroll
+                self.list_widget.verticalScrollBar().setValue(max_scroll)
+
+        # 7. Update header text & counts
+        visible_count = sum(1 for c, _, h in self.checkboxes if not (h and not show_hidden))
+        hidden_count = sum(1 for _, _, h in self.checkboxes if h)
+        if hidden_count > 0:
+            self.header_lbl.setText(f"Found {visible_count} game{'s' if visible_count != 1 else ''} ({hidden_count} hidden). Select games to add:")
+        else:
+            self.header_lbl.setText(f"Found {visible_count} game{'s' if visible_count != 1 else ''}. Select games to add:")
+        self._update_add_button_text()
+
     def _populate_list(self):
+        # Preserve scroll position across re-population
+        prev_scroll = self.list_widget.verticalScrollBar().value()
+
+        # Preserve user-checked states across re-population
+        checked_exes = set()
+        has_existing_checkboxes = hasattr(self, "checkboxes") and bool(self.checkboxes)
+        if has_existing_checkboxes:
+            for cb, game, _ in self.checkboxes:
+                if cb.isChecked():
+                    norm = self._norm_exe(game)
+                    if norm:
+                        checked_exes.add(norm)
+
         self.list_widget.clear()
         self.checkboxes = []
+        show_hidden = getattr(self, "show_hidden_cb", None) and self.show_hidden_cb.isChecked()
+
+        hidden_count = sum(1 for g in self.games if self._is_hidden(g))
+        visible_count = 0
+
         for i, game in enumerate(self.games):
             name = game.get("name", "") if isinstance(game, dict) else (game[0] if isinstance(game, (tuple, list)) else str(game))
             exe = game.get("exe", "") if isinstance(game, dict) else (game[1] if isinstance(game, (tuple, list)) and len(game) > 1 else "")
+            is_game_hidden = self._is_hidden(game)
 
             # Row container card
             row_card = QFrame()
-            row_card.setObjectName("scanItemCard")
+            row_card.setObjectName(f"scanItemCard_{i}")
+            row_card.setFixedHeight(40)
+            if is_game_hidden:
+                row_card.setStyleSheet(f"QFrame#scanItemCard_{i} {{ background-color: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.04); border-radius: 8px; }}")
+            else:
+                row_card.setStyleSheet(f"QFrame#scanItemCard_{i} {{ background-color: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 8px; }} QFrame#scanItemCard_{i}:hover {{ background-color: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.12); }}")
+
             row_layout = QHBoxLayout(row_card)
-            row_layout.setContentsMargins(10, 6, 10, 6)
+            row_layout.setContentsMargins(10, 0, 10, 0)
             row_layout.setSpacing(10)
 
-            cb = AnimatedCheckBox(name)
+            display_name = f"{name}  [HIDDEN]" if is_game_hidden else name
+            cb = AnimatedCheckBox(display_name)
             cb.setObjectName(f"scanGameCheckBox_{i}")
-            cb.setChecked(True)
-            cb._progress = 1.0
-            cb.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+
+            norm_path = self._norm_exe(game)
+            if has_existing_checkboxes:
+                is_checked = (norm_path in checked_exes) if norm_path else False
+            else:
+                is_checked = not is_game_hidden
+
+            cb.setChecked(is_checked, animate=False)
+            if is_game_hidden:
+                cb.setStyleSheet("color: #777777; font-family: 'Orbitron', sans-serif; font-size: 12px;")
+            else:
+                cb.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 12px;")
             if exe:
                 cb.setToolTip(exe)
                 row_card.setToolTip(exe)
             cb.stateChanged.connect(self._update_add_button_text)
-            self.checkboxes.append((cb, game))
+            self.checkboxes.append((cb, game, is_game_hidden))
 
-            row_layout.addWidget(cb, stretch=1)
+            row_layout.addWidget(cb, 1, Qt.AlignVCenter)
+
+            # Action button: Hide or Unhide with Eye Icons
+            action_btn = QPushButton()
+            action_btn.setObjectName(f"scanGameActionBtn_{i}")
+            action_btn.setFixedSize(32, 28)
+            action_btn.setCursor(Qt.PointingHandCursor)
+            action_btn.setFocusPolicy(Qt.NoFocus)
+            if is_game_hidden:
+                closed_icon = getattr(self, "eye_closed_dimmed_icon", None) or self._get_dimmed_icon(self.eye_closed_icon, QColor(130, 130, 130))
+                action_btn.setIcon(closed_icon)
+                action_btn.setIconSize(QSize(18, 18))
+                action_btn.setStyleSheet(
+                    f"QPushButton#scanGameActionBtn_{i} {{"
+                    "    background-color: rgba(34, 197, 94, 0.15);"
+                    "    border: none;"
+                    "    border-radius: 6px;"
+                    "    padding: 0px;"
+                    "    margin: 0px;"
+                    "}"
+                    f"QPushButton#scanGameActionBtn_{i}:hover {{"
+                    "    background-color: rgba(34, 197, 94, 0.30);"
+                    "}"
+                )
+                action_btn.setToolTip("Unhide this game")
+            else:
+                if os.path.exists(self.eye_open_icon):
+                    action_btn.setIcon(QIcon(self.eye_open_icon))
+                    action_btn.setIconSize(QSize(18, 18))
+                action_btn.setStyleSheet(
+                    f"QPushButton#scanGameActionBtn_{i} {{"
+                    "    background-color: rgba(255, 255, 255, 0.06);"
+                    "    border: none;"
+                    "    border-radius: 6px;"
+                    "    padding: 0px;"
+                    "    margin: 0px;"
+                    "}"
+                    f"QPushButton#scanGameActionBtn_{i}:hover {{"
+                    "    background-color: rgba(239, 68, 68, 0.25);"
+                    "}"
+                )
+                action_btn.setToolTip("Hide this game from scan results")
+
+            def make_action_handler(checkbox, g):
+                def _handler():
+                    is_hid = self._is_hidden(g)
+                    if is_hid:
+                        if hasattr(self.launcher, "unhide_scan_game"):
+                            self.launcher.unhide_scan_game(g)
+                        self._update_row_state(checkbox, g, False)
+                    else:
+                        if hasattr(self.launcher, "hide_scan_game"):
+                            self.launcher.hide_scan_game(g)
+                        self._update_row_state(checkbox, g, True)
+                return _handler
+            action_btn.clicked.connect(make_action_handler(cb, game))
+            row_layout.addWidget(action_btn, 0, Qt.AlignVCenter)
 
             # Enable clicking anywhere on row card to toggle checkbox
             def make_click_handler(checkbox):
@@ -7339,27 +7824,64 @@ class GameScanSelectionFloatingPanel(QFrame):
             row_card.mousePressEvent = make_click_handler(cb)
 
             item = QListWidgetItem(self.list_widget)
-            item.setSizeHint(row_card.sizeHint())
+            item.setSizeHint(QSize(0, 40))
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, row_card)
+            cb._list_item = item
+            cb._row_card = row_card
+            cb._action_btn = action_btn
+            cb._game_name = name
+            cb._index = i
+
+            should_hide = is_game_hidden and not show_hidden
+            if should_hide:
+                item.setHidden(True)
+            else:
+                visible_count += 1
+
+        # Update header label
+        if hidden_count > 0:
+            self.header_lbl.setText(f"Found {visible_count} game{'s' if visible_count != 1 else ''} ({hidden_count} hidden). Select games to add:")
+        else:
+            self.header_lbl.setText(f"Found {visible_count} game{'s' if visible_count != 1 else ''}. Select games to add:")
+
+        self._update_add_button_text()
+
+        # Restore scroll position after population
+        self.list_widget.doItemsLayout()
+        max_scroll = self.list_widget.verticalScrollBar().maximum()
+        restored_scroll = max(0, min(max_scroll, prev_scroll))
+        self.list_widget.verticalScrollBar().setValue(restored_scroll)
+        if hasattr(self.list_widget, "_target"):
+            self.list_widget._target = restored_scroll
 
     def select_all(self):
-        for cb, _ in self.checkboxes:
-            cb.setChecked(True)
+        show_hidden = getattr(self, "show_hidden_cb", None) and self.show_hidden_cb.isChecked()
+        for cb, _, is_hidden in self.checkboxes:
+            item = getattr(cb, "_list_item", None)
+            if item and item.isHidden():
+                continue
+            if not is_hidden or show_hidden:
+                cb.setChecked(True)
         self._update_add_button_text()
 
     def select_none(self):
-        for cb, _ in self.checkboxes:
+        for cb, _, _ in self.checkboxes:
             cb.setChecked(False)
         self._update_add_button_text()
 
     def _update_add_button_text(self, *args):
-        count = sum(1 for cb, _ in self.checkboxes if cb.isChecked())
+        count = sum(1 for cb, _, _ in self.checkboxes if cb.isChecked())
         self.add_btn.setText(f"Add Selected ({count})")
         self.add_btn.setEnabled(count > 0)
 
     def confirm_and_add(self):
-        selected = [game for cb, game in self.checkboxes if cb.isChecked()]
+        selected = []
+        for cb, game, is_hidden in self.checkboxes:
+            if cb.isChecked():
+                if is_hidden and hasattr(self.launcher, "unhide_scan_game"):
+                    self.launcher.unhide_scan_game(game)
+                selected.append(game)
         self.close_panel()
         if self.on_accept_callback:
             self.on_accept_callback(selected)
@@ -7875,6 +8397,610 @@ class ForceEndGameFloatingPanel(QFrame):
             event.accept()
 
 
+class CpuSettingsFloatingPanel(QFrame):
+    """
+    In-app draggable floating panel for CPU Settings.
+    Adheres strictly to HELXAID's signature floating panel design system:
+    - Less border, more background-color
+    - 100% Orbitron typography
+    - SVG iconography (hardware-chip.svg)
+    - HoverCloseButton in title bar
+    - Draggable within parent launcher bounds
+    - Smooth fade-in and fade-out animations via QPropertyAnimation
+    - Component names strictly set on all UI elements
+    """
+    def __init__(self, launcher, parent=None):
+        super().__init__(parent or launcher)
+        self.launcher = launcher
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("CpuSettingsFloatingPanel")
+
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        chip_icon_path = os.path.join(script_dir, "UI Icons", "hardware-chip.svg").replace('\\', '/')
+
+        self.setStyleSheet("""
+            QFrame#CpuSettingsFloatingPanel {
+                background-color: rgba(12, 12, 16, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#cpuSettingsTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#cpuSettingsTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 0.5px;
+            }
+            QFrame#cpuStartupCard, QFrame#cpuReapplyCard {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+            }
+            QLabel#cpuPresetLabel {
+                color: #9DB2BF;
+                font-size: 11px;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                padding-left: 2px;
+            }
+            QLabel#cpuIntervalHeaderLabel {
+                color: #FF5B06;
+                font-size: 11px;
+                font-family: 'Orbitron', sans-serif;
+                font-weight: bold;
+                letter-spacing: 0.5px;
+                background: transparent;
+            }
+            QLabel#cpuMinutesLabel, QLabel#cpuSecondsLabel {
+                color: #9DB2BF;
+                font-size: 11px;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+            }
+            QLabel#cpuMinutesValueLabel, QLabel#cpuSecondsValueLabel {
+                color: #FFFFFF;
+                font-size: 11px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                min-width: 35px;
+            }
+        """)
+
+        self.setFixedSize(460, 390)
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 220))
+        shadow.setOffset(0, 6)
+        self.setGraphicsEffect(shadow)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 1. Title bar
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("cpuSettingsTitleBar")
+        self.title_bar.setFixedHeight(42)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(14, 0, 14, 0)
+        tb_layout.setSpacing(10)
+
+        icon_lbl = QLabel()
+        icon_lbl.setObjectName("cpuSettingsTitleIcon")
+        icon_lbl.setFixedSize(18, 18)
+        icon_lbl.setScaledContents(True)
+        if os.path.exists(chip_icon_path):
+            icon_lbl.setPixmap(QPixmap(chip_icon_path))
+        icon_lbl.setStyleSheet("background: transparent; border: none;")
+        tb_layout.addWidget(icon_lbl, alignment=Qt.AlignVCenter)
+
+        title_lbl = QLabel("CPU SETTINGS")
+        title_lbl.setObjectName("cpuSettingsTitleLabel")
+        tb_layout.addWidget(title_lbl, stretch=1, alignment=Qt.AlignVCenter)
+
+        main_layout.addWidget(self.title_bar)
+
+        # 2. Content Container
+        content_container = QWidget()
+        content_container.setObjectName("cpuSettingsContentContainer")
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(14, 14, 14, 8)
+        content_layout.setSpacing(12)
+
+        # Card 1: Startup Preset Card
+        startup_card = QFrame()
+        startup_card.setObjectName("cpuStartupCard")
+        startup_layout = QVBoxLayout(startup_card)
+        startup_layout.setContentsMargins(14, 12, 14, 12)
+        startup_layout.setSpacing(8)
+
+        self.auto_apply_cb = AnimatedCheckBox("Apply current preset at startup")
+        self.auto_apply_cb.setObjectName("cpuAutoApplyCheckbox")
+        cb_font = QFont("Orbitron", 10)
+        cb_font.setBold(True)
+        self.auto_apply_cb.setFont(cb_font)
+
+        # Get initial value
+        current_value = False
+        if hasattr(self.launcher, 'cpu_settings') and self.launcher.cpu_settings._settings:
+            current_value = self.launcher.cpu_settings._settings.get("auto_apply_on_startup", False)
+        self.auto_apply_cb.setChecked(current_value)
+        startup_layout.addWidget(self.auto_apply_cb)
+
+        # Info sub-label
+        if hasattr(self.launcher, 'cpu_settings'):
+            current_preset = self.launcher.cpu_settings.current_preset_name
+            if current_preset:
+                info_text = f"Will apply preset: <span style='color: #FF5B06; font-weight: bold;'>{current_preset}</span>"
+            else:
+                info_text = "Will apply current slider values"
+        else:
+            info_text = "Will apply current slider values"
+        
+        self.preset_label = QLabel(info_text)
+        self.preset_label.setObjectName("cpuPresetLabel")
+        self.preset_label.setTextFormat(Qt.RichText)
+        startup_layout.addWidget(self.preset_label)
+
+        content_layout.addWidget(startup_card)
+
+        # Card 2: Auto-Reapply Daemon Card
+        reapply_card = QFrame()
+        reapply_card.setObjectName("cpuReapplyCard")
+        reapply_layout = QVBoxLayout(reapply_card)
+        reapply_layout.setContentsMargins(14, 12, 14, 14)
+        reapply_layout.setSpacing(10)
+
+        self.keep_applied_cb = AnimatedCheckBox("Keep settings applied")
+        self.keep_applied_cb.setObjectName("cpuKeepAppliedCheckbox")
+        self.keep_applied_cb.setToolTip("Re-applies CPU settings periodically to prevent Windows/BIOS from resetting them")
+        self.keep_applied_cb.setFont(cb_font)
+
+        keep_applied_value = False
+        if hasattr(self.launcher, 'cpu_settings') and self.launcher.cpu_settings._settings:
+            keep_applied_value = self.launcher.cpu_settings._settings.get("keep_settings_applied", False)
+        self.keep_applied_cb.setChecked(keep_applied_value)
+        reapply_layout.addWidget(self.keep_applied_cb)
+
+        # Interval Controls
+        is_dev = hasattr(self.launcher, 'settings') and self.launcher.settings.get("developer_mode", False)
+        self.min_total = 10 if is_dev else 300
+
+        saved_interval = self.min_total
+        if hasattr(self.launcher, 'cpu_settings') and self.launcher.cpu_settings._settings:
+            saved_interval = max(self.min_total, self.launcher.cpu_settings._settings.get("reapply_interval", 300))
+
+        initial_mins = saved_interval // 60
+        initial_secs = saved_interval % 60
+
+        slider_style = """
+            QSlider { background: transparent; }
+            QSlider::groove:horizontal { height: 4px; background: rgba(60, 64, 72, 0.8); border-radius: 2px; }
+            QSlider::handle:horizontal { 
+                background: #FF5B06; 
+                width: 14px; 
+                height: 14px; 
+                margin: -5px 0; 
+                border-radius: 7px; 
+                border: none;
+            }
+            QSlider::handle:horizontal:hover { background: #FF7B36; }
+            QSlider::sub-page:horizontal { background: rgba(255, 91, 6, 0.6); border-radius: 2px; }
+        """
+
+        grid_layout = QGridLayout()
+        grid_layout.setContentsMargins(0, 4, 0, 0)
+        grid_layout.setSpacing(8)
+        grid_layout.setColumnStretch(1, 1)
+
+        interval_label = QLabel("REAPPLY INTERVAL")
+        interval_label.setObjectName("cpuIntervalHeaderLabel")
+        grid_layout.addWidget(interval_label, 0, 0, 1, 3)
+
+        min_label = QLabel("Minutes:")
+        min_label.setObjectName("cpuMinutesLabel")
+        grid_layout.addWidget(min_label, 1, 0, 1, 1, Qt.AlignVCenter)
+
+        self.min_slider = NoScrollSlider(Qt.Horizontal)
+        self.min_slider.setObjectName("cpuMinutesSlider")
+        self.min_slider.setRange(0 if is_dev else 5, 30)
+        self.min_slider.setSingleStep(1)
+        self.min_slider.setPageStep(5)
+        self.min_slider.setFixedHeight(20)
+        self.min_slider.setStyleSheet(slider_style)
+        self.min_slider.setValue(initial_mins)
+        grid_layout.addWidget(self.min_slider, 1, 1, 1, 1, Qt.AlignVCenter)
+
+        self.min_value_label = QLabel(f"{initial_mins}m")
+        self.min_value_label.setObjectName("cpuMinutesValueLabel")
+        grid_layout.addWidget(self.min_value_label, 1, 2, 1, 1, Qt.AlignVCenter)
+
+        sec_label = QLabel("Seconds:")
+        sec_label.setObjectName("cpuSecondsLabel")
+        grid_layout.addWidget(sec_label, 2, 0, 1, 1, Qt.AlignVCenter)
+
+        self.sec_slider = NoScrollSlider(Qt.Horizontal)
+        self.sec_slider.setObjectName("cpuSecondsSlider")
+        self.sec_slider.setRange(0, 59)
+        self.sec_slider.setSingleStep(1)
+        self.sec_slider.setPageStep(10)
+        self.sec_slider.setFixedHeight(20)
+        self.sec_slider.setStyleSheet(slider_style)
+        self.sec_slider.setValue(initial_secs)
+        grid_layout.addWidget(self.sec_slider, 2, 1, 1, 1, Qt.AlignVCenter)
+
+        self.sec_value_label = QLabel(f"{initial_secs}s")
+        self.sec_value_label.setObjectName("cpuSecondsValueLabel")
+        grid_layout.addWidget(self.sec_value_label, 2, 2, 1, 1, Qt.AlignVCenter)
+
+        reapply_layout.addLayout(grid_layout)
+
+        def update_interval_labels():
+            self.min_value_label.setText(f"{self.min_slider.value()}m")
+            self.sec_value_label.setText(f"{self.sec_slider.value()}s")
+
+        self.min_slider.valueChanged.connect(lambda v: update_interval_labels())
+        self.sec_slider.valueChanged.connect(lambda v: update_interval_labels())
+
+        content_layout.addWidget(reapply_card)
+        main_layout.addWidget(content_container)
+
+        # 3. Footer Button Row
+        btn_container = QWidget()
+        btn_container.setObjectName("cpuFooterContainer")
+        btn_layout = QHBoxLayout(btn_container)
+        btn_layout.setContentsMargins(14, 0, 14, 14)
+        btn_layout.setSpacing(10)
+
+        btn_layout.addStretch()
+
+        self.cancel_btn = FadeHoverButton("Cancel", is_secondary=True, border_radius=6.0)
+        self.cancel_btn.setObjectName("cpuCancelButton")
+        self.cancel_btn.setFixedSize(85, 34)
+        self.cancel_btn.clicked.connect(self.close_panel)
+        btn_layout.addWidget(self.cancel_btn)
+
+        self.save_btn = FadeHoverButton("Save", is_secondary=False, border_radius=6.0)
+        self.save_btn.setObjectName("cpuSaveButton")
+        self.save_btn.setFixedSize(95, 34)
+        self.save_btn.clicked.connect(self._on_save_clicked)
+        btn_layout.addWidget(self.save_btn)
+
+        main_layout.addWidget(btn_container)
+
+        # Entrance Animation
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.anim.setDuration(220)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim.finished.connect(self._on_anim_finished)
+
+    def _get_calculated_total_seconds(self):
+        total = (self.min_slider.value() * 60) + self.sec_slider.value()
+        return max(self.min_total, total)
+
+    def _on_save_clicked(self):
+        auto_apply = self.auto_apply_cb.isChecked()
+        keep_applied = self.keep_applied_cb.isChecked()
+        interval = self._get_calculated_total_seconds()
+        self.launcher._save_cpu_settings(auto_apply, keep_applied, interval, self)
+
+    def _on_anim_finished(self):
+        if self.anim.direction() == QPropertyAnimation.Backward:
+            self.deleteLater()
+
+    def show_panel(self):
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = max(0, (parent_rect.width() - self.width()) // 2)
+            y = max(10, (parent_rect.height() - self.height()) // 2)
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        self.anim.setDirection(QPropertyAnimation.Forward)
+        self.anim.start()
+
+    def close_panel(self):
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.start()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close_panel()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+            event.accept()
+
+
+class CpuApplyResultFloatingPanel(QFrame):
+    """
+    In-app draggable floating panel for HELXAIL CPU action feedback (Settings Applied / Failed).
+    Replaces native QMessageBox with a frameless, non-blocking glassmorphic QFrame
+    adhering strictly to HELXAID's signature floating panel design system:
+    - Less border, more background-color
+    - 100% Orbitron typography
+    - SVG iconography (hardware-chip.svg, check-icon.svg, warning-icon.svg)
+    - HoverCloseButton in title bar
+    - Draggable within parent launcher bounds
+    - Smooth fade-in and fade-out animations via QPropertyAnimation
+    - Component names strictly set on all UI elements
+    """
+    def __init__(self, launcher, title="SETTINGS APPLIED", message="CPU settings applied successfully.", sub_tip=None, is_success=True, parent=None):
+        super().__init__(parent or launcher)
+        from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget, QGraphicsOpacityEffect, QFrame
+        from PySide6.QtGui import QPixmap, QColor
+        from AnimatedButton import HoverCloseButton
+
+        self.launcher = launcher
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("CpuApplyResultFloatingPanel")
+
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        chip_icon_path = os.path.join(script_dir, "UI Icons", "hardware-chip.svg").replace('\\', '/')
+        check_icon_path = os.path.join(script_dir, "UI Icons", "check-icon.svg").replace('\\', '/')
+        warning_icon_path = os.path.join(script_dir, "UI Icons", "warning-icon.svg").replace('\\', '/')
+        info_icon_path = os.path.join(script_dir, "UI Icons", "info-icon.svg").replace('\\', '/')
+
+        badge_icon_path = check_icon_path if is_success else warning_icon_path
+        if not os.path.exists(badge_icon_path):
+            badge_icon_path = chip_icon_path if is_success else info_icon_path
+
+        self.setStyleSheet("""
+            QFrame#CpuApplyResultFloatingPanel {
+                background-color: rgba(12, 12, 16, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#cpuApplyTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#cpuApplyTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 1px;
+            }
+            QFrame#cpuApplyCard {
+                background: rgba(255, 255, 255, 0.03);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 12px;
+            }
+            QLabel#cpuApplyBadgeIcon {
+                background: transparent;
+            }
+            QLabel#cpuApplyMessageLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: bold;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                line-height: 1.4;
+            }
+            QLabel#cpuApplyTipLabel {
+                color: #9DB2BF;
+                font-size: 11px;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                line-height: 1.4;
+            }
+            QPushButton#cpuApplyOkBtn {
+                background-color: rgba(255, 91, 6, 0.25);
+                border: 1px solid #FF5B06;
+                border-radius: 8px;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 7px 26px;
+            }
+            QPushButton#cpuApplyOkBtn:hover {
+                background-color: rgba(255, 91, 6, 0.55);
+                border-color: #FF7324;
+            }
+            QPushButton#cpuApplyOkBtn:pressed {
+                background-color: #FF5B06;
+                color: #FFFFFF;
+            }
+        """)
+
+        self.setFixedWidth(480)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 16)
+        main_layout.setSpacing(0)
+
+        # 1. Title Bar (Draggable)
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("cpuApplyTitleBar")
+        self.title_bar.setFixedHeight(42)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(14, 0, 14, 0)
+        tb_layout.setSpacing(10)
+
+        title_icon_lbl = QLabel(self.title_bar)
+        title_icon_lbl.setObjectName("cpuApplyTitleIcon")
+        title_icon_lbl.setFixedSize(18, 18)
+        title_icon_lbl.setScaledContents(True)
+        if os.path.exists(chip_icon_path):
+            title_icon_lbl.setPixmap(QPixmap(chip_icon_path))
+        tb_layout.addWidget(title_icon_lbl, alignment=Qt.AlignVCenter)
+
+        title_lbl = QLabel(title.upper(), self.title_bar)
+        title_lbl.setObjectName("cpuApplyTitleLabel")
+        tb_layout.addWidget(title_lbl, stretch=1, alignment=Qt.AlignVCenter)
+
+        self.close_btn = HoverCloseButton(size=20, icon_size=12, parent=self.title_bar)
+        self.close_btn.setObjectName("cpuApplyCloseBtn")
+        self.close_btn.clicked.connect(self.close_panel)
+        tb_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter)
+
+        main_layout.addWidget(self.title_bar)
+
+        # 2. Content Area
+        content_container = QWidget(self)
+        content_container.setObjectName("cpuApplyContentContainer")
+        content_outer_layout = QVBoxLayout(content_container)
+        content_outer_layout.setContentsMargins(16, 14, 16, 12)
+        content_outer_layout.setSpacing(12)
+
+        card = QFrame(content_container)
+        card.setObjectName("cpuApplyCard")
+        card_layout = QHBoxLayout(card)
+        card_layout.setContentsMargins(16, 14, 16, 14)
+        card_layout.setSpacing(14)
+
+        badge_lbl = QLabel(card)
+        badge_lbl.setObjectName("cpuApplyBadgeIcon")
+        badge_lbl.setFixedSize(32, 32)
+        badge_lbl.setScaledContents(True)
+        if os.path.exists(badge_icon_path):
+            badge_lbl.setPixmap(QPixmap(badge_icon_path))
+        card_layout.addWidget(badge_lbl, alignment=Qt.AlignVCenter)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+
+        msg_lbl = QLabel(message, card)
+        msg_lbl.setObjectName("cpuApplyMessageLabel")
+        msg_lbl.setWordWrap(True)
+        text_layout.addWidget(msg_lbl)
+
+        if sub_tip:
+            tip_lbl = QLabel(sub_tip, card)
+            tip_lbl.setObjectName("cpuApplyTipLabel")
+            tip_lbl.setWordWrap(True)
+            text_layout.addWidget(tip_lbl)
+
+        card_layout.addLayout(text_layout, stretch=1)
+        content_outer_layout.addWidget(card)
+
+        # 3. Action Button Row
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.addStretch()
+
+        self.ok_btn = QPushButton("OK", content_container)
+        self.ok_btn.setObjectName("cpuApplyOkBtn")
+        self.ok_btn.setCursor(Qt.PointingHandCursor)
+        self.ok_btn.clicked.connect(self.close_panel)
+        btn_layout.addWidget(self.ok_btn)
+
+        content_outer_layout.addLayout(btn_layout)
+        main_layout.addWidget(content_container, stretch=1)
+
+        self.adjustSize()
+
+        # Entrance Animation (Fade-in & Fade-out)
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.anim.setDuration(200)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim.finished.connect(self._on_anim_finished)
+
+    def _on_anim_finished(self):
+        if self.anim.direction() == QPropertyAnimation.Backward:
+            self.deleteLater()
+
+    def show_panel(self):
+        """Position centered in parent and display with smooth fade in."""
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = max(0, (parent_rect.width() - self.width()) // 2)
+            y = max(10, (parent_rect.height() - self.height()) // 2)
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        self.anim.setDirection(QPropertyAnimation.Forward)
+        self.anim.start()
+
+    def close_panel(self):
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.start()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close_panel()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+            event.accept()
+
+
 class HelxailInfoWizard(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -8024,11 +9150,11 @@ class HelxailInfoWizard(QFrame):
         self.steps = [
             {
                 "title": "Step 1: Disable Memory Integrity",
-                "desc": "Windows 11 blocks the RyzenAdj driver (inpoutx64.sys) by default. You MUST disable 'Memory Integrity' (Core Isolation) in Windows Settings and restart your PC for CPU Control to work."
+                "desc": "Windows 11 blocks low-level CPU drivers (such as RyzenAdj inpoutx64.sys or ThrottleStop WinRing0) by default. You MUST disable 'Memory Integrity' (Core Isolation) in Windows Settings and restart your PC for CPU Control to work."
             },
             {
                 "title": "Step 2: Close Other Tuning Apps",
-                "desc": "Apps like UXTU, Ryzen Controller, or AATU will compete for hardware access and cause silent driver crashes (like PawnIO.sys). Please close them completely before applying HELXAIL settings."
+                "desc": "Apps like UXTU, Intel XTU, or Ryzen Controller will compete for hardware access and cause silent driver conflicts. Please close them completely before applying HELXAIL settings."
             },
             {
                 "title": "Step 3: Install Background Service",
@@ -8036,7 +9162,7 @@ class HelxailInfoWizard(QFrame):
             },
             {
                 "title": "Step 4: Enable Service & Save",
-                "desc": "Inside the Quick Settings, scroll down to 'Background Service'. Click 'Install Service' and check the 'Enable Zero-UAC Background Service' box. Finally, hit 'Save'. You're all set!"
+                "desc": "Inside Main Setting, the panel will automatically scroll down to the <b>Zero-UAC Mode</b> section. Simply check the <b>'Auto-enable Zero-UAC on launch'</b> checkbox (or click <b>'Enable'</b> to activate the service immediately), then click <b>'OK'</b> to save. You're all set!"
             }
         ]
         self.current_step = 0
@@ -8074,7 +9200,8 @@ class HelxailInfoWizard(QFrame):
                     parent=dialog,
                     target_widget=target_group,
                     on_target_clicked=lambda: None,
-                    instruction_text="Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring." if link == 'open_settings_psutil' else "Enable Zero-UAC Mode here!\nClick 'Enable' to install the background service."
+                    instruction_text="Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring." if link == 'open_settings_psutil' else "Check 'Auto-enable Zero-UAC on launch' here!\n(Or click 'Enable' to activate the service)",
+                    auto_click_target=False
                 )
                 launcher._spotlight_overlay = overlay
                 overlay.show_with_fade_in()
@@ -8082,13 +9209,18 @@ class HelxailInfoWizard(QFrame):
             def on_settings_clicked():
                 """Open settings in tutorial mode."""
                 try:
-                    target = "psutil" if link == 'open_settings_psutil' else None
+                    target = "psutil" if link == 'open_settings_psutil' else "zero_uac"
                     launcher.open_quick_settings(
                         on_tutorial_ready=on_dev_or_service_ready if link != 'open_settings_psutil' else None,
                         highlight_target=target
                     )
                 except Exception as e:
                     print(f"[Tutorial] Error in step callback: {e}")
+
+            # If Main Setting dialog is already open and visible, directly scroll and spotlight it!
+            if getattr(launcher, "_active_quick_settings_dlg", None) is not None and launcher._active_quick_settings_dlg.isVisible():
+                on_settings_clicked()
+                return
 
             launcher.show_tutorial_overlay(
                 launcher.settings_nav_btn,
@@ -8405,6 +9537,21 @@ class GameLauncher(QWidget):
 
     def _cleanup_memory(self):
         """Periodic memory cleanup and aggressive working set trimming to prevent RAM growth."""
+        # Dismiss any orphaned modal/floating overlays
+        if hasattr(self, '_force_end_panel') and self._force_end_panel is not None:
+            try:
+                self._force_end_panel.close()
+            except Exception:
+                pass
+            self._force_end_panel = None
+
+        if hasattr(self, '_steam_tracker_panel') and self._steam_tracker_panel is not None:
+            try:
+                self._steam_tracker_panel.close_panel()
+            except Exception:
+                pass
+            self._steam_tracker_panel = None
+
         # Limit icon cache size
         if len(self._icon_cache) > self._icon_cache_max_size:
             # Remove oldest entries (first 30% of cache)
@@ -8412,8 +9559,8 @@ class GameLauncher(QWidget):
             for key in keys[:len(keys) // 3]:
                 del self._icon_cache[key]
         
-        # Run garbage collection
-        gc.collect()
+        # Run full generation garbage collection
+        gc.collect(2)
         
         # Trim the Working Set to release pages back to Windows OS
         import sys
@@ -9155,12 +10302,21 @@ class GameLauncher(QWidget):
             }
         """)
         
-        # Check if UXTU is installed
+        # Check if CPU tuning tools are installed
         self.uxtu_installed = is_uxtu_installed()
-        
-        # CPU button always enabled - shows download prompt if UXTU not available
-        if not self.uxtu_installed:
-            self.cpu_nav_btn.setToolTip("HELXAIL — CPU Controller (Click to install UXTU) (3)")
+        from integrations.cpu_controller import is_amd_cpu, is_intel_cpu, is_throttlestop_available
+        from integrations.tools_downloader import is_ryzenadj_available
+
+        is_amd = is_amd_cpu()
+        if is_amd:
+            tool_installed = is_ryzenadj_available() or self.uxtu_installed
+            missing_tool_name = "RyzenAdj"
+        else:
+            tool_installed = is_throttlestop_available() or self.uxtu_installed
+            missing_tool_name = "ThrottleStop"
+
+        if not tool_installed:
+            self.cpu_nav_btn.setToolTip(f"HELXAIL — CPU Controller (Click to setup {missing_tool_name}) (3)")
         else:
             self.cpu_nav_btn.setToolTip("HELXAIL — CPU Controller (3)")
         
@@ -9718,11 +10874,15 @@ class GameLauncher(QWidget):
                 
                 btn._rot_angle = (btn._rot_angle + 6) % 360
                 
-                rotated = btn._rot_src.transformed(QTransform().rotate(btn._rot_angle), Qt.SmoothTransformation)
                 canvas = QPixmap(btn._rot_size, btn._rot_size)
                 canvas.fill(Qt.transparent)
                 p = QPainter(canvas)
-                p.drawPixmap((btn._rot_size - rotated.width()) // 2, (btn._rot_size - rotated.height()) // 2, rotated)
+                p.setRenderHint(QPainter.Antialiasing, True)
+                p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                center = btn._rot_size / 2.0
+                p.translate(center, center)
+                p.rotate(btn._rot_angle)
+                p.drawPixmap(-center, -center, btn._rot_src)
                 p.end()
                 btn.setIcon(QIcon(canvas))
                 
@@ -10173,9 +11333,14 @@ class GameLauncher(QWidget):
         # Preload HELRCUS (Windows Customization) during idle time for 0ms instant page switch
         if not hasattr(self, 'wincustom_panel'):
             try:
-                t0 = time.perf_counter()
-                self._setup_wincustom_panel()
-                print(f"[Preload] HELRCUS (Windows Customization) preloaded in {(time.perf_counter()-t0)*1000:.2f}ms during idle time")
+                from WindowsCustomPanel import _load_helrcus_config
+                _h_cfg = _load_helrcus_config()
+                if _h_cfg.get("module_settings", {}).get("init_at_main_initialize", True):
+                    t0 = time.perf_counter()
+                    self._setup_wincustom_panel()
+                    print(f"[Preload] HELRCUS (Windows Customization) preloaded in {(time.perf_counter()-t0)*1000:.2f}ms during idle time")
+                else:
+                    print("[Preload] HELRCUS startup preload skipped (init_at_main_initialize=False)")
             except Exception as e:
                 print(f"[Preload] Windows Customization panel preload error: {e}")
 
@@ -11396,14 +12561,16 @@ class GameLauncher(QWidget):
         # Always clear tracking dict on setup to avoid dangling C++ object references
         self._cpu_collapsible_groups = {}
         
-        # Check if RyzenAdj (for AMD) or UXTU is available - if not, show download prompt
-        from integrations.cpu_controller import is_amd_cpu
+        # Check if RyzenAdj (for AMD) or ThrottleStop (for Intel) is available
+        from integrations.cpu_controller import is_amd_cpu, is_intel_cpu, is_throttlestop_available
         from integrations.tools_downloader import is_ryzenadj_available
         
         is_amd = is_amd_cpu()
+        is_intel = is_intel_cpu()
         ryzenadj_available = is_ryzenadj_available()
+        throttlestop_available = is_throttlestop_available()
         
-        # If AMD CPU and RyzenAdj is missing -> Show RyzenAdj Download Screen
+        # 1. If AMD CPU and RyzenAdj is missing -> Show RyzenAdj Download Screen
         if is_amd and not ryzenadj_available:
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
@@ -11533,8 +12700,137 @@ class GameLauncher(QWidget):
                 delattr(self, '_cpu_panel_insert_index')
             return
 
-        # Check if UXTU is available for non-AMD or general fallback - if not, show download prompt
-        if not self.uxtu_installed:
+        # 2. If Intel CPU and ThrottleStop is missing -> Show ThrottleStop Download Screen
+        if is_intel and not throttlestop_available:
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            
+            container = QWidget()
+            container.setObjectName("cpuMissingIntelToolContainer")
+            container.setStyleSheet("""
+                QWidget#cpuMissingIntelToolContainer {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 #0a0a0a, stop:0.5 #1a1a1a, stop:1 #0a0a0a);
+                }
+            """)
+            container_layout = QVBoxLayout(container)
+            container_layout.setAlignment(Qt.AlignCenter)
+            container_layout.setSpacing(20)
+            
+            icon_label = QLabel()
+            icon_label.setObjectName("cpuMissingIntelToolIcon")
+            icon_label.setStyleSheet("font-size: 64px; background: transparent;")
+            icon_label.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(icon_label)
+            
+            title = QLabel("ThrottleStop Required")
+            title.setObjectName("cpuMissingIntelToolTitle")
+            title.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
+            title.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(title)
+            
+            desc = QLabel("HELXAIL CPU Controller requires ThrottleStop for Intel PL1/PL2 power & thermal tuning.\nClick below to download or import ThrottleStop automatically.")
+            desc.setObjectName("cpuMissingIntelToolDesc")
+            desc.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #a0a5ad; font-size: 14px; background: transparent;")
+            desc.setAlignment(Qt.AlignCenter)
+            container_layout.addWidget(desc)
+            
+            def do_download_throttlestop():
+                from PySide6.QtWidgets import QMessageBox
+                from PySide6.QtCore import QThread, Signal as QSignal
+                from integrations.tools_downloader import HELXAIDProgressDialog
+                
+                class _ThrottleStopDownloadWorker(QThread):
+                    progress_update = QSignal(int, int)
+                    finished = QSignal(bool, str)
+                    
+                    def run(self):
+                        from integrations.tools_downloader import download_throttlestop
+                        def on_progress(downloaded: int, total: int):
+                            self.progress_update.emit(downloaded, total)
+                        success, error = download_throttlestop(on_progress, force=True)
+                        self.finished.emit(success, error or "")
+                        
+                progress = HELXAIDProgressDialog("Installing ThrottleStop", "Cancel", 0, 100, self)
+                progress.setObjectName("cpuThrottleStopDownloadProgress")
+                progress.set_status("Downloading ThrottleStop...")
+                progress.show()
+                
+                worker = _ThrottleStopDownloadWorker()
+                self._throttlestop_download_worker = worker
+                
+                def on_progress(downloaded: int, total: int):
+                    if progress.wasCanceled():
+                        worker.terminate()
+                        return
+                    if total > 0:
+                        progress.set_progress(downloaded, total)
+                        
+                def on_finished(success: bool, error: str):
+                    progress.close()
+                    if success:
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Complete",
+                            "ThrottleStop installed successfully!\n\nClick OK to reload HELXAIL.",
+                            self,
+                            on_ok=self._reload_cpu_panel
+                        )
+                    else:
+                        from integrations.tools_downloader import HELXAIDMessagePanel
+                        HELXAIDMessagePanel(
+                            "Download Notice",
+                            f"{error}",
+                            self,
+                            is_error=True
+                        )
+                        
+                worker.progress_update.connect(on_progress)
+                worker.finished.connect(on_finished)
+                worker.start()
+                
+            download_btn = QPushButton("Setup HELXAIL")
+            download_btn.setObjectName("cpuDownloadThrottleStopBtn")
+            download_btn.setFixedSize(220, 50)
+            download_btn.setCursor(Qt.PointingHandCursor)
+            download_btn.setStyleSheet("""
+                QPushButton#cpuDownloadThrottleStopBtn {
+                    font-family: 'Orbitron', sans-serif;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00A3FF, stop:1 #0051C5);
+                    color: #FFFFFF;
+                    border: none;
+                    border-radius: 12px;
+                    font-size: 16px;
+                    font-weight: bold;
+                }
+                QPushButton#cpuDownloadThrottleStopBtn:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00C0FF, stop:1 #0070E5);
+                }
+            """)
+            download_btn.clicked.connect(do_download_throttlestop)
+            container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
+            
+            from integrations.tools_downloader import SplitImportButton, import_throttlestop_tool, THROTTLESTOP_DIR
+            import_btn = SplitImportButton("ThrottleStop", import_throttlestop_tool, self._reload_cpu_panel, self)
+            container_layout.addWidget(import_btn, alignment=Qt.AlignCenter)
+            
+            instructions = QLabel(f"Installs to\n{THROTTLESTOP_DIR}")
+            instructions.setObjectName("cpuMissingIntelToolPath")
+            instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #a0a5ad; margin-top: 10px; background: transparent;")
+            instructions.setAlignment(Qt.AlignCenter)
+            instructions.setWordWrap(True)
+            container_layout.addWidget(instructions)
+            
+            layout.addWidget(container)
+            if not hasattr(self, '_cpu_panel_insert_index'):
+                self.content_stack.addWidget(self.cpu_panel)
+            else:
+                self.content_stack.insertWidget(self._cpu_panel_insert_index, self.cpu_panel)
+                delattr(self, '_cpu_panel_insert_index')
+            return
+
+        # 3. Fallback check if UXTU is available for non-AMD/non-Intel
+        if not is_amd and not is_intel and not self.uxtu_installed:
             layout.setContentsMargins(0, 0, 0, 0)
             layout.setSpacing(0)
             
@@ -11707,10 +13003,20 @@ class GameLauncher(QWidget):
         
         header = QLabel("HELXAIL")
         header.setObjectName("cpuControlTitle")
-        header.setStyleSheet("font-size: 28px; font-weight: 600; color: #DDE6ED; letter-spacing: 1px;")
+        header.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 28px; font-weight: 600; color: #DDE6ED; letter-spacing: 1px;")
         title_section.addWidget(header)
         
-        subtitle = QLabel("AMD RyzenAdj Integration")
+        if is_amd:
+            subtitle_text = "AMD RyzenAdj Integration"
+            is_connected = is_ryzenadj_available() or self.uxtu_installed
+        elif is_intel:
+            subtitle_text = "Intel ThrottleStop Integration"
+            is_connected = is_throttlestop_available() or self.uxtu_installed
+        else:
+            subtitle_text = "Windows Power Management"
+            is_connected = True
+
+        subtitle = QLabel(subtitle_text)
         subtitle.setObjectName("cpuControlSubtitle")
         subtitle.setStyleSheet("font-size: 12px; color: #9DB2BF; letter-spacing: 0.5px;")
         title_section.addWidget(subtitle)
@@ -11719,8 +13025,7 @@ class GameLauncher(QWidget):
         header_layout.addStretch()
         
         # Status badge
-        from integrations.tools_downloader import is_ryzenadj_available
-        if is_ryzenadj_available() or self.uxtu_installed:
+        if is_connected:
             status_text, status_style = "● CONNECTED", "background: rgba(76, 175, 80, 0.15); color: #4CAF50; border: none; border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
         else:
             status_text, status_style = "● OFFLINE", "background: rgba(244, 67, 54, 0.15); color: #f44336; border: none; border-radius: 12px; padding: 6px 14px; font-size: 11px; font-weight: bold;"
@@ -11891,11 +13196,12 @@ class GameLauncher(QWidget):
         # Use down-arrow-triangle.svg for dropdown icon
         arrow_icon_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
         self.preset_combo.setStyleSheet(f"""
-            QComboBox {{ background: rgba(255, 255, 255, 0.1); color: #e0e0e0; border: none; border-radius: 10px; padding: 8px 16px; font-size: 13px; }}
+            QComboBox {{ background: rgba(255, 255, 255, 0.1); color: #e0e0e0; border: none; border-radius: 10px; padding: 2px 36px 2px 14px; font-family: 'Orbitron', sans-serif; font-size: 13px; }}
             QComboBox:hover {{ background: rgba(255, 255, 255, 0.2); }}
             QComboBox::drop-down {{ border: none; width: 32px; background: transparent; }}
             QComboBox::down-arrow {{ image: url({arrow_icon_path}); width: 12px; height: 12px; }}
-            QComboBox QAbstractItemView {{ background: #1a1a1a; color: #e0e0e0; selection-background-color: rgba(255, 91, 6, 0.2); border: none; border-radius: 8px; }}
+            QComboBox QAbstractItemView {{ background: #1a1a1a; color: #e0e0e0; selection-background-color: rgba(255, 91, 6, 0.2); border: none; border-radius: 8px; font-family: 'Orbitron', sans-serif; font-size: 12px; }}
+            QComboBox QAbstractItemView::item {{ min-height: 28px; padding: 4px 10px; }}
         """)
         self._refresh_preset_combo()
         self.preset_combo.currentTextChanged.connect(self._on_preset_selected)
@@ -12094,7 +13400,7 @@ class GameLauncher(QWidget):
         self.boost_profile_combo = QComboBox()
         self.boost_profile_combo.setObjectName("cpuBoostProfileCombo")
         self.boost_profile_combo.addItems(["Auto", "Eco", "Balance", "Performance", "Max"])
-        self.boost_profile_combo.setFixedSize(120, 32)
+        self.boost_profile_combo.setFixedSize(140, 36)
         arrow_path = os.path.join(SCRIPT_DIR, "UI Icons", "down-arrow-triangle.svg").replace("\\", "/")
         self.boost_profile_combo.setStyleSheet(f"""
             QComboBox {{
@@ -12102,8 +13408,9 @@ class GameLauncher(QWidget):
                 color: #e0e0e0;
                 border: none;
                 border-radius: 10px;
-                padding: 10px 14px;
-                font-size: 13px;
+                padding: 2px 28px 2px 14px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
                 font-weight: 500;
             }}
             QComboBox:hover {{
@@ -12111,7 +13418,7 @@ class GameLauncher(QWidget):
             }}
             QComboBox::drop-down {{
                 border: none;
-                width: 24px;
+                width: 26px;
                 background: transparent;
             }}
             QComboBox::down-arrow {{
@@ -12125,6 +13432,13 @@ class GameLauncher(QWidget):
                 selection-background-color: rgba(255, 91, 6, 0.2);
                 border: none;
                 border-radius: 6px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 28px;
+                padding: 4px 10px;
             }}
         """)
         self.boost_profile_combo.currentTextChanged.connect(self._on_boost_profile_changed)
@@ -12140,7 +13454,8 @@ class GameLauncher(QWidget):
                 border-color: rgba(255, 91, 6, 0.4);
             }
         """)
-        sliders_layout.addWidget(boost_container)
+        if is_amd:
+            sliders_layout.addWidget(boost_container)
         
         # ===== DISPLAY REFRESH RATE MENU =====
         refresh_container = QWidget()
@@ -12178,15 +13493,16 @@ class GameLauncher(QWidget):
         available_rates = self._get_available_refresh_rates()
         rate_options = ["System Controlled"] + [f"{rate} Hz" for rate in sorted(set(available_rates), reverse=True)]
         self.refresh_rate_combo.addItems(rate_options)
-        self.refresh_rate_combo.setFixedSize(140, 32)
+        self.refresh_rate_combo.setFixedSize(155, 36)
         self.refresh_rate_combo.setStyleSheet(f"""
             QComboBox {{
                 background: rgba(255, 255, 255, 0.1);
                 color: #e0e0e0;
                 border: none;
                 border-radius: 10px;
-                padding: 10px 14px;
-                font-size: 13px;
+                padding: 2px 24px 2px 12px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
                 font-weight: 500;
             }}
             QComboBox:hover {{
@@ -12194,7 +13510,7 @@ class GameLauncher(QWidget):
             }}
             QComboBox::drop-down {{
                 border: none;
-                width: 24px;
+                width: 22px;
                 background: transparent;
             }}
             QComboBox::down-arrow {{
@@ -12208,6 +13524,13 @@ class GameLauncher(QWidget):
                 selection-background-color: rgba(255, 91, 6, 0.2);
                 border: none;
                 border-radius: 6px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 28px;
+                padding: 4px 10px;
             }}
         """)
         self.refresh_rate_combo.currentTextChanged.connect(self._on_refresh_rate_changed)
@@ -12257,15 +13580,16 @@ class GameLauncher(QWidget):
         self.power_mode_combo = QComboBox()
         self.power_mode_combo.setObjectName("cpuPowerModeCombo")
         self.power_mode_combo.addItems(["System Controlled", "Power Saver", "Balanced", "High Performance", "Ultimate Performance"])
-        self.power_mode_combo.setFixedSize(160, 32)
+        self.power_mode_combo.setFixedSize(225, 36)
         self.power_mode_combo.setStyleSheet(f"""
             QComboBox {{
                 background: rgba(255, 255, 255, 0.1);
                 color: #e0e0e0;
                 border: none;
                 border-radius: 10px;
-                padding: 10px 14px;
-                font-size: 13px;
+                padding: 2px 30px 2px 14px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
                 font-weight: 500;
             }}
             QComboBox:hover {{
@@ -12273,7 +13597,7 @@ class GameLauncher(QWidget):
             }}
             QComboBox::drop-down {{
                 border: none;
-                width: 24px;
+                width: 26px;
                 background: transparent;
             }}
             QComboBox::down-arrow {{
@@ -12287,6 +13611,13 @@ class GameLauncher(QWidget):
                 selection-background-color: rgba(255, 91, 6, 0.2);
                 border: none;
                 border-radius: 6px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                min-height: 28px;
+                padding: 4px 10px;
             }}
         """)
         self.power_mode_combo.currentTextChanged.connect(self._on_power_mode_changed)
@@ -12304,33 +13635,53 @@ class GameLauncher(QWidget):
         """)
         sliders_layout.addWidget(power_mode_container)
         
-        # Group definitions with icons and descriptions
-        slider_groups = [
-            ("", "Temperature Tuning", "Set CPU thermal targets", "temperature", [
-                ("temp_limit", "Temperature Limit (°C)", "°C"), 
-                ("temp_skin_limit", "Skin Temperature Limit (°C)", "°C")
-            ]),
-            ("", "Power Limits", "Configure power delivery", "power", [
-                ("stapm_limit", "STAPM Power (W)", "W"), 
-                ("slow_limit", "Slow Power (W)", "W"), 
-                ("fast_limit", "Fast Power (W)", "W")
-            ]),
-            ("", "Boost Timing", "Adjust boost durations", "timing", [
-                ("slow_duration", "Slow Duration (s)", "s"), 
-                ("fast_duration", "Fast Duration (s)", "s")
-            ]),
-            ("", "Current Limits", "Set TDC/EDC values", "current", [
-                ("cpu_tdc", "CPU TDC (A)", "A"), 
-                ("cpu_edc", "CPU EDC (A)", "A"), 
-                ("gfx_tdc", "GFX TDC (A)", "A"), 
-                ("gfx_edc", "GFX EDC (A)", "A"),
-                ("soc_tdc", "SoC TDC (A)", "A"),  # NEW
-                ("soc_edc", "SoC EDC (A)", "A"),  # NEW
-            ]),
-            ("", "iGPU Tuning", "Configure integrated graphics", "igpu", [
-                ("igpu_clock", "iGPU Clock (MHz)", "MHz"),  # NEW
-            ]),
-        ]
+        # Group definitions with icons and descriptions (Adaptive for AMD vs Intel)
+        from integrations.cpu_controller import INTEL_SAFETY_LIMITS
+        active_safety_limits = INTEL_SAFETY_LIMITS if is_intel else SAFETY_LIMITS
+
+        if is_intel:
+            slider_groups = [
+                ("", "Power Limits", "Configure Intel PL1 / PL2 power targets", "intel_power", [
+                    ("pl1_limit", "PL1 Sustained Power (W)", "W"),
+                    ("pl2_limit", "PL2 Burst Power (W)", "W"),
+                ]),
+                ("", "Turbo Boost Timing", "Adjust turbo boost time window", "intel_timing", [
+                    ("tau_duration", "Turbo Time Limit / Tau (s)", "s"),
+                ]),
+                ("", "Thermal Management", "Set CPU thermal limit & headroom", "intel_temperature", [
+                    ("temp_limit", "Thermal Limit (°C)", "°C"),
+                ]),
+                ("", "SpeedShift & Energy", "Configure Energy Performance Preference", "intel_speedshift", [
+                    ("epp_value", "SpeedShift EPP (0=Max Perf, 255=Battery)", ""),
+                ]),
+            ]
+        else:
+            slider_groups = [
+                ("", "Temperature Tuning", "Set CPU thermal targets", "temperature", [
+                    ("temp_limit", "Temperature Limit (°C)", "°C"), 
+                    ("temp_skin_limit", "Skin Temperature Limit (°C)", "°C")
+                ]),
+                ("", "Power Limits", "Configure power delivery", "power", [
+                    ("stapm_limit", "STAPM Power (W)", "W"), 
+                    ("slow_limit", "Slow Power (W)", "W"), 
+                    ("fast_limit", "Fast Power (W)", "W")
+                ]),
+                ("", "Boost Timing", "Adjust boost durations", "timing", [
+                    ("slow_duration", "Slow Duration (s)", "s"), 
+                    ("fast_duration", "Fast Duration (s)", "s")
+                ]),
+                ("", "Current Limits", "Set TDC/EDC values", "current", [
+                    ("cpu_tdc", "CPU TDC (A)", "A"), 
+                    ("cpu_edc", "CPU EDC (A)", "A"), 
+                    ("gfx_tdc", "GFX TDC (A)", "A"), 
+                    ("gfx_edc", "GFX EDC (A)", "A"),
+                    ("soc_tdc", "SoC TDC (A)", "A"),
+                    ("soc_edc", "SoC EDC (A)", "A"),
+                ]),
+                ("", "iGPU Tuning", "Configure integrated graphics", "igpu", [
+                    ("igpu_clock", "iGPU Clock (MHz)", "MHz"),
+                ]),
+            ]
         # (Tracking dict is initialized at the top of the function)
         
         # Pre-cache chevron SVGs into memory to eliminate repeated disk I/O in loop
@@ -12424,7 +13775,7 @@ class GameLauncher(QWidget):
             content_layout.setSpacing(14)
             
             for key, label_text, unit in sliders:
-                limits = SAFETY_LIMITS.get(key, {"min": 0, "max": 100, "default": 50})
+                limits = active_safety_limits.get(key, SAFETY_LIMITS.get(key, {"min": 0, "max": 100, "default": 50}))
                 current_value = self.cpu_settings.get_value(key)
                 
                 row = QWidget()
@@ -13101,191 +14452,36 @@ class GameLauncher(QWidget):
         self._info_panel.show()
         
     def _open_cpu_settings(self):
-        """Open CPU settings dialog."""
-        dialog = QDialog(self)
-        apply_custom_titlebar(dialog, "#000000")
-        dialog.setWindowTitle("CPU Settings")
-        dialog.setObjectName("cpuSettingsDialog")
-        dialog.setMinimumWidth(350)
-        dialog.setStyleSheet("""
-            QDialog {
-                background: #0f0f0f;
-                color: #DDE6ED;
-            }
-            QLabel {
-                color: #DDE6ED;
-            }
-            QCheckBox {
-                color: #DDE6ED;
-                font-size: 14px;
-            }
-            QCheckBox::indicator {
-                width: 20px;
-                height: 20px;
-            }
-        """)
-        
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(20)
-        
-        # Title
-        title = QLabel("CPU Settings")
-        title.setObjectName("cpuSettingsTitle")
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #FDA903;")
-        layout.addWidget(title)
-        
-        # Separator
-        separator = QFrame()
-        separator.setObjectName("cpuSettingsSeparator")
-        separator.setFrameShape(QFrame.HLine)
-        separator.setStyleSheet("background: rgba(157, 178, 191, 0.3);")
-        layout.addWidget(separator)
-        
-        # Apply current preset at startup checkbox
-        auto_apply_cb = AnimatedCheckBox("Apply current preset at startup")
-        auto_apply_cb.setObjectName("cpuAutoApplyCheckbox")
-        
-        # Get current value from settings
-        current_value = False
-        if hasattr(self, 'cpu_settings') and self.cpu_settings._settings:
-            current_value = self.cpu_settings._settings.get("auto_apply_on_startup", False)
-        auto_apply_cb.setChecked(current_value)
-        layout.addWidget(auto_apply_cb)
-        
-        # Info label about what gets applied
-        if hasattr(self, 'cpu_settings'):
-            current_preset = self.cpu_settings.current_preset_name
-            if current_preset:
-                info_text = f"Will apply preset: {current_preset}"
-            else:
-                info_text = "Will apply current slider values"
-            preset_label = QLabel(info_text)
-            preset_label.setObjectName("cpuCurrentPresetLabel")
-            preset_label.setStyleSheet("color: #9DB2BF; font-size: 12px; margin-top: 8px;")
-            layout.addWidget(preset_label)
-        
-        # Keep settings applied (auto re-apply timer)
-        keep_applied_cb = AnimatedCheckBox("Keep settings applied")
-        keep_applied_cb.setObjectName("cpuKeepAppliedCheckbox")
-        keep_applied_cb.setToolTip("Re-applies CPU settings periodically to prevent Windows/BIOS from resetting them")
-        
-        keep_applied_value = False
-        if hasattr(self, 'cpu_settings') and self.cpu_settings._settings:
-            keep_applied_value = self.cpu_settings._settings.get("keep_settings_applied", False)
-        keep_applied_cb.setChecked(keep_applied_value)
-        layout.addWidget(keep_applied_cb)
-        
-        # Reapply interval sliders (Minutes and Seconds)
-        is_dev = hasattr(self, 'settings') and self.settings.get("developer_mode", False)
-        min_total = 10 if is_dev else 300
+        """Open CPU settings floating panel."""
+        if getattr(self, '_cpu_settings_panel', None) is not None:
+            try:
+                self._cpu_settings_panel.close_panel()
+            except Exception:
+                pass
+            self._cpu_settings_panel = None
+            
+        self._cpu_settings_panel = CpuSettingsFloatingPanel(self)
+        self._cpu_settings_panel.show_panel()
 
-        saved_interval = min_total  # Default
-        if hasattr(self, 'cpu_settings') and self.cpu_settings._settings:
-            saved_interval = max(min_total, self.cpu_settings._settings.get("reapply_interval", 300))
+    def show_cpu_alert(self, title, message, sub_tip=None, is_success=True):
+        """Display an in-app glassmorphic floating panel for CPU/HELXAIL feedback."""
+        if getattr(self, '_cpu_apply_panel', None) is not None:
+            try:
+                self._cpu_apply_panel.close_panel()
+            except Exception:
+                pass
+            self._cpu_apply_panel = None
 
-        initial_mins = saved_interval // 60
-        initial_secs = saved_interval % 60
-
-        slider_style = """
-            QSlider { background: transparent; }
-            QSlider::groove:horizontal { height: 4px; background: rgba(60, 64, 72, 0.8); border-radius: 2px; }
-            QSlider::handle:horizontal { 
-                background: #FF5B06; 
-                width: 14px; 
-                height: 14px; 
-                margin: -5px 0; 
-                border-radius: 7px;
-                border: none;
-            }
-            QSlider::handle:horizontal:hover { background: #FF7B36; }
-            QSlider::sub-page:horizontal { background: rgba(255, 91, 6, 0.6); border-radius: 2px; }
-        """
-
-        # Grid layout for pixel-perfect vertical alignment of Minute and Second sliders
-        grid_layout = QGridLayout()
-        grid_layout.setContentsMargins(0, 0, 0, 0)
-        grid_layout.setSpacing(8)
-        grid_layout.setColumnStretch(1, 1)
-
-        # Single Label: "Reapply interval:"
-        interval_label = QLabel("Reapply interval:")
-        interval_label.setObjectName("cpuIntervalLabel")
-        interval_label.setStyleSheet("color: #9DB2BF; font-size: 12px;")
-        grid_layout.addWidget(interval_label, 0, 0, 1, 1, Qt.AlignVCenter)
-
-        # 1. Minutes Slider (Row 0, Col 1)
-        min_slider = NoScrollSlider(Qt.Horizontal)
-        min_slider.setObjectName("cpuReapplyMinutesSlider")
-        min_slider.setRange(0 if is_dev else 5, 30)
-        min_slider.setSingleStep(1)
-        min_slider.setPageStep(5)
-        min_slider.setFixedHeight(20)
-        min_slider.setStyleSheet(slider_style)
-        min_slider.setValue(initial_mins)
-        grid_layout.addWidget(min_slider, 0, 1, 1, 1, Qt.AlignVCenter)
-
-        min_value_label = QLabel(f"{initial_mins}m")
-        min_value_label.setObjectName("cpuReapplyMinutesValue")
-        min_value_label.setStyleSheet("color: #DDE6ED; font-size: 12px; min-width: 35px;")
-        grid_layout.addWidget(min_value_label, 0, 2, 1, 1, Qt.AlignVCenter)
-
-        # 2. Seconds Slider (Row 1, Col 1) - Perfectly aligned vertically with Minutes Slider
-        sec_slider = NoScrollSlider(Qt.Horizontal)
-        sec_slider.setObjectName("cpuReapplySecondsSlider")
-        sec_slider.setRange(0, 59)
-        sec_slider.setSingleStep(1)
-        sec_slider.setPageStep(10)
-        sec_slider.setFixedHeight(20)
-        sec_slider.setStyleSheet(slider_style)
-        sec_slider.setValue(initial_secs)
-        grid_layout.addWidget(sec_slider, 1, 1, 1, 1, Qt.AlignVCenter)
-
-        sec_value_label = QLabel(f"{initial_secs}s")
-        sec_value_label.setObjectName("cpuReapplySecondsValue")
-        sec_value_label.setStyleSheet("color: #DDE6ED; font-size: 12px; min-width: 35px;")
-        grid_layout.addWidget(sec_value_label, 1, 2, 1, 1, Qt.AlignVCenter)
-
-        layout.addLayout(grid_layout)
-
-        def get_calculated_total_seconds():
-            total = (min_slider.value() * 60) + sec_slider.value()
-            return max(min_total, total)
-
-        def update_interval_labels():
-            min_value_label.setText(f"{min_slider.value()}m")
-            sec_value_label.setText(f"{sec_slider.value()}s")
-
-        min_slider.valueChanged.connect(lambda v: update_interval_labels())
-        sec_slider.valueChanged.connect(lambda v: update_interval_labels())
-
-        layout.addStretch()
-
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-
-        save_btn = AnimatedButton("Save")
-        save_btn.setObjectName("cpuSettingsSaveButton")
-        save_btn.setFixedSize(100, 40)
-        save_btn.setCursor(Qt.PointingHandCursor)
-        save_btn.setHoverGradient(['#FF5B06', '#FDA903'])
-        save_btn.clicked.connect(lambda: self._save_cpu_settings(auto_apply_cb.isChecked(), keep_applied_cb.isChecked(), get_calculated_total_seconds(), dialog))
-        btn_layout.addWidget(save_btn)
-        
-        close_btn = AnimatedButton("Close")
-        close_btn.setObjectName("cpuSettingsCloseButton")
-        close_btn.setFixedSize(100, 40)
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setHoverGradient(['#FF5B06', '#FDA903'])
-        close_btn.clicked.connect(dialog.close)
-        btn_layout.addWidget(close_btn)
-        
-        layout.addLayout(btn_layout)
-        
-        dialog.exec()
+        self._cpu_apply_panel = CpuApplyResultFloatingPanel(
+            self,
+            title=title,
+            message=message,
+            sub_tip=sub_tip,
+            is_success=is_success
+        )
+        self._cpu_apply_panel.show_panel()
     
-    def _save_cpu_settings(self, auto_apply, keep_applied, interval, dialog):
+    def _save_cpu_settings(self, auto_apply, keep_applied, interval, panel=None):
         """Save CPU settings and manage auto-reapply timer."""
         if hasattr(self, 'cpu_settings') and self.cpu_settings._settings is not None:
             self.cpu_settings._settings["auto_apply_on_startup"] = auto_apply
@@ -13298,7 +14494,11 @@ class GameLauncher(QWidget):
                 self._start_cpu_reapply_timer(interval)
             else:
                 self._stop_cpu_reapply_timer()
-        dialog.close()
+        if panel is not None:
+            if hasattr(panel, 'close_panel'):
+                panel.close_panel()
+            elif hasattr(panel, 'close'):
+                panel.close()
     
     def _start_cpu_reapply_timer(self, interval_seconds=300):
         """Start the auto-reapply timer that re-applies CPU settings at specified interval.
@@ -13478,12 +14678,19 @@ class GameLauncher(QWidget):
         except Exception:
             pass
         
-        # 3. Spawn the hook subprocess (simple Popen, no schtasks overhead)
+        # 3. Spawn the hook subprocess (100% invisible GUI subsystem via pythonw + SW_HIDE)
         try:
             CREATE_NO_WINDOW = 0x08000000
+            py_bin = sys.executable.replace("python.exe", "pythonw.exe")
+            if not os.path.exists(py_bin):
+                py_bin = sys.executable
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
             self._macro_hook_proc = subprocess.Popen(
-                [sys.executable, script_path],
-                creationflags=CREATE_NO_WINDOW
+                [py_bin, script_path],
+                creationflags=CREATE_NO_WINDOW,
+                startupinfo=startupinfo
             )
             print(f"[MacroHook] Spawned UniversalMacroHook subprocess (PID: {self._macro_hook_proc.pid})")
             sys.stdout.flush()
@@ -13528,10 +14735,13 @@ class GameLauncher(QWidget):
                     settings = json.load(f)
                 button_mappings = settings.get('button_mappings', [])
             else:
-                button_mappings = ["Left Click", "Right Click", "Wheel Click", "Forward", "Backward"]
+                button_mappings = ["Left Click", "Right Click", "Wheel Click", "Backward", "Forward"]
         except Exception as e:
             print(f"[MacroHook] Failed to load settings: {e}")
-            button_mappings = ["Left Click", "Right Click", "Wheel Click", "Forward", "Backward"]
+            button_mappings = ["Left Click", "Right Click", "Wheel Click", "Backward", "Forward"]
+
+        if button_mappings == ["Left Click", "Right Click", "Wheel Click", "Forward", "Backward"]:
+            button_mappings = ["Left Click", "Right Click", "Wheel Click", "Backward", "Forward"]
         
         # Send each mapping to the hook via UDP
         for i, mapping in enumerate(button_mappings):
@@ -13710,14 +14920,22 @@ class GameLauncher(QWidget):
         
         Runs in background thread to avoid blocking UI during hardware writes or UAC elevation.
         """
-        uxtu_ok = self.uxtu_installed
+        from integrations.cpu_controller import is_amd_cpu, is_intel_cpu, is_throttlestop_available
+        from integrations.tools_downloader import is_ryzenadj_available
+
+        is_amd = is_amd_cpu()
+        if is_amd:
+            tool_ok = is_ryzenadj_available() or self.uxtu_installed
+            missing_tool_msg = "RyzenAdj is required to apply CPU settings on AMD.\n\nPlease setup RyzenAdj from the CPU Panel."
+        else:
+            tool_ok = is_throttlestop_available() or self.uxtu_installed
+            missing_tool_msg = "ThrottleStop is required to apply CPU settings on Intel.\n\nPlease setup ThrottleStop from the CPU Panel."
         
-        if not uxtu_ok:
-            QMessageBox.warning(
-                self,
-                "No CPU Control Available",
-                "UXTU is required to apply CPU settings.\n\n"
-                "Please install UXTU from the CPU Panel."
+        if not tool_ok:
+            self.show_cpu_alert(
+                title="No CPU Control Available",
+                message=missing_tool_msg,
+                is_success=False
             )
             return
         
@@ -13740,26 +14958,19 @@ class GameLauncher(QWidget):
         # This slot will execute on the main thread
         def show_result(success, error):
             if success:
-                msg = QMessageBox(
-                    QMessageBox.Information,
-                    "Settings Applied",
-                    f"CPU settings applied successfully.",
-                    QMessageBox.Ok,
-                    self
+                self.show_cpu_alert(
+                    title="Settings Applied",
+                    message="CPU settings applied successfully.",
+                    sub_tip="Power limits & parameters updated directly to CPU hardware.",
+                    is_success=True
                 )
-                apply_custom_titlebar(msg, "#000000")
-                msg.exec()
             else:
-                msg = QMessageBox(
-                    QMessageBox.Warning,
-                    "Application Failed",
-                    f"Failed to apply settings:\n\n{error}\n\n"
-                    "Try running the launcher as administrator or restart Zero-UAC Service.",
-                    QMessageBox.Ok,
-                    self
+                self.show_cpu_alert(
+                    title="Application Failed",
+                    message=f"Failed to apply settings:\n\n{error}",
+                    sub_tip="Try running the launcher as administrator or restart Zero-UAC Service.",
+                    is_success=False
                 )
-                apply_custom_titlebar(msg, "#000000")
-                msg.exec()
                 
         # Connect the signal to the handler callback
         self._cpu_apply_signals.finished.connect(show_result)
@@ -13849,10 +15060,11 @@ class GameLauncher(QWidget):
         self.cpu_settings.save_preset(preset_name, profile)
         self._refresh_preset_combo()
         
-        QMessageBox.information(
-            self,
-            "Preset Saved",
-            f"Preset '{preset_name}' has been saved."
+        self.show_cpu_alert(
+            title="Preset Saved",
+            message=f"Preset '{preset_name}' has been saved.",
+            sub_tip="Settings are stored and ready to load or auto-apply.",
+            is_success=True
         )
     
     def _delete_current_preset(self):
@@ -13863,10 +15075,10 @@ class GameLauncher(QWidget):
             return
         
         if preset_name not in self.cpu_settings.get_preset_names():
-            QMessageBox.warning(
-                self,
-                "Not Found",
-                f"Preset '{preset_name}' does not exist."
+            self.show_cpu_alert(
+                title="Not Found",
+                message=f"Preset '{preset_name}' does not exist.",
+                is_success=False
             )
             return
         
@@ -13880,10 +15092,10 @@ class GameLauncher(QWidget):
         if reply == QMessageBox.Yes:
             self.cpu_settings.delete_preset(preset_name)
             self._refresh_preset_combo()
-            QMessageBox.information(
-                self,
-                "Preset Deleted",
-                f"Preset '{preset_name}' has been deleted."
+            self.show_cpu_alert(
+                title="Preset Deleted",
+                message=f"Preset '{preset_name}' has been deleted.",
+                is_success=True
             )
 
     def refresh_library(self):
@@ -15367,6 +16579,8 @@ class GameLauncher(QWidget):
         if hasattr(self, "_active_quick_settings_dlg") and self._active_quick_settings_dlg is not None and self._active_quick_settings_dlg.isVisible():
             self._active_quick_settings_dlg.raise_()
             self._active_quick_settings_dlg.activateWindow()
+            if hasattr(self._active_quick_settings_dlg, "_scroll_and_spotlight"):
+                self._active_quick_settings_dlg._scroll_and_spotlight(highlight_target, on_tutorial_ready)
             return self._active_quick_settings_dlg
 
         dialog = QDialog(self)
@@ -15705,14 +16919,6 @@ class GameLauncher(QWidget):
         # Initial status update
         self._update_service_ui_status()
 
-        # If called from tutorial mode, schedule a spotlight on the service_group
-        # after dialog is fully shown (QTimer lets the event loop render the dialog first)
-        if callable(on_tutorial_ready):
-            from PySide6.QtCore import QTimer as _QTimer
-            _captured_dialog = dialog
-            _captured_group = service_group
-            _QTimer.singleShot(200, lambda: on_tutorial_ready(_captured_dialog, _captured_group))
-
         # === Developer Mode Section ===
         # Placed at the very bottom before Ok/Cancel.
         # The Uninstall External Tools button is hidden behind this toggle
@@ -15840,57 +17046,118 @@ class GameLauncher(QWidget):
 
         layout.addWidget(dev_group)
 
-        # Smart spotlight tutorial logic requested by Network Guide
-        if highlight_target in ("dev_group", "net", "psutil"):
-            from PySide6.QtCore import QTimer as _QTimer
-            from integrations.cpu_controller import is_service_running
+        # Smooth auto-scroll and tutorial spotlight handler
+        def _smooth_scroll_to_widget(target_w, on_finished=None, retry_count=0):
+            if not target_w or not scroll_content:
+                if callable(on_finished):
+                    on_finished()
+                return
 
-            # Conditional tutorial branching:
-            # 1. Zero-UAC off -> spotlight Zero-UAC (service_group)
-            # 2. Zero-UAC on, Developer Mode off -> spotlight Developer Mode toggle (dev_mode_cb)
-            # 3. Zero-UAC on, Developer Mode on -> spotlight Turn off Psutil toggle (turn_off_psutil_cb)
-            if not is_service_running():
-                target_w = service_group
-                msg_text = "Enable Zero-UAC Mode here!\nClick 'Enable' to install background service and unlock ETW network monitoring."
-            elif not self.settings.get("developer_mode", False):
-                target_w = dev_mode_cb
-                msg_text = "Enable Developer Mode here!\nCheck 'Developer Mode' to reveal 'Turn off Psutil' setting."
-            else:
-                target_w = turn_off_psutil_cb
-                msg_text = "Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring."
+            sb = scroll_area.verticalScrollBar()
+            if sb.maximum() == 0 and retry_count < 3:
+                QTimer.singleShot(100, lambda: _smooth_scroll_to_widget(target_w, on_finished, retry_count + 1))
+                return
 
-            def spotlight_smart_target(dlg, widget_to_spotlight, msg):
-                try:
-                    from SpotlightOverlay import SpotlightOverlay
-                    existing = getattr(self, '_spotlight_overlay', None)
-                    if existing:
-                        try:
-                            existing.fade_out()
-                        except Exception:
-                            pass
+            try:
+                target_pos = target_w.mapTo(scroll_content, QPoint(0, 0)).y()
+                target_val = max(sb.minimum(), min(sb.maximum(), target_pos - 15))
+            except Exception:
+                target_val = sb.value()
 
-                    def on_widget_clicked():
-                        # Auto-advance tutorial: if user clicked Developer Mode, target Turn off Psutil next!
-                        if widget_to_spotlight == dev_mode_cb:
-                            _QTimer.singleShot(300, lambda: spotlight_smart_target(
-                                dlg,
-                                turn_off_psutil_cb,
-                                "Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring."
-                            ))
+            if abs(sb.value() - target_val) < 5:
+                if callable(on_finished):
+                    on_finished()
+                return
 
-                    overlay = SpotlightOverlay(
-                        dlg,
-                        target_widget=widget_to_spotlight,
-                        on_target_clicked=on_widget_clicked,
-                        instruction_text=msg,
-                        auto_click_target=True
-                    )
-                    self._spotlight_overlay = overlay
-                    overlay.show_with_fade_in()
-                except Exception as e:
-                    print(f"[Spotlight] Error creating spotlight overlay: {e}")
+            anim = QPropertyAnimation(sb, b"value", dialog)
+            anim.setDuration(250)
+            anim.setStartValue(sb.value())
+            anim.setEndValue(int(target_val))
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            if callable(on_finished):
+                anim.finished.connect(on_finished)
+            dialog._scroll_anim = anim
+            anim.start()
 
-            _QTimer.singleShot(250, lambda: spotlight_smart_target(dialog, target_w, msg_text))
+        def _scroll_and_spotlight(target_type=None, tutorial_cb=None):
+            # 1. Zero-UAC tutorial target
+            if target_type in ("zero_uac", "service") or callable(tutorial_cb):
+                def _on_service_scrolled():
+                    if callable(tutorial_cb):
+                        tutorial_cb(dialog, service_group)
+                    elif target_type in ("zero_uac", "service"):
+                        from SpotlightOverlay import SpotlightOverlay
+                        existing = getattr(self, '_spotlight_overlay', None)
+                        if existing:
+                            try:
+                                existing.fade_out()
+                            except Exception:
+                                pass
+                        overlay = SpotlightOverlay(
+                            dialog,
+                            target_widget=service_group,
+                            on_target_clicked=lambda: None,
+                            instruction_text="Check 'Auto-enable Zero-UAC on launch' here!\n(Or click 'Enable' to activate the service)",
+                            auto_click_target=False
+                        )
+                        self._spotlight_overlay = overlay
+                        overlay.show_with_fade_in()
+
+                QTimer.singleShot(150, lambda: _smooth_scroll_to_widget(service_group, _on_service_scrolled))
+
+            # 2. Developer Mode / Network Guide target
+            elif target_type in ("dev_group", "net", "psutil"):
+                from integrations.cpu_controller import is_service_running
+
+                if not is_service_running():
+                    target_w = service_group
+                    msg_text = "Enable Zero-UAC Mode here!\nClick 'Enable' to install background service and unlock ETW network monitoring."
+                elif not self.settings.get("developer_mode", False):
+                    target_w = dev_mode_cb
+                    msg_text = "Enable Developer Mode here!\nCheck 'Developer Mode' to reveal 'Turn off Psutil' setting."
+                else:
+                    target_w = turn_off_psutil_cb
+                    msg_text = "Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring."
+
+                def spotlight_smart_target(dlg, widget_to_spotlight, msg):
+                    try:
+                        from SpotlightOverlay import SpotlightOverlay
+                        existing = getattr(self, '_spotlight_overlay', None)
+                        if existing:
+                            try:
+                                existing.fade_out()
+                            except Exception:
+                                pass
+
+                        def on_widget_clicked():
+                            if widget_to_spotlight == dev_mode_cb:
+                                QTimer.singleShot(250, lambda: _smooth_scroll_to_widget(
+                                    turn_off_psutil_cb,
+                                    lambda: spotlight_smart_target(
+                                        dlg,
+                                        turn_off_psutil_cb,
+                                        "Uncheck 'Turn off Psutil' here!\nThis will enable live Network History monitoring."
+                                    )
+                                ))
+
+                        overlay = SpotlightOverlay(
+                            dlg,
+                            target_widget=widget_to_spotlight,
+                            on_target_clicked=on_widget_clicked,
+                            instruction_text=msg,
+                            auto_click_target=True
+                        )
+                        self._spotlight_overlay = overlay
+                        overlay.show_with_fade_in()
+                    except Exception as e:
+                        print(f"[Spotlight] Error creating spotlight overlay: {e}")
+
+                def _on_dev_scrolled():
+                    spotlight_smart_target(dialog, target_w, msg_text)
+
+                QTimer.singleShot(150, lambda: _smooth_scroll_to_widget(target_w, _on_dev_scrolled))
+
+        dialog._scroll_and_spotlight = _scroll_and_spotlight
 
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area, 1)
@@ -16058,6 +17325,10 @@ class GameLauncher(QWidget):
         ok_btn.clicked.connect(dialog.accept)
         cancel_btn.clicked.connect(dialog.reject)
         dialog.accepted.connect(_on_accepted)
+        dialog.finished.connect(lambda: setattr(self, "_active_quick_settings_dlg", None))
+
+        if highlight_target or callable(on_tutorial_ready):
+            _scroll_and_spotlight(highlight_target, on_tutorial_ready)
 
         dialog.show()
         dialog.raise_()
@@ -16838,14 +18109,34 @@ class GameLauncher(QWidget):
                     QMessageBox.warning(self, "Error", f"Failed to restore: {e}")
     
     def show_statistics_dashboard(self, parent_dialog=None):
-        """Show game statistics floating dashboard."""
-        if hasattr(self, "_stats_floating_panel") and self._stats_floating_panel is not None:
+        """Show game statistics floating dashboard with toggle, debounce, and singleton guarantee."""
+        now = time.time()
+        last_time = getattr(self, "_last_stats_open_time", 0)
+        if now - last_time < 0.35:
+            return
+        self._last_stats_open_time = now
+
+        # 1. Check all existing GameStatisticsFloatingPanel in the entire application
+        existing_panels = [w for w in QApplication.allWidgets() if isinstance(w, GameStatisticsFloatingPanel)]
+
+        # If any panel is already visible and not currently closing, treat this click as a toggle close
+        active_visible = [w for w in existing_panels if w.isVisible() and not getattr(w, "_is_closing", False)]
+        if active_visible:
+            for p in active_visible:
+                p.close_panel()
+            self._stats_floating_panel = None
+            return
+
+        # 2. Force-destroy every other panel instance in existence
+        for p in existing_panels:
             try:
-                self._stats_floating_panel.close_panel()
+                p.hide()
+                p.close()
+                p.deleteLater()
             except Exception:
                 pass
-            self._stats_floating_panel = None
-            
+        self._stats_floating_panel = None
+
         parent_target = parent_dialog or self
         self._stats_floating_panel = GameStatisticsFloatingPanel(self, parent=parent_target)
         self._stats_floating_panel.show_panel()
@@ -17642,6 +18933,13 @@ class GameLauncher(QWidget):
                 print("[NativeEvent] Received WM_HELXAID_WAKE message. Restoring window.")
                 self.restore_from_tray()
                 return True, 0
+
+            # Intercept HELRCUS Global Activation Hotkey (WM_HOTKEY Layer 2)
+            if msg.message == 0x0312:  # WM_HOTKEY
+                if msg.wParam == 54321:  # HELRCUS Activation Hotkey ID
+                    if hasattr(self, 'wincustom_panel') and hasattr(self.wincustom_panel, '_activate_lock_screen'):
+                        self.wincustom_panel._activate_lock_screen()
+                        return True, 0
 
         except Exception as e:
             pass
@@ -18664,7 +19962,7 @@ class GameLauncher(QWidget):
         if game_exe:
             for name in game_exe.split(","):
                 name = name.strip().lower()
-                if name and name not in SYSTEM_PROCESS_BLACKLIST:
+                if name and not is_blacklisted_process(name):
                     exe_names.append(name)
         
         return exe_names
@@ -18703,7 +20001,7 @@ class GameLauncher(QWidget):
                 e_lower = e.lower()
                 
                 # PASS 1: Remove blacklisted system processes
-                if e_lower in SYSTEM_PROCESS_BLACKLIST:
+                if is_blacklisted_process(e_lower):
                     removed.add(e_lower)
                     continue
                 
@@ -18916,7 +20214,7 @@ class GameLauncher(QWidget):
         # 1. Seed initial process if tracked_pids is empty (e.g. just launched)
         if not tracked_pids:
             for pid, name in pid_name_dict.items():
-                if name in SYSTEM_PROCESS_BLACKLIST:
+                if is_blacklisted_process(name):
                     continue
                 if name in exe_names:
                     tracked_pids[pid] = now
@@ -18935,7 +20233,7 @@ class GameLauncher(QWidget):
         if now < session.get("adoption_deadline", 0):
             newly_adopted_name = None
             for pid, name in pid_name_dict.items():
-                if pid in tracked_pids or name in SYSTEM_PROCESS_BLACKLIST:
+                if pid in tracked_pids or is_blacklisted_process(name):
                     continue
                 parent_pid = ppid_dict.get(pid)
                 is_child = parent_pid in tracked_pids if parent_pid else False
@@ -18978,7 +20276,7 @@ class GameLauncher(QWidget):
         # Fallback check if tracked_pids was emptied prematurely:
         if not is_alive:
             for pid, name in pid_name_dict.items():
-                if name in exe_names and name not in SYSTEM_PROCESS_BLACKLIST:
+                if name in exe_names and not is_blacklisted_process(name):
                     tracked_pids[pid] = now
                     is_alive = True
                     break
@@ -19513,6 +20811,28 @@ class GameLauncher(QWidget):
             # Exit game mode and restore timers
             self._exit_game_mode()
             
+            # Restore game booster optimizations (e.g. release low-level Windows Key hook)
+            try:
+                from essential_optimizations import get_optimizer
+                get_optimizer().enable_windows_key()
+            except Exception as b_err:
+                print(f"[Booster] Error restoring optimizations on game stop: {b_err}")
+            
+            # Dismiss and cleanup any active floating panels
+            if hasattr(self, '_force_end_panel') and self._force_end_panel is not None:
+                try:
+                    self._force_end_panel.close()
+                except Exception:
+                    pass
+                self._force_end_panel = None
+                
+            if hasattr(self, '_steam_tracker_panel') and self._steam_tracker_panel is not None:
+                try:
+                    self._steam_tracker_panel.close_panel()
+                except Exception:
+                    pass
+                self._steam_tracker_panel = None
+            
             # Clear session and update UI
             self.current_session = None
             self.end_game_btn.hide()
@@ -19562,6 +20882,141 @@ class GameLauncher(QWidget):
         
         # Make sure the button is visible after animation
         button.show()
+
+    def _norm_scan_exe(self, game_or_exe) -> str:
+        """Helper to extract and normalize an executable path for scan tracking."""
+        if not game_or_exe:
+            return ""
+        if isinstance(game_or_exe, dict):
+            exe = game_or_exe.get("exe", "")
+        elif isinstance(game_or_exe, (tuple, list)) and len(game_or_exe) > 1:
+            exe = game_or_exe[1]
+        else:
+            exe = str(game_or_exe)
+        if not exe:
+            return ""
+        try:
+            return os.path.normcase(os.path.abspath(exe))
+        except Exception:
+            return os.path.normcase(exe)
+
+    def is_scan_game_hidden(self, game_or_exe) -> bool:
+        """Check if a scanned game's executable path is marked as hidden in settings."""
+        norm = self._norm_scan_exe(game_or_exe)
+        if not norm:
+            return False
+        hidden_list = self.settings.get("hidden_scan_games", [])
+        return norm in [
+            (os.path.normcase(os.path.abspath(h)) if os.path.isabs(h) else os.path.normcase(h))
+            for h in hidden_list if h
+        ]
+
+    def hide_scan_game(self, game_or_exe):
+        """Add a game's executable to the hidden_scan_games settings list."""
+        norm = self._norm_scan_exe(game_or_exe)
+        if not norm:
+            return
+        hidden_list = self.settings.setdefault("hidden_scan_games", [])
+        normalized_existing = {
+            (os.path.normcase(os.path.abspath(h)) if os.path.isabs(h) else os.path.normcase(h))
+            for h in hidden_list if h
+        }
+        if norm not in normalized_existing:
+            hidden_list.append(norm)
+            save_settings(self.settings)
+
+    def unhide_scan_game(self, game_or_exe):
+        """Remove a game's executable from the hidden_scan_games settings list."""
+        norm = self._norm_scan_exe(game_or_exe)
+        if not norm:
+            return
+        hidden_list = self.settings.get("hidden_scan_games", [])
+        new_list = [
+            h for h in hidden_list
+            if (os.path.normcase(os.path.abspath(h)) if os.path.isabs(h) else os.path.normcase(h)) != norm
+        ]
+        if len(new_list) != len(hidden_list):
+            self.settings["hidden_scan_games"] = new_list
+            save_settings(self.settings)
+
+    def _is_volume_online(self, path: str) -> bool:
+        """
+        Check if the drive or volume where path resides is currently mounted and online.
+        Prevents accidentally purging games installed on unplugged external USB drives or SD cards.
+        """
+        if not path:
+            return False
+        try:
+            drive, _ = os.path.splitdrive(path)
+            if drive:
+                drive_root = drive + "\\" if not drive.endswith("\\") else drive
+                return os.path.exists(drive_root)
+            # UNC network path check (e.g. \\server\share)
+            if path.startswith("\\\\"):
+                parts = path.split("\\")
+                if len(parts) >= 4:
+                    share_root = f"\\\\{parts[2]}\\{parts[3]}"
+                    return os.path.exists(share_root)
+            return True
+        except Exception:
+            return False
+
+    def _audit_library_integrity(self) -> tuple[int, list[str]]:
+        """
+        Audits games registered in self.data (game_library.json).
+        Detects games whose executable files have been permanently deleted from active/mounted drives,
+        and cleanly prunes them from the library without searching for or adding new games.
+        
+        Returns:
+            tuple[int, list[str]]: (removed_count, list_of_removed_game_names)
+        """
+        if not hasattr(self, 'data') or not isinstance(self.data, list) or not self.data:
+            return 0, []
+
+        missing_games = []
+        pruned_names = []
+
+        for game in list(self.data):
+            exe_path = game.get("exe", "")
+            if not exe_path:
+                continue
+
+            # Skip URL scheme protocols or virtual shell URIs (e.g. steam://, com.epicgames.launcher://, shell:)
+            if "://" in exe_path or exe_path.lower().startswith("shell:"):
+                continue
+
+            # If the volume/drive is unmounted / disconnected, do not delete the game (preserve offline games)
+            if not self._is_volume_online(exe_path):
+                continue
+
+            # Volume is online, but executable file no longer exists -> Game has been uninstalled or deleted
+            if not os.path.exists(exe_path):
+                missing_games.append(game)
+                pruned_names.append(game.get("name") or os.path.basename(exe_path))
+
+        if missing_games:
+            for g in missing_games:
+                if g in self.data:
+                    self.data.remove(g)
+
+            # If all games were removed, force_save=True bypasses the safety block in save_json
+            force_empty = (len(self.data) == 0)
+            save_json(self.data, force_save=force_empty)
+            print(f"[Library Integrity] Pruned {len(missing_games)} missing game(s): {pruned_names}")
+
+            # Prune cached background for deleted games to free disk space
+            try:
+                for g in missing_games:
+                    bg_cached = g.get("background_cached", "")
+                    if bg_cached and os.path.exists(bg_cached):
+                        try:
+                            os.remove(bg_cached)
+                        except Exception:
+                            pass
+            except Exception as cache_err:
+                print(f"[Library Integrity] Cache cleanup warning: {cache_err}")
+
+        return len(missing_games), pruned_names
 
     def show_scan_alert(self, title, message, icon_name="info-icon.svg", action_btn_text=None, on_action=None, ok_btn_text=None):
         """Show in-app glassmorphic floating alert/notification modal."""
@@ -19651,14 +21106,33 @@ class GameLauncher(QWidget):
                     QTimer.singleShot(100, self.refresh_grid_only)
                 threading.Thread(target=extract_icons_background, daemon=True).start()
 
+        non_hidden_steam = [g for g in new_games if not self.is_scan_game_hidden(g)]
         if auto_add:
-            add_steam_games(new_games)
+            if non_hidden_steam:
+                add_steam_games(non_hidden_steam)
         else:
-            panel = GameScanSelectionFloatingPanel(
-                self, "Add Games from Steam", new_games, add_steam_games, 
-                parent=self, icon_name="steam-icon.svg"
-            )
-            panel.show_panel()
+            if not non_hidden_steam and new_games:
+                def show_hidden_steam():
+                    panel = GameScanSelectionFloatingPanel(
+                        self, "Add Games from Steam", new_games, add_steam_games,
+                        parent=self, icon_name="steam-icon.svg", show_hidden_initial=True
+                    )
+                    panel.show_panel()
+                if not silent:
+                    self.show_scan_alert(
+                        "Steam Scan",
+                        f"All detected new Steam games ({len(new_games)}) are currently hidden.",
+                        icon_name="info-icon.svg",
+                        action_btn_text="Show Hidden",
+                        on_action=show_hidden_steam
+                    )
+                return False
+            else:
+                panel = GameScanSelectionFloatingPanel(
+                    self, "Add Games from Steam", new_games, add_steam_games, 
+                    parent=self, icon_name="steam-icon.svg"
+                )
+                panel.show_panel()
 
         return True
 
@@ -19955,14 +21429,33 @@ class GameLauncher(QWidget):
                         QTimer.singleShot(100, self.refresh_grid_only)
                     threading.Thread(target=extract_icons_background, daemon=True).start()
 
+        non_hidden_local = [g for g in games if not self.is_scan_game_hidden(g)]
         if auto_add or silent:
-            add_local_games(games)
+            if non_hidden_local:
+                add_local_games(non_hidden_local)
         else:
-            panel = GameScanSelectionFloatingPanel(
-                self, "Select Games to Add", games, add_local_games,
-                parent=self, icon_name="folder-load.svg"
-            )
-            panel.show_panel()
+            if not non_hidden_local and games:
+                def show_hidden_local():
+                    panel = GameScanSelectionFloatingPanel(
+                        self, "Select Games to Add", games, add_local_games,
+                        parent=self, icon_name="folder-load.svg", show_hidden_initial=True
+                    )
+                    panel.show_panel()
+                if not silent:
+                    self.show_scan_alert(
+                        "Scan Local",
+                        f"No new games found in watched folders.\n\n({len(games)} detected game{'s are' if len(games) != 1 else ' is'} currently hidden)",
+                        icon_name="info-icon.svg",
+                        action_btn_text="Show Hidden",
+                        on_action=show_hidden_local
+                    )
+                return False
+            else:
+                panel = GameScanSelectionFloatingPanel(
+                    self, "Select Games to Add", games, add_local_games,
+                    parent=self, icon_name="folder-load.svg"
+                )
+                panel.show_panel()
 
         return True
 
@@ -20055,14 +21548,33 @@ class GameLauncher(QWidget):
                     self.refresh_grid_only()
 
         gpg_items = [{"name": name, "exe": path} for name, path in found_games]
+        non_hidden_gpg = [g for g in gpg_items if not self.is_scan_game_hidden(g)]
         if auto_add:
-            add_gpg_games(gpg_items)
+            if non_hidden_gpg:
+                add_gpg_games(non_hidden_gpg)
         else:
-            panel = GameScanSelectionFloatingPanel(
-                self, "Select Google Play Games", gpg_items, add_gpg_games,
-                parent=self, icon_name="google-play-icon.svg"
-            )
-            panel.show_panel()
+            if not non_hidden_gpg and gpg_items:
+                def show_hidden_gpg():
+                    panel = GameScanSelectionFloatingPanel(
+                        self, "Select Google Play Games", gpg_items, add_gpg_games,
+                        parent=self, icon_name="google-play-icon.svg", show_hidden_initial=True
+                    )
+                    panel.show_panel()
+                if not silent:
+                    self.show_scan_alert(
+                        "Google Play Games",
+                        f"All detected Google Play Games ({len(gpg_items)}) are currently hidden.",
+                        icon_name="info-icon.svg",
+                        action_btn_text="Show Hidden",
+                        on_action=show_hidden_gpg
+                    )
+                return False
+            else:
+                panel = GameScanSelectionFloatingPanel(
+                    self, "Select Google Play Games", gpg_items, add_gpg_games,
+                    parent=self, icon_name="google-play-icon.svg"
+                )
+                panel.show_panel()
 
         return True
 
@@ -20357,10 +21869,31 @@ class GameLauncher(QWidget):
 
         def _do_scan_and_refresh():
             try:
+                # 1. Audit library integrity: prune deleted games without scanning new games
+                removed_count = 0
+                removed_names = []
                 try:
-                    self.refresh_grid_only()
+                    removed_count, removed_names = self._audit_library_integrity()
+                except Exception as audit_err:
+                    print(f"[Refresh] Integrity audit error: {audit_err}")
+
+                # 2. Re-render the grid UI
+                try:
+                    self.refresh_grid_only(reload_data=False)
                 except Exception as e:
                     print(f"[Refresh] Grid refresh error: {e}")
+
+                # 3. If any deleted games were pruned, alert the user transparently
+                if removed_count > 0:
+                    names_preview = ", ".join(f"'{n}'" for n in removed_names[:3])
+                    if removed_count > 3:
+                        names_preview += f" and {removed_count - 3} other(s)"
+                    msg = f"Detected {removed_count} uninstalled game{'s' if removed_count != 1 else ''} and removed from library:\n• {names_preview}"
+                    QTimer.singleShot(600, lambda: self.show_scan_alert(
+                        "Library Refreshed",
+                        msg,
+                        icon_name="info-icon.svg"
+                    ))
             finally:
                 # Ensure minimum appearance duration of 3 seconds (3000ms)
                 elapsed_ms = int((time.time() - start_time) * 1000)

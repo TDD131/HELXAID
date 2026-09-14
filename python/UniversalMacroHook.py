@@ -120,6 +120,7 @@ class MacroInterceptorProcess:
         self._active_scroll_threads = {}
         
         self.ahk_manager = AHKPluginManager()
+        self._is_injecting_native = False
         
         # Attempt to kill any lingering old instance
         try:
@@ -255,6 +256,51 @@ class MacroInterceptorProcess:
                   union=INPUT_UNION(ki=KEYBDINPUT(wVk=vk_code, wScan=0, dwFlags=KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, time=0, dwExtraInfo=None)))
         ctypes.windll.user32.SendInput(1, ctypes.byref(x_up), ctypes.sizeof(x_up))
 
+    def _inject_mouse_click(self, action: str, is_press: bool):
+        """
+        Injects synthetic mouse click events (Down/Up) when physical buttons
+        are remapped to native mouse actions.
+        """
+        MOUSEEVENTF_LEFTDOWN   = 0x0002
+        MOUSEEVENTF_LEFTUP     = 0x0004
+        MOUSEEVENTF_RIGHTDOWN  = 0x0008
+        MOUSEEVENTF_RIGHTUP    = 0x0010
+        MOUSEEVENTF_MIDDLEDOWN = 0x0020
+        MOUSEEVENTF_MIDDLEUP   = 0x0040
+        MOUSEEVENTF_XDOWN      = 0x0080
+        MOUSEEVENTF_XUP        = 0x0100
+        XBUTTON1               = 0x0001
+        XBUTTON2               = 0x0002
+        
+        flag = 0
+        data = 0
+        
+        if action == "Left Click":
+            flag = MOUSEEVENTF_LEFTDOWN if is_press else MOUSEEVENTF_LEFTUP
+        elif action == "Right Click":
+            flag = MOUSEEVENTF_RIGHTDOWN if is_press else MOUSEEVENTF_RIGHTUP
+        elif action == "Wheel Click" or action == "Middle Click":
+            flag = MOUSEEVENTF_MIDDLEDOWN if is_press else MOUSEEVENTF_MIDDLEUP
+        elif action == "Backward":
+            flag = MOUSEEVENTF_XDOWN if is_press else MOUSEEVENTF_XUP
+            data = XBUTTON1
+        elif action == "Forward":
+            flag = MOUSEEVENTF_XDOWN if is_press else MOUSEEVENTF_XUP
+            data = XBUTTON2
+        else:
+            return
+
+        self._is_injecting_native = True
+        try:
+            if getattr(self, 'bypass_anti_cheat', False):
+                ctypes.windll.user32.mouse_event(flag, 0, 0, data, 0)
+            else:
+                x = INPUT(type=INPUT_MOUSE,
+                          union=INPUT_UNION(mi=MOUSEINPUT(dx=0, dy=0, mouseData=data, dwFlags=flag, time=0, dwExtraInfo=None)))
+                ctypes.windll.user32.SendInput(1, ctypes.byref(x), ctypes.sizeof(x))
+        finally:
+            self._is_injecting_native = False
+
     def _inject_macro(self, macro_str):
         # Native OS injection for actions corrupted by hardware firmware
         if macro_str == "Scroll Up":
@@ -331,11 +377,18 @@ class MacroInterceptorProcess:
         if getattr(self, 'macro_execution_mode', 'Option A') == "Option B":
             return ctypes.windll.user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
             
+        # If we are currently injecting a synthetic native click, let it pass through
+        if getattr(self, '_is_injecting_native', False):
+            return ctypes.windll.user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
+
         if nCode >= 0:
-            struct = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
-            
-            if struct.flags & LLMHF_INJECTED:
+            # Ultra-fast check of injected flag without allocating MSLLHOOKSTRUCT
+            # MSLLHOOKSTRUCT offset of flags: pt.x (4) + pt.y (4) + mouseData (4) = 12 bytes
+            flags = wintypes.DWORD.from_address(lParam + 12).value
+            if flags & LLMHF_INJECTED:
                 return ctypes.windll.user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
+
+            struct = ctypes.cast(lParam, ctypes.POINTER(MSLLHOOKSTRUCT)).contents
             
             btn_name = None
             is_press = False
@@ -348,7 +401,7 @@ class MacroInterceptorProcess:
             elif wParam == WM_MBUTTONUP: btn_name, is_press = '2', False
             elif wParam in (WM_XBUTTONDOWN, WM_XBUTTONUP):
                 high_word = (struct.mouseData >> 16) & 0xFFFF
-                btn_name = '4' if high_word == 1 else '3'
+                btn_name = '3' if high_word == 1 else '4'
                 is_press = True if wParam == WM_XBUTTONDOWN else False
 
             if btn_name and btn_name in self.macro_map:
@@ -364,8 +417,8 @@ class MacroInterceptorProcess:
                     '0': 'Left Click',
                     '1': 'Right Click',
                     '2': 'Wheel Click',
-                    '3': 'Forward',
-                    '4': 'Backward'
+                    '3': 'Backward',
+                    '4': 'Forward'
                 }
                 
                 if action == DEFAULT_MAPPINGS.get(btn_name):
@@ -373,7 +426,11 @@ class MacroInterceptorProcess:
                     return ctypes.windll.user32.CallNextHookEx(self._hook_id, nCode, wParam, lParam)
                     
                 if action in NATIVE_ACTIONS:
-                    log_msg(f"[DEBUG-HOOK] Action {action} is NATIVE. Consuming and letting hardware handle it.")
+                    if action == "Disable":
+                        log_msg(f"[DEBUG-HOOK] Action {action} is Disable. Swallowing click.")
+                        return 1
+                    log_msg(f"[DEBUG-HOOK] Action {action} is remapped NATIVE. Injecting synthetic click (is_press={is_press}).")
+                    self._inject_mouse_click(action, is_press)
                     return 1
                     
                 log_msg(f"[DEBUG-HOOK] Action {action} is SOFTWARE. Swallowing click.")
@@ -410,6 +467,11 @@ class MacroInterceptorProcess:
         listener_thread = threading.Thread(target=self._ipc_listener_loop, daemon=True)
         listener_thread.start()
         
+        try:
+            ctypes.windll.winmm.timeBeginPeriod(1)
+        except Exception:
+            pass
+
         self._hook_id = ctypes.windll.user32.SetWindowsHookExW(WH_MOUSE_LL, self._pointer, None, 0)
         
         if not self._hook_id:
@@ -418,24 +480,37 @@ class MacroInterceptorProcess:
 
         log_msg(f"[UniversalMacroHook] Engine Started on UDP port {self.port} & Hook Installed.")
         
-        msg = wintypes.MSG()
-        PM_REMOVE = 0x0001
-        
-        while self.is_running:
+        # Periodic heartbeat timer (every 1000ms) - checks parent liveness without sleeping or stalling mouse messages
+        TIMERPROC = ctypes.WINFUNCTYPE(None, wintypes.HWND, wintypes.UINT, ctypes.c_size_t, wintypes.DWORD)
+        def _timer_proc(hwnd, uMsg, idEvent, dwTime):
             if not self._check_heartbeat():
+                ctypes.windll.user32.PostQuitMessage(0)
+
+        self._timer_callback = TIMERPROC(_timer_proc)
+        timer_id = ctypes.windll.user32.SetTimer(None, 0, 1000, self._timer_callback)
+
+        msg = wintypes.MSG()
+        
+        # Pure Win32 event-driven message loop with GetMessageW (instantaneous dispatch, 0ms latency, zero throttling)
+        while self.is_running:
+            bRet = ctypes.windll.user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+            if bRet <= 0:
                 break
+            ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
+            ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
                 
-            if ctypes.windll.user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
-                if msg.message == 0x0012: # WM_QUIT
-                    break
-                ctypes.windll.user32.TranslateMessage(ctypes.byref(msg))
-                ctypes.windll.user32.DispatchMessageW(ctypes.byref(msg))
-            else:
-                time.sleep(0.005) 
-                
+        if timer_id:
+            try:
+                ctypes.windll.user32.KillTimer(None, timer_id)
+            except Exception:
+                pass
         if self._hook_id:
             ctypes.windll.user32.UnhookWindowsHookEx(self._hook_id)
             self._hook_id = None
+        try:
+            ctypes.windll.winmm.timeEndPeriod(1)
+        except Exception:
+            pass
         self.sock.close()
         log_msg("[UniversalMacroHook] Engine Terminated Safely.")
         os._exit(0)

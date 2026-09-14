@@ -48,11 +48,17 @@ def is_ryzenadj_available() -> bool:
     # Fallback check
     return os.path.exists(get_ryzenadj_path())
 
+_CPU_VENDOR_CACHE = None
+
 def get_cpu_vendor() -> str:
     """
-    Detect CPU Vendor ('AMD', 'Intel', or 'UNKNOWN') via Windows Registry.
-    Zero-latency (0ms), 0-subprocess execution.
+    Detect CPU Vendor ('AMD', 'Intel', or 'UNKNOWN') with zero-latency hardware caching.
+    Uses multi-tier detection: in-memory cache -> winreg -> environment.
     """
+    global _CPU_VENDOR_CACHE
+    if _CPU_VENDOR_CACHE is not None:
+        return _CPU_VENDOR_CACHE
+
     try:
         import winreg
         key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
@@ -60,17 +66,22 @@ def get_cpu_vendor() -> str:
         winreg.CloseKey(key)
         vendor_str = str(vendor_id).upper()
         if "AMD" in vendor_str or "AUTHENTICAMD" in vendor_str:
+            _CPU_VENDOR_CACHE = "AMD"
             return "AMD"
         elif "INTEL" in vendor_str or "GENUINEINTEL" in vendor_str:
+            _CPU_VENDOR_CACHE = "Intel"
             return "Intel"
     except Exception:
         pass
     
     proc_id = os.environ.get("PROCESSOR_IDENTIFIER", "").upper()
     if "AMD" in proc_id:
+        _CPU_VENDOR_CACHE = "AMD"
         return "AMD"
     elif "INTEL" in proc_id:
+        _CPU_VENDOR_CACHE = "Intel"
         return "Intel"
+    _CPU_VENDOR_CACHE = "UNKNOWN"
     return "UNKNOWN"
 
 def is_amd_cpu() -> bool:
@@ -87,10 +98,11 @@ def _apply_intel_power_scheme(profile: dict) -> bool:
     Power Saver: a1841308-3541-4fab-bc81-f71556f20b4a
     """
     try:
-        stapm = profile.get("stapm_limit", 40)
-        if stapm >= 45:
+        # Check either Intel PL1 or AMD stapm
+        pwr = profile.get("pl1_limit", profile.get("stapm_limit", 40))
+        if pwr >= 45:
             scheme_guid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" # High Performance
-        elif stapm <= 20:
+        elif pwr <= 20:
             scheme_guid = "a1841308-3541-4fab-bc81-f71556f20b4a" # Power Saver
         else:
             scheme_guid = "381b4222-f694-41f0-9685-ff5bb260df2e" # Balanced
@@ -108,7 +120,32 @@ def _apply_intel_power_scheme(profile: dict) -> bool:
 # Legacy UXTU path (kept for compatibility)
 DEFAULT_UXTU_PATH = r"C:\Program Files\JamesCJ60\Universal x86 Tuning Utility\Universal x86 Tuning Utility.exe"
 
-# Safety limits (Priority #1) - Values will be clamped to these ranges
+# Intel Safety Limits
+INTEL_SAFETY_LIMITS = {
+    "pl1_limit": {"min": 10, "max": 200, "default": 45},     # Watts (Long Duration Power)
+    "pl2_limit": {"min": 15, "max": 250, "default": 65},     # Watts (Short Duration Power)
+    "tau_duration": {"min": 1, "max": 128, "default": 28},    # Seconds (Turbo Time Limit)
+    "temp_limit": {"min": 60, "max": 105, "default": 90},    # °C (PROCHOT Offset)
+    "epp_value": {"min": 0, "max": 255, "default": 84},       # SpeedShift EPP (0=Max, 255=Battery)
+}
+
+# Intel Default Profile
+INTEL_DEFAULT_PROFILE = {
+    "pl1_limit": 45,
+    "pl2_limit": 65,
+    "tau_duration": 28,
+    "temp_limit": 90,
+    "epp_value": 84,
+    "enabled_settings": {
+        "pl1_limit": True,
+        "pl2_limit": True,
+        "tau_duration": True,
+        "temp_limit": True,
+        "epp_value": True,
+    }
+}
+
+# Safety limits (Priority #1) - Values will be clamped to these ranges (AMD)
 SAFETY_LIMITS = {
     "temp_limit": {"min": 50, "max": 95, "default": 85},
     "temp_skin_limit": {"min": 50, "max": 95, "default": 80},
@@ -178,15 +215,23 @@ def get_uxtu_directory(custom_path: str = None) -> str:
     return os.path.dirname(path)
 
 
-def validate_value(key: str, value: int) -> int:
+def validate_value(key: str, value: int, vendor: str = None) -> int:
     """
-    Validate and clamp a value to its safety limits.
+    Validate and clamp a value to its safety limits (AMD or Intel).
     Returns the clamped value.
     """
-    if key not in SAFETY_LIMITS:
-        return value
+    is_intel = (vendor == "Intel") if vendor else is_intel_cpu()
+    active_limits = INTEL_SAFETY_LIMITS if is_intel else SAFETY_LIMITS
     
-    limits = SAFETY_LIMITS[key]
+    if key not in active_limits:
+        if key in INTEL_SAFETY_LIMITS:
+            active_limits = INTEL_SAFETY_LIMITS
+        elif key in SAFETY_LIMITS:
+            active_limits = SAFETY_LIMITS
+        else:
+            return value
+    
+    limits = active_limits[key]
     clamped = max(limits["min"], min(limits["max"], value))
     
     if clamped != value:
@@ -195,19 +240,22 @@ def validate_value(key: str, value: int) -> int:
     return clamped
 
 
-def validate_profile(profile: dict) -> dict:
+def validate_profile(profile: dict, vendor: str = None) -> dict:
     """Validate all values in a profile and return a safe version."""
     validated = {}
     for key, value in profile.items():
-        if key in SAFETY_LIMITS:
-            validated[key] = validate_value(key, value)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            validated[key] = validate_value(key, int(value), vendor)
         else:
             validated[key] = value
     return validated
 
 
-def get_default_profile() -> dict:
-    """Get a copy of the default profile."""
+def get_default_profile(vendor: str = None) -> dict:
+    """Get a copy of the default profile for the detected or specified CPU vendor."""
+    is_intel = (vendor == "Intel") if vendor else is_intel_cpu()
+    if is_intel:
+        return INTEL_DEFAULT_PROFILE.copy()
     return DEFAULT_PROFILE.copy()
 
 
@@ -287,26 +335,200 @@ def get_uxtu_presets_path(custom_path: str = None) -> str:
 
 
 
+# ----------------------------------------------------------
+# ThrottleStop Path & INI Management (Intel CPUs)
+# ----------------------------------------------------------
+
+def get_throttlestop_path() -> str:
+    """Get the path to ThrottleStop.exe (AppData or legacy tools folder)."""
+    try:
+        from integrations.tools_downloader import get_throttlestop_path as get_appdata_path
+        appdata_path = get_appdata_path()
+        if os.path.exists(appdata_path):
+            return appdata_path
+    except ImportError:
+        pass
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(script_dir, "assets", "throttlestop", "ThrottleStop.exe")
+
+def is_throttlestop_available() -> bool:
+    """Check if ThrottleStop.exe exists."""
+    try:
+        from integrations.tools_downloader import is_throttlestop_available as check_available
+        return check_available()
+    except ImportError:
+        pass
+    return os.path.exists(get_throttlestop_path())
+
+def get_throttlestop_ini_path(ts_path: str = None) -> str:
+    """Get the path to ThrottleStop.ini in the same directory as ThrottleStop.exe."""
+    if not ts_path:
+        ts_path = get_throttlestop_path()
+    return os.path.join(os.path.dirname(ts_path), "ThrottleStop.ini")
+
+def read_throttlestop_ini(ini_path: str = None) -> dict:
+    """Read key-values from ThrottleStop.ini safely."""
+    if not ini_path:
+        ini_path = get_throttlestop_ini_path()
+    result = {}
+    if not os.path.exists(ini_path):
+        return result
+    try:
+        with open(ini_path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith(("#", ";", "[")):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    result[k.strip()] = v.strip()
+    except Exception as e:
+        print(f"[ThrottleStop] Error reading INI: {e}")
+    return result
+
+def update_throttlestop_ini(ini_path: str, profile: dict) -> bool:
+    """
+    Atomically update ThrottleStop.ini with profile settings for Profile 1 (HELXAID Active).
+    Preserves comments and unknown keys.
+    """
+    try:
+        ini_dir = os.path.dirname(ini_path)
+        os.makedirs(ini_dir, exist_ok=True)
+
+        pl1 = int(profile.get("pl1_limit", 45))
+        pl2 = int(profile.get("pl2_limit", 65))
+        tau = int(profile.get("tau_duration", 28))
+        temp = int(profile.get("temp_limit", 90))
+        epp = int(profile.get("epp_value", 84))
+        dts = max(0, min(40, 100 - temp))
+
+        updates = {
+            "PL1_1": str(pl1),
+            "PL2_1": str(pl2),
+            "TurboTime_1": str(tau),
+            "SpeedShift_1": str(epp),
+            "DTS_1": str(dts),
+            "Clamp_1": "1",
+            "TPL_1": "1",
+            "Profile": "1",
+            "NotificationDisabled": "1",
+            "StartMinimized": "1",
+            "MinimizeOnClose": "1",
+        }
+
+        existing_lines = []
+        if os.path.exists(ini_path):
+            with open(ini_path, "r", encoding="utf-8", errors="ignore") as f:
+                existing_lines = f.readlines()
+
+        new_lines = []
+        applied_keys = set()
+
+        for raw_line in existing_lines:
+            stripped = raw_line.strip()
+            if "=" in stripped and not stripped.startswith(("#", ";", "[")):
+                k, _ = stripped.split("=", 1)
+                k = k.strip()
+                if k in updates:
+                    new_lines.append(f"{k}={updates[k]}\n")
+                    applied_keys.add(k)
+                    continue
+            new_lines.append(raw_line)
+
+        for k, v in updates.items():
+            if k not in applied_keys:
+                new_lines.append(f"{k}={v}\n")
+
+        tmp_path = ini_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+        os.replace(tmp_path, ini_path)
+        return True
+    except Exception as e:
+        print(f"[ThrottleStop] Error updating INI: {e}")
+        return False
+
+def apply_throttlestop(profile: dict) -> tuple:
+    """
+    Apply Intel CPU settings using ThrottleStop.
+    Routes through HelxaidHelperService for Zero-UAC, falls back to direct execution.
+    """
+    ts_path = get_throttlestop_path()
+    if not os.path.exists(ts_path):
+        _apply_intel_power_scheme(profile)
+        return False, f"ThrottleStop not found at: {ts_path}"
+
+    ini_path = get_throttlestop_ini_path(ts_path)
+    update_throttlestop_ini(ini_path, profile)
+
+    # 1. Attempt Zero-UAC via Helper Service
+    try:
+        payload = {
+            "action": "apply_intel",
+            "profile": profile,
+            "throttlestop_path": ts_path
+        }
+        response = send_service_command(payload)
+        if response and response.get("status") == "success":
+            print(f"[CPU DEBUG] Applied via Helper Service (Zero-UAC): {response.get('message')}")
+            _apply_intel_power_scheme(profile)
+            return True, None
+        elif is_service_running():
+            err_msg = response.get("message") if response else "Unknown service error"
+            print(f"[CPU DEBUG] Service IPC returned error: {err_msg}")
+            return False, f"Zero-UAC Service error: {err_msg}"
+    except Exception as e:
+        print(f"[CPU DEBUG] Service IPC for ThrottleStop failed: {e}")
+
+    # 2. Fallback to direct elevated execution
+    try:
+        subprocess.run(["taskkill.exe", "/F", "/IM", "ThrottleStop.exe"],
+                       capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        time.sleep(0.05)
+
+        if is_admin():
+            subprocess.Popen([ts_path, "-b"], creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            run_as_admin([ts_path, "-b"])
+
+        _apply_intel_power_scheme(profile)
+        return True, None
+    except Exception as e:
+        return False, f"Failed to execute ThrottleStop: {e}"
+
+
 TEMP_PRESET_NAME = "TDD_Launcher_Applied"
 
 
 def apply_settings_direct(profile: dict, custom_path: str = None) -> tuple:
     """
-    Apply CPU settings directly using RyzenAdj.
-    Falls back to UXTU if RyzenAdj is not available.
+    Apply CPU settings directly.
+    Routes to RyzenAdj if AMD CPU, or ThrottleStop if Intel CPU.
     
     Args:
         profile: Dictionary with profile values
-        custom_path: Optional custom path (unused for RyzenAdj)
+        custom_path: Optional custom path (unused for RyzenAdj/ThrottleStop)
     
     Returns:
         (success: bool, error_message: str or None)
     """
     print("[CPU DEBUG] apply_settings_direct() called")
-    
-    # Primary method: RyzenAdj
+    vendor = get_cpu_vendor()
+
+    # Intel CPU Routing
+    if vendor == "Intel":
+        if is_throttlestop_available():
+            print("[CPU DEBUG] Intel detected, using ThrottleStop method")
+            return apply_throttlestop(profile)
+        else:
+            print("[CPU DEBUG] ThrottleStop not found, fallback to Windows Power Scheme")
+            _apply_intel_power_scheme(profile)
+            return True, "ThrottleStop not found. Applied Windows Power Scheme."
+
+    # AMD CPU Routing (RyzenAdj primary)
     if is_ryzenadj_available():
-        print("[CPU DEBUG] Using RyzenAdj method")
+        print("[CPU DEBUG] AMD detected, using RyzenAdj method")
         return apply_ryzenadj(profile)
     
     # Fallback: UXTU method (if RyzenAdj not found)
@@ -316,8 +538,8 @@ def apply_settings_direct(profile: dict, custom_path: str = None) -> tuple:
             return _apply_settings_elevated(profile, custom_path)
         return apply_settings_auto_restart_direct(profile, custom_path)
     
-    print("[CPU DEBUG] Neither RyzenAdj nor UXTU found!")
-    return False, "Neither RyzenAdj nor UXTU found. Please install RyzenAdj in assets folder."
+    print("[CPU DEBUG] Neither RyzenAdj, ThrottleStop, nor UXTU found!")
+    return False, "Neither RyzenAdj nor ThrottleStop found. Please setup the required CPU tool."
 
 
 def is_pawnio_running() -> bool:
@@ -394,9 +616,8 @@ def apply_ryzenadj(profile: dict) -> tuple:
         (success: bool, error_message: str or None)
     """
     if is_intel_cpu():
-        print("[CPU DEBUG] Intel CPU detected. RyzenAdj is not applicable; applying Windows Power Scheme optimization.")
-        _apply_intel_power_scheme(profile)
-        return True, "Intel CPU detected: Applied Windows Power Profile optimization."
+        print("[CPU DEBUG] Intel CPU detected. Delegating to apply_throttlestop...")
+        return apply_throttlestop(profile)
 
     # 1. Attempt Service IPC (Zero-UAC)
 
@@ -1092,7 +1313,9 @@ class CPUControlSettings:
     
     def get_value(self, key: str) -> int:
         """Get a single profile value."""
-        return self.profile.get(key, SAFETY_LIMITS.get(key, {}).get("default", 0))
+        active_limits = INTEL_SAFETY_LIMITS if is_intel_cpu() else SAFETY_LIMITS
+        default_val = active_limits.get(key, {}).get("default", 0)
+        return self.profile.get(key, default_val)
     
     def set_value(self, key: str, value: int):
         """Set a single profile value with validation."""

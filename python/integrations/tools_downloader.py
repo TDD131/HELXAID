@@ -25,6 +25,7 @@ TOOLS_DIR = os.path.join(APPDATA_DIR, "tools")
 
 # Tool subdirectories
 RYZENADJ_DIR = os.path.join(TOOLS_DIR, "ryzenadj")
+THROTTLESTOP_DIR = os.path.join(TOOLS_DIR, "throttlestop")
 FFMPEG_DIR = os.path.join(TOOLS_DIR, "ffmpeg")
 LIBREHWMON_DIR = os.path.join(TOOLS_DIR, "librehardwaremonitor")
 HWINFO_DIR = os.path.join(TOOLS_DIR, "hwinfo")
@@ -32,6 +33,7 @@ AHK_DIR = os.path.join(TOOLS_DIR, "ahk")
 
 # Download URLs
 RYZENADJ_URL = "https://github.com/FlyGoat/RyzenAdj/releases/latest/download/ryzenadj-win64.zip"
+THROTTLESTOP_URL = "https://raw.githubusercontent.com/intel-undervolt/releases/main/ThrottleStop_9.6.zip"
 FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 LIBREHWMON_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/download/v0.9.4/LibreHardwareMonitor-net472.zip"
 AHK_URL = "https://www.autohotkey.com/download/ahk.zip"
@@ -73,6 +75,29 @@ def calculate_checksum(file_path: str, algorithm: str = "sha256") -> str:
 def get_ryzenadj_path() -> str:
     """Get path to ryzenadj.exe in AppData."""
     return os.path.join(RYZENADJ_DIR, "ryzenadj.exe")
+
+
+def get_throttlestop_path() -> str:
+    """Get path to ThrottleStop.exe in AppData or legacy assets."""
+    appdata_path = os.path.join(THROTTLESTOP_DIR, "ThrottleStop.exe")
+    if os.path.exists(appdata_path):
+        return appdata_path
+    
+    appdata_path_lower = os.path.join(THROTTLESTOP_DIR, "throttlestop.exe")
+    if os.path.exists(appdata_path_lower):
+        return appdata_path_lower
+
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_path = os.path.join(base_dir, "assets", "throttlestop", "ThrottleStop.exe")
+    if os.path.exists(local_path):
+        return local_path
+
+    return appdata_path
+
+
+def is_throttlestop_available() -> bool:
+    """Check if ThrottleStop.exe exists in AppData or assets."""
+    return os.path.exists(get_throttlestop_path())
 
 
 def get_ffmpeg_path() -> str:
@@ -598,6 +623,73 @@ def download_ryzenadj(progress_callback: Optional[Callable[[int, int], None]] = 
             
     except Exception as e:
         return False, str(e)
+
+
+def download_throttlestop(progress_callback: Optional[Callable[[int, int], None]] = None, force: bool = False) -> Tuple[bool, Optional[str]]:
+    """
+    Download and install ThrottleStop to AppData.
+    
+    Args:
+        progress_callback: Optional callback(downloaded_bytes, total_bytes) for UI progress reporting.
+        force: If True, always download even if already present.
+
+    Returns:
+        (success, error_message)
+    """
+    import time
+
+    try:
+        if not force and is_throttlestop_available():
+            return True, None
+
+        temp_dir = tempfile.gettempdir()
+        zip_path = os.path.join(temp_dir, f"throttlestop-{uuid.uuid4().hex}.zip")
+
+        urls = [
+            THROTTLESTOP_URL,
+            "https://files.thetechgame.com/tools/ThrottleStop_9.6.zip"
+        ]
+
+        last_error = None
+        success = False
+        for url in urls:
+            print(f"[Tools] Attempting ThrottleStop download from {url}...")
+            success, error = download_file(
+                url,
+                zip_path,
+                progress_callback,
+                expected_checksum=None
+            )
+            if success:
+                last_error = None
+                break
+            else:
+                last_error = error
+
+        if not success:
+            return False, f"Automated download unavailable: {last_error}.\nPlease download ThrottleStop from TechPowerUp and click 'Import ThrottleStop (.zip)'."
+
+        os.makedirs(THROTTLESTOP_DIR, exist_ok=True)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(THROTTLESTOP_DIR)
+
+        try:
+            os.remove(zip_path)
+        except Exception:
+            pass
+
+        ini_path = os.path.join(THROTTLESTOP_DIR, "ThrottleStop.ini")
+        if not os.path.exists(ini_path):
+            with open(ini_path, "w", encoding="utf-8") as f:
+                f.write("[ThrottleStop]\nProfile=1\nNotificationDisabled=1\nStartMinimized=1\nMinimizeOnClose=1\nPL1_1=45\nPL2_1=65\nTurboTime_1=28\nSpeedShift_1=84\nClamp_1=1\nTPL_1=1\n")
+
+        if is_throttlestop_available():
+            print("[Tools] ThrottleStop installed successfully.")
+            return True, None
+        return False, "ThrottleStop.exe was not found in the extracted package."
+    except Exception as e:
+        return False, f"ThrottleStop installation error: {e}"
+
 
 def download_ffmpeg(progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[bool, Optional[str]]:
     """
@@ -1494,6 +1586,27 @@ def ensure_ryzenadj(parent=None) -> bool:
 
 
 
+def ensure_throttlestop(parent=None) -> bool:
+    """
+    Ensure ThrottleStop is available, downloading if needed.
+    
+    Args:
+        parent: Optional parent widget for dialog
+    
+    Returns:
+        True if ThrottleStop is available
+    """
+    if is_throttlestop_available():
+        return True
+    
+    if parent:
+        return show_download_dialog(parent, "ThrottleStop", download_throttlestop)
+    else:
+        success, _ = download_throttlestop()
+        return success
+
+
+
 def ensure_ffmpeg(parent=None) -> bool:
     """
     Ensure FFmpeg is available, downloading if needed.
@@ -1688,6 +1801,14 @@ def import_ryzenadj_tool(source_path: str) -> Tuple[bool, str]:
     success, msg = import_tool_from_path(RYZENADJ_DIR, ["ryzenadj.exe"], source_path)
     if success and not is_ryzenadj_available():
         return False, "ryzenadj.exe was not found in the imported package."
+    return success, msg
+
+
+def import_throttlestop_tool(source_path: str) -> Tuple[bool, str]:
+    """Import ThrottleStop archive or executable into THROTTLESTOP_DIR."""
+    success, msg = import_tool_from_path(THROTTLESTOP_DIR, ["ThrottleStop.exe", "throttlestop.exe"], source_path)
+    if success and not is_throttlestop_available():
+        return False, "ThrottleStop.exe was not found in the imported package."
     return success, msg
 
 

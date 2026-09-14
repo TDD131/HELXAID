@@ -238,7 +238,10 @@ class SilkWaveRenderer(IVisualizerRenderer):
         if len(spectrum) >= n_nodes:
             step = len(spectrum) / float(n_nodes)
             node_indices = [min(len(spectrum) - 1, int(i * step)) for i in range(n_nodes)]
-            spec_nodes = spectrum[node_indices]
+            if isinstance(spectrum, (list, tuple)):
+                spec_nodes = np.array([spectrum[idx] for idx in node_indices], dtype=np.float32)
+            else:
+                spec_nodes = spectrum[node_indices]
         else:
             spec_nodes = np.zeros(n_nodes, dtype=np.float32)
 

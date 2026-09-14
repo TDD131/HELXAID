@@ -7,10 +7,9 @@ build_name = os.environ.get('HELXAID_BUILD_NAME', 'HELXAID')
 datas = [
     ('python/UI Icons', 'UI Icons'),
     ('python/UI Sidebar Icons', 'UI Sidebar Icons'),
-    ('python/UI Reguler', 'UI Reguler'),
     ('python/UI Taskbar Icons', 'UI Taskbar Icons'),
     ('python/icons', 'icons'),
-    ('python/Fonts', 'Fonts'),
+    ('python/fonts', 'fonts'),
     ('python/helxaid_native.cp314-win_amd64.pyd', '.'),
     ('python/helxairo_native.cp314-win_amd64.pyd', '.'),
     ('python/hardware_utils.cp314-win_amd64.pyd', '.'),
@@ -19,6 +18,10 @@ datas = [
     ('python/innertube_fast_resolver.pyd', '.'),
     ('python/audio_spectrum_native.cp314-win_amd64.pyd', '.'),
     ('python/audio_spectrum_native.pyd', '.'),
+    ('python/image_cache_native.cp314-win_amd64.pyd', '.'),
+    ('python/image_cache_native.pyd', '.'),
+    ('python/ambient_glow.cp314-win_amd64.pyd', '.'),
+    ('python/ambient_glow.pyd', '.'),
 ]
 binaries = [
     ('python/helxaid_native.cp314-win_amd64.pyd', '.'),
@@ -29,9 +32,15 @@ binaries = [
     ('python/innertube_fast_resolver.pyd', '.'),
     ('python/audio_spectrum_native.cp314-win_amd64.pyd', '.'),
     ('python/audio_spectrum_native.pyd', '.'),
+    ('python/image_cache_native.cp314-win_amd64.pyd', '.'),
+    ('python/image_cache_native.pyd', '.'),
+    ('python/ambient_glow.cp314-win_amd64.pyd', '.'),
+    ('python/ambient_glow.pyd', '.'),
 ]
 hiddenimports = [
     'audio_spectrum_native',
+    'image_cache_native',
+    'ambient_glow',
     'hardware_utils',
     'hardware_wrapper',
     'native_wrapper',

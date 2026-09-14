@@ -50,18 +50,18 @@ void ToggleMacro::execute(ExecutionContext &ctx) {
       }
 
       // High-precision interval timing
+      uint64_t targetInterval = m_repeatIntervalMicros > 0 ? m_repeatIntervalMicros : 1000;
       uint64_t elapsed = timer->nowMicros() - startTime;
-      if (elapsed < m_repeatIntervalMicros) {
-        // For 1ms or 0ms intervals (<= 1000 microseconds), unthrottle for maximum performance (1340+ CPS)
-        if (m_repeatIntervalMicros <= 1000) {
-          // Zero delay unthrottled mode
-        } else if (m_repeatIntervalMicros <= 15000) {
-          uint64_t target = startTime + m_repeatIntervalMicros;
+      if (elapsed < targetInterval) {
+        if (targetInterval <= 15000) {
+          uint64_t target = startTime + targetInterval;
           while (timer->nowMicros() < target && !ctx.isCancelled()) {
-            // Spin wait
+            #if defined(_MSC_VER) || defined(__x86_64__) || defined(_M_X64)
+            YieldProcessor();
+            #endif
           }
         } else {
-          ctx.delay(m_repeatIntervalMicros - elapsed);
+          ctx.delay(targetInterval - elapsed);
         }
       }
     }
@@ -69,6 +69,15 @@ void ToggleMacro::execute(ExecutionContext &ctx) {
     // No repeat action - just wait until cancelled
     while (!ctx.isCancelled()) {
       ctx.delay(100000); // 100ms
+    }
+  }
+
+  // Release repeat action state if cancelled mid-stroke
+  if (!m_repeatAction.target.empty()) {
+    if (m_repeatAction.type == ActionType::MouseClick) {
+      sim->mouseUp(m_repeatAction.target);
+    } else if (m_repeatAction.type == ActionType::KeyTap) {
+      sim->keyUp(m_repeatAction.target);
     }
   }
 
