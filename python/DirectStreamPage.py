@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QApplication, QSizePolicy, QGraphicsOpacityEffect, QComboBox,
     QMenu, QDialog, QScrollArea, QMainWindow, QProgressBar, QFileDialog
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QSettings, QVariantAnimation, QEasingCurve, QRectF, QPoint, QUrl, QPropertyAnimation
+from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QSettings, QVariantAnimation, QEasingCurve, QRectF, QPoint, QUrl, QPropertyAnimation, QEvent
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QPainterPath, QColor, QLinearGradient, QGradient, QFont, QFontMetrics, QPen, QShortcut, QKeySequence
 from PySide6.QtSvg import QSvgRenderer
 
@@ -211,20 +211,48 @@ def create_section_nav_button(object_name: str, is_next: bool = False, parent=No
 
 
 def scroll_horizontal_by_items(scroll_area: QScrollArea, direction: int, item_width: int, spacing: int = 12, count: int = 2):
-    """Smooth animated horizontal scroll by N items (direction: -1 for Prev, 1 for Next)."""
+    """Smooth animated horizontal scroll by N items with momentum accumulation & OutCubic easing."""
     if not scroll_area or not scroll_area.horizontalScrollBar():
         return
     bar = scroll_area.horizontalScrollBar()
-    step = (item_width + spacing) * count
-    start_val = bar.value()
-    end_val = max(bar.minimum(), min(bar.maximum(), start_val + (step * direction)))
+    vp_w = scroll_area.viewport().width() if scroll_area.viewport() else 600
+    effective_count = max(1, min(count, vp_w // (item_width + spacing))) if vp_w > 0 else count
+    step = (item_width + spacing) * effective_count
+
+    # Accumulate target on rapid clicks
+    curr_anim = getattr(scroll_area, '_scroll_anim', None)
+    is_running = False
+    if curr_anim:
+        try:
+            if curr_anim.state() == QPropertyAnimation.Running:
+                is_running = True
+        except (RuntimeError, Exception):
+            curr_anim = None
+            scroll_area._scroll_anim = None
+
+    if is_running and hasattr(scroll_area, '_target_scroll_x'):
+        base_val = scroll_area._target_scroll_x
+    else:
+        base_val = bar.value()
+
+    end_val = max(bar.minimum(), min(bar.maximum(), base_val + (step * direction)))
+    scroll_area._target_scroll_x = end_val
+
+    if curr_anim:
+        try:
+            curr_anim.stop()
+        except (RuntimeError, Exception):
+            pass
+
+    dist = abs(end_val - bar.value())
+    duration = min(420, max(260, int(220 + dist * 0.2)))
 
     anim = QPropertyAnimation(bar, b"value", scroll_area)
-    anim.setDuration(260)
+    anim.setDuration(duration)
     anim.setEasingCurve(QEasingCurve.OutCubic)
-    anim.setStartValue(start_val)
+    anim.setStartValue(bar.value())
     anim.setEndValue(end_val)
-    anim.start(QPropertyAnimation.DeleteWhenStopped)
+    anim.start()
     scroll_area._scroll_anim = anim
 
 
@@ -1279,10 +1307,11 @@ class CloudProfileView(QWidget):
         hero_layout.addLayout(hero_actions)
         layout.addWidget(self.hero_card)
 
-        # 3. Two Cloud Service Cards (Side-by-Side)
-        cards_grid = QGridLayout()
-        cards_grid.setContentsMargins(0, 0, 0, 0)
-        cards_grid.setSpacing(12)
+        # 3. Two Cloud Service Cards (Side-by-Side on desktop, Stacked on narrow screens)
+        self.cards_grid = QGridLayout()
+        self.cards_grid.setContentsMargins(0, 0, 0, 0)
+        self.cards_grid.setSpacing(12)
+        self._profile_is_stacked = False
 
         # --- Card A: YouTube Music Hub ---
         self.yt_card = QFrame(self)
@@ -1452,7 +1481,7 @@ class CloudProfileView(QWidget):
         yt_actions.addWidget(self.yt_disc_btn)
 
         yt_layout.addLayout(yt_actions)
-        cards_grid.addWidget(self.yt_card, 0, 0)
+        self.cards_grid.addWidget(self.yt_card, 0, 0)
 
         # --- Card B: Spotify Hub ---
         self.sp_card = QFrame(self)
@@ -1564,9 +1593,9 @@ class CloudProfileView(QWidget):
         sp_actions.addWidget(self.sp_disc_btn)
 
         sp_layout.addLayout(sp_actions)
-        cards_grid.addWidget(self.sp_card, 0, 1)
+        self.cards_grid.addWidget(self.sp_card, 0, 1)
 
-        layout.addLayout(cards_grid)
+        layout.addLayout(self.cards_grid)
 
         # 4. Telemetry & Cache Bar
         telemetry_card = QFrame(self)
@@ -1920,6 +1949,22 @@ class CloudProfileView(QWidget):
                 pass
         self.accountsChanged.emit()
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = self.width()
+        is_stacked = w < 680
+        if is_stacked != getattr(self, '_profile_is_stacked', False):
+            self._profile_is_stacked = is_stacked
+            if hasattr(self, 'cards_grid') and hasattr(self, 'yt_card') and hasattr(self, 'sp_card'):
+                self.cards_grid.removeWidget(self.yt_card)
+                self.cards_grid.removeWidget(self.sp_card)
+                if is_stacked:
+                    self.cards_grid.addWidget(self.yt_card, 0, 0)
+                    self.cards_grid.addWidget(self.sp_card, 1, 0)
+                else:
+                    self.cards_grid.addWidget(self.yt_card, 0, 0)
+                    self.cards_grid.addWidget(self.sp_card, 0, 1)
+
 
 class StreamProfilePillButton(QPushButton):
     """
@@ -1932,20 +1977,29 @@ class StreamProfilePillButton(QPushButton):
         self.setFixedHeight(30)
         self.setCursor(Qt.PointingHandCursor)
         self.setFont(QFont("Orbitron", 9, QFont.Bold))
+        self._is_compact = False
+        self._is_active_panel = False
         self.update_status()
 
+    def set_compact_mode(self, is_compact: bool):
+        if self._is_compact != is_compact:
+            self._is_compact = is_compact
+            self.update_status(self._is_active_panel)
+
     def update_status(self, is_active_panel: bool = False):
+        self._is_active_panel = is_active_panel
         yt_auth = YouTubeAccountEngine.get_instance().is_authenticated()
         sp_auth = SpotifyAccountEngine.get_instance().is_authenticated()
 
         active_border = "border: 1px solid #FF5B06; background: #242838;" if is_active_panel else ""
+        pad = "padding: 4px 6px;" if self._is_compact else "padding: 4px 12px;"
 
         if yt_auth and sp_auth:
             self.setIcon(QIcon(render_svg_pixmap(SVG_USER_AVATAR, 16, 16)))
-            self.setText("  Accounts: 2 Active  ")
+            self.setText("  2 Active  " if self._is_compact else "  Accounts: 2 Active  ")
             self.setStyleSheet(f"""
                 QPushButton#streamProfilePillButton {{
-                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(255, 91, 6, 0.4); border-radius: 15px; padding: 4px 12px;
+                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(255, 91, 6, 0.4); border-radius: 15px; {pad}
                     {active_border}
                 }}
                 QPushButton#streamProfilePillButton:hover {{ background: #202430; border: 1px solid #FF5B06; }}
@@ -1953,11 +2007,11 @@ class StreamProfilePillButton(QPushButton):
         elif yt_auth:
             self.setIcon(QIcon(render_svg_pixmap("lighting-adaptive.svg", 16, 16)))
             name = YouTubeAccountEngine.get_instance().get_user_name()
-            short_name = (name[:12] + "..") if len(name) > 14 else name
-            self.setText(f"  YT: {short_name}  ")
+            short_name = (name[:8] + "..") if self._is_compact else ((name[:12] + "..") if len(name) > 14 else name)
+            self.setText(f"  {short_name}  " if self._is_compact else f"  YT: {short_name}  ")
             self.setStyleSheet(f"""
                 QPushButton#streamProfilePillButton {{
-                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(255, 0, 0, 0.4); border-radius: 15px; padding: 4px 12px;
+                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(255, 0, 0, 0.4); border-radius: 15px; {pad}
                     {active_border}
                 }}
                 QPushButton#streamProfilePillButton:hover {{ background: #202430; border: 1px solid #FF0000; }}
@@ -1965,21 +2019,21 @@ class StreamProfilePillButton(QPushButton):
         elif sp_auth:
             self.setIcon(QIcon(render_svg_pixmap("spotify-icon.svg", 16, 16)))
             name = SpotifyAccountEngine.get_instance().get_display_name()
-            short_name = (name[:12] + "..") if len(name) > 14 else name
-            self.setText(f"  Spotify: {short_name}  ")
+            short_name = (name[:8] + "..") if self._is_compact else ((name[:12] + "..") if len(name) > 14 else name)
+            self.setText(f"  {short_name}  " if self._is_compact else f"  Spotify: {short_name}  ")
             self.setStyleSheet(f"""
                 QPushButton#streamProfilePillButton {{
-                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(29, 185, 84, 0.4); border-radius: 15px; padding: 4px 12px;
+                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(29, 185, 84, 0.4); border-radius: 15px; {pad}
                     {active_border}
                 }}
                 QPushButton#streamProfilePillButton:hover {{ background: #202430; border: 1px solid #1DB954; }}
             """)
         else:
             self.setIcon(QIcon(render_svg_pixmap(SVG_USER_AVATAR, 16, 16)))
-            self.setText("  Link Accounts  ")
+            self.setText("  Sync  " if self._is_compact else "  Link Accounts  ")
             self.setStyleSheet(f"""
                 QPushButton#streamProfilePillButton {{
-                    background: #14161F; color: #A0A4B4; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 15px; padding: 4px 12px;
+                    background: #14161F; color: #A0A4B4; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 15px; {pad}
                     {active_border}
                 }}
                 QPushButton#streamProfilePillButton:hover {{ background: #1B1E2B; color: #FFFFFF; border: 1px solid rgba(255, 91, 6, 0.4); }}
@@ -2040,20 +2094,25 @@ class StreamOmniSearchBar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("streamOmniSearchBar")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFixedHeight(140)
         self._setup_ui()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
-        # Header Row
-        header_row = QHBoxLayout()
+        # Header Row Container
+        header_widget = QWidget(self)
+        header_widget.setObjectName("streamOmniHeaderWidget")
+        header_widget.setFixedHeight(30)
+        header_row = QHBoxLayout(header_widget)
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(10)
         header_row.setAlignment(Qt.AlignVCenter)
 
-        title_lbl = QLabel("DIRECT STREAM", self)
+        title_lbl = QLabel("DIRECT STREAM", header_widget)
         title_lbl.setObjectName("streamHubTitle")
         title_lbl.setAlignment(Qt.AlignVCenter)
         title_lbl.setStyleSheet("""
@@ -2063,22 +2122,23 @@ class StreamOmniSearchBar(QFrame):
         """)
         header_row.addWidget(title_lbl, 0, Qt.AlignVCenter)
 
-        sub_title = QLabel("Instant Cloud & Online Audio Engine", self)
-        sub_title.setObjectName("streamHubSubtitle")
-        sub_title.setAlignment(Qt.AlignVCenter)
-        sub_title.setStyleSheet("color: #70727e; font-size: 12px; margin-left: 8px; font-weight: 500;")
-        header_row.addWidget(sub_title, 0, Qt.AlignVCenter)
+        self.sub_title = QLabel("Instant Cloud & Online Audio Engine", header_widget)
+        self.sub_title.setObjectName("streamHubSubtitle")
+        self.sub_title.setAlignment(Qt.AlignVCenter)
+        self.sub_title.setStyleSheet("color: #70727e; font-size: 12px; margin-left: 8px; font-weight: 500;")
+        header_row.addWidget(self.sub_title, 0, Qt.AlignVCenter)
         header_row.addStretch()
 
-        self.profile_btn = StreamProfilePillButton(self)
+        self.profile_btn = StreamProfilePillButton(header_widget)
         self.profile_btn.clicked.connect(self.profileClicked.emit)
         header_row.addWidget(self.profile_btn, 0, Qt.AlignVCenter)
 
-        layout.addLayout(header_row)
+        layout.addWidget(header_widget)
 
         # Search Input Box
         search_box = QFrame(self)
         search_box.setObjectName("streamSearchBox")
+        search_box.setFixedHeight(40)
         search_box.setStyleSheet("""
             QFrame#streamSearchBox {
                 background: rgba(30, 30, 30, 0.85);
@@ -2091,7 +2151,7 @@ class StreamOmniSearchBar(QFrame):
             }
         """)
         search_layout = QHBoxLayout(search_box)
-        search_layout.setContentsMargins(12, 6, 12, 6)
+        search_layout.setContentsMargins(12, 5, 12, 5)
         search_layout.setSpacing(8)
         search_layout.setAlignment(Qt.AlignVCenter)
 
@@ -2143,10 +2203,14 @@ class StreamOmniSearchBar(QFrame):
 
         layout.addWidget(search_box)
 
-        # Genre Chips
-        chips_row = QHBoxLayout()
-        chips_row.setContentsMargins(0, 4, 0, 4)
+        self.chips_container = QWidget(self)
+        self.chips_container.setObjectName("streamGenreChipsContainer")
+        self.chips_container.setFixedHeight(34)
+        self.chips_container.setStyleSheet("QWidget#streamGenreChipsContainer { background: transparent; }")
+        chips_row = QHBoxLayout(self.chips_container)
+        chips_row.setContentsMargins(0, 0, 0, 0)
         chips_row.setSpacing(6)
+        chips_row.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
         chips = [
             ("Lofi 24/7", "Lofi Girl 24/7 chill beats"),
@@ -2157,29 +2221,45 @@ class StreamOmniSearchBar(QFrame):
             ("Anime OST", "Anime Opening Hits")
         ]
 
-        font = QFont("Orbitron")
-        font.setBold(True)
-        font.setPixelSize(9)
-        fm = QFontMetrics(font)
         for label, query in chips:
-            chip_btn = AnimatedButton(label, self)
+            chip_btn = QPushButton(label, self.chips_container)
             chip_btn.setObjectName(f"streamGenreChip_{label.replace(' ', '_')}")
-            chip_btn.setStyleSheet("border: none; background: transparent; padding: 0;")
+            chip_btn.setFixedHeight(28)
             chip_btn.setCursor(Qt.PointingHandCursor)
-            chip_btn.setHoverGradient(['#3A3D45', '#4A4D55'])
-            chip_btn.setHoverMode("fade")
-            chip_btn.setBorderRadius(6.0)
-            chip_btn.setDrawBorder(False)
-            chip_btn.setIdleBackground(QColor(30, 32, 38, 220))
-            chip_btn.setFontSize(9)
-            chip_btn.setFixedHeight(24)
-            chip_width = fm.horizontalAdvance(label) + 24
-            chip_btn.setFixedWidth(chip_width)
+            chip_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(30, 32, 38, 0.9);
+                    color: #FFFFFF;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border-radius: 6px;
+                    padding: 0px 14px;
+                    border: none;
+                }
+                QPushButton:hover {
+                    background-color: #272727;
+                    color: #FFFFFF;
+                }
+                QPushButton:pressed {
+                    background-color: #FF5B06;
+                    color: #FFFFFF;
+                }
+            """)
             chip_btn.clicked.connect(lambda _, q=query: self._on_chip_clicked(q))
             chips_row.addWidget(chip_btn)
 
         chips_row.addStretch()
-        layout.addLayout(chips_row)
+        layout.addWidget(self.chips_container)
+        layout.addStretch()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = self.width()
+        if hasattr(self, 'sub_title') and self.sub_title:
+            self.sub_title.setVisible(w >= 620)
+        if hasattr(self, 'profile_btn') and self.profile_btn and hasattr(self.profile_btn, 'set_compact_mode'):
+            self.profile_btn.set_compact_mode(w < 460)
 
     def _on_enter_pressed(self):
         text = self.input_edit.text().strip()
@@ -2317,9 +2397,11 @@ class YTMusicVideoCard(QFrame):
         self._bg_colors = bg_gradient_colors
         self._setup_ui()
 
-    def _format_two_line_title(self, text: str, max_width: int = 295) -> str:
+    def _format_two_line_title(self, text: str, max_width: int = None) -> str:
         if not text:
             return ""
+        if max_width is None:
+            max_width = max(100, (self.width() - 24) if self.width() > 40 else 295)
         font = getattr(self, 'title_lbl', None).font() if hasattr(self, 'title_lbl') and self.title_lbl else QFont("Orbitron", 10, QFont.Bold)
         fm = QFontMetrics(font)
         words = text.split()
@@ -2348,7 +2430,6 @@ class YTMusicVideoCard(QFrame):
 
     def _setup_ui(self):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(236)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("""
             QFrame#ytMusicVideoCard {
@@ -2375,7 +2456,7 @@ class YTMusicVideoCard(QFrame):
         self.thumb_img_lbl = QLabel(self.thumb_frame)
         self.thumb_img_lbl.setObjectName("ytVideoThumbImg")
         self.thumb_img_lbl.setGeometry(0, 0, 299, 150)
-        self.thumb_img_lbl.setScaledContents(False)
+        self.thumb_img_lbl.setScaledContents(True)
         self.thumb_img_lbl.setAlignment(Qt.AlignCenter)
         self.thumb_img_lbl.hide()
 
@@ -2395,7 +2476,7 @@ class YTMusicVideoCard(QFrame):
 
         layout.addWidget(self.thumb_frame)
 
-        init_title = self._format_two_line_title(self.track_data['title'], 295)
+        init_title = self._format_two_line_title(self.track_data['title'])
         self.title_lbl = QLabel(init_title, self)
         self.title_lbl.setObjectName("ytVideoTitle")
         self.title_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -2413,6 +2494,31 @@ class YTMusicVideoCard(QFrame):
         self.sub_lbl.setFixedHeight(18)
         layout.addWidget(self.sub_lbl)
         layout.addStretch()
+
+    def update_dimensions(self, card_w: int, card_h: int):
+        if card_w <= 40:
+            return
+        if getattr(self, '_last_card_size', None) == (card_w, card_h):
+            return
+        self._last_card_size = (card_w, card_h)
+
+        thumb_w = max(40, card_w - 20)
+        thumb_h = max(24, int(thumb_w * 9 / 16))
+        if self.thumb_frame.height() != thumb_h:
+            self.thumb_frame.setFixedHeight(thumb_h)
+        self.thumb_img_lbl.setGeometry(0, 0, thumb_w, thumb_h)
+        self.play_overlay.setGeometry(0, 0, thumb_w, thumb_h)
+        formatted_title = self._format_two_line_title(self.track_data.get('title', ''), max_width=thumb_w)
+        if self.title_lbl.text() != formatted_title:
+            self.title_lbl.setText(formatted_title)
+        fm_sub = QFontMetrics(self.sub_lbl.font())
+        sub_text = self.sub_lbl.toolTip() or self.sub_lbl.text()
+        if sub_text:
+            elided = fm_sub.elidedText(sub_text, Qt.ElideRight, thumb_w)
+            if self.sub_lbl.text() != elided:
+                self.sub_lbl.setText(elided)
+        if self._raw_pixmap and not self._raw_pixmap.isNull() and (not self.thumb_img_lbl.pixmap() or self.thumb_img_lbl.pixmap().isNull()):
+            self._render_thumbnail()
 
     def _on_hover_step(self, val: float):
         try:
@@ -2436,7 +2542,8 @@ class YTMusicVideoCard(QFrame):
             'is_online': True,
             'is_stream': True
         })
-        formatted_title = self._format_two_line_title(raw_title, max_width=295)
+        thumb_w = max(40, (self.width() - 20) if self.width() > 40 else 295)
+        formatted_title = self._format_two_line_title(raw_title, max_width=thumb_w)
         self.title_lbl.setText(formatted_title)
         self.title_lbl.setToolTip(raw_title)
         self.setToolTip(f"{raw_title}\n{artist}")
@@ -2448,7 +2555,7 @@ class YTMusicVideoCard(QFrame):
             sub_text = f"{artist} • {subtitle}"
 
         fm_sub = QFontMetrics(self.sub_lbl.font())
-        elided_sub = fm_sub.elidedText(sub_text, Qt.ElideRight, 295)
+        elided_sub = fm_sub.elidedText(sub_text, Qt.ElideRight, thumb_w)
         self.sub_lbl.setText(elided_sub)
         self.sub_lbl.setToolTip(sub_text)
 
@@ -2472,8 +2579,11 @@ class YTMusicVideoCard(QFrame):
         w = max(40, self.thumb_frame.width() if self.thumb_frame.width() > 40 else 299)
         h = max(24, self.thumb_frame.height() if self.thumb_frame.height() > 24 else 150)
 
-        rounded = render_ambient_thumbnail(self._raw_pixmap, w, h, radius=7)
+        render_w = max(w, 360)
+        render_h = max(h, int(render_w * 9 / 16))
+        rounded = render_ambient_thumbnail(self._raw_pixmap, render_w, render_h, radius=7)
         if rounded:
+            self.thumb_img_lbl.setScaledContents(True)
             self.thumb_img_lbl.setGeometry(0, 0, w, h)
             self.thumb_img_lbl.setPixmap(rounded)
             self.thumb_img_lbl.show()
@@ -2492,19 +2602,12 @@ class YTMusicVideoCard(QFrame):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        card_w = self.width()
-        if card_w > 40:
-            thumb_w = card_w - 20
-            thumb_h = max(24, int(thumb_w * 9 / 16))
-            if self.thumb_frame.height() != thumb_h:
-                self.thumb_frame.setFixedHeight(thumb_h)
-            tot_h = thumb_h + 74
-            if self.height() != tot_h:
-                self.setFixedHeight(tot_h)
-            self.thumb_img_lbl.setGeometry(0, 0, thumb_w, thumb_h)
-            self.play_overlay.setGeometry(0, 0, thumb_w, thumb_h)
-            if self._raw_pixmap and not self._raw_pixmap.isNull():
-                self._render_thumbnail()
+        thumb_w = max(40, self.width() - 20)
+        thumb_h = max(24, int(thumb_w * 9 / 16))
+        self.thumb_img_lbl.setGeometry(0, 0, thumb_w, thumb_h)
+        self.play_overlay.setGeometry(0, 0, thumb_w, thumb_h)
+        if self._raw_pixmap and not self._raw_pixmap.isNull():
+            self._render_thumbnail()
 
     def enterEvent(self, event):
         self._hover_anim.stop()
@@ -2994,9 +3097,7 @@ class CloudMediaCard(QFrame):
         self._setup_ui()
 
     def _setup_ui(self):
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setMinimumWidth(260)
-        self.setFixedHeight(236)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("""
             QFrame#cloudMediaCard {
@@ -3031,10 +3132,9 @@ class CloudMediaCard(QFrame):
         self.thumb_img.setObjectName("cloudMediaCardThumbImg")
         self.thumb_img.setStyleSheet("background: transparent; border-radius: 7px;")
         self.thumb_img.setAlignment(Qt.AlignCenter)
+        self.thumb_img.setScaledContents(True)
         self.thumb_img.setGeometry(0, 0, 299, 150)
         self.thumb_img.hide()
-
-
 
         # Hover Play Overlay (Full Thumbnail Dark Cover)
         self.play_overlay = CardDarkPlayOverlay(icon_size=38, parent=self.thumb_frame)
@@ -3049,28 +3149,45 @@ class CloudMediaCard(QFrame):
 
         layout.addWidget(self.thumb_frame)
 
-        title_lbl = QLabel(self.item_data.get("title", "Unknown Title"), self)
-        title_lbl.setObjectName("cloudMediaCardTitle")
-        title_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; line-height: 1.2; background: transparent;")
-        title_lbl.setWordWrap(True)
-        title_lbl.setFixedHeight(30)
-        layout.addWidget(title_lbl)
+        self.title_lbl = QLabel(self.item_data.get("title", "Unknown Title"), self)
+        self.title_lbl.setObjectName("cloudMediaCardTitle")
+        self.title_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; line-height: 1.2; background: transparent;")
+        self.title_lbl.setWordWrap(True)
+        self.title_lbl.setFixedHeight(30)
+        layout.addWidget(self.title_lbl)
 
         sub_text = self.item_data.get("artist") or self.item_data.get("description") or f"{self.item_data.get('track_count', 0)} Tracks"
-        sub_lbl = QLabel(str(sub_text), self)
-        sub_lbl.setObjectName("cloudMediaCardSub")
-        sub_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        sub_lbl.setStyleSheet("color: #9DA2B4; font-family: 'Orbitron', sans-serif; font-size: 9px; background: transparent;")
-        sub_lbl.setFixedHeight(18)
-        layout.addWidget(sub_lbl)
+        self.sub_lbl = QLabel(str(sub_text), self)
+        self.sub_lbl.setObjectName("cloudMediaCardSub")
+        self.sub_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.sub_lbl.setStyleSheet("color: #9DA2B4; font-family: 'Orbitron', sans-serif; font-size: 9px; background: transparent;")
+        self.sub_lbl.setFixedHeight(18)
+        layout.addWidget(self.sub_lbl)
         layout.addStretch()
+
+    def update_dimensions(self, card_w: int, card_h: int):
+        """Dynamically adapt card, thumbnail frame, and overlays to parent viewport constraints."""
+        try:
+            if getattr(self, '_last_card_size', None) == (card_w, card_h):
+                return
+            self._last_card_size = (card_w, card_h)
+            self.setFixedSize(card_w, card_h)
+            thumb_w = max(40, card_w - 20)
+            thumb_h = max(40, card_h - 76)
+            self.thumb_frame.setFixedHeight(thumb_h)
+            self.thumb_img.setGeometry(0, 0, thumb_w, thumb_h)
+            self.play_overlay.setGeometry(0, 0, thumb_w, thumb_h)
+            if self._raw_pixmap and not self._raw_pixmap.isNull() and (not self.thumb_img.pixmap() or self.thumb_img.pixmap().isNull()):
+                self._render_thumbnail()
+        except (RuntimeError, Exception):
+            pass
 
     def _on_hover_step(self, val: float):
         try:
             self._hover_progress = val
             self.play_opacity.setOpacity(val)
-            w = max(40, self.thumb_frame.width() if self.thumb_frame.width() > 40 else 299)
+            w = max(40, self.thumb_frame.width() if self.thumb_frame.width() > 40 else (self.width() - 20 if self.width() > 20 else 299))
             h = max(40, self.thumb_frame.height() if self.thumb_frame.height() > 40 else 150)
             self.play_overlay.setGeometry(0, 0, w, h)
         except (RuntimeError, Exception):
@@ -3080,11 +3197,14 @@ class CloudMediaCard(QFrame):
         try:
             if not self._raw_pixmap or self._raw_pixmap.isNull():
                 return
-            w = max(40, self.thumb_frame.width() if self.thumb_frame.width() > 40 else 299)
+            w = max(40, self.thumb_frame.width() if self.thumb_frame.width() > 40 else (self.width() - 20 if self.width() > 20 else 299))
             h = max(40, self.thumb_frame.height() if self.thumb_frame.height() > 40 else 150)
 
-            rounded = render_ambient_thumbnail(self._raw_pixmap, w, h, radius=7)
+            render_w = max(w, 360)
+            render_h = max(h, int(render_w * 9 / 16))
+            rounded = render_ambient_thumbnail(self._raw_pixmap, render_w, render_h, radius=7)
             if rounded:
+                self.thumb_img.setScaledContents(True)
                 self.thumb_img.setGeometry(0, 0, w, h)
                 self.thumb_img.setPixmap(rounded)
                 self.thumb_img.show()
@@ -3096,8 +3216,8 @@ class CloudMediaCard(QFrame):
         try:
             if not pixmap or pixmap.isNull():
                 return
-            if pixmap.width() > 360:
-                pixmap = pixmap.scaledToWidth(360, Qt.SmoothTransformation)
+            if pixmap.width() > 480:
+                pixmap = pixmap.scaledToWidth(480, Qt.SmoothTransformation)
             self._raw_pixmap = pixmap
             self._render_thumbnail()
         except (RuntimeError, Exception):
@@ -3106,8 +3226,8 @@ class CloudMediaCard(QFrame):
     def resizeEvent(self, event):
         try:
             super().resizeEvent(event)
-            w = self.thumb_frame.width()
-            h = self.thumb_frame.height()
+            w = max(40, self.thumb_frame.width())
+            h = max(40, self.thumb_frame.height())
             if w > 20 and h > 20:
                 self.thumb_img.setGeometry(0, 0, w, h)
                 self.play_overlay.setGeometry(0, 0, w, h)
@@ -3788,18 +3908,16 @@ class StreamPlaylistDetailView(QWidget):
 
         main_layout.addLayout(nav_row)
 
-        # 2. Main Two-Column Container
-        content_row = QHBoxLayout()
-        content_row.setContentsMargins(0, 0, 0, 0)
-        content_row.setSpacing(24)
-
-        # --- Left Column: Hero Cover & Controls ---
-        left_col = QVBoxLayout()
+        # 2. Main Container with Responsive Layout (Two-column on wide, stacked on narrow)
+        self.left_col_widget = QWidget(self)
+        self.left_col_widget.setObjectName("detailLeftColWidget")
+        self.left_col_widget.setStyleSheet("background: transparent;")
+        left_col = QVBoxLayout(self.left_col_widget)
         left_col.setContentsMargins(0, 0, 0, 0)
         left_col.setSpacing(12)
 
         # Cover Frame
-        self.cover_frame = QFrame(self)
+        self.cover_frame = QFrame(self.left_col_widget)
         self.cover_frame.setObjectName("detailCoverFrame")
         self.cover_frame.setFixedSize(210, 210)
         self.cover_frame.setStyleSheet("""
@@ -3820,7 +3938,7 @@ class StreamPlaylistDetailView(QWidget):
         left_col.addWidget(self.cover_frame)
 
         # Title
-        self.title_lbl = QLabel("Mix Title", self)
+        self.title_lbl = QLabel("Mix Title", self.left_col_widget)
         self.title_lbl.setObjectName("detailTitleLbl")
         self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 15px; font-weight: 900; line-height: 1.2;")
         self.title_lbl.setWordWrap(True)
@@ -3828,7 +3946,7 @@ class StreamPlaylistDetailView(QWidget):
         left_col.addWidget(self.title_lbl)
 
         # Subtitle / Metadata
-        self.meta_lbl = QLabel("Playlist • 50 tracks", self)
+        self.meta_lbl = QLabel("Playlist • 50 tracks", self.left_col_widget)
         self.meta_lbl.setObjectName("detailMetaLbl")
         self.meta_lbl.setStyleSheet("color: #7E849B; font-size: 11px; line-height: 1.3;")
         self.meta_lbl.setWordWrap(True)
@@ -3836,7 +3954,7 @@ class StreamPlaylistDetailView(QWidget):
         left_col.addWidget(self.meta_lbl)
 
         # Actions Row: Bookmark, Big Play, Options
-        act_frame = QFrame(self)
+        act_frame = QFrame(self.left_col_widget)
         act_frame.setObjectName("detailActFrame")
         act_frame.setFixedWidth(210)
         act_frame.setStyleSheet("background: transparent; border: none;")
@@ -3878,15 +3996,16 @@ class StreamPlaylistDetailView(QWidget):
         left_col.addWidget(act_frame)
         left_col.addStretch()
 
-        content_row.addLayout(left_col)
-
         # --- Right Column: Tracklist Table ---
-        right_col = QVBoxLayout()
+        self.right_col_widget = QWidget(self)
+        self.right_col_widget.setObjectName("detailRightColWidget")
+        self.right_col_widget.setStyleSheet("background: transparent;")
+        right_col = QVBoxLayout(self.right_col_widget)
         right_col.setContentsMargins(0, 0, 0, 0)
         right_col.setSpacing(6)
 
         # Table Header Frame with bottom separator line
-        tbl_hdr_frame = QFrame(self)
+        tbl_hdr_frame = QFrame(self.right_col_widget)
         tbl_hdr_frame.setObjectName("detailTableHdrFrame")
         tbl_hdr_frame.setStyleSheet("""
             QFrame#detailTableHdrFrame {
@@ -3918,7 +4037,7 @@ class StreamPlaylistDetailView(QWidget):
 
         # Tracklist Container Widget inside dynamic smooth scroll area
         from smooth_scroll import SmoothScrollArea
-        self.track_scroll = SmoothScrollArea(self)
+        self.track_scroll = SmoothScrollArea(self.right_col_widget)
         self.track_scroll.setObjectName("detailTrackScroll")
         self.track_scroll.setWidgetResizable(True)
         self.track_scroll.setFrameShape(QFrame.NoFrame)
@@ -3964,8 +4083,16 @@ class StreamPlaylistDetailView(QWidget):
         self.track_scroll.setWidget(self.track_container)
         right_col.addWidget(self.track_scroll, stretch=1)
 
-        content_row.addLayout(right_col, stretch=1)
-        main_layout.addLayout(content_row, stretch=1)
+        self.content_layout = QGridLayout()
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(20)
+        self.content_layout.addWidget(self.left_col_widget, 0, 0)
+        self.content_layout.addWidget(self.right_col_widget, 0, 1)
+        self.content_layout.setColumnStretch(0, 0)
+        self.content_layout.setColumnStretch(1, 1)
+        self._detail_is_stacked = False
+
+        main_layout.addLayout(self.content_layout, stretch=1)
 
     def set_data(self, playlist_data: dict):
         self._playlist_data = playlist_data
@@ -4180,6 +4307,23 @@ class StreamPlaylistDetailView(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        w = self.width()
+        is_stacked = w < 620
+        if is_stacked != getattr(self, '_detail_is_stacked', False):
+            self._detail_is_stacked = is_stacked
+            if hasattr(self, 'content_layout') and hasattr(self, 'left_col_widget') and hasattr(self, 'right_col_widget'):
+                self.content_layout.removeWidget(self.left_col_widget)
+                self.content_layout.removeWidget(self.right_col_widget)
+                if is_stacked:
+                    self.content_layout.addWidget(self.left_col_widget, 0, 0)
+                    self.content_layout.addWidget(self.right_col_widget, 1, 0)
+                    self.content_layout.setColumnStretch(0, 1)
+                    self.content_layout.setColumnStretch(1, 0)
+                else:
+                    self.content_layout.addWidget(self.left_col_widget, 0, 0)
+                    self.content_layout.addWidget(self.right_col_widget, 0, 1)
+                    self.content_layout.setColumnStretch(0, 0)
+                    self.content_layout.setColumnStretch(1, 1)
         if hasattr(self, '_save_floating_panel') and self._save_floating_panel and self._save_floating_panel.isVisible():
             self._save_floating_panel.show_centered()
 
@@ -4312,20 +4456,21 @@ class StreamHeroCard(QFrame):
         super().__init__(parent)
         self.setObjectName("streamHeroCard")
         self._track_data: Optional[Dict[str, Any]] = None
+        self._raw_pixmap: Optional[QPixmap] = None
         self._setup_ui()
 
     def _setup_ui(self):
         self.setStyleSheet("QFrame#streamHeroCard { background: rgba(24, 25, 32, 0.95); border-radius: 10px; }")
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 14, 16, 14)
-        layout.setSpacing(16)
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(14, 12, 14, 12)
+        self.main_layout.setSpacing(14)
 
         self.art_lbl = QLabel(self)
         self.art_lbl.setObjectName("heroArtLabel")
         self.art_lbl.setFixedSize(110, 110)
         self.art_lbl.setAlignment(Qt.AlignCenter)
         self.art_lbl.setStyleSheet("QLabel#heroArtLabel { background: #121318; border-radius: 8px; }")
-        layout.addWidget(self.art_lbl)
+        self.main_layout.addWidget(self.art_lbl)
 
         meta_col = QVBoxLayout()
         meta_col.setContentsMargins(0, 0, 0, 0)
@@ -4347,6 +4492,7 @@ class StreamHeroCard(QFrame):
         self.title_lbl = QLabel("Title Placeholder", self)
         self.title_lbl.setObjectName("heroTitleLabel")
         self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 15px; font-weight: bold;")
+        self.title_lbl.setWordWrap(True)
         meta_col.addWidget(self.title_lbl)
 
         self.artist_lbl = QLabel("Artist • Album", self)
@@ -4354,9 +4500,9 @@ class StreamHeroCard(QFrame):
         self.artist_lbl.setStyleSheet("color: #a0a2ac; font-size: 12px;")
         meta_col.addWidget(self.artist_lbl)
 
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 6, 0, 0)
-        btn_row.setSpacing(8)
+        self.btn_row = QHBoxLayout()
+        self.btn_row.setContentsMargins(0, 6, 0, 0)
+        self.btn_row.setSpacing(8)
 
         self.play_btn = QPushButton("PLAY NOW", self)
         self.play_btn.setObjectName("heroPlayBtn")
@@ -4368,26 +4514,26 @@ class StreamHeroCard(QFrame):
             QPushButton:hover { background: #FF7026; }
         """)
         self.play_btn.clicked.connect(self._on_play)
-        btn_row.addWidget(self.play_btn)
+        self.btn_row.addWidget(self.play_btn)
 
         self.add_btn = QPushButton("+ Add to Queue", self)
         self.add_btn.setObjectName("heroAddQueueBtn")
         self.add_btn.setCursor(Qt.PointingHandCursor)
         self.add_btn.setStyleSheet("background: rgba(255, 255, 255, 0.06); color: #FFFFFF; font-size: 11px; border-radius: 5px; padding: 6px 12px; border: none;")
         self.add_btn.clicked.connect(self._on_playlist)
-        btn_row.addWidget(self.add_btn)
+        self.btn_row.addWidget(self.add_btn)
 
         self.save_btn = QPushButton("Save .hxstream", self)
         self.save_btn.setObjectName("heroSaveStreamBtn")
         self.save_btn.setCursor(Qt.PointingHandCursor)
         self.save_btn.setStyleSheet("background: rgba(255, 255, 255, 0.06); color: #FFFFFF; font-size: 11px; border-radius: 5px; padding: 6px 12px; border: none;")
         self.save_btn.clicked.connect(self._on_save)
-        btn_row.addWidget(self.save_btn)
+        self.btn_row.addWidget(self.save_btn)
 
-        btn_row.addStretch()
-        meta_col.addLayout(btn_row)
+        self.btn_row.addStretch()
+        meta_col.addLayout(self.btn_row)
 
-        layout.addLayout(meta_col, stretch=1)
+        self.main_layout.addLayout(meta_col, stretch=1)
 
     def set_data(self, data: Dict[str, Any]):
         self._track_data = data
@@ -4398,20 +4544,46 @@ class StreamHeroCard(QFrame):
         score = data.get('score', 95)
         self.score_lbl.setText(f"MATCH: {int(score)}%")
 
-    def set_pixmap(self, pixmap: Optional[QPixmap]):
-        if not pixmap or pixmap.isNull():
+    def _render_art(self):
+        if not self._raw_pixmap or self._raw_pixmap.isNull():
             return
-        scaled = pixmap.scaled(110, 110, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        rounded = QPixmap(110, 110)
+        w = self.art_lbl.width()
+        h = self.art_lbl.height()
+        scaled = self._raw_pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        rounded = QPixmap(w, h)
         rounded.fill(Qt.transparent)
         p = QPainter(rounded)
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
         path = QPainterPath()
-        path.addRoundedRect(0, 0, 110, 110, 8, 8)
+        path.addRoundedRect(0, 0, w, h, 8, 8)
         p.setClipPath(path)
         p.drawPixmap(0, 0, scaled)
         p.end()
         self.art_lbl.setPixmap(rounded)
+
+    def set_pixmap(self, pixmap: Optional[QPixmap]):
+        if not pixmap or pixmap.isNull():
+            return
+        self._raw_pixmap = pixmap
+        self._render_art()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = self.width()
+        if w < 480:
+            self.art_lbl.setFixedSize(80, 80)
+            self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: bold;")
+            self.play_btn.setStyleSheet("background: #FF5B06; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; border-radius: 5px; padding: 5px 10px; border: none;")
+            self.add_btn.setStyleSheet("background: rgba(255, 255, 255, 0.06); color: #FFFFFF; font-size: 9px; border-radius: 5px; padding: 5px 8px; border: none;")
+            self.save_btn.setStyleSheet("background: rgba(255, 255, 255, 0.06); color: #FFFFFF; font-size: 9px; border-radius: 5px; padding: 5px 8px; border: none;")
+        else:
+            self.art_lbl.setFixedSize(110, 110)
+            self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 15px; font-weight: bold;")
+            self.play_btn.setStyleSheet("background: #FF5B06; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold; border-radius: 5px; padding: 6px 16px; border: none;")
+            self.add_btn.setStyleSheet("background: rgba(255, 255, 255, 0.06); color: #FFFFFF; font-size: 11px; border-radius: 5px; padding: 6px 12px; border: none;")
+            self.save_btn.setStyleSheet("background: rgba(255, 255, 255, 0.06); color: #FFFFFF; font-size: 11px; border-radius: 5px; padding: 6px 12px; border: none;")
+        self._render_art()
 
     def _on_play(self):
         if self._track_data:
@@ -4836,11 +5008,11 @@ class LikedMusicPortalCard(QFrame):
             }
         """)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(18)
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(14, 14, 14, 14)
+        self.main_layout.setSpacing(14)
 
-        # Left Cover Frame (178x178)
+        # Left Cover Frame
         self.cover_frame = QFrame(self)
         self.cover_frame.setObjectName("streamLikedCoverFrame")
         self.cover_frame.setFixedSize(178, 178)
@@ -4885,9 +5057,10 @@ class LikedMusicPortalCard(QFrame):
         self.cover_img.setObjectName("streamLikedCoverImg")
         self.cover_img.setGeometry(0, 0, 178, 178)
         self.cover_img.setStyleSheet("background: transparent; border-radius: 8px;")
+        self.cover_img.setScaledContents(True)
         self.cover_img.hide()
 
-        layout.addWidget(self.cover_frame)
+        self.main_layout.addWidget(self.cover_frame)
 
         # Right Content Column
         content_layout = QVBoxLayout()
@@ -4918,8 +5091,8 @@ class LikedMusicPortalCard(QFrame):
         content_layout.addStretch()
 
         # Action Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        self.btn_layout = QHBoxLayout()
+        self.btn_layout.setSpacing(8)
 
         self.shuffle_btn = QPushButton("Shuffle Play", self)
         self.shuffle_btn.setObjectName("streamLikedShuffleBtn")
@@ -4945,7 +5118,7 @@ class LikedMusicPortalCard(QFrame):
             }
         """)
         self.shuffle_btn.clicked.connect(self.shuffleClicked.emit)
-        btn_layout.addWidget(self.shuffle_btn)
+        self.btn_layout.addWidget(self.shuffle_btn)
 
         self.open_btn = QPushButton("Open Hub", self)
         self.open_btn.setObjectName("streamLikedOpenBtn")
@@ -4972,12 +5145,117 @@ class LikedMusicPortalCard(QFrame):
             }
         """)
         self.open_btn.clicked.connect(self.openClicked.emit)
-        btn_layout.addWidget(self.open_btn)
+        self.btn_layout.addWidget(self.open_btn)
 
-        btn_layout.addStretch()
-        content_layout.addLayout(btn_layout)
+        self.btn_layout.addStretch()
+        content_layout.addLayout(self.btn_layout)
 
-        layout.addLayout(content_layout, stretch=1)
+        self.main_layout.addLayout(content_layout, stretch=1)
+
+    def update_responsive_layout(self, avail_w: int):
+        """Scale internal portal dimensions according to available column width."""
+        try:
+            tier = 'compact' if avail_w < 360 else ('medium' if avail_w < 500 else 'full')
+            if getattr(self, '_current_tier', None) != tier:
+                self._current_tier = tier
+                if tier == 'compact':
+                    cov_size = 88
+                    self.cover_frame.setFixedSize(cov_size, cov_size)
+                    self.cover_img.setGeometry(0, 0, cov_size, cov_size)
+                    self.setFixedHeight(140)
+                    self.main_layout.setContentsMargins(10, 10, 10, 10)
+                    self.main_layout.setSpacing(10)
+                    self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: bold; letter-spacing: 0.5px;")
+                    self.desc_lbl.hide()
+                    self.meta_lbl.setStyleSheet("color: #707585; font-size: 9px;")
+                    self.shuffle_btn.setStyleSheet("""
+                        QPushButton#streamLikedShuffleBtn {
+                            background-color: #FF0055; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; border-radius: 5px; padding: 5px 9px; border: none;
+                        }
+                        QPushButton#streamLikedShuffleBtn:hover { background-color: #E6004C; }
+                    """)
+                    self.open_btn.setStyleSheet("""
+                        QPushButton#streamLikedOpenBtn {
+                            background-color: #1B1E2B; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; border-radius: 5px; padding: 5px 9px; border: 1px solid #2D3246;
+                        }
+                        QPushButton#streamLikedOpenBtn:hover { background-color: #262B3D; }
+                    """)
+                elif tier == 'medium':
+                    cov_size = 115
+                    self.cover_frame.setFixedSize(cov_size, cov_size)
+                    self.cover_img.setGeometry(0, 0, cov_size, cov_size)
+                    self.setFixedHeight(165)
+                    self.main_layout.setContentsMargins(12, 12, 12, 12)
+                    self.main_layout.setSpacing(12)
+                    self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; letter-spacing: 0.5px;")
+                    self.desc_lbl.show()
+                    self.desc_lbl.setStyleSheet("color: #9DA2B4; font-size: 10px; line-height: 1.3;")
+                    self.meta_lbl.setStyleSheet("color: #707585; font-size: 9px;")
+                    self.shuffle_btn.setStyleSheet("""
+                        QPushButton#streamLikedShuffleBtn {
+                            background-color: #FF0055; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border-radius: 6px; padding: 6px 12px; border: none;
+                        }
+                        QPushButton#streamLikedShuffleBtn:hover { background-color: #E6004C; }
+                    """)
+                    self.open_btn.setStyleSheet("""
+                        QPushButton#streamLikedOpenBtn {
+                            background-color: #1B1E2B; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border-radius: 6px; padding: 6px 12px; border: 1px solid #2D3246;
+                        }
+                        QPushButton#streamLikedOpenBtn:hover { background-color: #262B3D; }
+                    """)
+                else:
+                    cov_size = 178
+                    self.cover_frame.setFixedSize(cov_size, cov_size)
+                    self.cover_img.setGeometry(0, 0, cov_size, cov_size)
+                    self.setFixedHeight(210)
+                    self.main_layout.setContentsMargins(16, 16, 16, 16)
+                    self.main_layout.setSpacing(18)
+                    self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 17px; font-weight: bold; letter-spacing: 0.5px;")
+                    self.desc_lbl.show()
+                    self.desc_lbl.setStyleSheet("color: #9DA2B4; font-size: 11px; line-height: 1.4;")
+                    self.meta_lbl.setStyleSheet("color: #707585; font-size: 10px;")
+                    self.shuffle_btn.setStyleSheet("""
+                        QPushButton#streamLikedShuffleBtn {
+                            background-color: #FF0055; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border-radius: 6px; padding: 7px 16px; border: none;
+                        }
+                        QPushButton#streamLikedShuffleBtn:hover { background-color: #E6004C; }
+                    """)
+                    self.open_btn.setStyleSheet("""
+                        QPushButton#streamLikedOpenBtn {
+                            background-color: #1B1E2B; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border-radius: 6px; padding: 7px 16px; border: 1px solid #2D3246;
+                        }
+                        QPushButton#streamLikedOpenBtn:hover { background-color: #262B3D; }
+                    """)
+            self._render_cover()
+        except (RuntimeError, Exception):
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_responsive_layout(self.width())
+
+    def _render_cover(self):
+        if self._raw_pixmap and not self._raw_pixmap.isNull():
+            cw = max(20, self.cover_frame.width())
+            ch = max(20, self.cover_frame.height())
+            if getattr(self, '_rendered_size', None) == (cw, ch) and self.cover_img.pixmap() and not self.cover_img.pixmap().isNull():
+                return
+            scaled = self._raw_pixmap.scaled(cw, ch, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            rounded = QPixmap(cw, ch)
+            rounded.fill(Qt.transparent)
+            painter = QPainter(rounded)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, cw, ch, 8, 8)
+            painter.setClipPath(path)
+            painter.drawPixmap(0, 0, scaled)
+            painter.end()
+            self._rendered_size = (cw, ch)
+            self.cover_img.setGeometry(0, 0, cw, ch)
+            self.cover_img.setPixmap(rounded)
+            self.cover_img.show()
+            self.heart_icon_lbl.hide()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -4997,20 +5275,8 @@ class LikedMusicPortalCard(QFrame):
     def set_pixmap(self, pix: QPixmap):
         if pix and not pix.isNull():
             self._raw_pixmap = pix
-            scaled = pix.scaled(178, 178, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            rounded = QPixmap(178, 178)
-            rounded.fill(Qt.transparent)
-            painter = QPainter(rounded)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
-            path = QPainterPath()
-            path.addRoundedRect(0, 0, 178, 178, 8, 8)
-            painter.setClipPath(path)
-            painter.drawPixmap(0, 0, scaled)
-            painter.end()
-            self.cover_img.setPixmap(rounded)
-            self.cover_img.show()
-            self.heart_icon_lbl.hide()
+            self._rendered_size = None
+            self._render_cover()
 
 
 class YouTubeDiscoveryPortalCard(QFrame):
@@ -5040,11 +5306,11 @@ class YouTubeDiscoveryPortalCard(QFrame):
             }
         """)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(18)
+        self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(14, 14, 14, 14)
+        self.main_layout.setSpacing(14)
 
-        # Left Cover Frame (178x178)
+        # Left Cover Frame
         self.cover_frame = QFrame(self)
         self.cover_frame.setObjectName("streamDiscoveryCoverFrame")
         self.cover_frame.setFixedSize(178, 178)
@@ -5071,9 +5337,10 @@ class YouTubeDiscoveryPortalCard(QFrame):
         self.cover_img.setObjectName("streamDiscoveryCoverImg")
         self.cover_img.setGeometry(0, 0, 178, 178)
         self.cover_img.setStyleSheet("background: transparent; border-radius: 8px;")
+        self.cover_img.setScaledContents(True)
         self.cover_img.hide()
 
-        layout.addWidget(self.cover_frame)
+        self.main_layout.addWidget(self.cover_frame)
 
         # Right Content Column
         content_layout = QVBoxLayout()
@@ -5104,8 +5371,8 @@ class YouTubeDiscoveryPortalCard(QFrame):
         content_layout.addStretch()
 
         # Action Buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        self.btn_layout = QHBoxLayout()
+        self.btn_layout.setSpacing(8)
 
         self.explore_btn = QPushButton("Explore Feed", self)
         self.explore_btn.setObjectName("streamDiscoveryExploreBtn")
@@ -5131,7 +5398,7 @@ class YouTubeDiscoveryPortalCard(QFrame):
             }
         """)
         self.explore_btn.clicked.connect(self.exploreClicked.emit)
-        btn_layout.addWidget(self.explore_btn)
+        self.btn_layout.addWidget(self.explore_btn)
 
         self.quick_btn = QPushButton("Quick Mix", self)
         self.quick_btn.setObjectName("streamDiscoveryQuickBtn")
@@ -5158,12 +5425,123 @@ class YouTubeDiscoveryPortalCard(QFrame):
             }
         """)
         self.quick_btn.clicked.connect(self.quickPlayClicked.emit)
-        btn_layout.addWidget(self.quick_btn)
+        self.btn_layout.addWidget(self.quick_btn)
 
-        btn_layout.addStretch()
-        content_layout.addLayout(btn_layout)
+        self.btn_layout.addStretch()
+        content_layout.addLayout(self.btn_layout)
 
-        layout.addLayout(content_layout, stretch=1)
+        self.main_layout.addLayout(content_layout, stretch=1)
+
+    def update_responsive_layout(self, avail_w: int):
+        """Scale internal portal dimensions according to available column width."""
+        try:
+            tier = 'compact' if avail_w < 360 else ('medium' if avail_w < 500 else 'full')
+            if getattr(self, '_current_tier', None) != tier:
+                self._current_tier = tier
+                if tier == 'compact':
+                    cov_size = 88
+                    self.cover_frame.setFixedSize(cov_size, cov_size)
+                    self.cover_img.setGeometry(0, 0, cov_size, cov_size)
+                    self.setFixedHeight(140)
+                    self.main_layout.setContentsMargins(10, 10, 10, 10)
+                    self.main_layout.setSpacing(10)
+                    self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: bold; letter-spacing: 0.5px;")
+                    self.desc_lbl.hide()
+                    self.meta_lbl.setStyleSheet("color: #707585; font-size: 9px;")
+                    self.explore_btn.setStyleSheet("""
+                        QPushButton#streamDiscoveryExploreBtn {
+                            background-color: #FF5B06; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; border-radius: 5px; padding: 5px 9px; border: none;
+                        }
+                        QPushButton#streamDiscoveryExploreBtn:hover { background-color: #E04F03; }
+                    """)
+                    self.quick_btn.setStyleSheet("""
+                        QPushButton#streamDiscoveryQuickBtn {
+                            background-color: #1B1E2B; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: bold; border-radius: 5px; padding: 5px 9px; border: 1px solid #2D3246;
+                        }
+                        QPushButton#streamDiscoveryQuickBtn:hover { background-color: #262B3D; }
+                    """)
+                elif tier == 'medium':
+                    cov_size = 115
+                    self.cover_frame.setFixedSize(cov_size, cov_size)
+                    self.cover_img.setGeometry(0, 0, cov_size, cov_size)
+                    self.setFixedHeight(165)
+                    self.main_layout.setContentsMargins(12, 12, 12, 12)
+                    self.main_layout.setSpacing(12)
+                    self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; letter-spacing: 0.5px;")
+                    self.desc_lbl.show()
+                    self.desc_lbl.setStyleSheet("color: #9DA2B4; font-size: 10px; line-height: 1.3;")
+                    self.meta_lbl.setStyleSheet("color: #707585; font-size: 9px;")
+                    self.explore_btn.setStyleSheet("""
+                        QPushButton#streamDiscoveryExploreBtn {
+                            background-color: #FF5B06; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border-radius: 6px; padding: 6px 12px; border: none;
+                        }
+                        QPushButton#streamDiscoveryExploreBtn:hover { background-color: #E04F03; }
+                    """)
+                    self.quick_btn.setStyleSheet("""
+                        QPushButton#streamDiscoveryQuickBtn {
+                            background-color: #1B1E2B; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border-radius: 6px; padding: 6px 12px; border: 1px solid #2D3246;
+                        }
+                        QPushButton#streamDiscoveryQuickBtn:hover { background-color: #262B3D; }
+                    """)
+                else:
+                    cov_size = 178
+                    self.cover_frame.setFixedSize(cov_size, cov_size)
+                    self.cover_img.setGeometry(0, 0, cov_size, cov_size)
+                    self.setFixedHeight(210)
+                    self.main_layout.setContentsMargins(16, 16, 16, 16)
+                    self.main_layout.setSpacing(18)
+                    self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 17px; font-weight: bold; letter-spacing: 0.5px;")
+                    self.desc_lbl.show()
+                    self.desc_lbl.setStyleSheet("color: #9DA2B4; font-size: 11px; line-height: 1.4;")
+                    self.meta_lbl.setStyleSheet("color: #707585; font-size: 10px;")
+                    self.explore_btn.setStyleSheet("""
+                        QPushButton#streamDiscoveryExploreBtn {
+                            background-color: #FF5B06; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border-radius: 6px; padding: 7px 16px; border: none;
+                        }
+                        QPushButton#streamDiscoveryExploreBtn:hover { background-color: #E04F03; }
+                    """)
+                    self.quick_btn.setStyleSheet("""
+                        QPushButton#streamDiscoveryQuickBtn {
+                            background-color: #1B1E2B; color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; border-radius: 6px; padding: 7px 16px; border: 1px solid #2D3246;
+                        }
+                        QPushButton#streamDiscoveryQuickBtn:hover { background-color: #262B3D; }
+                    """)
+            self._render_cover()
+        except (RuntimeError, Exception):
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_responsive_layout(self.width())
+
+    def _render_cover(self):
+        if self._raw_pixmap and not self._raw_pixmap.isNull():
+            cw = max(20, self.cover_frame.width())
+            ch = max(20, self.cover_frame.height())
+            if getattr(self, '_rendered_size', None) == (cw, ch) and self.cover_img.pixmap() and not self.cover_img.pixmap().isNull():
+                return
+            scaled = self._raw_pixmap.scaled(cw, ch, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            rounded = QPixmap(cw, ch)
+            rounded.fill(Qt.transparent)
+            painter = QPainter(rounded)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, cw, ch, 8, 8)
+            painter.setClipPath(path)
+            painter.drawPixmap(0, 0, scaled)
+            painter.end()
+            self._rendered_size = (cw, ch)
+            self.cover_img.setGeometry(0, 0, cw, ch)
+            self.cover_img.setPixmap(rounded)
+            self.cover_img.show()
+            self.yt_icon_lbl.hide()
+
+    def set_pixmap(self, pix: QPixmap):
+        if pix and not pix.isNull():
+            self._raw_pixmap = pix
+            self._rendered_size = None
+            self._render_cover()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -5173,24 +5551,6 @@ class YouTubeDiscoveryPortalCard(QFrame):
             if not exp_rect.contains(pos) and not q_rect.contains(pos):
                 self.exploreClicked.emit()
         super().mousePressEvent(event)
-
-    def set_pixmap(self, pix: QPixmap):
-        if pix and not pix.isNull():
-            self._raw_pixmap = pix
-            scaled = pix.scaled(178, 178, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            rounded = QPixmap(178, 178)
-            rounded.fill(Qt.transparent)
-            painter = QPainter(rounded)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
-            path = QPainterPath()
-            path.addRoundedRect(0, 0, 178, 178, 8, 8)
-            painter.setClipPath(path)
-            painter.drawPixmap(0, 0, scaled)
-            painter.end()
-            self.cover_img.setPixmap(rounded)
-            self.cover_img.show()
-            self.yt_icon_lbl.hide()
 
 
 class YouTubeVideoCard(QFrame):
@@ -5207,8 +5567,8 @@ class YouTubeVideoCard(QFrame):
     def _setup_ui(self):
         self.setFocusPolicy(Qt.NoFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        self.setMinimumWidth(200)
-        self.setMinimumHeight(200)
+        self.setMinimumWidth(0)
+        self.setMinimumHeight(180)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("""
             QFrame#youtubeVideoCard {
@@ -5243,6 +5603,7 @@ class YouTubeVideoCard(QFrame):
         self.thumb_img.setObjectName("ytVideoThumbImg")
         self.thumb_img.setStyleSheet("background: transparent; border-radius: 7px;")
         self.thumb_img.setAlignment(Qt.AlignCenter)
+        self.thumb_img.setScaledContents(True)
         self.thumb_img.hide()
 
         # Hover Play Overlay
@@ -5324,15 +5685,18 @@ class YouTubeVideoCard(QFrame):
         needed_h = h + 16 + 8 + 58
         if self.height() != needed_h:
             self.setFixedHeight(needed_h)
-        if self._raw_pixmap and not self._raw_pixmap.isNull():
+        if self._raw_pixmap and not self._raw_pixmap.isNull() and (not self.thumb_img.pixmap() or self.thumb_img.pixmap().isNull()):
             self._render_thumbnail(w, h)
 
     def _render_thumbnail(self, w: int, h: int):
         if not self._raw_pixmap or self._raw_pixmap.isNull() or w <= 0 or h <= 0:
             return
 
-        rounded = render_ambient_thumbnail(self._raw_pixmap, w, h, radius=7)
+        render_w = max(w, 360)
+        render_h = max(h, int(render_w * 9 / 16))
+        rounded = render_ambient_thumbnail(self._raw_pixmap, render_w, render_h, radius=7)
         if rounded:
+            self.thumb_img.setScaledContents(True)
             self.thumb_img.setGeometry(0, 0, w, h)
             self.thumb_img.setPixmap(rounded)
             self.thumb_img.show()
@@ -5443,6 +5807,7 @@ class YouTubeDiscoveryView(QWidget):
             "Workout": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRABSgQIChABSgQIAxABSgQIDRABSgQIDhABSgQIBBADSgQIBhAB",
             "Focus": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRABSgQIChABSgQIAxABSgQIDRABSgQIDhABSgQIBBABSgQIBhAD"
         }
+        self._current_grid_cols = 4
         self._setup_ui()
 
     def _setup_ui(self):
@@ -5534,13 +5899,25 @@ class YouTubeDiscoveryView(QWidget):
 
         layout.addLayout(top_bar)
 
-        # Filter Chips Bar
-        self.chips_layout = QHBoxLayout()
+        # Filter Chips Bar (Wrapped in smooth horizontal scroll area)
+        self.chips_scroll = QScrollArea(self)
+        self.chips_scroll.setObjectName("streamDiscoveryChipsScroll")
+        self.chips_scroll.setWidgetResizable(True)
+        self.chips_scroll.setFrameShape(QFrame.NoFrame)
+        self.chips_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.chips_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.chips_scroll.setFixedHeight(34)
+        self.chips_scroll.setStyleSheet("QScrollArea#streamDiscoveryChipsScroll { background: transparent; border: none; }")
+
+        self.chips_container = QWidget()
+        self.chips_container.setStyleSheet("background: transparent;")
+        self.chips_layout = QHBoxLayout(self.chips_container)
+        self.chips_layout.setContentsMargins(0, 2, 0, 2)
         self.chips_layout.setSpacing(8)
         self.chip_buttons: Dict[str, QPushButton] = {}
         initial_categories = list(self._chip_params.keys())
         for cat in initial_categories:
-            btn = QPushButton(cat, self)
+            btn = QPushButton(cat, self.chips_container)
             btn.setObjectName(f"streamChip_{cat.replace(' ', '_')}")
             btn.setCursor(Qt.PointingHandCursor)
             self._apply_chip_style(btn, is_active=(cat == "All"))
@@ -5549,7 +5926,8 @@ class YouTubeDiscoveryView(QWidget):
             self.chips_layout.addWidget(btn)
 
         self.chips_layout.addStretch()
-        layout.addLayout(self.chips_layout)
+        self.chips_scroll.setWidget(self.chips_container)
+        layout.addWidget(self.chips_scroll)
 
         # Loading / Status message banner
         self.status_banner = QLabel(self)
@@ -5916,10 +6294,41 @@ class YouTubeDiscoveryView(QWidget):
             self.status_banner.setText(f"Unable to load feed: {err}")
             self.status_banner.show()
 
+    def _get_responsive_columns(self) -> int:
+        w = self.width()
+        if w < 520:
+            return 1
+        elif w < 780:
+            return 2
+        elif w < 1100:
+            return 3
+        return 4
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        target_cols = self._get_responsive_columns()
+        if target_cols != getattr(self, '_current_grid_cols', 4):
+            self._current_grid_cols = target_cols
+            self._regrid_section(self.mix_grid_layout, target_cols)
+            self._regrid_section(self.grid_layout, target_cols)
+
+    def _regrid_section(self, grid: QGridLayout, cols: int):
+        items = []
+        while grid.count():
+            item = grid.takeAt(0)
+            if item.widget():
+                items.append(item.widget())
+        for col in range(4):
+            grid.setColumnStretch(col, 1 if col < cols else 0)
+        for idx, widget in enumerate(items):
+            row = idx // cols
+            col = idx % cols
+            grid.addWidget(widget, row, col)
+
     def _populate_grid(self, videos: list, target_grid: QGridLayout, target_container: QWidget, start_idx: int = 0):
-        cols = 4
-        for col in range(cols):
-            target_grid.setColumnStretch(col, 1)
+        cols = getattr(self, '_current_grid_cols', 4)
+        for col in range(4):
+            target_grid.setColumnStretch(col, 1 if col < cols else 0)
 
         for i, v_data in enumerate(videos):
             global_idx = start_idx + i
@@ -5969,6 +6378,82 @@ class YouTubeDiscoveryView(QWidget):
                     av_loader.start()
 
 
+class SmoothTransitionStackedWidget(QStackedWidget):
+    """
+    Signature HELXAID Smooth Cross-Dissolve Transition Stacked Widget.
+    Provides cinematic transitions between views (Home, Search, Profile, Detail, Discovery)
+    with zero flickering, native layout safety, and hardware efficiency.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("streamViewStack")
+        self._overlay_label = QLabel(self)
+        self._overlay_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._overlay_label.setStyleSheet("background: transparent;")
+        self._overlay_label.hide()
+
+        self._overlay_effect = QGraphicsOpacityEffect(self._overlay_label)
+        self._overlay_label.setGraphicsEffect(self._overlay_effect)
+
+        self._fade_anim = QPropertyAnimation(self._overlay_effect, b"opacity", self)
+        self._fade_anim.setDuration(220)
+        self._fade_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._fade_anim.finished.connect(self._on_anim_finished)
+
+    def _on_anim_finished(self):
+        try:
+            self._overlay_label.hide()
+            self._overlay_label.setPixmap(QPixmap())
+        except Exception:
+            pass
+
+    def setCurrentIndex(self, index: int, animate: bool = True):
+        if index == self.currentIndex() or index < 0 or index >= self.count():
+            return
+
+        if not animate or not self.isVisible() or self.width() <= 10 or self.height() <= 10:
+            if self._fade_anim.state() == QPropertyAnimation.Running:
+                self._fade_anim.stop()
+            self._overlay_label.hide()
+            super().setCurrentIndex(index)
+            return
+
+        old_w = self.currentWidget()
+        if not old_w or not old_w.isVisible():
+            super().setCurrentIndex(index)
+            return
+
+        try:
+            if self._fade_anim.state() == QPropertyAnimation.Running:
+                self._fade_anim.stop()
+
+            # Take high-speed snapshot of outgoing view
+            pix = old_w.grab()
+            if pix and not pix.isNull():
+                self._overlay_label.setPixmap(pix)
+                self._overlay_label.setGeometry(self.rect())
+                self._overlay_effect.setOpacity(1.0)
+                self._overlay_label.show()
+                self._overlay_label.raise_()
+
+                # Switch active widget underneath
+                super().setCurrentIndex(index)
+
+                # Animate cross-dissolve fade out
+                self._fade_anim.setStartValue(1.0)
+                self._fade_anim.setEndValue(0.0)
+                self._fade_anim.start()
+            else:
+                super().setCurrentIndex(index)
+        except Exception:
+            super().setCurrentIndex(index)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._overlay_label.isVisible():
+            self._overlay_label.setGeometry(self.rect())
+
+
 class DirectStreamPage(QWidget):
     """
     Master Page for HELXAIC Dedicated Direct Streaming & Cloud Accounts Hub.
@@ -5993,6 +6478,9 @@ class DirectStreamPage(QWidget):
         self._image_loaders: List[AsyncImageLoader] = []
         self._recent_history: List[Dict[str, Any]] = []
         self.featured_video_cards: List[YTMusicVideoCard] = []
+        self._portal_is_stacked = False
+        self._current_quick_pick_cols = 3
+        self._current_candidate_cols = 3
 
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
@@ -6009,28 +6497,30 @@ class DirectStreamPage(QWidget):
         SpotifyAccountEngine.get_instance().authStatusChanged.connect(self._on_accounts_state_changed)
 
     def _init_ui(self):
-        master_layout = QVBoxLayout(self)
-        master_layout.setContentsMargins(18, 14, 18, 14)
-        master_layout.setSpacing(14)
+        self.master_layout = QVBoxLayout(self)
+        self.master_layout.setContentsMargins(18, 14, 18, 14)
+        self.master_layout.setSpacing(14)
+        master_layout = self.master_layout
 
         # 1. Omnisearch Bar at Top (Includes Top-Right Profile Pill)
         self.search_bar = StreamOmniSearchBar(self)
         self.search_bar.searchTriggered.connect(self._on_search_query_changed)
         self.search_bar.genreChipClicked.connect(self._on_search_query_changed)
         self.search_bar.profileClicked.connect(self._toggle_profile_panel)
-        master_layout.addWidget(self.search_bar)
+        master_layout.addWidget(self.search_bar, 0)
 
-        # 2. Main Stack (Index 0: Unified Home View, Index 1: Search Results View, Index 2: Cloud Profile View)
-        self.view_stack = QStackedWidget(self)
+        # 2. Main Stack with Signature Smooth Cross-Dissolve Transition (Index 0: Home, Index 1: Search, Index 2: Profile, Index 3: Detail, Index 4: Discovery)
+        self.view_stack = SmoothTransitionStackedWidget(self)
         self.view_stack.setObjectName("streamViewStack")
         self.view_stack.setStyleSheet("QStackedWidget#streamViewStack { background: transparent; }")
+        master_layout.addWidget(self.view_stack, 1)
 
         # --- View 0: Unified Home View ---
         self.home_view = QWidget()
         self.home_view.setObjectName("streamHomeView")
         self.home_view.setStyleSheet("QWidget#streamHomeView { background: transparent; }")
         home_layout = QVBoxLayout(self.home_view)
-        home_layout.setContentsMargins(0, 4, 14, 0)
+        home_layout.setContentsMargins(0, 6, 14, 0)
         home_layout.setSpacing(12)
 
         # Section 1: Featured Live Streams & Videos
@@ -6045,12 +6535,12 @@ class DirectStreamPage(QWidget):
         vid_nav_layout.setSpacing(6)
         self.featured_prev_btn = create_section_nav_button("streamFeaturedPrevBtn", is_next=False, parent=self.home_view)
         self.featured_prev_btn.setToolTip("Previous items")
-        self.featured_prev_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.featured_scroll, -1, 319, 12, 2))
+        self.featured_prev_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.featured_scroll, -1, getattr(self, '_current_card_w', 319), 12, 2))
         vid_nav_layout.addWidget(self.featured_prev_btn)
 
         self.featured_next_btn = create_section_nav_button("streamFeaturedNextBtn", is_next=True, parent=self.home_view)
         self.featured_next_btn.setToolTip("Next items")
-        self.featured_next_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.featured_scroll, 1, 319, 12, 2))
+        self.featured_next_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.featured_scroll, 1, getattr(self, '_current_card_w', 319), 12, 2))
         vid_nav_layout.addWidget(self.featured_next_btn)
         vid_section_hdr.addLayout(vid_nav_layout)
         home_layout.addLayout(vid_section_hdr)
@@ -6075,19 +6565,23 @@ class DirectStreamPage(QWidget):
 
         self.featured_video_cards = []
         presets = TasteProfileEngine.DEFAULT_PRESETS
+        curr_w = getattr(self, '_current_card_w', 319)
+        curr_h = getattr(self, '_current_card_h', 236)
         for i in range(len(presets)):
             preset = presets[i]
             card = YTMusicVideoCard(
                 preset["title"], preset["artist"], preset["subtitle"],
                 preset["original_url"], preset["bg_colors"], self.featured_container
             )
-            card.setFixedSize(319, 236)
+            card.update_dimensions(curr_w, curr_h)
             card.badge_lbl.setText(preset["badge"])
             card.playClicked.connect(self._on_play_track)
             self.featured_layout.insertWidget(i, card)
             self.featured_video_cards.append(card)
 
         self.featured_scroll.setWidget(self.featured_container)
+        if self.featured_scroll.viewport():
+            self.featured_scroll.viewport().installEventFilter(self)
         home_layout.addWidget(self.featured_scroll)
 
         # Gap between Section 1 and Section 2
@@ -6105,12 +6599,12 @@ class DirectStreamPage(QWidget):
         mix_nav_layout.setSpacing(6)
         self.mixes_prev_btn = create_section_nav_button("streamMixesPrevBtn", is_next=False, parent=self.home_view)
         self.mixes_prev_btn.setToolTip("Previous mixes")
-        self.mixes_prev_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.mixes_scroll, -1, 319, 12, 2))
+        self.mixes_prev_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.mixes_scroll, -1, getattr(self, '_current_card_w', 319), 12, 2))
         mix_nav_layout.addWidget(self.mixes_prev_btn)
 
         self.mixes_next_btn = create_section_nav_button("streamMixesNextBtn", is_next=True, parent=self.home_view)
         self.mixes_next_btn.setToolTip("Next mixes")
-        self.mixes_next_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.mixes_scroll, 1, 319, 12, 2))
+        self.mixes_next_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.mixes_scroll, 1, getattr(self, '_current_card_w', 319), 12, 2))
         mix_nav_layout.addWidget(self.mixes_next_btn)
         mix_hdr.addLayout(mix_nav_layout)
         home_layout.addLayout(mix_hdr)
@@ -6134,6 +6628,8 @@ class DirectStreamPage(QWidget):
         self.cloud_mixes_layout.addStretch()
 
         self.mixes_scroll.setWidget(self.mixes_container)
+        if self.mixes_scroll.viewport():
+            self.mixes_scroll.viewport().installEventFilter(self)
         home_layout.addWidget(self.mixes_scroll)
 
         # Gap between Section 2 and Section 3
@@ -6148,8 +6644,8 @@ class DirectStreamPage(QWidget):
         pl_hdr.addStretch()
         home_layout.addLayout(pl_hdr)
 
-        # 2 Hero Portal Cards Layout
-        self.portal_hubs_layout = QHBoxLayout()
+        # 2 Hero Portal Cards Layout (Side-by-side on wide screens, Stacked on narrow screens)
+        self.portal_hubs_layout = QGridLayout()
         self.portal_hubs_layout.setContentsMargins(0, 0, 0, 0)
         self.portal_hubs_layout.setSpacing(16)
 
@@ -6157,13 +6653,17 @@ class DirectStreamPage(QWidget):
         self.liked_portal_card = LikedMusicPortalCard(self.home_view)
         self.liked_portal_card.shuffleClicked.connect(self._shuffle_play_liked_music)
         self.liked_portal_card.openClicked.connect(self._show_liked_music_detail)
-        self.portal_hubs_layout.addWidget(self.liked_portal_card, stretch=1)
+        self.portal_hubs_layout.addWidget(self.liked_portal_card, 0, 0)
 
         # Right Portal: YouTube Algorithm Discovery Feed
         self.discovery_portal_card = YouTubeDiscoveryPortalCard(self.home_view)
         self.discovery_portal_card.exploreClicked.connect(self._show_youtube_discovery_view)
         self.discovery_portal_card.quickPlayClicked.connect(self._show_youtube_discovery_view)
-        self.portal_hubs_layout.addWidget(self.discovery_portal_card, stretch=1)
+        self.portal_hubs_layout.addWidget(self.discovery_portal_card, 0, 1)
+
+        self.portal_hubs_layout.setColumnStretch(0, 1)
+        self.portal_hubs_layout.setColumnStretch(1, 1)
+        self._portal_is_stacked = False
 
         home_layout.addLayout(self.portal_hubs_layout)
 
@@ -6289,13 +6789,167 @@ class DirectStreamPage(QWidget):
         self.youtube_discovery_scroll = None
         self._youtube_discovery_placeholder = QWidget()
         self.view_stack.addWidget(self._youtube_discovery_placeholder)  # Index 4
-
-        # Add View Stack directly to Master Layout with stretch
-        master_layout.addWidget(self.view_stack, stretch=1)
         self.view_stack.currentChanged.connect(self._on_view_changed)
 
     def _on_view_changed(self, idx: int):
         pass
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Wheel:
+            is_featured = hasattr(self, 'featured_scroll') and self.featured_scroll and obj == self.featured_scroll.viewport()
+            is_mixes = hasattr(self, 'mixes_scroll') and self.mixes_scroll and obj == self.mixes_scroll.viewport()
+            if is_featured or is_mixes:
+                scroll_area = self.featured_scroll if is_featured else self.mixes_scroll
+                modifiers = event.modifiers()
+                has_shift = bool(modifiers & Qt.ShiftModifier)
+                x_delta = event.angleDelta().x()
+                y_delta = event.angleDelta().y()
+
+                # Explicit horizontal scrolling: Shift key held or hardware horizontal wheel/touchpad gesture
+                if has_shift or (x_delta != 0 and y_delta == 0):
+                    delta = x_delta if x_delta != 0 else y_delta
+                    if delta:
+                        sb = scroll_area.horizontalScrollBar()
+                        sb.setValue(sb.value() - delta)
+                    return True
+
+                # Standard vertical scrolling: delegate to the main home scroll area so whole page scrolls vertically
+                if y_delta != 0:
+                    if hasattr(self, 'home_scroll') and self.home_scroll:
+                        self.home_scroll.wheelEvent(event)
+                        return True
+
+        return super().eventFilter(obj, event)
+
+    def _get_quick_pick_cols(self, w: int) -> int:
+        if w < 540:
+            return 1
+        elif w < 880:
+            return 2
+        return 3
+
+    def set_animating_state(self, is_animating: bool):
+        """Toggle animation state to defer heavy DOM/layout restructuring until motion ends."""
+        self._is_animating_slide = is_animating
+        if not is_animating:
+            self._apply_responsive_layout(self.width(), is_animating=False)
+
+    def _update_carousel_sizes(self, w: int):
+        """Dynamically compute carousel card dimensions and scroll container heights with discrete stepped tiers."""
+        try:
+            side_pad = 10 if w < 540 else 18
+            avail_w = max(220, w - (2 * side_pad) - 14)
+            if avail_w >= 850:
+                card_w = 300
+            elif avail_w >= 540:
+                card_w = 260
+            else:
+                card_w = 220
+
+            thumb_w = max(40, card_w - 20)
+            thumb_h = max(90, int(thumb_w * 9 / 16))
+            card_h = thumb_h + 76
+            scroll_h = card_h + 24
+
+            if getattr(self, '_current_card_w', None) == card_w and getattr(self, '_current_card_h', None) == card_h and getattr(self, '_current_scroll_h', None) == scroll_h:
+                return
+
+            self._current_card_w = card_w
+            self._current_card_h = card_h
+            self._current_scroll_h = scroll_h
+
+            if hasattr(self, 'featured_scroll') and self.featured_scroll:
+                if self.featured_scroll.height() != scroll_h:
+                    self.featured_scroll.setFixedHeight(scroll_h)
+            if hasattr(self, 'mixes_scroll') and self.mixes_scroll:
+                if self.mixes_scroll.height() != scroll_h:
+                    self.mixes_scroll.setFixedHeight(scroll_h)
+
+            for card in getattr(self, 'featured_video_cards', []):
+                if hasattr(card, 'update_dimensions'):
+                    card.update_dimensions(card_w, card_h)
+
+            if hasattr(self, 'cloud_mixes_layout') and self.cloud_mixes_layout:
+                for idx in range(self.cloud_mixes_layout.count()):
+                    item = self.cloud_mixes_layout.itemAt(idx)
+                    if item and item.widget() and hasattr(item.widget(), 'update_dimensions'):
+                        item.widget().update_dimensions(card_w, card_h)
+        except (RuntimeError, Exception):
+            pass
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_responsive_layout(event.size().width(), is_animating=getattr(self, '_is_animating_slide', False))
+
+    def _apply_responsive_layout(self, w: int, is_animating: bool = False):
+        # 0. Master layout adaptive margins
+        if hasattr(self, 'master_layout') and self.master_layout:
+            target_margin = 10 if w < 540 else 18
+            if self.master_layout.contentsMargins().left() != target_margin:
+                self.master_layout.setContentsMargins(target_margin, 10 if w < 540 else 14, target_margin, 10 if w < 540 else 14)
+
+        # 1. Responsive Horizontal Carousels (Section 1 & 2) with discrete stepped widths
+        self._update_carousel_sizes(w)
+
+        # Update portal cards inner scale
+        is_stacked = w < 720
+        portal_w = w if is_stacked else int(w / 2)
+        if hasattr(self, 'liked_portal_card') and hasattr(self.liked_portal_card, 'update_responsive_layout'):
+            self.liked_portal_card.update_responsive_layout(portal_w)
+        if hasattr(self, 'discovery_portal_card') and hasattr(self.discovery_portal_card, 'update_responsive_layout'):
+            self.discovery_portal_card.update_responsive_layout(portal_w)
+
+        # Defer heavy widget-reparenting grid reconstructions during active slide animation
+        if is_animating:
+            return
+
+        # 2. Responsive Portal Hubs (Section 3: Liked Music & Discovery)
+        if is_stacked != getattr(self, '_portal_is_stacked', False):
+            self._portal_is_stacked = is_stacked
+            if hasattr(self, 'portal_hubs_layout') and hasattr(self, 'liked_portal_card') and hasattr(self, 'discovery_portal_card'):
+                self.portal_hubs_layout.removeWidget(self.liked_portal_card)
+                self.portal_hubs_layout.removeWidget(self.discovery_portal_card)
+                if is_stacked:
+                    self.portal_hubs_layout.addWidget(self.liked_portal_card, 0, 0)
+                    self.portal_hubs_layout.addWidget(self.discovery_portal_card, 1, 0)
+                    self.portal_hubs_layout.setColumnStretch(0, 1)
+                    self.portal_hubs_layout.setColumnStretch(1, 0)
+                else:
+                    self.portal_hubs_layout.addWidget(self.liked_portal_card, 0, 0)
+                    self.portal_hubs_layout.addWidget(self.discovery_portal_card, 0, 1)
+                    self.portal_hubs_layout.setColumnStretch(0, 1)
+                    self.portal_hubs_layout.setColumnStretch(1, 1)
+
+        # 3. Responsive Quick Picks Grid (Section 4)
+        target_qp_cols = self._get_quick_pick_cols(w)
+        if target_qp_cols != getattr(self, '_current_quick_pick_cols', 3):
+            self._current_quick_pick_cols = target_qp_cols
+            if hasattr(self, 'quick_picks_grid'):
+                items = []
+                while self.quick_picks_grid.count():
+                    child = self.quick_picks_grid.takeAt(0)
+                    if child.widget():
+                        items.append(child.widget())
+                for c in range(3):
+                    self.quick_picks_grid.setColumnStretch(c, 1 if c < target_qp_cols else 0)
+                for idx, widget in enumerate(items):
+                    row = idx // target_qp_cols
+                    col = idx % target_qp_cols
+                    self.quick_picks_grid.addWidget(widget, row, col)
+
+        # 4. Responsive Candidates Grid (Search Results View)
+        target_cand_cols = self._get_quick_pick_cols(w)
+        if target_cand_cols != getattr(self, '_current_candidate_cols', 3):
+            self._current_candidate_cols = target_cand_cols
+            if hasattr(self, 'cand_grid_layout') and hasattr(self, 'candidate_cards'):
+                for idx, card in enumerate(self.candidate_cards):
+                    self.cand_grid_layout.removeWidget(card)
+                for c in range(3):
+                    self.cand_grid_layout.setColumnStretch(c, 1 if c < target_cand_cols else 0)
+                for idx, card in enumerate(self.candidate_cards):
+                    row = idx // target_cand_cols
+                    col = idx % target_cand_cols
+                    self.cand_grid_layout.addWidget(card, row, col)
 
     def _ensure_profile_view(self):
         if self.profile_view is None:
@@ -6732,7 +7386,9 @@ class DirectStreamPage(QWidget):
         for idx, item in enumerate(mixes[:12]):
             accent = "#FF0000" if item.get("source") == "youtube" else "#FF5B06"
             card = CloudMediaCard(item, accent_color=accent, parent=self.mixes_container)
-            card.setFixedSize(319, 236)
+            curr_w = getattr(self, '_current_card_w', 319)
+            curr_h = getattr(self, '_current_card_h', 236)
+            card.update_dimensions(curr_w, curr_h)
             card.playClicked.connect(self._show_playlist_detail)
             self.cloud_mixes_layout.insertWidget(idx, card)
 
@@ -7109,8 +7765,9 @@ class DirectStreamPage(QWidget):
             item_card.searchRequested.connect(self._on_quick_search_requested)
             item_card.notInterestedRequested.connect(self._on_track_dismissed)
             item_card.blockArtistRequested.connect(self._on_artist_blocked)
-            row = idx % 4
-            col = idx // 4
+            cols = getattr(self, '_current_quick_pick_cols', 3)
+            row = idx // cols
+            col = idx % cols
             self.quick_picks_grid.addWidget(item_card, row, col)
 
             # Load live YouTube thumbnail for quick pick item

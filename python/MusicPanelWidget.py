@@ -1105,7 +1105,7 @@ class UniversalDownloaderPanel(QFrame):
         super().closeEvent(event)
 
     def _setup_ui(self):
-        self.setMinimumWidth(350)
+        self.setMinimumWidth(0)
         self.setMaximumWidth(450)
         # Master layout for the panel frame
         master_layout = QVBoxLayout(self)
@@ -14173,14 +14173,17 @@ class MusicPanelWidget(QWidget):
                 self._anim_timer = QTimer(self)
                 self._anim_timer.setInterval(16)  # ~60fps
                 self._anim_timer.timeout.connect(self._tick)
-                self._anim_timer.start()
                 self.setAttribute(Qt.WA_Hover, True)
 
             def _lerp(self, a, b, t):
                 return a + (b - a) * t
 
+            def _start_anim(self):
+                if not self._anim_timer.isActive():
+                    self._anim_timer.start()
+
             def _tick(self):
-                speed = 0.15  # interpolation speed per frame
+                speed = 0.25  # fast interpolation speed per frame
                 tr, tg, tb, ta = self._target
                 changed = False
                 for attr, tval in [('_r', tr), ('_g', tg), ('_b', tb), ('_a', ta)]:
@@ -14193,11 +14196,13 @@ class MusicPanelWidget(QWidget):
                     setattr(self, attr, nxt)
 
                 if self._is_pressed:
-                    self._gradient_offset = (self._gradient_offset + 0.005) % 1.0
+                    self._gradient_offset = (self._gradient_offset + 0.01) % 1.0
                     changed = True
 
                 if changed:
                     self.update()
+                elif not self._is_pressed:
+                    self._anim_timer.stop()
 
             def paintEvent(self, event):
                 painter = QPainter(self)
@@ -14229,17 +14234,20 @@ class MusicPanelWidget(QWidget):
             def enterEvent(self, event):
                 if not self._is_pressed:
                     self._target = self.COLOR_HOVER
+                    self._start_anim()
                 super().enterEvent(event)
 
             def leaveEvent(self, event):
                 if not self._is_pressed:
                     self._target = self.COLOR_NORMAL
+                    self._start_anim()
                 super().leaveEvent(event)
 
             def mousePressEvent(self, event):
                 if event.button() == Qt.LeftButton:
                     self._is_pressed = True
                     self._target = self.COLOR_PRESSED
+                    self._start_anim()
                 super().mousePressEvent(event)
 
             def mouseReleaseEvent(self, event):
@@ -14250,6 +14258,7 @@ class MusicPanelWidget(QWidget):
                         self._target = self.COLOR_HOVER
                     else:
                         self._target = self.COLOR_NORMAL
+                    self._start_anim()
                 super().mouseReleaseEvent(event)
 
         class AnimatedSplitter(QSplitter):
@@ -14386,30 +14395,29 @@ class MusicPanelWidget(QWidget):
 
     def _update_yt_panel_constraints(self):
         """Clamp right panel stack width to <= 70% of available width (max 520px)."""
+        if getattr(self, '_is_animating_panel', False):
+            return
         if not hasattr(self, 'right_panel_stack') or getattr(self, 'right_panel_stack', None) is None:
             return
         total_w = max(1, self.width())
-        min_w = 320
-        max_w = min(520, max(min_w, int(total_w * 0.7)))
+        min_w = 0  # Allow smooth slide down to 0
+        max_w = min(520, max(320, int(total_w * 0.7)))
         self.right_panel_stack.setMinimumWidth(min_w)
         self.right_panel_stack.setMaximumWidth(max_w)
 
         # If visible and currently wider than max, pull it back via splitter sizes.
         if hasattr(self, 'main_splitter') and self.right_panel_stack.isVisible():
             sizes = self.main_splitter.sizes()
-            if len(sizes) >= 3:
+            if len(sizes) >= 3 and sizes[2] > 0:
                 if sizes[2] > max_w:
                     diff = sizes[2] - max_w
                     sizes[2] = max_w
                     sizes[1] += diff
                     self.main_splitter.setSizes(sizes)
-                elif sizes[2] < min_w and sizes[2] > 0:
-                    diff = min_w - sizes[2]
-                    sizes[2] = min_w
-                    sizes[1] = max(1, sizes[1] - diff)
-                    self.main_splitter.setSizes(sizes)
 
     def _on_main_splitter_moved(self, pos, index):
+        if getattr(self, '_is_animating_panel', False):
+            return
         # Record the user's chosen width and keep it clamped.
         if hasattr(self, 'main_splitter'):
             sizes = self.main_splitter.sizes()
@@ -15750,17 +15758,95 @@ class MusicPanelWidget(QWidget):
         """Toggle the lyrics panel view."""
         self._toggle_right_panel(0)
 
+    def _animate_right_panel(self, target_w: int, on_finished=None):
+        """Smoothly slide right panel in/out with continuous real-time splitter resizing."""
+        if not hasattr(self, 'main_splitter') or not hasattr(self, 'right_panel_stack'):
+            return
+
+        if hasattr(self, '_panel_anim') and self._panel_anim:
+            self._panel_anim.stop()
+
+        start_sizes = self.main_splitter.sizes()
+        if len(start_sizes) < 3:
+            return
+
+        sidebar_w = start_sizes[0]
+        current_right_w = start_sizes[2]
+        total_w = sum(start_sizes)
+
+        if current_right_w == target_w:
+            if callable(on_finished):
+                on_finished()
+            return
+
+        is_opening = target_w > 0
+        self._is_animating_panel = True
+
+        # Unconstrain right panel minimum width so splitter resizes smoothly down to 0
+        self.right_panel_stack.setMinimumWidth(0)
+
+        # Freeze heavy layout recalculations on lyrics and stream page during sliding animation
+        if hasattr(self, 'lyrics_page') and hasattr(self.lyrics_page, 'set_animating_state'):
+            self.lyrics_page.set_animating_state(True)
+        if hasattr(self, 'stream_page') and hasattr(self.stream_page, 'set_animating_state'):
+            self.stream_page.set_animating_state(True)
+
+        if is_opening:
+            self.right_panel_stack.show()
+
+        anim = QVariantAnimation(self)
+        dist = abs(target_w - current_right_w)
+        duration = min(260, max(170, int(130 + dist * 0.22)))
+        anim.setDuration(duration)
+        anim.setEasingCurve(QEasingCurve.OutCubic if is_opening else QEasingCurve.OutQuad)
+        anim.setStartValue(float(current_right_w))
+        anim.setEndValue(float(target_w))
+
+        def _on_step(val: float):
+            try:
+                w_right = int(val)
+                w_center = max(1, int(total_w - sidebar_w - w_right))
+                self.main_splitter.setSizes([sidebar_w, w_center, w_right])
+            except Exception:
+                pass
+
+        def _on_finish():
+            try:
+                self._is_animating_panel = False
+                w_right = int(target_w)
+                w_center = max(1, int(total_w - sidebar_w - w_right))
+                self.main_splitter.setSizes([sidebar_w, w_center, w_right])
+
+                if not is_opening:
+                    self.right_panel_stack.hide()
+
+                if hasattr(self, 'lyrics_page') and hasattr(self.lyrics_page, 'set_animating_state'):
+                    self.lyrics_page.set_animating_state(False)
+                if hasattr(self, 'stream_page') and hasattr(self.stream_page, 'set_animating_state'):
+                    self.stream_page.set_animating_state(False)
+
+                if callable(on_finished):
+                    on_finished()
+            except Exception:
+                pass
+
+        anim.valueChanged.connect(_on_step)
+        anim.finished.connect(_on_finish)
+        self._panel_anim = anim
+        anim.start()
+
     def _toggle_right_panel(self, target_idx: int):
-        """Unified right panel stack manager for Lyrics (0) and Universal Downloader (1)."""
+        """Unified right panel stack manager for Lyrics (0) and Universal Downloader (1) with smooth sliding transition."""
         if not hasattr(self, 'right_panel_stack') or not hasattr(self, 'main_splitter'):
             return
 
         is_visible = self.right_panel_stack.isVisible()
         cur_idx = self.right_panel_stack.currentIndex()
+        current_sizes = self.main_splitter.sizes()
+        is_expanded = is_visible and (len(current_sizes) >= 3 and current_sizes[2] > 20)
 
-        if is_visible and cur_idx == target_idx:
-            # Collapse right panel
-            self.right_panel_stack.hide()
+        if is_expanded and cur_idx == target_idx:
+            # Collapse right panel with smooth slide animation
             if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'set_lyrics_active'):
                 self.player_bar.set_lyrics_active(False)
             if hasattr(self, 'btn_lyrics') and self.btn_lyrics:
@@ -15769,14 +15855,10 @@ class MusicPanelWidget(QWidget):
                 self.btn_lyrics.style().polish(self.btn_lyrics)
                 self.btn_lyrics.setStyleSheet("")
 
-            current_sizes = self.main_splitter.sizes()
-            sidebar_size = current_sizes[0] if len(current_sizes) > 0 else 200
-            total = max(1, self.width())
-            self.main_splitter.setSizes([sidebar_size, max(1, total - sidebar_size), 0])
+            self._animate_right_panel(0)
         else:
-            # Switch to target index and expand right panel
+            # Switch to target index and expand right panel with smooth slide animation
             self.right_panel_stack.setCurrentIndex(target_idx)
-            self.right_panel_stack.show()
 
             if target_idx == 0:  # Lyrics
                 if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'set_lyrics_active'):
@@ -15809,12 +15891,8 @@ class MusicPanelWidget(QWidget):
                     if text.startswith(('http://', 'https://')):
                         self.dl_panel.set_url(text)
 
-            self._update_yt_panel_constraints()
-            current_sizes = self.main_splitter.sizes()
-            sidebar_size = current_sizes[0] if len(current_sizes) > 0 else 200
-            total = max(1, self.width())
-            desired = min(520, max(350, int(getattr(self, '_yt_last_width', 380) or 380)))
-            self.main_splitter.setSizes([sidebar_size, max(1, total - sidebar_size - desired), desired])
+            desired = min(520, max(340, int(getattr(self, '_yt_last_width', 380) or 380)))
+            self._animate_right_panel(desired)
 
     def _on_yt_download_finished(self, dest_path):
         """Handle track after integrated download completion."""
