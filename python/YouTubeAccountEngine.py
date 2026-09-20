@@ -13,6 +13,7 @@ Component Name: YouTubeAccountEngine
 
 import os
 import sys
+import re
 import json
 import time
 import ssl
@@ -1554,7 +1555,11 @@ class YouTubeAccountEngine(QObject):
         if browse_id in private_endpoints and not self.is_authenticated():
             return {}
 
-        endpoint = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
+        if continuation:
+            endpoint = f"https://music.youtube.com/youtubei/v1/browse?continuation={urllib.parse.quote(continuation)}&ctoken={urllib.parse.quote(continuation)}&prettyPrint=false"
+        else:
+            endpoint = "https://music.youtube.com/youtubei/v1/browse?prettyPrint=false"
+
         payload = {
             "context": {
                 "client": {
@@ -1767,16 +1772,50 @@ class YouTubeAccountEngine(QObject):
             return cached
 
         # If clean_id is an 11-char video ID (e.g. Hcq9RRxQErQ), treat as radio station
-        if len(clean_id) == 11 and not clean_id.startswith(("PL", "RD", "VL", "MP", "FE", "LM", "OL")):
+        if len(clean_id) == 11 and not clean_id.startswith(("PL", "RD", "VL", "MP", "FE", "LM", "OL", "UC")):
             video_id = clean_id
             clean_id = f"RD{clean_id}"
             is_radio = True
 
         tracks: List[Dict[str, Any]] = []
+
+        # Tier 0: Artist Channel Radio & Discography Handling (UC...)
+        if clean_id.startswith("UC"):
+            try:
+                # 1. Try artist radio queue (RDEM + channel_id)
+                next_data = self.execute_innertube_next(playlist_id=f"RDEM{clean_id}")
+                if next_data:
+                    tracks = self._parse_playlist_panel_tracks(next_data, default_badge="ARTIST MIX")
+                    if tracks and on_first_batch:
+                        on_first_batch(list(tracks))
+            except Exception:
+                pass
+
+            if not tracks:
+                try:
+                    data_raw = self.execute_innertube_browse(clean_id)
+                    if data_raw:
+                        tracks = FetchYTLikedMusicWorker._parse_music_tracks(data_raw, default_badge="TRACK")
+                        if tracks and on_first_batch:
+                            on_first_batch(list(tracks))
+                except Exception:
+                    pass
+
+        # Tier 0b: Liked Music Handling (LM / VLLM / FEmusic_liked_videos)
+        elif clean_id in ("LM", "VLLM", "FEmusic_liked_videos"):
+            try:
+                data_lm = self.execute_innertube_browse("FEmusic_liked_videos") or self.execute_innertube_browse("VLLM")
+                if data_lm:
+                    tracks = FetchYTLikedMusicWorker._parse_music_tracks(data_lm, default_badge="FAVORITES")
+                    if tracks and on_first_batch:
+                        on_first_batch(list(tracks))
+            except Exception:
+                pass
+
         is_radio_id = is_radio or clean_id == "RDMM" or clean_id.startswith("RD") or clean_id.startswith("RDTMAK5uy_")
 
         # 1. Tier 1: Try Innertube v1/next Radio Queue if it's a radio station
-        if is_radio_id:
+        if not tracks and is_radio_id:
             try:
                 vid = video_id or ""
                 next_data = self.execute_innertube_next(playlist_id=clean_id, video_id=vid)
@@ -2127,8 +2166,22 @@ class FetchYTMixesWorker(QThread):
         mixes: List[Dict[str, Any]] = []
 
         try:
-            data = self.engine.execute_innertube_browse("FEmusic_home")
-            mixes = self._parse_mixes(data)
+            # 1. First fetch directly from FEmusic_mixed_for_you (contains the complete algorithmic mixes)
+            data = self.engine.execute_innertube_browse("FEmusic_mixed_for_you")
+            if data:
+                mixes = self._parse_mixes(data)
+
+            # 2. Fallback to FEmusic_home if empty
+            if not mixes:
+                home_data = self.engine.execute_innertube_browse("FEmusic_home")
+                if home_data:
+                    mixes = self._parse_mixes(home_data)
+                    if not mixes:
+                        tok = self.engine._extract_continuation_token(home_data)
+                        if tok:
+                            c_data = self.engine.execute_innertube_browse(continuation=tok)
+                            if c_data:
+                                mixes = self._parse_mixes(c_data)
 
             if not mixes:
                 mixes = self._get_default_5_mixes()
@@ -2187,70 +2240,292 @@ class FetchYTMixesWorker(QThread):
             },
             {
                 "id": "VLRDCLAK5uy_n4jtH1BoYT7FxNFJAGmJw5WQFF_ZzBTBM",
-                "title": "Indo Indie On Repeat",
-                "description": "Bernadya, Hindia, Nadin Amizah, idgitaf",
-                "track_count": 89,
+                "title": "Replay Mix",
+                "description": "Your favorite tracks on repeat",
+                "track_count": 50,
                 "thumbnail_url": "https://i.ytimg.com/vi/36YnV9STBqc/hqdefault.jpg",
                 "source": "youtube",
                 "is_algorithmic": True,
-                "badge": "MIX"
-            },
-            {
-                "id": "VLRDCLAK5uy_lgUiRZLoEefwv4IdQBJfoXEgHiSKXctEM",
-                "title": "Indo Indie",
-                "description": "Aku Jeje, Batas Senja, idgitaf, Feby Putri",
-                "track_count": 100,
-                "thumbnail_url": "https://i.ytimg.com/vi/4xDzrJKXOOY/hqdefault.jpg",
-                "source": "youtube",
-                "is_algorithmic": True,
-                "badge": "MIX"
+                "badge": "REPLAY"
             },
             {
                 "id": "VLRDCLAK5uy_m0wlRoNn5iCTTgBedfoOQ19Jq9P3XTLIA",
-                "title": "Feel-Good Pop & Rock",
-                "description": "Ed Sheeran, Imagine Dragons, 5 Seconds of Summer, HAIM",
-                "track_count": 100,
+                "title": "New Release Mix",
+                "description": "Fresh tracks from your favorite artists",
+                "track_count": 50,
                 "thumbnail_url": "https://i.ytimg.com/vi/60ItHLz5WEA/hqdefault.jpg",
                 "source": "youtube",
                 "is_algorithmic": True,
-                "badge": "MIX"
+                "badge": "NEW RELEASE"
+            },
+            {
+                "id": "VLRDCLAK5uy_lgUiRZLoEefwv4IdQBJfoXEgHiSKXctEM",
+                "title": "My Mix 1",
+                "description": "Personalized mix curated for you",
+                "track_count": 50,
+                "thumbnail_url": "https://i.ytimg.com/vi/4xDzrJKXOOY/hqdefault.jpg",
+                "source": "youtube",
+                "is_algorithmic": True,
+                "badge": "MY MIX 1"
             },
             {
                 "id": "VLRDCLAK5uy_mX4JK0m7lhZ8Egv1E7bbXox_e0k6rGejo",
-                "title": "Chill R&B",
-                "description": "Ariana Grande, Drake, Bruno Mars, Jason Derulo",
-                "track_count": 100,
+                "title": "My Mix 2",
+                "description": "Personalized mix curated for you",
+                "track_count": 50,
                 "thumbnail_url": "https://i.ytimg.com/vi/sPxXiXucYcM/hqdefault.jpg",
                 "source": "youtube",
                 "is_algorithmic": True,
-                "badge": "CHILL"
+                "badge": "MY MIX 2"
             }
         ]
 
     def _parse_mixes(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        mixes: List[Dict[str, Any]] = []
+        bucket_supermix: Optional[Dict[str, Any]] = None
+        bucket_replay: List[Dict[str, Any]] = []
+        bucket_new_release: List[Dict[str, Any]] = []
+        bucket_my_mixes: List[Tuple[int, Dict[str, Any]]] = []
         seen_ids = set()
 
-        PERSONAL_KEYWORDS = ["mixed for you", "made for you", "listen again", "similar to", "quick picks", "my mix", "supermix", "favorit saya", "discover", "replay", "radar", "chill", "focus", "energy", "favorites", "kemarau chill"]
-        EXCLUDE_SHELVES = ["trending community playlists", "charts", "top music videos"]
+        def traverse(node):
+            nonlocal bucket_supermix
+            if isinstance(node, dict):
+                if 'musicTwoRowItemRenderer' in node:
+                    item = node['musicTwoRowItemRenderer']
+                    t_runs = item.get('title', {}).get('runs', [])
+                    title = "".join([x.get('text', '') for x in t_runs]).strip()
+                    s_runs = item.get('subtitle', {}).get('runs', [])
+                    subtitle = " • ".join([x.get('text', '') for x in s_runs]).strip()
+                    nav = item.get('navigationEndpoint', {})
+                    pl_id = nav.get('watchEndpoint', {}).get('playlistId', '') or nav.get('browseEndpoint', {}).get('browseId', '')
+                    vid = nav.get('watchEndpoint', {}).get('videoId', '')
+                    t_low = title.lower().strip()
+                    sub_low = subtitle.lower().strip()
 
-        def traverse_shelves(node, current_shelf_title=""):
+                    # Strict filter against single songs / view counts
+                    if "views" in sub_low or "ditonton" in sub_low or "penayangan" in sub_low or "tayang" in sub_low:
+                        return
+                    if pl_id.startswith("RDAMVM") or pl_id.startswith("RDAMPL") or pl_id.startswith("RDAM"):
+                        return
+
+                    thumb_url = ""
+                    thumbs = item.get('thumbnailRenderer', {}).get('musicThumbnailRenderer', {}).get('thumbnail', {}).get('thumbnails', [])
+                    if thumbs:
+                        thumb_url = thumbs[-1].get('url', '')
+                        if "=w120-h120" in thumb_url:
+                            thumb_url = thumb_url.replace("=w120-h120", "=w544-h544")
+                        elif "=s120" in thumb_url:
+                            thumb_url = thumb_url.replace("=s120", "=s544")
+
+                    if pl_id and title and pl_id not in seen_ids:
+                        item_obj = {
+                            "id": pl_id,
+                            "title": title,
+                            "description": subtitle or "Personalized YouTube Music Station",
+                            "track_count": 50,
+                            "thumbnail_url": thumb_url,
+                            "source": "youtube",
+                            "is_algorithmic": True,
+                            "badge": "MIX",
+                            "seed_video_id": vid
+                        }
+
+                        # Slot 1: Supermix
+                        if "supermix" in t_low or "favorit saya" in t_low or pl_id == "RDMM" or pl_id.startswith("RDMM"):
+                            if "my supermix" in t_low or t_low == "supermix" or pl_id == "RDMM" or not bucket_supermix:
+                                seen_ids.add(pl_id)
+                                item_obj["badge"] = "SUPERMIX"
+                                bucket_supermix = item_obj
+                        # Slot 2: Replay Mix
+                        elif "replay" in t_low or "putar ulang" in t_low or "on repeat" in t_low or "repeat" in t_low:
+                            seen_ids.add(pl_id)
+                            item_obj["badge"] = "REPLAY"
+                            bucket_replay.append(item_obj)
+                        # Slot 3: New Release Mix
+                        elif "new release" in t_low or "rilis baru" in t_low or "rilis terbaru" in t_low:
+                            seen_ids.add(pl_id)
+                            item_obj["badge"] = "NEW RELEASE"
+                            bucket_new_release.append(item_obj)
+                        # Slot 4..10: My Mix 1 to 7 (Strict: only matches My Mix / Mix 1..7)
+                        elif re.search(r'^\s*(?:my\s*mix|mix\s*saya|campuran|mix)\s*([1-7])\s*$', t_low):
+                            seen_ids.add(pl_id)
+                            m = re.search(r'([1-7])', t_low)
+                            num = int(m.group(1)) if m else 99
+                            item_obj["badge"] = f"MY MIX {num}"
+                            bucket_my_mixes.append((num, item_obj))
+
+                for v in node.values():
+                    traverse(v)
+            elif isinstance(node, list):
+                for it in node:
+                    traverse(it)
+
+        traverse(data)
+
+        # Sort My Mixes numerically (1 through 7)
+        bucket_my_mixes.sort(key=lambda x: x[0])
+        sorted_my_mixes = [it for _, it in bucket_my_mixes]
+
+        defaults = self._get_default_5_mixes()
+        final_list: List[Dict[str, Any]] = []
+
+        # Slot 1: Supermix
+        if bucket_supermix:
+            final_list.append(bucket_supermix)
+        elif defaults:
+            final_list.append(dict(defaults[0]))
+
+        # Slot 2: Replay Mix
+        final_list.extend(bucket_replay)
+
+        # Slot 3: New Release Mix
+        final_list.extend(bucket_new_release)
+
+        # Slots 4-10: My Mix 1..7
+        final_list.extend(sorted_my_mixes)
+
+        # Deduplicate preserving order
+        unique_list: List[Dict[str, Any]] = []
+        final_seen = set()
+        for it in final_list:
+            iid = it.get("id")
+            if iid and iid not in final_seen:
+                final_seen.add(iid)
+                unique_list.append(it)
+
+        # If zero mixes were parsed from live API (unauthenticated or offline), use defaults
+        if not unique_list and defaults:
+            unique_list = list(defaults)
+
+        return unique_list[:12]
+
+
+class FetchYTPlaylistsWorker(QThread):
+    """Async worker to fetch user's personalized Discovery Feeds, Artist Radios, and Cloud Playlists."""
+    playlistsLoaded = Signal(list)
+    errorOccurred = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.engine = YouTubeAccountEngine.get_instance()
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    @staticmethod
+    def _sanitize_feed_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Sanitizes, filters out junk (podcasts, user profile channels), and converts artist entities to algorithmic Artist Mixes."""
+        if not isinstance(item, dict):
+            return None
+
+        raw_id = item.get("id", "")
+        raw_title = str(item.get("title", "")).strip()
+        raw_desc = str(item.get("description", "") or item.get("subtitle", "")).strip()
+        thumb = item.get("thumbnail_url", "")
+
+        t_low = raw_title.lower()
+        d_low = raw_desc.lower()
+
+        # Filter 1: Junk / Podcasts / Queues / Non-music aggregations
+        EXCLUDE_TERMS = [
+            "episodes for later", "queued episodes", "episode untuk nanti",
+            "podcast", "episodes", "episode", "your queued episodes",
+            "feplaylist_aggregation", "femusic_library_corpus_podcasts",
+            "femusic_library_corpus_episodes"
+        ]
+        if any(term in t_low or term in d_low or term in raw_id.lower() for term in EXCLUDE_TERMS):
+            return None
+
+        # Filter 2: Non-artist user profile channels (e.g., "Profile • @kezelve-z0c" or raw @handles)
+        if d_low.startswith("profile • @") or (d_low.startswith("profile") and "@" in d_low) or d_low.startswith("@"):
+            return None
+
+        # Transform 1: Liked Music / Favorites Auto-Mix
+        if raw_id in ("LM", "VLLM", "FEmusic_liked_videos") or "liked music" in t_low or "musik yang disukai" in t_low or "lagu yang disukai" in t_low:
+            return {
+                "id": "LM",
+                "title": "Liked Music",
+                "description": "Auto-Mix • Your Liked Tracks",
+                "track_count": item.get("track_count") or 50,
+                "thumbnail_url": thumb or "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png",
+                "source": "youtube",
+                "is_algorithmic": True,
+                "badge": "FAVORITES"
+            }
+
+        # Transform 2: Subscribed Artist Entities -> Live Algorithmic Artist Radios / Mixes
+        is_artist = "artist" in d_low or "artis" in d_low or (raw_id.startswith("UC") and "profile" not in d_low)
+        if is_artist:
+            clean_name = raw_title
+            if not (clean_name.endswith("Mix") or clean_name.endswith("Radio") or clean_name.endswith("Station")):
+                clean_title = f"{clean_name} Mix"
+            else:
+                clean_title = clean_name
+
+            if "artist •" in d_low or "artis •" in d_low:
+                clean_desc = raw_desc.replace("Artist •", "Artist Radio •").replace("artist •", "Artist Radio •").replace("Artis •", "Artist Radio •").replace("artis •", "Artist Radio •")
+            elif raw_desc:
+                clean_desc = f"Artist Radio • {raw_desc}"
+            else:
+                clean_desc = f"Artist Radio • Top Tracks & Mix"
+
+            return {
+                "id": raw_id,
+                "title": clean_title,
+                "description": clean_desc,
+                "track_count": item.get("track_count") or 50,
+                "thumbnail_url": thumb,
+                "source": "youtube",
+                "is_algorithmic": True,
+                "badge": "ARTIST MIX",
+                "artist_name": clean_name
+            }
+
+        # Transform 3: Standard Playlists / Discovery Feeds / Trending
+        badge = item.get("badge") or "PLAYLIST"
+        if "supermix" in t_low:
+            badge = "SUPERMIX"
+        elif "discover" in t_low:
+            badge = "DISCOVER"
+        elif "top 50" in t_low or "hits" in t_low or "charts" in t_low or "trending" in t_low:
+            badge = "TOP 50"
+        elif "mix" in t_low or "radio" in t_low:
+            badge = "MIX"
+
+        return {
+            "id": raw_id,
+            "title": raw_title,
+            "description": raw_desc or "Cloud Feed",
+            "track_count": item.get("track_count") or 0,
+            "thumbnail_url": thumb,
+            "source": "youtube",
+            "is_algorithmic": (badge in ("SUPERMIX", "DISCOVER", "MIX", "TOP 50", "ARTIST MIX", "SIMILAR", "RADIO", "REPLAY")),
+            "badge": badge
+        }
+
+    def _parse_discovery_shelves(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract genuine algorithmic discovery shelves (Similar to..., Recommended radios, Forgotten favorites, Speed dial)."""
+        discovery_items: List[Dict[str, Any]] = []
+        seen_ids = set()
+
+        DISCOVERY_KEYWORDS = ["similar to", "mirip dengan", "recommended", "rekomendasi", "forgotten", "favorit lama", "listen again", "putar lagi", "speed dial", "quick picks", "pilihan cepat", "from your library", "radio"]
+
+        def traverse(node, current_shelf_title=""):
             if isinstance(node, dict):
                 if 'musicCarouselShelfRenderer' in node:
                     shelf = node['musicCarouselShelfRenderer']
                     header = shelf.get('header', {})
                     shelf_title = "".join([run.get("text", "") for run in header.get("musicCarouselShelfBasicHeaderRenderer", {}).get("title", {}).get("runs", [])]).lower()
                     for item in shelf.get('contents', []):
-                        traverse_shelves(item, shelf_title)
+                        traverse(item, shelf_title)
                     return
 
                 if 'musicTwoRowItemRenderer' in node:
                     item = node['musicTwoRowItemRenderer']
                     nav_ep = item.get('navigationEndpoint', {})
                     watch_ep = nav_ep.get('watchEndpoint', {})
-                    playlist_id = watch_ep.get('playlistId', '') or nav_ep.get('browseEndpoint', {}).get('browseId', '')
-                    seed_video_id = watch_ep.get('videoId', '')
-
+                    browse_id = nav_ep.get('browseEndpoint', {}).get('browseId', '') or watch_ep.get('playlistId', '')
                     title = ""
                     title_runs = item.get('title', {}).get('runs', [])
                     if title_runs:
@@ -2266,93 +2541,41 @@ class FetchYTMixesWorker(QThread):
                     if thumbs:
                         thumb_url = thumbs[-1].get('url', '')
 
-                    t_low = title.lower()
-                    is_excluded = any(ex in current_shelf_title for ex in EXCLUDE_SHELVES)
-                    is_personal_shelf = any(pk in current_shelf_title for pk in PERSONAL_KEYWORDS)
-                    is_algo_id = playlist_id.startswith("RDTMAK5uy_") or playlist_id.startswith("RDCLAK5uy_") or playlist_id.startswith("VLRDCLAK5uy_") or playlist_id.startswith("RD")
-                    is_algo_title = any(pk in t_low for pk in ["supermix", "favorit saya", "my mix", "discover", "chill", "focus", "energy", "replay", "radio", "indie", "pop", "r&b", "kemarau"])
-
-                    if playlist_id and title and playlist_id not in seen_ids:
-                        if (is_personal_shelf or is_algo_id or is_algo_title) and not (is_excluded and not (is_algo_id or is_algo_title)):
-                            seen_ids.add(playlist_id)
-                            badge = "MIX"
-                            if "supermix" in t_low or "favorit saya" in t_low or "my mix" in t_low:
-                                badge = "SUPERMIX"
-                            elif "discover" in t_low:
-                                badge = "DISCOVER"
-                            elif "chill" in t_low or "focus" in t_low or "kemarau" in t_low or "r&b" in t_low:
-                                badge = "CHILL"
-                            elif "energy" in t_low or "rock" in t_low:
-                                badge = "ENERGY"
-                            elif "replay" in t_low or "repeat" in t_low:
+                    if browse_id and title:
+                        is_discovery_shelf = any(dk in current_shelf_title for dk in DISCOVERY_KEYWORDS)
+                        if is_discovery_shelf:
+                            badge = "DISCOVER"
+                            if "similar" in current_shelf_title or "mirip" in current_shelf_title:
+                                badge = "SIMILAR"
+                            elif "radio" in current_shelf_title or "stasiun" in current_shelf_title:
+                                badge = "RADIO"
+                            elif "forgotten" in current_shelf_title or "favorit lama" in current_shelf_title:
                                 badge = "REPLAY"
+                            elif "listen again" in current_shelf_title or "putar lagi" in current_shelf_title:
+                                badge = "LISTEN AGAIN"
 
-                            mixes.append({
-                                "id": playlist_id,
+                            raw_item = {
+                                "id": browse_id,
                                 "title": title,
-                                "description": subtitle or "Personalized YouTube Music Station",
-                                "track_count": 50,
+                                "description": subtitle or current_shelf_title.title(),
                                 "thumbnail_url": thumb_url,
                                 "source": "youtube",
-                                "is_algorithmic": True,
                                 "badge": badge,
-                                "seed_video_id": seed_video_id
-                            })
+                                "is_algorithmic": True
+                            }
+                            sanitized = self._sanitize_feed_item(raw_item)
+                            if sanitized and sanitized.get("id") not in seen_ids:
+                                seen_ids.add(sanitized.get("id"))
+                                discovery_items.append(sanitized)
+
                 for v in node.values():
-                    traverse_shelves(v, current_shelf_title)
+                    traverse(v, current_shelf_title)
             elif isinstance(node, list):
                 for item in node:
-                    traverse_shelves(item, current_shelf_title)
+                    traverse(item, current_shelf_title)
 
-        traverse_shelves(data)
-
-        defaults = self._get_default_5_mixes()
-        final_list = []
-
-        # Slot 1 is always the official YouTube Music RDMM station (My Supermix / Mix Favorit Saya)
-        # Use the REAL dynamic ID + seed_video_id from the live API response if available
-        supermix_card = dict(defaults[0])
-        for m in mixes:
-            if m.get("badge") == "SUPERMIX" or "favorit saya" in m.get("title", "").lower() or "supermix" in m.get("title", "").lower() or "my mix" in m.get("title", "").lower():
-                supermix_card["id"] = m.get("id") or supermix_card["id"]
-                supermix_card["title"] = m.get("title") or supermix_card["title"]
-                supermix_card["description"] = m.get("description") or supermix_card["description"]
-                if m.get("thumbnail_url"):
-                    supermix_card["thumbnail_url"] = m["thumbnail_url"]
-                if m.get("seed_video_id"):
-                    supermix_card["seed_video_id"] = m["seed_video_id"]
-                break
-        final_list.append(supermix_card)
-
-        # Slots 2 through 5: Genuine live mood/genre mix stations from FEmusic_home (Indo Indie, Chill R&B, etc.)
-        for m in mixes:
-            if m.get("id") and m.get("id") != "RDMM" and m.get("id") not in [x.get("id") for x in final_list]:
-                final_list.append(m)
-                if len(final_list) >= 5:
-                    break
-
-        # If less than 5 live mixes found, fill with fallback defaults
-        idx = 1
-        while len(final_list) < 5 and idx < len(defaults):
-            if defaults[idx].get("id") not in [x.get("id") for x in final_list]:
-                final_list.append(defaults[idx])
-            idx += 1
-
-        return final_list[:5]
-
-
-class FetchYTPlaylistsWorker(QThread):
-    """Async worker to fetch user's saved & created playlists from FEmusic_library_playlists."""
-    playlistsLoaded = Signal(list)
-    errorOccurred = Signal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.engine = YouTubeAccountEngine.get_instance()
-        self._is_cancelled = False
-
-    def cancel(self):
-        self._is_cancelled = True
+        traverse(data)
+        return discovery_items
 
     def run(self):
         if self._is_cancelled:
@@ -2362,54 +2585,86 @@ class FetchYTPlaylistsWorker(QThread):
         playlists: List[Dict[str, Any]] = []
 
         try:
-            # Try modern YouTube Music library landing first, then fallback endpoints
-            data = self.engine.execute_innertube_browse("FEmusic_library_landing")
-            playlists = self._parse_playlists(data) if data else []
+            # 1. Fetch genuine algorithmic discovery feeds from FEmusic_home (Similar to..., Recommended radios, Forgotten favorites, Listen again)
+            home_data = self.engine.execute_innertube_browse("FEmusic_home")
+            if home_data:
+                home_discovery = self._parse_discovery_shelves(home_data)
+                for it in home_discovery:
+                    if it.get("id") not in [p.get("id") for p in playlists]:
+                        playlists.append(it)
 
-            if not playlists:
-                data2 = self.engine.execute_innertube_browse("FEmusic_liked_videos")
-                if data2:
-                    playlists = self._parse_playlists(data2)
+            # 2. Fetch user's saved playlists & subscribed artist feeds from FEmusic_library_landing
+            lib_data = self.engine.execute_innertube_browse("FEmusic_library_landing")
+            if lib_data:
+                lib_items = self._parse_playlists(lib_data)
+                for it in lib_items:
+                    if it.get("id") not in [p.get("id") for p in playlists]:
+                        playlists.append(it)
 
+            # 3. Fallback to FEmusic_library_playlists if empty
             if not playlists:
                 data3 = self.engine.execute_innertube_browse("FEmusic_library_playlists")
                 if data3:
                     playlists = self._parse_playlists(data3)
 
-            # Prepend Liked Music auto-playlist
+            # 4. Enrich with Explore / Discovery Mixes if user has few items
+            if len(playlists) < 12:
+                try:
+                    exp_data = self.engine.execute_innertube_browse("FEmusic_explore")
+                    if exp_data:
+                        exp_items = self._parse_playlists(exp_data)
+                        existing_ids = {p.get("id") for p in playlists}
+                        for it in exp_items:
+                            if it.get("id") not in existing_ids:
+                                playlists.append(it)
+                                existing_ids.add(it.get("id"))
+                except Exception:
+                    pass
+
+            # 5. Prepend Liked Music auto-playlist at Slot 0
             liked_music_item = {
                 "id": "LM",
                 "title": "Liked Music",
-                "description": "Auto-Playlist • All your liked tracks",
+                "description": "Auto-Mix • Your Liked Tracks",
                 "track_count": 50,
                 "thumbnail_url": "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png",
                 "source": "youtube",
-                "is_algorithmic": False,
-                "badge": "LIKED"
+                "is_algorithmic": True,
+                "badge": "FAVORITES"
             }
-            has_lm = any(p.get("id") in ("LM", "FEmusic_liked_videos", "VLLM") for p in playlists)
+
+            has_lm = any(p.get("id") in ("LM", "FEmusic_liked_videos", "VLLM") or "liked music" in p.get("title", "").lower() for p in playlists)
             if not has_lm:
                 playlists.insert(0, liked_music_item)
+            else:
+                for i, p in enumerate(playlists):
+                    if p.get("id") in ("LM", "FEmusic_liked_videos", "VLLM") or "liked music" in p.get("title", "").lower():
+                        lm = playlists.pop(i)
+                        lm.update(liked_music_item)
+                        playlists.insert(0, lm)
+                        break
 
             if playlists:
                 try:
                     with open(cache_file, "w", encoding="utf-8") as f:
-                        json.dump(playlists, f, ensure_ascii=False, indent=2)
+                        json.dump(playlists[:12], f, ensure_ascii=False, indent=2)
                 except Exception:
                     pass
             elif os.path.exists(cache_file):
                 with open(cache_file, "r", encoding="utf-8") as f:
-                    playlists = json.load(f)
+                    raw_cache = json.load(f)
+                    playlists = [self._sanitize_feed_item(it) for it in raw_cache if self._sanitize_feed_item(it)]
 
             if not self._is_cancelled:
-                self.playlistsLoaded.emit(playlists)
+                self.playlistsLoaded.emit(playlists[:12])
         except Exception as e:
             if not self._is_cancelled:
                 if os.path.exists(cache_file):
                     try:
                         with open(cache_file, "r", encoding="utf-8") as f:
-                            playlists = json.load(f)
-                        self.playlistsLoaded.emit(playlists)
+                            raw_cache = json.load(f)
+                            playlists = [self._sanitize_feed_item(it) for it in raw_cache if self._sanitize_feed_item(it)]
+                        self.playlistsLoaded.emit(playlists[:12])
                         return
                     except Exception:
                         pass
@@ -2441,18 +2696,19 @@ class FetchYTPlaylistsWorker(QThread):
                     if thumbs:
                         thumb_url = thumbs[-1].get('url', '')
 
-                    if browse_id and title and browse_id not in seen_ids and browse_id != "FEplaylist_aggregation":
-                        seen_ids.add(browse_id)
-                        playlists.append({
+                    if browse_id and title:
+                        raw_item = {
                             "id": browse_id,
                             "title": title,
-                            "description": subtitle or "User Playlist",
-                            "track_count": 0,
+                            "description": subtitle,
                             "thumbnail_url": thumb_url,
-                            "source": "youtube",
-                            "is_algorithmic": False,
-                            "badge": "PLAYLIST"
-                        })
+                            "source": "youtube"
+                        }
+                        sanitized = self._sanitize_feed_item(raw_item)
+                        if sanitized and sanitized.get("id") not in seen_ids:
+                            seen_ids.add(sanitized.get("id"))
+                            playlists.append(sanitized)
+
                 # 2. Responsive List Item Renderer
                 elif 'musicResponsiveListItemRenderer' in node:
                     item = node['musicResponsiveListItemRenderer']
@@ -2474,18 +2730,18 @@ class FetchYTPlaylistsWorker(QThread):
                     if thumbs:
                         thumb_url = thumbs[-1].get('url', '')
 
-                    if browse_id and title and browse_id not in seen_ids and browse_id != "FEplaylist_aggregation":
-                        seen_ids.add(browse_id)
-                        playlists.append({
+                    if browse_id and title:
+                        raw_item = {
                             "id": browse_id,
                             "title": title,
-                            "description": subtitle or "User Playlist",
-                            "track_count": 0,
+                            "description": subtitle,
                             "thumbnail_url": thumb_url,
-                            "source": "youtube",
-                            "is_algorithmic": False,
-                            "badge": "PLAYLIST"
-                        })
+                            "source": "youtube"
+                        }
+                        sanitized = self._sanitize_feed_item(raw_item)
+                        if sanitized and sanitized.get("id") not in seen_ids:
+                            seen_ids.add(sanitized.get("id"))
+                            playlists.append(sanitized)
 
                 for v in node.values():
                     traverse(v)
@@ -2495,6 +2751,559 @@ class FetchYTPlaylistsWorker(QThread):
 
         traverse(data)
         return playlists
+
+
+class FetchYouTubeHomeFeedWorker(QThread):
+    """Async worker to fetch authentic personalized music recommendations from YouTube Music (FEmusic_home)."""
+    feedLoaded = Signal(list, list, str)  # (mixes, tracks, continuation_token)
+    moreFeedLoaded = Signal(list, str)    # (tracks, next_continuation_token)
+    chipsLoaded = Signal(list)            # (chips: [{"title": str, "params": str}])
+    errorOccurred = Signal(str)
+
+    def __init__(self, continuation: Optional[str] = None, params: Optional[str] = None, parent=None):
+        super().__init__(parent)
+        self.continuation = continuation
+        self.params = params
+        self.engine = YouTubeAccountEngine.get_instance()
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    def run(self):
+        if self._is_cancelled:
+            return
+
+        cache_key = f"yt_music_feed_{self.params or 'all'}.json"
+        cache_file = os.path.join(self.engine.CACHE_DIR, cache_key)
+        is_continuation = bool(self.continuation)
+
+        BATCH_SIZE = 28
+
+        try:
+            if self.continuation:
+                accumulated_tracks = []
+                current_token = self.continuation
+                # Loop continuation up to 3 pages if needed to ensure a rich batch of playable tracks
+                for _ in range(3):
+                    if self._is_cancelled or not current_token:
+                        break
+                    data = self.engine.execute_innertube_browse(continuation=current_token)
+                    if not data:
+                        break
+                    m, t, c, next_token = self._parse_ytm_home_feed(data)
+                    valid_tracks = [x for x in t if x.get("video_id") and not self._is_mix_or_station(x.get("title", ""), x.get("playlist_id", ""), x.get("video_id", ""))]
+                    accumulated_tracks.extend(valid_tracks)
+                    current_token = next_token
+                    if len(accumulated_tracks) >= 16:
+                        break
+
+                tracks = accumulated_tracks
+                next_token = current_token
+
+                if len(tracks) >= BATCH_SIZE:
+                    tracks = tracks[:BATCH_SIZE]
+                elif len(tracks) >= 4:
+                    valid_count = (len(tracks) // 4) * 4
+                    tracks = tracks[:valid_count]
+
+                if not self._is_cancelled:
+                    self.moreFeedLoaded.emit(tracks, next_token)
+                return
+            else:
+                data = self.engine.execute_innertube_browse("FEmusic_home", params=self.params)
+
+            if data:
+                mixes, tracks, chips, next_token = self._parse_ytm_home_feed(data)
+
+                # Snap tracks to 28 (or clean multiple of 4) for 4-column layout
+                if len(tracks) >= BATCH_SIZE:
+                    tracks = tracks[:BATCH_SIZE]
+                elif len(tracks) >= 4:
+                    valid_count = (len(tracks) // 4) * 4
+                    tracks = tracks[:valid_count]
+
+                # Snap mixes to clean multiple of 4
+                if len(mixes) >= 4:
+                    mixes = mixes[:(len(mixes) // 4) * 4]
+
+                if not is_continuation and (tracks or mixes):
+                    try:
+                        with open(cache_file, "w", encoding="utf-8") as f:
+                            json.dump({"mixes": mixes, "tracks": tracks, "chips": chips, "token": next_token}, f, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
+
+                if not self._is_cancelled:
+                    if not tracks and not mixes:
+                        fallback_tracks, next_token = self._get_fallback_feed()
+                        tracks = fallback_tracks
+                    if chips:
+                        self.chipsLoaded.emit(chips)
+                    self.feedLoaded.emit(mixes, tracks, next_token)
+                    return
+
+            if not is_continuation:
+                self._load_fallback_or_cache(cache_file)
+            else:
+                if not self._is_cancelled:
+                    self.errorOccurred.emit("Failed to load more music recommendations.")
+        except Exception as e:
+            if self._is_cancelled:
+                return
+            if not is_continuation:
+                self._load_fallback_or_cache(cache_file)
+            else:
+                self.errorOccurred.emit(str(e))
+
+    def _load_fallback_or_cache(self, cache_file: str):
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                    if isinstance(cached, dict) and (cached.get("tracks") or cached.get("videos")):
+                        if cached.get("chips"):
+                            self.chipsLoaded.emit(cached["chips"])
+                        m_list = cached.get("mixes", [])
+                        t_list = cached.get("tracks") or cached.get("videos", [])
+                        self.feedLoaded.emit(m_list, t_list, cached.get("token", ""))
+                        return
+                    elif isinstance(cached, list) and cached:
+                        self.feedLoaded.emit([], cached, "")
+                        return
+            except Exception:
+                pass
+        fallback_videos, token = self._get_fallback_feed()
+        self.feedLoaded.emit([], fallback_videos, token)
+
+    @staticmethod
+    def _is_mix_or_station(title: str, pl_id: str, vid: str) -> bool:
+        if not vid:
+            return True
+        t_low = (title or "").lower()
+        if "my mix" in t_low or "supermix" in t_low or "station" in t_low or "radio" in t_low:
+            return True
+        if pl_id and (pl_id.startswith("VLRD") or pl_id.startswith("RDCLAK") or pl_id.startswith("RDTMAK")):
+            return True
+        return False
+
+    def _parse_ytm_home_feed(self, data: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, str]], str]:
+        mixes: List[Dict[str, Any]] = []
+        tracks: List[Dict[str, Any]] = []
+        chips: List[Dict[str, str]] = [{"title": "All", "params": ""}]
+        seen_ids = set()
+        continuation_token = ""
+
+        def traverse(node):
+            nonlocal continuation_token
+            if isinstance(node, dict):
+                # Continuation Tokens
+                if 'continuationCommand' in node and 'token' in node['continuationCommand']:
+                    t = node['continuationCommand']['token']
+                    if t and not continuation_token:
+                        continuation_token = t
+
+                if 'nextContinuationData' in node:
+                    t = node['nextContinuationData'].get('continuation')
+                    if t and not continuation_token:
+                        continuation_token = t
+
+                if 'reloadContinuationData' in node:
+                    t = node['reloadContinuationData'].get('continuation')
+                    if t and not continuation_token:
+                        continuation_token = t
+
+                if 'continuationItemRenderer' in node:
+                    ep = node['continuationItemRenderer'].get('continuationEndpoint', {})
+                    cmd = ep.get('continuationCommand', {})
+                    token = cmd.get('token')
+                    if token and not continuation_token:
+                        continuation_token = token
+
+                # Dynamic YouTube Music Mood / Activity Chips
+                if 'chipCloudChipRenderer' in node:
+                    c = node['chipCloudChipRenderer']
+                    ctext = c.get('text', {}).get('runs', [{}])[0].get('text', '')
+                    cparams = c.get('navigationEndpoint', {}).get('browseEndpoint', {}).get('params', '')
+                    if ctext and not any(ch['title'].lower() == ctext.lower() for ch in chips):
+                        chips.append({'title': ctext, 'params': cparams})
+
+                # Music Two Row Item (Tracks, Mixes, Albums, Recommended Singles)
+                if 'musicTwoRowItemRenderer' in node:
+                    item = self._extract_ytm_two_row_item(node['musicTwoRowItemRenderer'], seen_ids)
+                    if item:
+                        if self._is_mix_or_station(item.get('title', ''), item.get('playlist_id', ''), item.get('video_id', '')):
+                            mixes.append(item)
+                        else:
+                            tracks.append(item)
+                    return
+
+                # Music Responsive List Item (Quick Picks, Stream Tracks)
+                if 'musicResponsiveListItemRenderer' in node:
+                    item = self._extract_ytm_responsive_item(node['musicResponsiveListItemRenderer'], seen_ids)
+                    if item:
+                        if self._is_mix_or_station(item.get('title', ''), item.get('playlist_id', ''), item.get('video_id', '')):
+                            mixes.append(item)
+                        else:
+                            tracks.append(item)
+                    return
+
+                # Lockup View Model fallback
+                if 'lockupViewModel' in node:
+                    item = self._extract_lockup_item(node['lockupViewModel'], seen_ids)
+                    if item:
+                        if self._is_mix_or_station(item.get('title', ''), item.get('playlist_id', ''), item.get('video_id', '')):
+                            mixes.append(item)
+                        else:
+                            tracks.append(item)
+                    return
+
+                # Video Renderer fallback
+                if 'videoRenderer' in node:
+                    self._extract_video_item(node['videoRenderer'], tracks, seen_ids)
+                    return
+
+                for v in node.values():
+                    traverse(v)
+            elif isinstance(node, list):
+                for item in node:
+                    traverse(item)
+
+        traverse(data)
+        return mixes, tracks, chips, continuation_token
+
+    def _optimize_thumbnail_url(self, url: str) -> str:
+        if not url:
+            return ""
+        # 1. Google user content / YTM album art: upgrade small resolutions to crystal clear high-res (w800-h800)
+        if "googleusercontent.com" in url or "ggpht.com" in url:
+            url = re.sub(r'=w\d+-h\d+[^?&]*', '=w800-h800-l90-rj', url)
+            url = re.sub(r'=s\d+[^?&]*', '=s800', url)
+            return url
+        # 2. YouTube image CDN: strip low-res sqp compression query parameter to get full HD 1280x720
+        if "i.ytimg.com" in url:
+            return url.split("?")[0]
+        return url
+
+    def _extract_ytm_two_row_item(self, r: dict, seen_ids: set) -> Optional[Dict[str, Any]]:
+        title_runs = r.get("title", {}).get("runs", [])
+        title = title_runs[0].get("text", "") if title_runs else ""
+
+        sub_runs = r.get("subtitle", {}).get("runs", [])
+        sub_texts = [x.get("text", "").strip() for x in sub_runs if x.get("text", "").strip() and x.get("text", "").strip() != "•"]
+
+        channel_name = sub_texts[0] if sub_texts else "YouTube Music"
+        views_or_type = sub_texts[1] if len(sub_texts) > 1 else ""
+        pub_or_extra = sub_texts[2] if len(sub_texts) > 2 else ""
+
+        # Check endpoints (both navigationEndpoint and thumbnailOverlay play button)
+        nav = r.get("navigationEndpoint", {})
+        watch_ep = nav.get("watchEndpoint", {})
+        browse_ep = nav.get("browseEndpoint", {})
+
+        overlay_btn = r.get("thumbnailOverlay", {}).get("musicItemThumbnailOverlayRenderer", {}).get("content", {}).get("musicPlayButtonRenderer", {})
+        play_watch_ep = overlay_btn.get("playNavigationEndpoint", {}).get("watchEndpoint", {})
+
+        vid = watch_ep.get("videoId", "") or play_watch_ep.get("videoId", "")
+        pl_id = watch_ep.get("playlistId", "") or play_watch_ep.get("playlistId", "") or browse_ep.get("browseId", "")
+
+        thumb_renderer = r.get("thumbnailRenderer", {}).get("musicThumbnailRenderer", {})
+        thumbs = thumb_renderer.get("thumbnail", {}).get("thumbnails", [])
+        thumb_url = thumbs[-1].get("url") if thumbs else ""
+
+        if not thumb_url:
+            if vid:
+                thumb_url = f"https://i.ytimg.com/vi/{vid}/hq720.jpg"
+            else:
+                thumb_url = "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png"
+
+        thumb_url = self._optimize_thumbnail_url(thumb_url)
+
+        item_id = vid or pl_id
+        if not item_id or item_id in seen_ids:
+            return None
+
+        seen_ids.add(item_id)
+        return {
+            "video_id": vid,
+            "playlist_id": pl_id,
+            "title": title or "Music Track",
+            "channel_name": channel_name,
+            "channel_id": browse_ep.get("browseId", ""),
+            "channel_avatar": "",
+            "thumbnail_url": thumb_url,
+            "duration_text": "Track",
+            "view_count_text": views_or_type,
+            "published_time_text": pub_or_extra,
+            "is_live": False,
+            "source": "youtube"
+        }
+
+    def _extract_ytm_responsive_item(self, r: dict, seen_ids: set) -> Optional[Dict[str, Any]]:
+        cols = r.get("flexColumns", [])
+        title = ""
+        channel_name = "YouTube Music"
+        views_text = ""
+        pub_text = ""
+        duration_text = ""
+
+        if len(cols) > 0:
+            runs = cols[0].get("musicResponsiveListItemFlexColumnRenderer", {}).get("text", {}).get("runs", [])
+            title = runs[0].get("text", "") if runs else ""
+
+        if len(cols) > 1:
+            runs = cols[1].get("musicResponsiveListItemFlexColumnRenderer", {}).get("text", {}).get("runs", [])
+            sub_texts = [x.get("text", "").strip() for x in runs if x.get("text", "").strip() and x.get("text", "").strip() != "•"]
+            if len(sub_texts) > 0:
+                channel_name = sub_texts[0]
+            if len(sub_texts) > 1:
+                views_text = sub_texts[1]
+            if len(sub_texts) > 2:
+                pub_text = sub_texts[2]
+
+        fixed_cols = r.get("fixedColumns", [])
+        if fixed_cols:
+            f_runs = fixed_cols[0].get("musicResponsiveListItemFixedColumnRenderer", {}).get("text", {}).get("runs", [])
+            if f_runs:
+                duration_text = f_runs[0].get("text", "")
+
+        overlay_nav = r.get("overlay", {}).get("musicItemThumbnailOverlayRenderer", {}).get("content", {}).get("musicPlayButtonRenderer", {})
+        play_nav = overlay_nav.get("playNavigationEndpoint", {})
+        watch_ep = play_nav.get("watchEndpoint", {})
+        vid = watch_ep.get("videoId", "")
+        pl_id = watch_ep.get("playlistId", "")
+
+        thumbs = r.get("thumbnail", {}).get("musicThumbnailRenderer", {}).get("thumbnail", {}).get("thumbnails", [])
+        thumb_url = thumbs[-1].get("url") if thumbs else ""
+
+        if not thumb_url:
+            if vid:
+                thumb_url = f"https://i.ytimg.com/vi/{vid}/hq720.jpg"
+            else:
+                thumb_url = "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png"
+
+        thumb_url = self._optimize_thumbnail_url(thumb_url)
+
+        item_id = vid or pl_id
+        if not item_id or item_id in seen_ids:
+            return None
+
+        seen_ids.add(item_id)
+        return {
+            "video_id": vid,
+            "playlist_id": pl_id,
+            "title": title or "Music Track",
+            "channel_name": channel_name,
+            "channel_id": "",
+            "channel_avatar": "",
+            "thumbnail_url": thumb_url,
+            "duration_text": duration_text or "Track",
+            "view_count_text": views_text,
+            "published_time_text": pub_text,
+            "is_live": False,
+            "source": "youtube"
+        }
+
+    def _extract_lockup_item(self, lockup: dict, seen_ids: set) -> Optional[Dict[str, Any]]:
+        vid = lockup.get("contentId", "")
+        if not vid:
+            on_tap = lockup.get("rendererContext", {}).get("commandContext", {}).get("onTap", {}).get("innertubeCommand", {})
+            vid = on_tap.get("watchEndpoint", {}).get("videoId", "")
+        if not vid or vid in seen_ids:
+            return None
+
+        meta = lockup.get("metadata", {}).get("lockupMetadataViewModel", {})
+        title = meta.get("title", {}).get("content", "")
+
+        channel_name = ""
+        channel_avatar = ""
+        view_text = ""
+        pub_text = ""
+
+        # Channel avatar image
+        image_obj = meta.get("image", {})
+        if image_obj and "sources" in image_obj and image_obj["sources"]:
+            channel_avatar = image_obj["sources"][-1].get("url", "")
+
+        # Metadata rows (Channel name, views, publish time)
+        content_meta = meta.get("metadata", {}).get("contentMetadataViewModel", {})
+        rows = content_meta.get("metadataRows", [])
+        if len(rows) > 0:
+            parts = rows[0].get("metadataParts", [])
+            if parts:
+                channel_name = parts[0].get("text", {}).get("content", "")
+        if len(rows) > 1:
+            parts = rows[1].get("metadataParts", [])
+            if len(parts) > 0:
+                view_text = parts[0].get("text", {}).get("content", "")
+            if len(parts) > 1:
+                pub_text = parts[1].get("text", {}).get("content", "")
+
+        thumb_url = f"https://i.ytimg.com/vi/{vid}/hq720.jpg" if vid else ""
+        duration_text = ""
+        is_live = False
+
+        content_image = lockup.get("contentImage", {})
+        thumb_vm = content_image.get("thumbnailViewModel") or content_image.get("collectionThumbnailViewModel", {}).get("primaryThumbnail", {}).get("thumbnailViewModel", {})
+
+        if thumb_vm:
+            sources = thumb_vm.get("image", {}).get("sources", [])
+            if sources:
+                thumb_url = sources[-1].get("url", thumb_url)
+            overlays = thumb_vm.get("overlays", [])
+            for ov in overlays:
+                bottom_ov = ov.get("thumbnailBottomOverlayViewModel", {})
+                badges = bottom_ov.get("badges", [])
+                for b in badges:
+                    b_vm = b.get("thumbnailBadgeViewModel", {})
+                    b_text = b_vm.get("text", "")
+                    if "LIVE" in b_text.upper():
+                        is_live = True
+                        duration_text = "LIVE"
+                    elif b_text and not duration_text:
+                        duration_text = b_text
+
+                badge_ov = ov.get("thumbnailOverlayBadgeViewModel", {})
+                for b in badge_ov.get("thumbnailBadges", []):
+                    b_text = b.get("thumbnailBadgeViewModel", {}).get("text", "")
+                    if "LIVE" in b_text.upper():
+                        is_live = True
+                        duration_text = "LIVE"
+                    elif b_text and not duration_text:
+                        duration_text = b_text
+
+                time_status = ov.get("thumbnailOverlayTimeStatusRenderer", {})
+                if time_status:
+                    ts_text = time_status.get("text", {}).get("simpleText", "")
+                    if "LIVE" in ts_text.upper():
+                        is_live = True
+                        duration_text = "LIVE"
+                    elif ts_text and not duration_text:
+                        duration_text = ts_text
+
+        thumb_url = self._optimize_thumbnail_url(thumb_url)
+        seen_ids.add(vid)
+        return {
+            "video_id": vid,
+            "title": title or "YouTube Video",
+            "channel_name": channel_name or "YouTube Creator",
+            "channel_id": "",
+            "channel_avatar": channel_avatar,
+            "thumbnail_url": thumb_url,
+            "duration_text": duration_text or ("LIVE" if is_live else ""),
+            "view_count_text": view_text,
+            "published_time_text": pub_text,
+            "is_live": is_live,
+            "source": "youtube"
+        }
+
+    def _extract_video_item(self, v_renderer: dict, videos: list, seen_ids: set):
+        vid = v_renderer.get('videoId', '')
+        if not vid or vid in seen_ids:
+            return
+
+        title = ""
+        title_obj = v_renderer.get('title', {})
+        if 'runs' in title_obj and title_obj['runs']:
+            title = title_obj['runs'][0].get('text', '')
+        elif 'simpleText' in title_obj:
+            title = title_obj['simpleText']
+
+        channel_name = ""
+        channel_id = ""
+        owner_obj = v_renderer.get('ownerText') or v_renderer.get('shortBylineText') or {}
+        if 'runs' in owner_obj and owner_obj['runs']:
+            channel_name = owner_obj['runs'][0].get('text', '')
+            nav_ep = owner_obj['runs'][0].get('navigationEndpoint', {})
+            channel_id = nav_ep.get('browseEndpoint', {}).get('browseId', '')
+
+        channel_avatar = ""
+        avatar_obj = v_renderer.get('channelThumbnailSupportedRenderers', {}).get('channelThumbnailWithLinkRenderer', {}).get('thumbnail', {})
+        if avatar_obj and 'thumbnails' in avatar_obj and avatar_obj['thumbnails']:
+            channel_avatar = avatar_obj['thumbnails'][-1].get('url', '')
+
+        thumb_url = f"https://i.ytimg.com/vi/{vid}/hq720.jpg" if vid else ""
+        thumb_obj = v_renderer.get('thumbnail', {})
+        if thumb_obj and 'thumbnails' in thumb_obj and thumb_obj['thumbnails']:
+            thumb_url = thumb_obj['thumbnails'][-1].get('url', thumb_url)
+        thumb_url = self._optimize_thumbnail_url(thumb_url)
+
+        duration_text = ""
+        len_obj = v_renderer.get('lengthText', {})
+        if 'simpleText' in len_obj:
+            duration_text = len_obj['simpleText']
+        elif 'runs' in len_obj and len_obj['runs']:
+            duration_text = len_obj['runs'][0].get('text', '')
+
+        view_text = ""
+        view_obj = v_renderer.get('shortViewCountText') or v_renderer.get('viewCountText') or {}
+        if 'simpleText' in view_obj:
+            view_text = view_obj['simpleText']
+        elif 'runs' in view_obj and view_obj['runs']:
+            view_text = "".join([r.get('text', '') for r in view_obj['runs']])
+
+        pub_text = ""
+        pub_obj = v_renderer.get('publishedTimeText', {})
+        if 'simpleText' in pub_obj:
+            pub_text = pub_obj['simpleText']
+        elif 'runs' in pub_obj and pub_obj['runs']:
+            pub_text = "".join([r.get('text', '') for r in pub_obj['runs']])
+
+        is_live = False
+        badges = v_renderer.get('badges', [])
+        for b in badges:
+            b_text = b.get('metadataBadgeRenderer', {}).get('label', '').upper()
+            if 'LIVE' in b_text:
+                is_live = True
+                break
+
+        seen_ids.add(vid)
+        videos.append({
+            "video_id": vid,
+            "title": title or "YouTube Video",
+            "channel_name": channel_name or "YouTube Creator",
+            "channel_id": channel_id,
+            "channel_avatar": channel_avatar,
+            "thumbnail_url": thumb_url,
+            "duration_text": duration_text or ("LIVE" if is_live else ""),
+            "view_count_text": view_text,
+            "published_time_text": pub_text,
+            "is_live": is_live,
+            "source": "youtube"
+        })
+
+    def _get_fallback_feed(self) -> Tuple[List[Dict[str, Any]], str]:
+        fallback_items = [
+            {"video_id": "4NRXx6U8ABQ", "title": "Hindia - Evaluasi", "channel_name": "Hindia", "channel_id": "UCHindia", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/4NRXx6U8ABQ/mqdefault.jpg", "duration_text": "3:58", "view_count_text": "45M views", "published_time_text": "4 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "36YnV9STBqc", "title": "Bernadya - Satu Bulan", "channel_name": "Bernadya", "channel_id": "UCBernadya", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/36YnV9STBqc/mqdefault.jpg", "duration_text": "3:42", "view_count_text": "28M views", "published_time_text": "3 months ago", "is_live": False, "source": "youtube"},
+            {"video_id": "4xDzrJKXOOY", "title": "Nadin Amizah - Rayuan Perempuan Gila", "channel_name": "Nadin Amizah", "channel_id": "UCNadin", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/4xDzrJKXOOY/mqdefault.jpg", "duration_text": "5:18", "view_count_text": "36M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
+            {"video_id": "60ItHLz5WEA", "title": "Imagine Dragons - Eyes Closed", "channel_name": "Imagine Dragons", "channel_id": "UCImagineDragons", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/60ItHLz5WEA/mqdefault.jpg", "duration_text": "3:20", "view_count_text": "52M views", "published_time_text": "5 months ago", "is_live": False, "source": "youtube"},
+            {"video_id": "sPxXiXucYcM", "title": "The Weeknd - Blinding Lights", "channel_name": "The Weeknd", "channel_id": "UCTheWeeknd", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/sPxXiXucYcM/mqdefault.jpg", "duration_text": "3:22", "view_count_text": "850M views", "published_time_text": "4 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "kJQP7kiw5Fk", "title": "Luis Fonsi - Despacito ft. Daddy Yankee", "channel_name": "Luis Fonsi", "channel_id": "UCLuisFonsi", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/kJQP7kiw5Fk/mqdefault.jpg", "duration_text": "4:42", "view_count_text": "8.4B views", "published_time_text": "7 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "dFAiChO9_OA", "title": "Fujii Kaze - Shinunoga E-Wa", "channel_name": "Fujii Kaze", "channel_id": "UCFujiiKaze", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/dFAiChO9_OA/mqdefault.jpg", "duration_text": "3:05", "view_count_text": "420M views", "published_time_text": "3 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "fJ9rUzIMcZQ", "title": "Queen - Bohemian Rhapsody", "channel_name": "Queen", "channel_id": "UCQueen", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/fJ9rUzIMcZQ/mqdefault.jpg", "duration_text": "5:55", "view_count_text": "1.7B views", "published_time_text": "15 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "JGwWNGJdvx8", "title": "Ed Sheeran - Shape of You", "channel_name": "Ed Sheeran", "channel_id": "UCEdSheeran", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/JGwWNGJdvx8/mqdefault.jpg", "duration_text": "3:53", "view_count_text": "6.2B views", "published_time_text": "7 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "dvgZkm1xWPE", "title": "Coldplay - Viva La Vida", "channel_name": "Coldplay", "channel_id": "UCColdplay", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/dvgZkm1xWPE/mqdefault.jpg", "duration_text": "4:02", "view_count_text": "980M views", "published_time_text": "16 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "PMivT7MJ41M", "title": "Bruno Mars - That's What I Like", "channel_name": "Bruno Mars", "channel_id": "UCBrunoMars", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/PMivT7MJ41M/mqdefault.jpg", "duration_text": "3:26", "view_count_text": "2.2B views", "published_time_text": "7 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "rYEDA3JcQqw", "title": "Adele - Rolling in the Deep", "channel_name": "Adele", "channel_id": "UCAdele", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/rYEDA3JcQqw/mqdefault.jpg", "duration_text": "3:48", "view_count_text": "2.4B views", "published_time_text": "13 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "fhzKLBZJC3w", "title": "King Gnu - SPECIALZ", "channel_name": "King Gnu", "channel_id": "UCKKingGnu", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/fhzKLBZJC3w/mqdefault.jpg", "duration_text": "3:58", "view_count_text": "204M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
+            {"video_id": "ApXoWvfEYVU", "title": "Post Malone, Swae Lee - Sunflower", "channel_name": "Post Malone", "channel_id": "UCPostMalone", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/ApXoWvfEYVU/mqdefault.jpg", "duration_text": "2:38", "view_count_text": "2.1B views", "published_time_text": "5 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "TUVcZfQe-Kw", "title": "Dua Lipa - Levitating", "channel_name": "Dua Lipa", "channel_id": "UCDuaLipa", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/TUVcZfQe-Kw/mqdefault.jpg", "duration_text": "3:23", "view_count_text": "910M views", "published_time_text": "3 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "DyDfgMOUjCI", "title": "Billie Eilish - bad guy", "channel_name": "Billie Eilish", "channel_id": "UCBillieEilish", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/DyDfgMOUjCI/mqdefault.jpg", "duration_text": "3:14", "view_count_text": "1.3B views", "published_time_text": "5 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "09R8_2nJtjg", "title": "Maroon 5 - Sugar", "channel_name": "Maroon 5", "channel_id": "UCMaroon5", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/09R8_2nJtjg/mqdefault.jpg", "duration_text": "3:55", "view_count_text": "4.1B views", "published_time_text": "9 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "b1kbLwvqugk", "title": "Taylor Swift - Anti-Hero", "channel_name": "Taylor Swift", "channel_id": "UCTaylorSwift", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/b1kbLwvqugk/mqdefault.jpg", "duration_text": "3:20", "view_count_text": "220M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
+            {"video_id": "ZRtdQ81jPUQ", "title": "YOASOBI - Idol", "channel_name": "Ayase / YOASOBI", "channel_id": "UCYOASOBI", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/ZRtdQ81jPUQ/mqdefault.jpg", "duration_text": "3:33", "view_count_text": "500M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
+            {"video_id": "Zi_XLOBDo_Y", "title": "Michael Jackson - Billie Jean", "channel_name": "Michael Jackson", "channel_id": "UCMichaelJackson", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/Zi_XLOBDo_Y/mqdefault.jpg", "duration_text": "4:54", "view_count_text": "1.6B views", "published_time_text": "14 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "IcrbM1l_BoI", "title": "Avicii - Wake Me Up", "channel_name": "Avicii", "channel_id": "UCAvicii", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/IcrbM1l_BoI/mqdefault.jpg", "duration_text": "4:07", "view_count_text": "2.3B views", "published_time_text": "10 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "PT2_F-1esPk", "title": "The Chainsmokers - Closer ft. Halsey", "channel_name": "The Chainsmokers", "channel_id": "UCTheChainsmokers", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/PT2_F-1esPk/mqdefault.jpg", "duration_text": "4:05", "view_count_text": "3.1B views", "published_time_text": "7 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "nfs8NYg7yQM", "title": "Charlie Puth - Attention", "channel_name": "Charlie Puth", "channel_id": "UCCharliePuth", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/nfs8NYg7yQM/mqdefault.jpg", "duration_text": "3:28", "view_count_text": "1.5B views", "published_time_text": "6 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "RlPNh_PBZb4", "title": "Olivia Rodrigo - vampire", "channel_name": "Olivia Rodrigo", "channel_id": "UCOliviaRodrigo", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/RlPNh_PBZb4/mqdefault.jpg", "duration_text": "3:39", "view_count_text": "180M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
+            {"video_id": "H5v3kku4y6Q", "title": "Harry Styles - As It Was", "channel_name": "Harry Styles", "channel_id": "UCHarryStyles", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/H5v3kku4y6Q/mqdefault.jpg", "duration_text": "2:47", "view_count_text": "760M views", "published_time_text": "2 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "Pkh8UtuejGw", "title": "Shawn Mendes, Camila Cabello - Señorita", "channel_name": "Shawn Mendes", "channel_id": "UCShawnMendes", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/Pkh8UtuejGw/mqdefault.jpg", "duration_text": "3:11", "view_count_text": "1.7B views", "published_time_text": "5 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "bpOSxM07931", "title": "Arctic Monkeys - Do I Wanna Know?", "channel_name": "Arctic Monkeys", "channel_id": "UCArcticMonkeys", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/bpOSxM07931/mqdefault.jpg", "duration_text": "4:32", "view_count_text": "1.6B views", "published_time_text": "11 years ago", "is_live": False, "source": "youtube"},
+            {"video_id": "hT_nvWreIhg", "title": "OneRepublic - Counting Stars", "channel_name": "OneRepublic", "channel_id": "UCOneRepublic", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/hT_nvWreIhg/mqdefault.jpg", "duration_text": "4:17", "view_count_text": "4.0B views", "published_time_text": "11 years ago", "is_live": False, "source": "youtube"}
+        ]
+        return fallback_items, ""
 
 
 class SyncYTCookiesWorker(QThread):
@@ -2510,5 +3319,6 @@ class SyncYTCookiesWorker(QThread):
     def run(self):
         ok, msg, detected_b = self.engine.sync_from_browser(self.browser_name, self.profile_dir)
         self.syncCompleted.emit(ok, msg, detected_b)
+
 
 

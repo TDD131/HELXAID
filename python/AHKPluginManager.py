@@ -23,9 +23,6 @@ class AHKPluginManager:
             self.ahk_exe_path = os.path.join(self.plugin_dir, "AutoHotkey.exe")
 
         self._process = None
-        
-        if not os.path.exists(self.plugin_dir):
-            os.makedirs(self.plugin_dir, exist_ok=True)
 
     def _generate_ahk_script(self, mappings: dict, bypass_anticheat: bool) -> str:
         """
@@ -145,6 +142,7 @@ class AHKPluginManager:
             return
 
         # Write new script
+        os.makedirs(self.plugin_dir, exist_ok=True)
         script_content = self._generate_ahk_script(mappings, bypass_anticheat)
         with open(self.script_path, "w", encoding="utf-8") as f:
             f.write(script_content)

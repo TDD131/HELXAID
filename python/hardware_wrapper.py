@@ -501,9 +501,7 @@ class HardwareMonitor:
         """Set update interval (100-1000ms)."""
         self.update_interval_ms = max(100, min(1000, interval_ms))
     
-    # ============================================
-    # RAM FUNCTIONS
-    # ============================================
+    # Memory monitoring and working set management
     
     def get_ram_info(self) -> Dict:
         """
@@ -545,9 +543,7 @@ class HardwareMonitor:
         # ctypes-based fallback using Windows API
         return self._clean_ram_ctypes()
     
-    # ============================================
-    # CPU FUNCTIONS
-    # ============================================
+    # Processor performance counters and utilization
     
     def get_cpu_usage(self) -> float:
         """Get current CPU usage percentage."""
@@ -625,9 +621,7 @@ class HardwareMonitor:
         
         return {"freq_ghz": freq_ghz, "cores": cores, "threads": threads}
     
-    # ============================================
-    # DISK FUNCTIONS
-    # ============================================
+    # Storage volumes and physical disk metrics
     
     def get_disk_info(self) -> List[Dict]:
         """
@@ -663,105 +657,197 @@ class HardwareMonitor:
     
     def get_smart_disks(self) -> List[Dict]:
         """
-        Get Physical Disk S.M.A.R.T info (Health, Temperature) via service, COM WMI, or WinAPI without spawning powershell.
+        Get Physical Disk S.M.A.R.T info (Health, Temperature) via embedded LHM engine,
+        Zero-UAC service (Ring-0 IOCTL / Log Page 0x02), or Win32 COM fallback.
+        Always resolves true hardware brand/model names from Win32_DiskDrive.
         """
         smart_disks = []
         if os.name != 'nt':
             return smart_disks
 
-        # 1. Try Zero-UAC Service (Fastest & most reliable for elevated SMART)
+        # 0. Build authoritative hardware model map from Win32_DiskDrive and MSFT_PhysicalDisk
+        wmi_model_map = {}
+        wmi_type_map = {}
+        try:
+            from utils.drive_utils import _query_msft_disk_types, _resolve_media_type, _infer_media_type, query_drive_health
+        except Exception:
+            _query_msft_disk_types = None
+            _resolve_media_type = None
+            _infer_media_type = None
+            query_drive_health = None
+
+        try:
+            msft_data = _query_msft_disk_types() if _query_msft_disk_types else {}
+        except Exception:
+            msft_data = {}
+
+        try:
+            disks = _query_wmi_fast("cimv2", "SELECT Index, Model, MediaType, InterfaceType FROM Win32_DiskDrive")
+            for d in (disks or []):
+                d_idx = str(d.get("Index", "")).strip()
+                d_model = str(d.get("Model", "")).strip()
+                d_mtype = str(d.get("MediaType", "")).upper()
+                d_iface = str(d.get("InterfaceType", "")).upper()
+                if d_idx and d_model:
+                    wmi_model_map[d_idx] = d_model
+                    idx_int = int(d_idx) if d_idx.isdigit() else 0
+                    if _resolve_media_type:
+                        res_type = _resolve_media_type(idx_int, d_model, 0, msft_data)
+                        if res_type == "Storage" and _infer_media_type:
+                            res_type = _infer_media_type(d_model, d_mtype, d_iface, "")
+                        is_ssd = "SSD" in res_type.upper()
+                    else:
+                        is_ssd = "SSD" in d_mtype or "NVME" in d_iface or any(kw in (d_mtype + " " + d_model).upper() for kw in ["NVME", "SSD", "M.2", "970 EVO", "980", "990 PRO"])
+                    wmi_type_map[d_idx] = "SSD" if is_ssd else "HDD"
+        except Exception:
+            pass
+
+        # 1. Primary: Universal health query (NVMe IOCTL -> ATA WMI -> MSFT WMI -> service fallback)
+        if query_drive_health:
+            try:
+                health_data = query_drive_health()
+                if health_data:
+                    unified_disks = []
+                    for dev_idx, h in sorted(health_data.items()):
+                        m_name = h.get("model") or wmi_model_map.get(str(dev_idx)) or f"Storage Drive {dev_idx}"
+                        health_pct = float(h.get("health_pct", 100))
+                        status_str = "OK" if health_pct >= 60 else ("Warning" if health_pct >= 20 else "Critical")
+                        is_ssd = "SSD" in str(h.get("type", "")).upper() or wmi_type_map.get(str(dev_idx), "SSD") == "SSD"
+                        if not is_ssd and _infer_media_type:
+                            is_ssd = "SSD" in _infer_media_type(m_name, "", "", "").upper()
+                        unified_disks.append({
+                            'model': m_name,
+                            'temp': round(float(h.get("temp", 0)), 0),
+                            'health_percent': round(health_pct, 0),
+                            'status': status_str,
+                            'type': "SSD" if is_ssd else "HDD",
+                            'device': str(dev_idx),
+                        })
+                    if unified_disks:
+                        return unified_disks
+            except Exception:
+                pass
+
+        # 2. Fallback: In-process Embedded LibreHardwareMonitor Engine
+        try:
+            from core.lhm_wrapper import get_lhm_reader_instance
+            lhm = get_lhm_reader_instance()
+            if lhm.is_available():
+                storage_list = lhm.get_storage_disks()
+                if storage_list:
+                    for idx, disk in enumerate(storage_list):
+                        m_name = disk.get('model') or disk.get('name', '')
+                        if not m_name or any(gen in m_name.lower() for gen in ('generic', 'physical drive', 'storage', 'harddisk')):
+                            m_name = wmi_model_map.get(str(idx)) or m_name or f"Storage Drive {idx}"
+                        t_val = float(disk.get('temp') or 0)
+                        h_val = float(disk.get('health_percent', 100))
+
+                        # Enrich with universal health query if LHM returned default values
+                        if query_drive_health and (h_val >= 100 or t_val == 0):
+                            h_data = query_drive_health([idx])
+                            h_entry = h_data.get(idx)
+                            if h_entry:
+                                h_val = float(h_entry.get("health_pct", h_val))
+                                if h_entry.get("temp", 0) > 0:
+                                    t_val = float(h_entry["temp"])
+
+                        if wmi_type_map.get(str(idx)):
+                            is_ssd = wmi_type_map.get(str(idx)) == "SSD"
+                        elif _infer_media_type:
+                            is_ssd = "SSD" in _infer_media_type(m_name, "", "", "").upper()
+                        else:
+                            is_ssd = any(kw in m_name.upper() for kw in ["NVME", "SSD", "M.2", "970 EVO", "980", "990 PRO"])
+
+                        smart_disks.append({
+                            'model': m_name,
+                            'temp': round(t_val, 0),
+                            'health_percent': round(h_val, 0),
+                            'status': disk.get('status', 'OK'),
+                            'type': "SSD" if is_ssd else "HDD",
+                            'device': str(idx)
+                        })
+        except Exception as e_embed:
+            pass
+
+        if smart_disks and any(d.get('temp', 0) > 0 for d in smart_disks):
+            return smart_disks
+
+        # 3. Tertiary: Zero-UAC Service (Elevated LHM Storage Sensors)
         try:
             from integrations.cpu_controller import send_service_command
             resp = send_service_command({"action": "read_lhm_sensors"})
             if resp and resp.get("status") == "success":
                 svc_sensors = resp.get("sensors", {})
-                for disk in svc_sensors.get("storage", []):
-                    model_name = disk.get("name", "Unknown")
-                    temp_val = float(disk.get("temp") or 0)
-                    health_pct = float(disk.get("health_percent", 100))
-                    
-                    is_ssd = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "WD", "SAMSUNG", "KINGSTON", "CRUCIAL"])
-                    status_str = "OK"
-                    if health_pct < 20: status_str = "Warning"
-                    if health_pct < 5: status_str = "Critical"
-                    
-                    smart_disks.append({
-                        'model': model_name,
-                        'temp': round(temp_val, 0),
-                        'health_percent': round(health_pct, 0),
-                        'status': status_str,
-                        'type': "SSD" if is_ssd else "HDD"
-                    })
+                svc_storage = svc_sensors.get("storage", [])
+                if svc_storage:
+                    svc_disks = []
+                    for idx, disk in enumerate(svc_storage):
+                        model_name = disk.get("name") or disk.get("model", "")
+                        if not model_name or any(gen in model_name.lower() for gen in ('unknown', 'generic', 'physical drive', 'storage')):
+                            model_name = wmi_model_map.get(str(idx)) or model_name or f"Storage Drive {idx}"
+                        temp_val = float(disk.get("temp") or 0)
+                        health_pct = float(disk.get("health_percent", 100))
+
+                        if wmi_type_map.get(str(idx)):
+                            is_ssd = wmi_type_map.get(str(idx)) == "SSD"
+                        elif _infer_media_type:
+                            is_ssd = "SSD" in _infer_media_type(model_name, "", "", "").upper()
+                        else:
+                            is_ssd = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "970 EVO", "980", "990 PRO"])
+
+                        status_str = "OK"
+                        if health_pct < 20: status_str = "Warning"
+                        if health_pct < 5: status_str = "Critical"
+
+                        svc_disks.append({
+                            'model': model_name,
+                            'temp': round(temp_val, 0),
+                            'health_percent': round(health_pct, 0),
+                            'status': status_str,
+                            'type': "SSD" if is_ssd else "HDD",
+                            'device': str(idx)
+                        })
+                    if svc_disks:
+                        smart_disks = svc_disks
         except Exception:
             pass
 
         if smart_disks:
             return smart_disks
 
-        # 2. Try LHM via COM WMI (Fallback if service is down)
+        # 4. Quaternary Fallback: Standard Win32_DiskDrive COM query
         try:
-            lhm_hw = _query_wmi_fast("LibreHardwareMonitor", "SELECT Identifier, Name FROM Hardware WHERE HardwareType='Storage'")
-            if lhm_hw:
-                sensors = _query_wmi_fast("LibreHardwareMonitor", "SELECT Identifier, Name, SensorType, Value FROM Sensor")
-                for hw in lhm_hw:
-                    hw_id = str(hw.get('Identifier', ''))
-                    model_name = str(hw.get('Name', 'Unknown'))
-                    hw_sensors = [s for s in sensors if str(s.get('Identifier', '')).startswith(hw_id)]
-                    
-                    temp_val = 0.0
-                    health_pct = 100.0
-                    
-                    for s in hw_sensors:
-                        stype = str(s.get('SensorType', ''))
-                        sname = str(s.get('Name', ''))
-                        sval = float(s.get('Value') or 0)
-                        
-                        if stype == 'Temperature' and temp_val == 0:
-                            temp_val = sval
-                        elif 'Percentage Used' in sname or 'Degradation' in sname:
-                            health_pct = max(0.0, min(100.0, 100.0 - sval))
-                        elif 'Remaining Life' in sname or 'Available Spare' in sname:
-                            health_pct = max(0.0, min(100.0, sval))
-                            
-                    is_ssd = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "WD", "SAMSUNG", "KINGSTON", "CRUCIAL"])
-                    status_str = "OK"
-                    if health_pct < 20: status_str = "Warning"
-                    if health_pct < 5: status_str = "Critical"
-                    
-                    smart_disks.append({
-                        'model': model_name,
-                        'temp': round(temp_val, 0),
-                        'health_percent': round(health_pct, 0),
-                        'status': status_str,
-                        'type': "SSD" if is_ssd else "HDD"
-                    })
-        except Exception:
-            pass
+            disks = _query_wmi_fast("cimv2", "SELECT Model, Status, MediaType FROM Win32_DiskDrive")
+            failures = _query_wmi_fast("wmi", "SELECT Active, PredictFailure FROM MSStorageDriver_FailurePredictStatus")
+            predict_failed = any(f.get('PredictFailure', False) for f in failures) if failures else False
 
-        # 3. Fallback: Standard Win32_DiskDrive COM query if empty
-        if not smart_disks:
-            try:
-                disks = _query_wmi_fast("cimv2", "SELECT Model, Status, MediaType FROM Win32_DiskDrive")
-                failures = _query_wmi_fast("wmi", "SELECT Active, PredictFailure FROM MSStorageDriver_FailurePredictStatus")
-                predict_failed = any(f.get('PredictFailure', False) for f in failures)
-                
-                for d in disks:
-                    model_name = str(d.get('Model', 'Disk Drive'))
-                    media_type = str(d.get('MediaType', '')).upper()
-                    is_ssd = "SSD" in media_type or any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "WD", "SAMSUNG", "KINGSTON", "CRUCIAL"])
-                    
-                    health_pct = 50.0 if predict_failed else 100.0
-                    status_str = "Warning" if predict_failed else "OK"
-                    
-                    smart_disks.append({
-                        'model': model_name,
-                        'temp': 0.0,
-                        'health_percent': health_pct,
-                        'status': status_str,
-                        'type': "SSD" if is_ssd else "HDD"
-                    })
-            except Exception as e:
-                print(f"[Hardware] SMART disks error: {e}")
+            for idx, d in enumerate(disks or []):
+                model_name = str(d.get('Model', 'Disk Drive'))
+                media_type = str(d.get('MediaType', '')).upper()
+                if "HDD" in media_type:
+                    is_ssd = False
+                elif "SSD" in media_type:
+                    is_ssd = True
+                elif wmi_type_map.get(str(idx)):
+                    is_ssd = wmi_type_map.get(str(idx)) == "SSD"
+                elif _infer_media_type:
+                    is_ssd = "SSD" in _infer_media_type(model_name, media_type, "", "").upper()
+                else:
+                    is_ssd = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "970 EVO", "980", "990 PRO"])
+
+                health_pct = 50.0 if predict_failed else 100.0
+                status_str = "Warning" if predict_failed else "OK"
+
+                smart_disks.append({
+                    'model': model_name,
+                    'temp': 0.0,
+                    'health_percent': health_pct,
+                    'status': status_str,
+                    'type': "SSD" if is_ssd else "HDD",
+                    'device': str(idx)
+                })
+        except Exception as e:
+            print(f"[Hardware] SMART disks error: {e}")
 
         return smart_disks
 
@@ -774,10 +860,18 @@ class HardwareMonitor:
             return details
 
         try:
+            try:
+                from utils.drive_utils import _infer_media_type
+            except Exception:
+                _infer_media_type = None
+
             physical_disks = _query_wmi_fast("cimv2", "SELECT Model FROM Win32_DiskDrive")
             model_name = str(physical_disks[0].get('Model', 'Unknown')) if physical_disks else "Unknown"
-            is_nvme = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "WD_BLACK", "SAMSUNG", "KINGSTON", "CRUCIAL"])
-            disk_type = "SSD" if is_nvme else "HDD"
+            if _infer_media_type:
+                disk_type = "SSD" if "SSD" in _infer_media_type(model_name, "", "", "").upper() else "HDD"
+            else:
+                is_nvme = any(kw in model_name.upper() for kw in ["NVME", "SSD", "M.2", "970 EVO", "980", "990 PRO"])
+                disk_type = "SSD" if is_nvme else "HDD"
 
             if PSUTIL_AVAILABLE:
                 for part in psutil.disk_partitions():
@@ -800,46 +894,71 @@ class HardwareMonitor:
     
     def get_disk_io_speed(self) -> Dict:
         """
-        Get disk I/O speeds (read/write MB/s).
+        Get disk I/O speeds (read/write MB/s) globally and per physical disk.
         
         Returns:
-            Dict with read_mbps, write_mbps
+            Dict with read_mbps, write_mbps, per_disk
         """
         if not hasattr(self, '_last_disk_io'):
             self._last_disk_io = None
             self._last_disk_io_time = 0
+            self._last_perdisk_io = {}
+            self._last_perdisk_time = 0
         
         if PSUTIL_AVAILABLE:
             try:
                 io = psutil.disk_io_counters()
                 current_time = time.time()
                 
-                read_speed = 0
-                write_speed = 0
+                read_speed = 0.0
+                write_speed = 0.0
                 
                 if self._last_disk_io and self._last_disk_io_time > 0:
                     elapsed = current_time - self._last_disk_io_time
                     if elapsed > 0:
                         read_diff = io.read_bytes - self._last_disk_io.read_bytes
                         write_diff = io.write_bytes - self._last_disk_io.write_bytes
-                        read_speed = (read_diff / elapsed) / (1024 * 1024)  # MB/s
-                        write_speed = (write_diff / elapsed) / (1024 * 1024)  # MB/s
+                        read_speed = max(0.0, (read_diff / elapsed) / (1024 * 1024))  # MB/s
+                        write_speed = max(0.0, (write_diff / elapsed) / (1024 * 1024))  # MB/s
                 
                 self._last_disk_io = io
                 self._last_disk_io_time = current_time
                 
+                # Per-disk speed calculation
+                per_disk_speeds = {}
+                try:
+                    perdisk = psutil.disk_io_counters(perdisk=True)
+                    if hasattr(self, '_last_perdisk_io') and self._last_perdisk_io and getattr(self, '_last_perdisk_time', 0) > 0:
+                        per_elapsed = current_time - self._last_perdisk_time
+                        if per_elapsed > 0:
+                            for d_name, d_stat in perdisk.items():
+                                if d_name in self._last_perdisk_io:
+                                    last_stat = self._last_perdisk_io[d_name]
+                                    r_diff = d_stat.read_bytes - last_stat.read_bytes
+                                    w_diff = d_stat.write_bytes - last_stat.write_bytes
+                                    r_mbps = max(0.0, (r_diff / per_elapsed) / (1024 * 1024))
+                                    w_mbps = max(0.0, (w_diff / per_elapsed) / (1024 * 1024))
+                                    per_disk_speeds[d_name] = {
+                                        "read_mbps": r_mbps,
+                                        "write_mbps": w_mbps,
+                                        "total_mbps": r_mbps + w_mbps
+                                    }
+                    self._last_perdisk_io = perdisk
+                    self._last_perdisk_time = current_time
+                except Exception:
+                    pass
+                
                 return {
                     "read_mbps": read_speed,
-                    "write_mbps": write_speed
+                    "write_mbps": write_speed,
+                    "per_disk": per_disk_speeds
                 }
             except Exception:
                 pass
         
-        return {"read_mbps": 0, "write_mbps": 0}
+        return {"read_mbps": 0.0, "write_mbps": 0.0, "per_disk": {}}
     
-    # ============================================
-    # NETWORK FUNCTIONS
-    # ============================================
+    # Network adapter throughput metrics
     
     def get_network_stats(self) -> Dict:
         """
@@ -882,9 +1001,7 @@ class HardwareMonitor:
         
         return {"download_mbps": 0, "upload_mbps": 0, "total_received_bytes": 0, "total_sent_bytes": 0}
     
-    # ============================================
-    # TEMPERATURE FUNCTIONS
-    # ============================================
+    # Hardware sensor polling and temperature caches
     
     def get_temperatures(self) -> Dict:
         """
@@ -901,9 +1018,7 @@ class HardwareMonitor:
         # NVIDIA temp/power — far superior to C++ hardware_utils which lacks all of these.
         return self._temp_cache.copy()
     
-    # ============================================
-    # ALL-IN-ONE SNAPSHOT
-    # ============================================
+    # Aggregated system performance snapshot
     
     def get_snapshot(self) -> Dict:
         """

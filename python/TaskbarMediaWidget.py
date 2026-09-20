@@ -64,13 +64,17 @@ def _render_svg_icon(svg_xml: str, size: int = 14, color: str = "#FF5B06", w: in
 def _get_taskbar_icon(filename: str, fallback_svg: str = "", size: int = 14, color: str = "#FF5B06") -> QIcon:
     """Load icon from 'UI Taskbar Icons' directory with fallback to inline SVG."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    icon_path = os.path.join(base_dir, "UI Taskbar Icons", filename)
-    if not os.path.exists(icon_path) and getattr(sys, 'frozen', False):
-        icon_path = os.path.join(getattr(sys, '_MEIPASS', ''), "UI Taskbar Icons", filename)
-        
-    if os.path.exists(icon_path):
-        return QIcon(icon_path)
-    elif fallback_svg:
+    base_no_ext = os.path.splitext(filename)[0]
+    candidates = [f"{base_no_ext}.svg", f"{base_no_ext}.png", filename]
+    
+    for fn in candidates:
+        icon_path = os.path.join(base_dir, "UI Taskbar Icons", fn)
+        if not os.path.exists(icon_path) and getattr(sys, 'frozen', False):
+            icon_path = os.path.join(getattr(sys, '_MEIPASS', ''), "UI Taskbar Icons", fn)
+        if os.path.exists(icon_path):
+            return QIcon(icon_path)
+            
+    if fallback_svg:
         return _render_svg_icon(fallback_svg, size=size, color=color)
     return QIcon()
 
@@ -654,7 +658,7 @@ class TaskbarMediaWidget(QWidget):
         self.btn_prev.setObjectName("taskbarMediaPrevBtn")
         self.btn_prev.setFixedSize(22, 22)
         self.btn_prev.setCursor(QCursor(Qt.PointingHandCursor))
-        self.btn_prev.setIcon(_get_taskbar_icon("taskbar-previous-icon.png", SVG_PREV, size=12, color="#FDA903"))
+        self.btn_prev.setIcon(_get_taskbar_icon("taskbar-previous-icon.svg", SVG_PREV, size=12, color="#FDA903"))
         self.btn_prev.setIconSize(QSize(12, 12))
         self.btn_prev.setToolTip("Previous Track")
         self.btn_prev.clicked.connect(self.prev_clicked.emit)
@@ -665,7 +669,7 @@ class TaskbarMediaWidget(QWidget):
         self.btn_play.setObjectName("taskbarMediaPlayBtn")
         self.btn_play.setFixedSize(24, 22)
         self.btn_play.setCursor(QCursor(Qt.PointingHandCursor))
-        self.btn_play.setIcon(_get_taskbar_icon("taskbar-play-icon.png", SVG_PLAY, size=13, color="#FF5B06"))
+        self.btn_play.setIcon(_get_taskbar_icon("taskbar-play-icon.svg", SVG_PLAY, size=13, color="#FF5B06"))
         self.btn_play.setIconSize(QSize(13, 13))
         self.btn_play.setToolTip("Play / Pause")
         self.btn_play.clicked.connect(self.playpause_clicked.emit)
@@ -676,7 +680,7 @@ class TaskbarMediaWidget(QWidget):
         self.btn_next.setObjectName("taskbarMediaNextBtn")
         self.btn_next.setFixedSize(22, 22)
         self.btn_next.setCursor(QCursor(Qt.PointingHandCursor))
-        self.btn_next.setIcon(_get_taskbar_icon("taskbar-next-icon.png", SVG_NEXT, size=12, color="#FDA903"))
+        self.btn_next.setIcon(_get_taskbar_icon("taskbar-next-icon.svg", SVG_NEXT, size=12, color="#FDA903"))
         self.btn_next.setIconSize(QSize(12, 12))
         self.btn_next.setToolTip("Next Track")
         self.btn_next.clicked.connect(self.next_clicked.emit)
@@ -1067,10 +1071,10 @@ class TaskbarMediaWidget(QWidget):
         if hasattr(self, 'lbl_title') and hasattr(self.lbl_title, 'set_playback_state'):
             self.lbl_title.set_playback_state(is_playing)
         if is_playing:
-            self.btn_play.setIcon(_get_taskbar_icon("taskbar-pause-icon.png", SVG_PAUSE, size=13, color="#FF5B06"))
+            self.btn_play.setIcon(_get_taskbar_icon("taskbar-pause-icon.svg", SVG_PAUSE, size=13, color="#FF5B06"))
             self.btn_play.setToolTip("Pause")
         else:
-            self.btn_play.setIcon(_get_taskbar_icon("taskbar-play-icon.png", SVG_PLAY, size=13, color="#FF5B06"))
+            self.btn_play.setIcon(_get_taskbar_icon("taskbar-play-icon.svg", SVG_PLAY, size=13, color="#FF5B06"))
             self.btn_play.setToolTip("Play")
 
     def set_visualizer_suppressed(self, suppressed: bool, animate: bool = True):

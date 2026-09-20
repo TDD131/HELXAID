@@ -8,6 +8,34 @@
 #include <algorithm>
 #include <cctype>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
+namespace {
+// Helper to convert UTF-8 string to wide string on Windows
+inline std::wstring utf8ToWide(const std::string& str) {
+    if (str.empty()) return std::wstring();
+    int size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+    if (size <= 1) return std::wstring();
+    std::wstring result(size - 1, 0);
+    MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &result[0], size);
+    return result;
+}
+
+// Helper to convert wide string to UTF-8 on Windows
+inline std::string wideToUtf8(const std::wstring& wstr) {
+    if (wstr.empty()) return std::string();
+    int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 1) return std::string();
+    std::string result(size - 1, 0);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &result[0], size, nullptr, nullptr);
+    return result;
+}
+} // anonymous namespace
+#endif
+
 namespace fs = std::filesystem;
 
 namespace helxaid {
@@ -17,7 +45,9 @@ static std::string getLowerExt(const std::string& path) {
     size_t pos = path.rfind('.');
     if (pos == std::string::npos) return "";
     std::string ext = path.substr(pos);
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
     return ext;
 }
 
@@ -37,15 +67,23 @@ std::vector<FileInfo> FileScanner::scanDirectory(
     std::vector<FileInfo> results;
     
     try {
-        auto options = recursive ? 
-            fs::directory_options::skip_permission_denied :
-            fs::directory_options::skip_permission_denied;
+#ifdef _WIN32
+        fs::path dirPath(utf8ToWide(directory));
+#else
+        fs::path dirPath = fs::u8path(directory);
+#endif
+        auto options = fs::directory_options::skip_permission_denied;
         
         if (recursive) {
-            for (const auto& entry : fs::recursive_directory_iterator(directory, options)) {
+            for (const auto& entry : fs::recursive_directory_iterator(dirPath, options)) {
                 FileInfo info;
-                info.path = entry.path().string();
-                info.name = entry.path().filename().string();
+#ifdef _WIN32
+                info.path = wideToUtf8(entry.path().wstring());
+                info.name = wideToUtf8(entry.path().filename().wstring());
+#else
+                info.path = entry.path().u8string();
+                info.name = entry.path().filename().u8string();
+#endif
                 info.extension = getLowerExt(info.name);
                 info.isDirectory = entry.is_directory();
                 
@@ -66,10 +104,15 @@ std::vector<FileInfo> FileScanner::scanDirectory(
                 }
             }
         } else {
-            for (const auto& entry : fs::directory_iterator(directory, options)) {
+            for (const auto& entry : fs::directory_iterator(dirPath, options)) {
                 FileInfo info;
-                info.path = entry.path().string();
-                info.name = entry.path().filename().string();
+#ifdef _WIN32
+                info.path = wideToUtf8(entry.path().wstring());
+                info.name = wideToUtf8(entry.path().filename().wstring());
+#else
+                info.path = entry.path().u8string();
+                info.name = entry.path().filename().u8string();
+#endif
                 info.extension = getLowerExt(info.name);
                 info.isDirectory = entry.is_directory();
                 

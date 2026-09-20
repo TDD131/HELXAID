@@ -79,13 +79,16 @@ class DebugConsoleWidget(QWidget):
             self.console.document().setMaximumBlockCount(5000)
         except Exception:
             pass
-        self.console.setFont(QFont("Orbitron", 9))
+        console_font = QFont("Orbitron", 9)
+        console_font.setFamilies(["Orbitron", "Yu Gothic UI", "Meiryo", "MS Gothic", "Segoe UI", "sans-serif"])
+        self.console.setFont(console_font)
         self.console.setStyleSheet("""
             QTextEdit {
                 background: #1e1e1e;
                 color: #d4d4d4;
                 border: 1px solid #3c3c3c;
                 border-radius: 4px;
+                font-family: 'Orbitron', 'Yu Gothic UI', 'Meiryo', 'MS Gothic', 'Segoe UI', sans-serif;
             }
         """)
         layout.addWidget(self.console)

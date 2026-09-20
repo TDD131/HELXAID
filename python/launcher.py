@@ -1,4 +1,34 @@
 import sys
+import os
+
+# --- Universal UTF-8 Environment & Console Code Page (CP_UTF8 / 65001) ---
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if sys.stdin and hasattr(sys.stdin, 'reconfigure'):
+    try:
+        sys.stdin.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+if sys.platform == 'win32':
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+        ctypes.windll.kernel32.SetConsoleCP(65001)
+    except Exception:
+        pass
+
+from ctypes import wintypes
 
 # --- Windows Service Intercept ---
 if len(sys.argv) > 1 and sys.argv[1] == "--run-service":
@@ -137,10 +167,14 @@ class TaskbarEventFilter(QAbstractNativeEventFilter):
         self._win_ref = weakref.ref(main_window)
         
     def nativeEventFilter(self, eventType, message):
+        if not message:
+            return False, 0
         try:
             import ctypes
             from ctypes import wintypes
             msg_ptr = int(message)
+            if not msg_ptr:
+                return False, 0
             from ctypes.wintypes import MSG
             msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
             
@@ -240,31 +274,19 @@ class DropFileNativeFilter:
 
         class _Filter(QAbstractNativeEventFilter):
             def nativeEventFilter(self, eventType, message):  # noqa: N802
+                if not message:
+                    return False, 0
                 WM_DROPFILES = 0x0233
                 try:
                     import ctypes
                     from ctypes import wintypes
                     msg_ptr = int(message)
+                    if not msg_ptr:
+                        return False, 0
                     from ctypes.wintypes import MSG
                     msg = ctypes.cast(msg_ptr, ctypes.POINTER(MSG)).contents
 
-                    if msg.message == WM_DROPFILES:
-                        pass # Continue processing drop files below
-                    else:
-                        # --- TASKBAR EVENT ROUTING ---
-                        parent = outer._win_ref()
-                        if parent is not None:
-                            if hasattr(parent, '_WM_TASKBARBUTTONCREATED') and msg.message == parent._WM_TASKBARBUTTONCREATED:
-                                print(f"[Taskbar ENFORCER] Caught TaskbarButtonCreated msg in QAbstractNativeEventFilter! Explorer assigned HWND: {hex(msg.hWnd)}")
-                                parent._verified_taskbar_hwnd = msg.hWnd
-                                parent._os_taskbar_proxy_hwnd = msg.hWnd
-                                from PySide6.QtCore import QTimer
-                                parent._os_taskbar_timer = QTimer(parent)
-                                parent._os_taskbar_timer.setSingleShot(True)
-                                parent._os_taskbar_timer.timeout.connect(parent._exec_os_taskbar_init)
-                                parent._os_taskbar_timer.start(500)
-                                return True, 0
-
+                    if msg.message != WM_DROPFILES:
                         return False, 0
 
                     _drop_debug_log(f"WM_DROPFILES caught via QAbstractNativeEventFilter. HDROP={hex(msg.wParam)}")
@@ -692,400 +714,265 @@ except Exception:
 TASKBAR_TOOLBAR_AVAILABLE = False
 
 # Button IDs (used for WM_COMMAND identification)
+# Button IDs (used for WM_COMMAND identification)
 BUTTON_PREV = 100
 BUTTON_PLAYPAUSE = 101
 BUTTON_NEXT = 102
 
 try:
+    # Inject candidate directories into sys.path so taskbar_native.pyd is always found
+    # regardless of CWD or frozen/debug context
+    _taskbar_native_candidates = [
+        os.path.dirname(os.path.abspath(__file__)),                          # python/
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),         # workspace root
+        getattr(sys, '_MEIPASS', ''),                                         # PyInstaller
+    ]
+    for _p in _taskbar_native_candidates:
+        if _p and _p not in sys.path:
+            sys.path.insert(0, _p)
+
+    import taskbar_native
+    TASKBAR_NATIVE_AVAILABLE = True
+    print(f"[Taskbar] taskbar_native C++ module loaded successfully.", flush=True)
+except Exception as _e:
+    taskbar_native = None
+    TASKBAR_NATIVE_AVAILABLE = False
+    print(f"[Taskbar WARNING] taskbar_native not available: {_e}", flush=True)
+
+try:
     import ctypes
-    from ctypes import Structure, c_int, c_uint, c_wchar, POINTER, byref, windll, c_void_p, WINFUNCTYPE, HRESULT
-    from ctypes.wintypes import HWND, HICON, DWORD, UINT, BOOL
-    
-    # GUID structure
-    class GUID(Structure):
-        _fields_ = [
-            ("Data1", ctypes.c_ulong),
-            ("Data2", ctypes.c_ushort),
-            ("Data3", ctypes.c_ushort),
-            ("Data4", ctypes.c_ubyte * 8)
-        ]
-    
-    # THUMBBUTTON structure for Windows 7+ taskbar
-    class THUMBBUTTON(Structure):
-        _fields_ = [
-            ("dwMask", DWORD),
-            ("iId", UINT),
-            ("iBitmap", UINT),
-            ("hIcon", HICON),
-            ("szTip", c_wchar * 260),
-            ("dwFlags", DWORD),
-        ]
-    
-    # Constants
-    THB_BITMAP = 0x1
-    THB_ICON = 0x2
-    THB_TOOLTIP = 0x4
-    THB_FLAGS = 0x8
-    THBF_ENABLED = 0x0
-    THBF_DISABLED = 0x1
-    THBF_DISMISSONCLICK = 0x2
-    THBF_NOBACKGROUND = 0x4
-    THBF_HIDDEN = 0x8
-    
-    # GUIDs
-    CLSID_TaskbarList = GUID(0x56FDF344, 0xFD6D, 0x11d0, (ctypes.c_ubyte * 8)(0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90))
-    IID_ITaskbarList3 = GUID(0xEA1AFB91, 0x9E28, 0x4B86, (ctypes.c_ubyte * 8)(0x90, 0xE9, 0x9E, 0x9F, 0x8A, 0x5E, 0xEF, 0xAF))
-    
-    # COM function prototypes
-    CoCreateInstance = windll.ole32.CoCreateInstance
-    CoCreateInstance.argtypes = [POINTER(GUID), c_void_p, DWORD, POINTER(GUID), POINTER(c_void_p)]
-    CoCreateInstance.restype = HRESULT
-    
-    CLSCTX_INPROC_SERVER = 0x1
-    
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+
     class TaskbarThumbnailToolbar:
-        """Helper class to manage Windows 7+ taskbar thumbnail toolbar buttons using pure ctypes."""
+        """Helper class to manage Windows 7+ taskbar thumbnail toolbar buttons and progress using native C++ taskbar_native extension."""
         
         def __init__(self, hwnd, on_prev=None, on_playpause=None, on_next=None):
             self.hwnd = hwnd
             self.on_prev = on_prev
             self.on_playpause = on_playpause
             self.on_next = on_next
-            self.taskbar = None
+            self.manager = None
             self.buttons_added = False
             self._is_playing = False
+            self.icon_prev = 0
+            self.icon_play = 0
+            self.icon_pause = 0
+            self.icon_next = 0
             
-            # Load icons
+            # Load icons via native memory buffer
             self._load_icons()
             
-            # Initialize taskbar interface
+            # Initialize native taskbar manager
             self._init_taskbar()
         
         def _load_icons(self):
-            """Load media control icons from PNG files."""
+            """Load media control icons directly into 32-bit GDI HICONs using native memory buffers."""
             try:
                 from PIL import Image
-                import os
+                script_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+                candidates = [
+                    os.path.join(script_dir, "UI Taskbar Icons"),
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Taskbar Icons"),
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)), "python", "UI Taskbar Icons"),
+                    os.path.join(os.getcwd(), "python", "UI Taskbar Icons"),
+                    os.path.join(os.getcwd(), "UI Taskbar Icons"),
+                ]
+                icon_dir = ""
+                for c in candidates:
+                    if c and os.path.isdir(c):
+                        icon_dir = c
+                        break
                 
-                user32 = windll.user32
-                CreateIconFromResourceEx = user32.CreateIconFromResourceEx
-                
-                # CRITICAL: Use module-level SCRIPT_DIR, NOT __file__-based resolution.
-                # In a PyInstaller --onefile frozen build, __file__ for the main script
-                # resolves to the .exe path itself (e.g. dist\HELXAID.exe), so
-                # os.path.dirname(__file__) = the 'dist' folder — NOT sys._MEIPASS,
-                # where all bundled assets (UI Taskbar Icons/, etc.) are actually
-                # extracted at runtime. SCRIPT_DIR is already set to sys._MEIPASS
-                # in frozen builds (see module top), so it always resolves correctly.
-                script_dir = SCRIPT_DIR
-                print(f"[Taskbar DEBUG] Loading icons from: {os.path.join(script_dir, 'UI Taskbar Icons')}")
-                def load_icon_from_png(filename):
-                    """Load a PNG file and convert to HICON using win32gui."""
-                    path = os.path.join(script_dir, filename)
-                    if not os.path.exists(path):
-                        print(f"[Taskbar DEBUG] Icon NOT found on disk: {path}")
+                def load_icon(filename):
+                    if not icon_dir or not taskbar_native:
                         return 0
-                    
+                    base_no_ext = os.path.splitext(filename)[0]
+                    candidates_fn = [f"{base_no_ext}.svg", f"{base_no_ext}.png", filename]
+                    path = None
+                    for c_fn in candidates_fn:
+                        test_p = os.path.join(icon_dir, c_fn)
+                        if os.path.exists(test_p):
+                            path = test_p
+                            break
+                    if not path or not os.path.exists(path):
+                        return 0
                     try:
-                        # Open image and resize to 16x16 for taskbar
-                        img = Image.open(path)
-                        img = img.convert("RGBA")
-                        img = img.resize((16, 16), Image.Resampling.LANCZOS)
-                        
-                        # Save to temporary ICO file
-                        import tempfile, win32gui, win32con
-                        fd, temp_ico_path = tempfile.mkstemp(suffix=".ico")
-                        os.close(fd)
-                        img.save(temp_ico_path, format='ICO', sizes=[(16, 16)])
-                        
-                        # Load icon using native Windows API
-                        icon_flags = win32con.LR_LOADFROMFILE | win32con.LR_DEFAULTSIZE
-                        hicon = win32gui.LoadImage(0, temp_ico_path, win32con.IMAGE_ICON, 16, 16, icon_flags)
-                        
-                        try:
-                            os.remove(temp_ico_path)
-                        except:
-                            pass
-                            
-                        if not hicon:
-                            print(f"[Taskbar DEBUG] LoadImage returned NULL for {filename}")
-                            return 0
-                            
-                        return hicon
+                        if path.lower().endswith('.svg'):
+                            from PySide6.QtSvg import QSvgRenderer
+                            from PySide6.QtGui import QImage, QPainter
+                            from PySide6.QtCore import Qt
+                            renderer = QSvgRenderer(path)
+                            qimg = QImage(20, 20, QImage.Format_RGBA8888)
+                            qimg.fill(Qt.transparent)
+                            p = QPainter(qimg)
+                            p.setRenderHint(QPainter.Antialiasing)
+                            p.setRenderHint(QPainter.SmoothPixmapTransform)
+                            renderer.render(p)
+                            p.end()
+                            raw_bytes = bytes(qimg.constBits()[:20 * 20 * 4])
+                        else:
+                            img = Image.open(path).convert("RGBA").resize((20, 20), Image.Resampling.LANCZOS)
+                            raw_bytes = img.tobytes()
+                        hicon = taskbar_native.create_icon_from_rgba(raw_bytes, 20, 20)
+                        return hicon or 0
                     except Exception as e:
-                        print(f"[Taskbar DEBUG] Error loading icon {filename}: {e}")
+                        print(f"[Taskbar DEBUG] Error loading icon {filename}: {e}", flush=True)
                         return 0
                 
-                self.icon_prev = load_icon_from_png("UI Taskbar Icons/taskbar-previous-icon.png")
-                self.icon_play = load_icon_from_png("UI Taskbar Icons/taskbar-play-icon.png")
-                self.icon_pause = load_icon_from_png("UI Taskbar Icons/taskbar-pause-icon.png")
-                self.icon_next = load_icon_from_png("UI Taskbar Icons/taskbar-next-icon.png")
+                self.icon_prev = load_icon("taskbar-previous-icon.svg")
+                self.icon_play = load_icon("taskbar-play-icon.svg")
+                self.icon_pause = load_icon("taskbar-pause-icon.svg")
+                self.icon_next = load_icon("taskbar-next-icon.svg")
                 
-                print(f"[Taskbar DEBUG] Final HICON handles: prev={self.icon_prev}, play={self.icon_play}, pause={self.icon_pause}, next={self.icon_next}")
-                
-                # If any icons failed, use simple fallback
-                if not all([self.icon_prev, self.icon_play, self.icon_pause, self.icon_next]):
-                    print("[Taskbar DEBUG] Some icons missing, attempting system fallback...")
-                    self._load_fallback_icons()
-                    
+                print(f"[Taskbar DEBUG] Loaded Native HICON handles: prev={self.icon_prev}, play={self.icon_play}, pause={self.icon_pause}, next={self.icon_next}", flush=True)
             except Exception as e:
-                print(f"[Taskbar DEBUG] Global icon loading error: {e}")
-                self._load_fallback_icons()
-        
-        def _load_fallback_icons(self):
-            """Use system icons as fallback."""
-            try:
-                shell32 = windll.shell32
-                ExtractIconExW = shell32.ExtractIconExW
-                
-                hicons_large = (HICON * 1)()
-                hicons_small = (HICON * 1)()
-                
-                shell32_path = r"C:\Windows\System32\shell32.dll"
-                
-                # Use generic arrow icons as fallback
-                ExtractIconExW(shell32_path, 137, hicons_large, hicons_small, 1)
-                self.icon_prev = hicons_small[0] if hicons_small[0] else 0
-                
-                ExtractIconExW(shell32_path, 131, hicons_large, hicons_small, 1)
-                self.icon_play = hicons_small[0] if hicons_small[0] else 0
-                
-                ExtractIconExW(shell32_path, 132, hicons_large, hicons_small, 1)
-                self.icon_pause = hicons_small[0] if hicons_small[0] else 0
-                
-                ExtractIconExW(shell32_path, 138, hicons_large, hicons_small, 1)
-                self.icon_next = hicons_small[0] if hicons_small[0] else 0
-                print("[Taskbar DEBUG] System fallback icons loaded.")
-            except Exception as e:
-                print(f"[Taskbar DEBUG] Fallback icon error: {e}")
-                self.icon_prev = self.icon_play = self.icon_pause = self.icon_next = 0
+                print(f"[Taskbar ERROR] Failed to load native taskbar icons: {e}", flush=True)
         
         def _init_taskbar(self):
-            """Initialize the ITaskbarList3 COM interface using pure ctypes."""
+            """Initialize the native C++ TaskbarManager."""
             if not globals().get('ENABLE_TASKBAR', True):
-                print("[Taskbar DEBUG] Taskbar initialization skipped due to ENABLE_TASKBAR flag.")
                 return
             try:
-                # Initialize COM
-                print("[Taskbar DEBUG] Pre-CoInitialize...", flush=True)
-                windll.ole32.CoInitialize(None)
-                
-                # Create TaskbarList COM object
-                taskbar_ptr = c_void_p()
-                print("[Taskbar DEBUG] Engaging CoCreateInstance...", flush=True)
-                hr = CoCreateInstance(
-                    byref(CLSID_TaskbarList),
-                    None,
-                    CLSCTX_INPROC_SERVER,
-                    byref(IID_ITaskbarList3),
-                    byref(taskbar_ptr)
-                )
-                
-                if hr != 0 or not taskbar_ptr.value:
-                    print(f"[Taskbar ERROR] CoCreateInstance failed: HRESULT {hex(hr & 0xFFFFFFFF)}", flush=True)
-                    self.taskbar = None
-                    return
-                
-                self.taskbar = taskbar_ptr.value
-                print(f"[Taskbar DEBUG] Taskbar object address: {hex(self.taskbar)}", flush=True)
-                
-                # Get the VTable address (the value at the object address)
-                # We use [0] to get the value at that address directly from ctypes
-                print("[Taskbar DEBUG] Fetching VTable...", flush=True)
-                vtable_addr = ctypes.cast(self.taskbar, POINTER(c_void_p))[0]
-                if not vtable_addr:
-                    print("[Taskbar ERROR] VTable address is NULL!", flush=True)
-                    self.taskbar = None
-                    return
-                
-                print(f"[Taskbar DEBUG] VTable address: {hex(vtable_addr)}", flush=True)
-                
-                # Get the array of function pointers from the VTable
-                # Using 32 as a safe upper bound for ITaskbarList3 (which has ~21 methods)
-                self._vtable = ctypes.cast(vtable_addr, POINTER(c_void_p * 32)).contents
-                
-                # VTable index 3: HrInit (optional on modern Windows 10/11)
-                try:
-                    HrInit_addr = self._vtable[3]
-                    HrInit_proto = WINFUNCTYPE(ctypes.c_long, c_void_p)
-                    HrInit = HrInit_proto(HrInit_addr)
-                    hr = HrInit(self.taskbar)
-                    print(f"[Taskbar DEBUG] HrInit returned: {hex(hr & 0xFFFFFFFF)}", flush=True)
-                except Exception as e:
-                    print(f"[Taskbar DEBUG] HrInit optional call bypassed: {e}", flush=True)
-                    
-                print("[Taskbar SUCCESS] ITaskbarList3 interface ready.", flush=True)
-                    
+                if TASKBAR_NATIVE_AVAILABLE and taskbar_native:
+                    self.manager = taskbar_native.TaskbarManager()
+                    if self.manager and self.manager.is_available():
+                        print("[Taskbar SUCCESS] Native C++ TaskbarManager initialized.", flush=True)
+                    else:
+                        print("[Taskbar WARNING] Native C++ TaskbarManager unavailable.", flush=True)
             except Exception as e:
-                print(f"[Taskbar FATAL] Critical COM crash: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-                self.taskbar = None
-        
+                print(f"[Taskbar ERROR] TaskbarManager init error: {e}", flush=True)
+                self.manager = None
+
         def add_buttons(self, target_hwnd=None):
-            """Add the thumbnail toolbar buttons."""
-            if not self.taskbar or self.buttons_added:
+            """Add the thumbnail toolbar buttons via C++ native."""
+            if target_hwnd:
+                self.hwnd = target_hwnd
+            target_hwnd = self.hwnd
+            if self.buttons_added:
+                return True
+            if not self.manager or not self.manager.is_available():
                 return False
             
             try:
-                # Target exact MS proxy or root
-                if target_hwnd is None:
-                    user32 = windll.user32
-                    GA_ROOT = 2
-                    root_hwnd = user32.GetAncestor(self.hwnd, GA_ROOT)
-                    target_hwnd = root_hwnd if root_hwnd else self.hwnd
-                
-                print(f"[Taskbar DEBUG] Initializing AddButtons for HWND: {hex(target_hwnd)}", flush=True)
-                
-                buttons = (THUMBBUTTON * 3)()
-                
-                # Previous button
-                buttons[0].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
-                buttons[0].iId = BUTTON_PREV
-                buttons[0].iBitmap = 0
-                buttons[0].hIcon = self.icon_prev
-                buttons[0].szTip = "Previous"
-                buttons[0].dwFlags = THBF_ENABLED
-                
-                # Play/Pause toggle button
-                buttons[1].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
-                buttons[1].iId = BUTTON_PLAYPAUSE
-                buttons[1].iBitmap = 0
-                buttons[1].hIcon = self.icon_play
-                buttons[1].szTip = "Play"
-                buttons[1].dwFlags = THBF_ENABLED
-                
-                # Next button
-                buttons[2].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
-                buttons[2].iId = BUTTON_NEXT
-                buttons[2].iBitmap = 0
-                buttons[2].hIcon = self.icon_next
-                buttons[2].szTip = "Next"
-                buttons[2].dwFlags = THBF_ENABLED
-                
-                # ThumbBarAddButtons (VTable index 15)
-                ThumbBarAddButtons_addr = self._vtable[15]
-                ThumbBarAddButtons_proto = WINFUNCTYPE(ctypes.c_long, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
-                ThumbBarAddButtons = ThumbBarAddButtons_proto(ThumbBarAddButtons_addr)
-                
-                print(f"[Taskbar DEBUG] Calling ThumbBarAddButtons(taskbar={hex(self.taskbar)}, hwnd={hex(target_hwnd)})...", flush=True)
-                hr = ThumbBarAddButtons(self.taskbar, target_hwnd, 3, buttons)
-                
+                hr = self.manager.add_buttons(
+                    target_hwnd,
+                    self.icon_prev,
+                    self.icon_play,
+                    self.icon_pause,
+                    self.icon_next,
+                    self._is_playing
+                )
                 if hr == 0:
                     self.buttons_added = True
-                    print("[Taskbar SUCCESS] Taskbar buttons successfully binded.", flush=True)
+                    print(f"[Taskbar SUCCESS] Native buttons successfully mapped on HWND {hex(target_hwnd)}", flush=True)
                     return True
                 else:
-                    print(f"[Taskbar ERROR] ThumbBarAddButtons failed: {hex(hr & 0xFFFFFFFF)}", flush=True)
-                    return False
-                    
+                    print(f"[Taskbar DEBUG] Native add_buttons returned hr={hex(hr & 0xFFFFFFFF)} on HWND {hex(target_hwnd)}", flush=True)
             except Exception as e:
-                print(f"[Taskbar FATAL] Error adding taskbar buttons: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-                return False
-                
-        def verify_buttons(self, target_hwnd):
-            """Test if buttons genuinely exist by calling ThumbBarUpdateButtons."""
-            if not self.taskbar or not self.buttons_added:
-                return False
-            
-            try:
-                buttons = (THUMBBUTTON * 1)()
-                buttons[0].dwMask = THB_TOOLTIP
-                buttons[0].iId = BUTTON_PREV
-                buttons[0].szTip = "Previous"
-                
-                ThumbBarUpdateButtons_proto = WINFUNCTYPE(ctypes.c_long, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
-                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(self._vtable[16])
-                
-                hr = ThumbBarUpdateButtons(self.taskbar, target_hwnd, 1, buttons)
-                return (hr == 0)
-            except Exception as e:
-                print(f"[Taskbar VERIFY FATAL] {e}")
-                return False
-        
+                print(f"[Taskbar ERROR] Native add_buttons exception: {e}", flush=True)
+            return False
+
         def update_play_state(self, is_playing, target_hwnd=None):
-            """Update the play/pause button icon based on playback state."""
-            if not self.taskbar or not self.buttons_added:
-                return
-            
+            """Update play/pause state in C++ native."""
             self._is_playing = is_playing
-            
-            try:
-                if target_hwnd is None:
-                    target_hwnd = self.hwnd
-                    
-                buttons = (THUMBBUTTON * 1)()
-                buttons[0].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
-                buttons[0].iId = BUTTON_PLAYPAUSE
-                buttons[0].iBitmap = 0
-                buttons[0].hIcon = self.icon_pause if is_playing else self.icon_play
-                buttons[0].szTip = "Pause" if is_playing else "Play"
-                buttons[0].dwFlags = THBF_ENABLED
-                
-                ThumbBarUpdateButtons_proto = WINFUNCTYPE(ctypes.c_long, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
-                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(self._vtable[16])
-                
-                ThumbBarUpdateButtons(self.taskbar, target_hwnd, 1, buttons)
-            except Exception as e:
-                print(f"[Taskbar ERROR] Could not update play state: {e}")
-        
-        def set_buttons_visible(self, visible: bool, target_hwnd=None):
-            """Hide or show taskbar thumbnail buttons dynamically."""
-            if not self.taskbar or not self.buttons_added:
+            if not self.manager or not self.manager.is_available():
                 return
-            
+            if target_hwnd:
+                self.hwnd = target_hwnd
+            target_hwnd = self.hwnd
             try:
-                if target_hwnd is None:
-                    target_hwnd = self.hwnd
-                    
-                flags = THBF_ENABLED if visible else THBF_HIDDEN
-                
-                buttons = (THUMBBUTTON * 3)()
-                
-                # Button 0: Prev
-                buttons[0].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
-                buttons[0].iId = BUTTON_PREV
-                buttons[0].iBitmap = 0
-                buttons[0].hIcon = self.icon_prev
-                buttons[0].szTip = "Previous"
-                buttons[0].dwFlags = flags
-                
-                # Button 1: Play/Pause
-                buttons[1].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
-                buttons[1].iId = BUTTON_PLAYPAUSE
-                buttons[1].iBitmap = 0
-                buttons[1].hIcon = self.icon_pause if self._is_playing else self.icon_play
-                buttons[1].szTip = "Pause" if self._is_playing else "Play"
-                buttons[1].dwFlags = flags
-                
-                # Button 2: Next
-                buttons[2].dwMask = THB_ICON | THB_TOOLTIP | THB_FLAGS
-                buttons[2].iId = BUTTON_NEXT
-                buttons[2].iBitmap = 0
-                buttons[2].hIcon = self.icon_next
-                buttons[2].szTip = "Next"
-                buttons[2].dwFlags = flags
-                
-                ThumbBarUpdateButtons_proto = WINFUNCTYPE(ctypes.c_long, c_void_p, HWND, UINT, POINTER(THUMBBUTTON))
-                ThumbBarUpdateButtons = ThumbBarUpdateButtons_proto(self._vtable[16])
-                
-                ThumbBarUpdateButtons(self.taskbar, target_hwnd, 3, buttons)
-                print(f"[Taskbar DEBUG] set_buttons_visible({visible}) on HWND {hex(target_hwnd)}", flush=True)
+                self.manager.update_play_state(target_hwnd, is_playing, self.icon_play, self.icon_pause)
             except Exception as e:
-                print(f"[Taskbar ERROR] Could not update button visibility: {e}")
-        
+                print(f"[Taskbar ERROR] Native update_play_state exception: {e}", flush=True)
+
+        def set_buttons_visible(self, visible: bool, target_hwnd=None):
+            """Set thumbnail buttons visibility in C++ native."""
+            if not self.manager or not self.manager.is_available():
+                return
+            if target_hwnd:
+                self.hwnd = target_hwnd
+            target_hwnd = self.hwnd
+            try:
+                self.manager.set_buttons_visible(
+                    target_hwnd,
+                    visible,
+                    self.icon_prev,
+                    self.icon_play,
+                    self.icon_pause,
+                    self.icon_next,
+                    self._is_playing
+                )
+            except Exception as e:
+                print(f"[Taskbar ERROR] Native set_buttons_visible exception: {e}", flush=True)
+
+        def set_progress(self, current_ms: int, total_ms: int, target_hwnd=None):
+            """Set live taskbar progress bar in C++ native."""
+            if not self.manager or not self.manager.is_available():
+                return
+            if target_hwnd:
+                self.hwnd = target_hwnd
+            target_hwnd = self.hwnd
+            try:
+                self.manager.set_progress(target_hwnd, int(current_ms), int(total_ms))
+            except Exception:
+                pass
+
+        def reset(self):
+            """Reset the native taskbar manager (e.g. after Windows Explorer restart/crash)."""
+            self.buttons_added = False
+            if self.manager:
+                if hasattr(self.manager, 'reset'):
+                    try:
+                        res = self.manager.reset()
+                        print(f"[Taskbar SUCCESS] Native C++ TaskbarManager reset returned {res}.", flush=True)
+                        return res
+                    except Exception as e:
+                        print(f"[Taskbar WARNING] Native reset failed ({e}), falling back to reinitialization.", flush=True)
+                if hasattr(self.manager, 'release'):
+                    try:
+                        self.manager.release()
+                    except Exception:
+                        pass
+                if hasattr(self.manager, 'init'):
+                    try:
+                        res = self.manager.init()
+                        return res
+                    except Exception:
+                        pass
+            # Recreate native manager instance if reset() / init() method is not bound on C++ object
+            self._init_taskbar()
+            return bool(self.manager and self.manager.is_available())
+
         def handle_button_click(self, button_id):
             """Handle a button click from WM_COMMAND."""
-            print(f"[Taskbar DEBUG] handle_button_click called with id={button_id}", flush=True)
             if button_id == BUTTON_PREV and self.on_prev:
                 self.on_prev()
             elif button_id == BUTTON_PLAYPAUSE and self.on_playpause:
                 self.on_playpause()
             elif button_id == BUTTON_NEXT and self.on_next:
                 self.on_next()
-    
+
+        def __del__(self):
+            """Destroy GDI HICONs when toolbar is disposed."""
+            if taskbar_native:
+                for ico in [self.icon_prev, self.icon_play, self.icon_pause, self.icon_next]:
+                    if ico:
+                        try:
+                            taskbar_native.destroy_icon(ico)
+                        except Exception:
+                            pass
+        
+        @property
+        def taskbar(self):
+            return self.manager.is_available() if self.manager else False
+        
     TASKBAR_TOOLBAR_AVAILABLE = True
     
 except Exception as e:
@@ -1386,9 +1273,7 @@ def _create_shaped_bg_icon(pixmap):
         
         n_total = w * h
         
-        # ============================================================
-        # PHASE 1: Fast transparency mask + early exit for solid icons
-        # ============================================================
+        # Phase 1: fast transparency mask and early exit for solid icons
         # ARGB32 on little-endian (x86): pixel bytes are [B, G, R, A].
         # Alpha lives at byte offset 3 within each 4-byte pixel.
         # Reading raw bytes is 10-50x faster than per-pixel img.pixel().
@@ -1412,9 +1297,7 @@ def _create_shaped_bg_icon(pixmap):
         if n_transp < n_total * 0.02:
             return pixmap, False
         
-        # ============================================================
-        # PHASE 2: BFS exterior flood-fill + structural analysis
-        # ============================================================
+        # Phase 2: BFS exterior flood-fill and structural hole detection
         # Flood-fill from the canvas edges to mark all exterior-transparent
         # pixels.  Transparent pixels NOT reached = interior holes (enclosed
         # by the icon shape).  Examples: REPO's eye whites, Schedule I's
@@ -1481,9 +1364,7 @@ def _create_shaped_bg_icon(pixmap):
             if n_comp > 1:
                 needs_bg = True
         
-        # ============================================================
-        # PHASE 3: Isoperimetric ratio (boundary irregularity)
-        # ============================================================
+        # Phase 3: isoperimetric ratio boundary irregularity scoring
         # Only reached for single-component, hole-free icons with >= 2%
         # transparency (e.g. circles, triangles, organic silhouettes).
         #
@@ -1526,9 +1407,7 @@ def _create_shaped_bg_icon(pixmap):
         if not needs_bg:
             return pixmap, False
         
-        # ============================================================
-        # BUILD BACKGROUND + COMPOSITE
-        # ============================================================
+        # Build composite silhouette mask and final pixmap
         
         # --- Build filled-silhouette mask (holes filled in) ---
         bg_mask = QImage(w, h, QImage.Format.Format_ARGB32)
@@ -2101,10 +1980,36 @@ KNOWN_LAUNCHERS = {
     "amazon games.exe",
     # itch.io
     "itch.exe",
-    # TLauncher (Minecraft)
-    "tlauncher.exe",
+    # Roblox / Bloxstrap Bootstrappers
+    "bloxstrap.exe", "robloxplayerlauncher.exe", "robloxplayerinstaller.exe",
+    # Minecraft Launchers
+    "tlauncher.exe", "prismlauncher.exe", "multimc.exe",
+    "lunarclient.exe", "badlionclient.exe", "feather client.exe", "curseforge.exe", "modrinth app.exe",
+    # Heroic Games Launcher
+    "heroic.exe",
     # Overwolf
     "overwolf.exe",
+}
+
+# Bootstrapper/Launcher -> Game Executables association mapping.
+# For games with custom/community bootstrappers (e.g., Roblox with Bloxstrap,
+# Minecraft with Prism/Lunar/TLauncher), this maps launcher executables to their
+# known child game client processes for seamless lifecycle tracking.
+KNOWN_BOOTSTRAPPER_GAME_MAP = {
+    # Roblox & Bloxstrap
+    "bloxstrap.exe": {"robloxplayerbeta.exe", "robloxplayerlauncher.exe", "robloxstudio.exe"},
+    "robloxplayerlauncher.exe": {"robloxplayerbeta.exe"},
+    "robloxplayerinstaller.exe": {"robloxplayerbeta.exe"},
+    # Minecraft custom launchers
+    "tlauncher.exe": {"javaw.exe", "java.exe"},
+    "prismlauncher.exe": {"javaw.exe", "java.exe"},
+    "multimc.exe": {"javaw.exe", "java.exe"},
+    "lunarclient.exe": {"javaw.exe", "java.exe"},
+    "badlionclient.exe": {"javaw.exe", "java.exe"},
+    "feather client.exe": {"javaw.exe", "java.exe"},
+    "curseforge.exe": {"javaw.exe", "java.exe"},
+    # Heroic Games Launcher
+    "heroic.exe": {"legendary.exe", "gogdl.exe"},
 }
 
 # Generic Unreal Engine process names that many games share.
@@ -2166,9 +2071,11 @@ SYSTEM_PROCESS_BLACKLIST = {
     "msedgewebview2.exe",
     "cef.exe", "cefsharp.browsersubprocess.exe",
     # Roblox / Bloxstrap crash reporters and background watchers
-    "robloxcrashhandler.exe", "robloxcrashhandler64.exe", "robloxplayerlauncher.exe",
+    "robloxcrashhandler.exe", "robloxcrashhandler64.exe",
     # Windows error reporting / crashpad handlers
     "werfault.exe", "werfaultsecure.exe", "wermgr.exe", "crashpad_handler.exe",
+    # Setup and uninstaller binaries
+    "unwise.exe", "unwise32.exe", "unins000.exe", "unins001.exe",
     # Other game launcher background handlers
     "riotclientcrashhandler.exe", "eadesktop.exe", "link2ea.exe",
 }
@@ -9522,6 +9429,604 @@ class TabInitProfilerWindow(QWidget):
         main_layout.addLayout(btn_layout)
 
 
+class UninstallExternalToolsFloatingPanel(QFrame):
+    """
+    In-App Draggable Cyberpunk Floating Panel for Uninstalling External Tools.
+    Replaces native QDialog modal with a modern, glassmorphism QFrame matching
+    HELXAID's signature design system:
+    - Less border, more background-color
+    - 100% Orbitron typography
+    - Vector SVG iconography (trash-icon-white.svg, warning-icon.svg, HoverCloseButton)
+    - Dark translucent glassmorphism with QGraphicsDropShadowEffect
+    - Smooth draggable header with parent viewport boundary clamp
+    - Fade-in & fade-out entrance/exit animations via QPropertyAnimation
+    - Complete component names (setObjectName) on every UI element
+    
+    Component Name: UninstallExternalToolsFloatingPanel
+    """
+    def __init__(self, targets, launcher=None, parent=None):
+        super().__init__(parent or launcher)
+        from PySide6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve
+        from PySide6.QtWidgets import (
+            QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QWidget,
+            QScrollArea, QGraphicsOpacityEffect, QGraphicsDropShadowEffect
+        )
+        from PySide6.QtGui import QFont, QColor, QPixmap
+        from AnimatedButton import AnimatedButton, AnimatedCheckBox, HoverCloseButton
+
+        self.launcher = launcher
+        self.targets = targets
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setObjectName("UninstallExternalToolsFloatingPanel")
+
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+        self._uninstall_worker = None
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        icons_dir = os.path.join(script_dir, "UI Icons")
+        trash_icon_path = os.path.join(icons_dir, "trash-icon-white.svg").replace('\\', '/')
+        warning_icon_path = os.path.join(icons_dir, "warning-icon.svg").replace('\\', '/')
+
+        self.setFixedSize(580, 520)
+
+        # Authentic HELXAID Floating Drop Shadow
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 220))
+        shadow.setOffset(0, 8)
+        self.setGraphicsEffect(shadow)
+
+        self.setStyleSheet("""
+            QFrame#UninstallExternalToolsFloatingPanel {
+                background-color: rgba(12, 12, 16, 0.98);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#uninstallToolsTitleBar {
+                background-color: rgba(6, 6, 8, 0.85);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#uninstallToolsTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: 800;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                letter-spacing: 1px;
+            }
+            QFrame#uninstallToolsWarningCard {
+                background: rgba(255, 91, 6, 0.07);
+                border: 1px solid rgba(255, 91, 6, 0.22);
+                border-radius: 8px;
+            }
+            QLabel#uninstallToolsWarningIcon {
+                background: transparent;
+            }
+            QLabel#uninstallToolsWarningLabel {
+                color: #FFA048;
+                font-size: 10px;
+                font-family: 'Orbitron', sans-serif;
+                background: transparent;
+                line-height: 1.3;
+            }
+            QScrollArea#uninstallToolsScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QWidget#uninstallToolsScrollContent {
+                background: rgba(255, 255, 255, 0.02);
+                border-radius: 8px;
+            }
+            QScrollArea#uninstallToolsScrollArea QScrollBar:vertical {
+                background: transparent;
+                width: 6px;
+                margin: 0px;
+                border: none;
+            }
+            QScrollArea#uninstallToolsScrollArea QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 0.15);
+                min-height: 20px;
+                border-radius: 3px;
+                border: none;
+            }
+            QScrollArea#uninstallToolsScrollArea QScrollBar::handle:vertical:hover {
+                background: #FF5B06;
+            }
+            QScrollArea#uninstallToolsScrollArea QScrollBar::add-line:vertical,
+            QScrollArea#uninstallToolsScrollArea QScrollBar::sub-line:vertical {
+                height: 0px;
+                border: none;
+                background: none;
+            }
+            QCheckBox {
+                font-family: 'Orbitron', sans-serif;
+                color: #FFFFFF;
+                font-size: 10px;
+                padding: 6px;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                background: #1e2128;
+                border: none;
+            }
+            QCheckBox::indicator:hover {
+                background: #2a2d35;
+            }
+            QCheckBox::indicator:checked {
+                background: #FF5B06;
+            }
+            QPushButton#uninstallSelectAllBtn, FadeHoverButton#uninstallSelectAllBtn {
+                background: transparent;
+                border: none;
+                min-width: 115px;
+                max-width: 115px;
+                min-height: 34px;
+                max-height: 34px;
+            }
+            QPushButton#uninstallDeselectAllBtn, FadeHoverButton#uninstallDeselectAllBtn {
+                background: transparent;
+                border: none;
+                min-width: 125px;
+                max-width: 125px;
+                min-height: 34px;
+                max-height: 34px;
+            }
+            QPushButton#cancelUninstallBtn, FadeHoverButton#cancelUninstallBtn {
+                background: transparent;
+                border: none;
+                min-width: 85px;
+                max-width: 85px;
+                min-height: 34px;
+                max-height: 34px;
+            }
+            QPushButton#confirmUninstallBtn, AnimatedButton#confirmUninstallBtn {
+                background: transparent;
+                border: none;
+                min-width: 175px;
+                max-width: 175px;
+                min-height: 34px;
+                max-height: 34px;
+            }
+        """)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # 1. Title Bar (Draggable)
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("uninstallToolsTitleBar")
+        self.title_bar.setFixedHeight(44)
+        tb_layout = QHBoxLayout(self.title_bar)
+        tb_layout.setContentsMargins(14, 0, 14, 0)
+        tb_layout.setSpacing(10)
+
+        title_icon_lbl = QLabel(self.title_bar)
+        title_icon_lbl.setObjectName("uninstallToolsTitleIcon")
+        title_icon_lbl.setFixedSize(18, 18)
+        title_icon_lbl.setScaledContents(True)
+        if os.path.exists(trash_icon_path):
+            title_icon_lbl.setPixmap(QPixmap(trash_icon_path))
+        tb_layout.addWidget(title_icon_lbl, alignment=Qt.AlignVCenter)
+
+        title_lbl = QLabel("UNINSTALL EXTERNAL TOOLS", self.title_bar)
+        title_lbl.setObjectName("uninstallToolsTitleLabel")
+        tb_layout.addWidget(title_lbl, stretch=1, alignment=Qt.AlignVCenter)
+
+        self.close_btn = HoverCloseButton(size=20, icon_size=12, parent=self.title_bar)
+        self.close_btn.setObjectName("uninstallToolsCloseBtn")
+        self.close_btn.clicked.connect(self.close_panel)
+        tb_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter)
+
+        main_layout.addWidget(self.title_bar)
+
+        # 2. Content Container
+        content_container = QWidget(self)
+        content_container.setObjectName("uninstallToolsContentContainer")
+        content_outer_layout = QVBoxLayout(content_container)
+        content_outer_layout.setContentsMargins(18, 14, 18, 18)
+        content_outer_layout.setSpacing(12)
+
+        # Warning Card
+        warning_card = QFrame(content_container)
+        warning_card.setObjectName("uninstallToolsWarningCard")
+        w_card_layout = QHBoxLayout(warning_card)
+        w_card_layout.setContentsMargins(12, 10, 12, 10)
+        w_card_layout.setSpacing(10)
+
+        warn_icon_lbl = QLabel(warning_card)
+        warn_icon_lbl.setObjectName("uninstallToolsWarningIcon")
+        warn_icon_lbl.setFixedSize(20, 20)
+        warn_icon_lbl.setScaledContents(True)
+        if os.path.exists(warning_icon_path):
+            warn_icon_lbl.setPixmap(QPixmap(warning_icon_path))
+        w_card_layout.addWidget(warn_icon_lbl, alignment=Qt.AlignVCenter)
+
+        warn_desc_lbl = QLabel("Select the external tools you want to remove. Checked items will be permanently deleted.", warning_card)
+        warn_desc_lbl.setObjectName("uninstallToolsWarningLabel")
+        warn_desc_lbl.setWordWrap(True)
+        w_card_layout.addWidget(warn_desc_lbl, stretch=1, alignment=Qt.AlignVCenter)
+
+        content_outer_layout.addWidget(warning_card)
+
+        # Scroll Area for checkboxes
+        scroll = SmoothScrollArea(content_container)
+        scroll.setObjectName("uninstallToolsScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(140)
+
+        scroll_content = QWidget()
+        scroll_content.setObjectName("uninstallToolsScrollContent")
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(14, 12, 14, 12)
+        scroll_layout.setSpacing(10)
+        scroll_layout.setAlignment(Qt.AlignTop)
+
+        self.checkbox_map = []
+        for i, (path, label) in enumerate(self.targets):
+            cb = AnimatedCheckBox(label, scroll_content)
+            cb.setObjectName(f"toolCheckbox_{i}")
+            cb.setChecked(True)
+            cb.setFont(QFont("Orbitron", 10))
+            cb.setToolTip(f"{label}\nPath: {path}")
+            scroll_layout.addWidget(cb)
+            self.checkbox_map.append((cb, path, label))
+
+        scroll_layout.addStretch()
+
+        scroll.setWidget(scroll_content)
+        content_outer_layout.addWidget(scroll, stretch=1)
+
+        # Select All / Deselect All Bar
+        select_bar = QHBoxLayout()
+        select_bar.setContentsMargins(0, 0, 0, 0)
+        select_bar.setSpacing(8)
+
+        select_all_btn = FadeHoverButton("Select All", is_secondary=True, border_radius=6.0, font_size=12, parent=content_container)
+        select_all_btn.setObjectName("uninstallSelectAllBtn")
+        select_all_btn.setFixedSize(115, 34)
+        select_all_btn.clicked.connect(lambda: self._set_all_checked(True))
+
+        deselect_all_btn = FadeHoverButton("Deselect All", is_secondary=True, border_radius=6.0, font_size=12, parent=content_container)
+        deselect_all_btn.setObjectName("uninstallDeselectAllBtn")
+        deselect_all_btn.setFixedSize(125, 34)
+        deselect_all_btn.clicked.connect(lambda: self._set_all_checked(False))
+
+        select_bar.addWidget(select_all_btn)
+        select_bar.addWidget(deselect_all_btn)
+        select_bar.addStretch()
+        content_outer_layout.addLayout(select_bar)
+
+        # Action Buttons Row
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(0, 8, 0, 0)
+        btn_layout.setSpacing(10)
+
+        self.cancel_btn = FadeHoverButton("Cancel", is_secondary=True, border_radius=6.0, font_size=12, parent=content_container)
+        self.cancel_btn.setObjectName("cancelUninstallBtn")
+        self.cancel_btn.setFixedSize(85, 34)
+        self.cancel_btn.clicked.connect(self.close_panel)
+
+        self.uninstall_btn = AnimatedButton("Uninstall Selected", content_container)
+        self.uninstall_btn.setObjectName("confirmUninstallBtn")
+        self.uninstall_btn.setFixedSize(175, 34)
+        self.uninstall_btn.setCursor(Qt.PointingHandCursor)
+        self.uninstall_btn.setHoverMode("fade")
+        self.uninstall_btn.setHoverGradient(['#FF3333', '#FF6666'])
+        self.uninstall_btn.setBorderRadius(6.0)
+        self.uninstall_btn.setFontSize(12)
+        self.uninstall_btn.setDrawBorder(False)
+        self.uninstall_btn.setIdleBackground(QColor(30, 32, 38, 220))
+        self.uninstall_btn.clicked.connect(self._do_uninstall)
+
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.cancel_btn)
+        btn_layout.addWidget(self.uninstall_btn)
+        content_outer_layout.addLayout(btn_layout)
+
+        main_layout.addWidget(content_container, stretch=1)
+
+        # Entrance Animation (Fade-in & Fade-out)
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.anim = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.anim.setDuration(220)
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(1.0)
+        self.anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.anim.finished.connect(self._on_anim_finished)
+
+    def _set_all_checked(self, checked: bool):
+        for cb, _, _ in self.checkbox_map:
+            cb.setChecked(checked)
+
+    def _do_uninstall(self):
+        selected_targets = [(path, label) for cb, path, label in self.checkbox_map if cb.isChecked()]
+        if not selected_targets:
+            return
+
+        self.uninstall_btn.setEnabled(False)
+        self.uninstall_btn.setText("Uninstalling...")
+        self.cancel_btn.setEnabled(False)
+        for cb, _, _ in self.checkbox_map:
+            cb.setEnabled(False)
+
+        from PySide6.QtCore import QThread, Signal as QSignal
+
+        class _UninstallWorker(QThread):
+            finished_signal = QSignal(list, list)
+
+            def __init__(self, targets):
+                super().__init__()
+                self.targets = targets
+
+            def run(self):
+                removed, failed = [], []
+                import subprocess, shutil, glob, os, stat, tempfile, uuid
+
+                def _kill_processes_for_target(name, target_path):
+                    proc_names = []
+                    target_lower = (str(name) + " " + str(target_path)).lower()
+                    if "uxtu" in target_lower or "universal x86" in target_lower or "jamescj60" in target_lower:
+                        proc_names.extend(["Universal x86 Tuning Utility.exe", "JamesCJ60.exe", "RyzenAdj.exe", "UXTU.exe"])
+                    if "ahk" in target_lower or "autohotkey" in target_lower:
+                        proc_names.extend(["AutoHotkey.exe", "AutoHotkeyU64.exe", "AutoHotkeyU32.exe", "AutoHotkeyA32.exe"])
+                    if "throttlestop" in target_lower:
+                        proc_names.extend(["ThrottleStop.exe"])
+                    if "librehardwaremonitor" in target_lower or "lhm" in target_lower:
+                        proc_names.extend(["LibreHardwareMonitor.exe"])
+                    if "hwinfo" in target_lower:
+                        proc_names.extend(["HWiNFO64.exe", "HWiNFO32.exe"])
+                    if "crystaldiskinfo" in target_lower:
+                        proc_names.extend(["DiskInfo64.exe", "DiskInfo32.exe"])
+                    if "ffmpeg" in target_lower or "ffprobe" in target_lower:
+                        proc_names.extend(["ffmpeg.exe", "ffprobe.exe"])
+                    
+                    for p_name in proc_names:
+                        try:
+                            subprocess.run(['taskkill', '/F', '/T', '/IM', p_name], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                        except Exception:
+                            pass
+
+                def _delete_target_path(p):
+                    if not p or not os.path.exists(p):
+                        return True
+                    
+                    # Tier 1: Recursive chmod + rmtree / os.remove
+                    try:
+                        if os.path.isdir(p):
+                            for root, dirs, files in os.walk(p):
+                                for d in dirs:
+                                    try: os.chmod(os.path.join(root, d), stat.S_IWRITE)
+                                    except Exception: pass
+                                for f in files:
+                                    try: os.chmod(os.path.join(root, f), stat.S_IWRITE)
+                                    except Exception: pass
+                            shutil.rmtree(p, ignore_errors=True)
+                        else:
+                            try: os.chmod(p, stat.S_IWRITE)
+                            except Exception: pass
+                            os.remove(p)
+                    except Exception:
+                        pass
+                    if not os.path.exists(p):
+                        return True
+
+                    # Tier 2: Zero-UAC Service Deletion (Admin rights)
+                    try:
+                        from utils.drive_utils import _send_ipc_command
+                        _send_ipc_command({"action": "delete_path", "path": p})
+                    except Exception:
+                        pass
+                    if not os.path.exists(p):
+                        return True
+
+                    # Tier 3: In-Use File Evacuation (Move to %TEMP% then delete)
+                    try:
+                        if os.path.isdir(p):
+                            for root, dirs, files in os.walk(p, topdown=False):
+                                for f in files:
+                                    f_path = os.path.join(root, f)
+                                    try:
+                                        os.chmod(f_path, stat.S_IWRITE)
+                                        os.remove(f_path)
+                                    except Exception:
+                                        try:
+                                            os.rename(f_path, os.path.join(tempfile.gettempdir(), f"{f}.del_{uuid.uuid4().hex[:4]}"))
+                                        except Exception:
+                                            pass
+                            shutil.rmtree(p, ignore_errors=True)
+                        else:
+                            try:
+                                os.rename(p, os.path.join(tempfile.gettempdir(), f"{os.path.basename(p)}.del_{uuid.uuid4().hex[:4]}"))
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    if not os.path.exists(p):
+                        return True
+
+                    # Tier 4: Windows Shell Forced Deletion
+                    try:
+                        if os.path.isdir(p):
+                            subprocess.run(['cmd.exe', '/c', f'attrib -r -s -h "{p}\\*" /s /d & rd /s /q "{p}"'],
+                                           capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                        else:
+                            subprocess.run(['cmd.exe', '/c', f'attrib -r -s -h "{p}" & del /f /q "{p}"'],
+                                           capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                    except Exception:
+                        pass
+
+                    return not os.path.exists(p)
+
+                for path, label in self.targets:
+                    display_name = label.split("  ")[0]
+                    try:
+                        _kill_processes_for_target(display_name, path)
+
+                        if path == "SYSTEM_UNINSTALL_UXTU":
+                            # 1. Run PowerShell uninstaller
+                            ps_cmd = (
+                                "$paths = 'HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', "
+                                "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', "
+                                "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'; "
+                                "$app = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'Universal x86 Tuning Utility' }; "
+                                "if ($app) { "
+                                "  if ($app.UninstallString) { Start-Process cmd.exe -ArgumentList \"/c $($app.UninstallString) /quiet /qn /norestart\" -Wait -NoNewWindow } "
+                                "  if ($app.PSChildName -match '^{') { Start-Process msiexec.exe -ArgumentList \"/x $($app.PSChildName) /qn /norestart\" -Wait -NoNewWindow } "
+                                "}"
+                            )
+                            subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], creationflags=subprocess.CREATE_NO_WINDOW)
+                            
+                            # 2. Multi-tier cleanup of Program Files and AppData folders
+                            uxtu_dirs = [
+                                r"C:\Program Files\JamesCJ60\Universal x86 Tuning Utility",
+                                r"C:\Program Files\JamesCJ60",
+                                r"C:\Program Files (x86)\JamesCJ60\Universal x86 Tuning Utility",
+                                r"C:\Program Files (x86)\JamesCJ60",
+                                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'JamesCJ60'),
+                                os.path.join(os.environ.get('APPDATA', ''), 'JamesCJ60'),
+                                os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Universal_x86_Tuning_Utility')
+                            ]
+                            for ud in uxtu_dirs:
+                                _delete_target_path(ud)
+                                
+                            ps_reg = "Remove-Item -Path 'HKCU:\\Software\\JamesCJ60', 'HKLM:\\Software\\JamesCJ60' -Recurse -Force -ErrorAction SilentlyContinue"
+                            subprocess.run(['powershell', '-NoProfile', '-Command', ps_reg], creationflags=subprocess.CREATE_NO_WINDOW)
+                            
+                            try:
+                                prefetch_files = glob.glob(r"C:\Windows\Prefetch\UNIVERSAL X86 TUNING UTILITY*.pf")
+                                for pf in prefetch_files:
+                                    try: os.remove(pf)
+                                    except Exception: pass
+                            except Exception:
+                                pass
+
+                            from integrations.cpu_controller import is_uxtu_installed, DEFAULT_UXTU_PATH
+                            if not is_uxtu_installed():
+                                removed.append(display_name)
+                            else:
+                                _delete_target_path(os.path.dirname(DEFAULT_UXTU_PATH))
+                                _delete_target_path(DEFAULT_UXTU_PATH)
+                                if not is_uxtu_installed():
+                                    removed.append(display_name)
+                                else:
+                                    failed.append(f"{display_name}: Could not remove installation files from Program Files")
+                            continue
+
+                        # Standard path deletion
+                        success = _delete_target_path(path)
+                        if success:
+                            removed.append(display_name)
+                        else:
+                            failed.append(f"{display_name}: Access is denied (In use or locked)")
+                    except Exception as e:
+                        failed.append(f"{display_name}: {e}")
+
+                self.finished_signal.emit(removed, failed)
+
+        self._uninstall_worker = _UninstallWorker(selected_targets)
+
+        def _on_uninstall_finished(removed, failed):
+            if self.launcher:
+                if any("UXTU" in n for n in removed):
+                    self.launcher.uxtu_installed = False
+
+                if any("FFmpeg" in n for n in removed):
+                    self.launcher.settings.pop("ffprobe_path", None)
+                    self.launcher.settings.pop("ffprobe_exe", None)
+                    save_settings(self.launcher.settings)
+
+                try:
+                    from integrations.tools_downloader import TOOLS_DIR
+                    if os.path.exists(TOOLS_DIR) and not os.listdir(TOOLS_DIR):
+                        os.rmdir(TOOLS_DIR)
+                except Exception:
+                    pass
+
+                current_page_idx = self.launcher.content_stack.currentIndex() if hasattr(self.launcher, 'content_stack') else 0
+
+                if any("UXTU" in n or "RyzenAdj" in n for n in removed):
+                    self.launcher._reload_cpu_panel()
+                if any("LibreHardwareMonitor" in n or "HWiNFO" in n for n in removed):
+                    self.launcher._reload_hardware_panel()
+                if any("FFprobe" in n or "FFmpeg" in n for n in removed):
+                    self.launcher._reload_music_panel()
+
+                if hasattr(self.launcher, 'switch_panel'):
+                    self.launcher.switch_panel(current_page_idx)
+
+                msg = ""
+                if removed:
+                    msg += "Successfully removed:\n" + "\n".join(f"  - {n}" for n in removed)
+                if failed:
+                    msg += "\n\nFailed to remove:\n" + "\n".join(f"  - {n}" for n in failed)
+
+                from integrations.tools_downloader import HELXAIDMessagePanel
+                HELXAIDMessagePanel("Uninstall Complete", msg.strip(), self.launcher, is_error=bool(failed and not removed))
+
+            self.close_panel()
+
+        self._uninstall_worker.finished_signal.connect(_on_uninstall_finished)
+        self._uninstall_worker.start()
+
+    def _on_anim_finished(self):
+        if self.anim.direction() == QPropertyAnimation.Backward:
+            self.deleteLater()
+
+    def show_panel(self):
+        """Position centered in parent launcher and display with smooth fade in."""
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = max(0, (parent_rect.width() - self.width()) // 2)
+            y = max(0, (parent_rect.height() - self.height()) // 2)
+            self.move(x, y)
+        self.show()
+        self.raise_()
+        self.anim.setDirection(QPropertyAnimation.Forward)
+        self.anim.start()
+
+    def show_centered(self):
+        self.show_panel()
+
+    def close_panel(self):
+        """Close panel with smooth fade-out and cleanup."""
+        self.anim.setDirection(QPropertyAnimation.Backward)
+        self.anim.start()
+
+    def mousePressEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        from PySide6.QtCore import Qt, QPoint
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        from PySide6.QtCore import Qt
+        if event.button() == Qt.LeftButton:
+            self._is_dragging = False
+            event.accept()
+
+
 class GameLauncher(QWidget):
     # Class-level icon cache to avoid reloading same icons
     _icon_cache = {}
@@ -9647,6 +10152,10 @@ class GameLauncher(QWidget):
                 self.ahk_info = detect_user_ahk(force_refresh=True, check_processes=True)
             except Exception:
                 pass
+
+        # Fallback check: ensure taskbar thumbnail buttons are registered if not yet mapped
+        if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar and not self.taskbar_toolbar.buttons_added:
+            self._init_taskbar_buttons()
 
         # All heavy panels (Music, CPU, Crosshair, Macro, Hardware, WinCustom) are purely
         # lazy-loaded on first user click via switch_panel() to keep startup RAM minimal (~90-120MB).
@@ -10151,9 +10660,21 @@ class GameLauncher(QWidget):
         # Center on main display after window flags are set
         self.center_on_main_display()
                 
-        # Window opacity
-        self.setWindowOpacity(self.settings.get("window_opacity", 1.0))
-        
+        # Instantiate Taskbar Thumbnail Toolbar using the final settled HWND
+        if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar:
+            try:
+                final_hwnd = int(self.winId())
+                self.taskbar_toolbar = TaskbarThumbnailToolbar(
+                    final_hwnd,
+                    on_prev=self._taskbar_prev,
+                    on_playpause=self._taskbar_playpause,
+                    on_next=self._taskbar_next
+                )
+                print(f"[Taskbar SUCCESS] TaskbarThumbnailToolbar instantiated on final HWND {hex(final_hwnd)} [id={id(self)}]", flush=True)
+            except Exception as e:
+                print(f"[Taskbar ERROR] Failed toolbar init: {e}", flush=True)
+                self.taskbar_toolbar = None
+
         # Enable drag-drop from non-elevated Explorer to elevated app (UAC bypass for drag-drop)
         self._enable_drag_drop_for_elevated()
         self._debug_delay()
@@ -10203,9 +10724,7 @@ class GameLauncher(QWidget):
         self.setup_system_tray()
         self._debug_delay()
 
-        # =============================================
-        # MAIN LAYOUT: Sidebar + Content Panel
-        # =============================================
+        # Root layout: fixed-width sidebar and content stack
         root_layout = QHBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
@@ -10444,7 +10963,7 @@ class GameLauncher(QWidget):
         # Bottom stretch pushes nav icons toward center; settings pin stays at very bottom
         sidebar_layout.addStretch()
         
-        # ===== SETTINGS BUTTON (bottom-pinned) =====
+        # Settings trigger button pinned to sidebar bottom
         # Thin separator dividing nav icons from the settings button at the bottom
         settings_sep = QFrame()
         settings_sep.setObjectName("sidebarSettingsSep")
@@ -10711,36 +11230,11 @@ class GameLauncher(QWidget):
         # Add Game menu with options for scanning and managing libraries
         self.add_menu = QMenu(self)
         self.add_menu.setObjectName("AddGameMenu")
-        self.apply_qmenu_blur(self.add_menu)
         self.add_menu.setStyleSheet("""
-            QMenu#AddGameMenu, QMenu {
-                background-color: #1e2128;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-                padding: 4px;
-                font-family: 'Orbitron', sans-serif;
-            }
-            QMenu::item {
-                color: #e0e0e0;
-                padding: 6px 14px 6px 10px;
-                min-height: 26px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-family: 'Orbitron', sans-serif;
-                background-color: transparent;
-            }
-            QMenu::item:selected, QMenu::item:hover {
-                background-color: rgba(255, 255, 255, 0.12);
-                color: #ffffff;
-            }
-            QMenu::separator {
-                height: 1px;
-                background: rgba(255, 255, 255, 0.08);
-                margin: 3px 4px;
-            }
-            QMenu::icon {
-                padding-left: 4px;
-            }
+            QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; font-family: 'Orbitron', sans-serif; }
+            QMenu::item { padding: 6px 20px; border-radius: 4px; font-size: 12px; }
+            QMenu::item:selected { background-color: #FF5B06; }
+            QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 4px 6px; }
         """)
 
         icons_dir = os.path.join(script_dir, "UI Icons")
@@ -11852,9 +12346,7 @@ class GameLauncher(QWidget):
                     self._last_applied_game_counter_style = counter_style
 
 
-    # =============================================
-    # TASKBAR ICON HELPER
-    # =============================================
+    # Taskbar window handle icon updates
     def _apply_taskbar_icon(self):
         """Apply taskbar icon using win32gui WM_SETICON message."""
         print("[Icon] _apply_taskbar_icon called")
@@ -11881,9 +12373,7 @@ class GameLauncher(QWidget):
         except Exception as e:
             print(f"[Icon] WM_SETICON failed: {e}")
 
-    # =============================================
-    # SIDEBAR NAVIGATION METHODS
-    # =============================================
+    # Sidebar navigation and lazy panel initialization
     def switch_panel(self, index: int):
         """Switch content panel based on sidebar selection with high-resolution page initialization latency profiling."""
         is_profiling = self.settings.get("calculate_page_initialize", False)
@@ -12446,67 +12936,30 @@ class GameLauncher(QWidget):
             self.content_stack.insertWidget(self._music_panel_insert_index, self.music_panel)
             delattr(self, '_music_panel_insert_index')
         
-        # Initialize taskbar thumbnail toolbar reference if not already created
-        if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar and not getattr(self, 'taskbar_toolbar', None):
-            try:
-                hwnd = int(self.winId())
-                self.taskbar_toolbar = TaskbarThumbnailToolbar(
-                    hwnd,
-                    on_prev=self._taskbar_prev,
-                    on_playpause=self._taskbar_playpause,
-                    on_next=self._taskbar_next
-                )
-                
-                self._taskbar_init_attempts = 0
-                self._taskbar_retry_count = 0
-                
-                # If running as Admin, allow Taskbar messages through UIPI
+        # Initialize or synchronize taskbar thumbnail toolbar
+        if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar:
+            if not getattr(self, 'taskbar_toolbar', None):
                 try:
-                    import ctypes
-                    from ctypes import wintypes
-                    user32 = ctypes.windll.user32
-                    MSGFLT_ALLOW = 1
-                    
-                    ChangeWindowMessageFilterEx = user32.ChangeWindowMessageFilterEx
-                    ChangeWindowMessageFilterEx.argtypes = [
-                        wintypes.HWND, wintypes.UINT, wintypes.DWORD, ctypes.c_void_p
-                    ]
-                    ChangeWindowMessageFilterEx.restype = wintypes.BOOL
-                    
-                    if hasattr(self, '_WM_TASKBARBUTTONCREATED') and self._WM_TASKBARBUTTONCREATED:
-                        ChangeWindowMessageFilterEx(hwnd, self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
-                    # Also allow WM_COMMAND for the buttons themselves
-                    ChangeWindowMessageFilterEx(hwnd, 0x0111, MSGFLT_ALLOW, None)
-                    
-                    proxy_hwnd = getattr(self, '_os_taskbar_proxy_hwnd', None)
-                    if proxy_hwnd and proxy_hwnd != hwnd:
-                        ChangeWindowMessageFilterEx(proxy_hwnd, 0x0111, MSGFLT_ALLOW, None)
-                except Exception as ex:
-                    print(f"[Taskbar DEBUG] ChangeWindowMessageFilterEx error: {ex}")
-                    
-                # If TaskbarButtonCreated already fired before music panel was opened, trigger it now
-                if getattr(self, '_os_taskbar_proxy_hwnd', None):
-                    self._exec_os_taskbar_init()
-                else:
-                    self._init_taskbar_buttons()
-                    
-            except Exception as e:
-                print(f"[Taskbar FATAL] Could not setup taskbar toolbar: {e}")
-        elif getattr(self, 'taskbar_toolbar', None):
-            # Toolbar already initialized; ensure buttons are mapped and sync current state
+                    hwnd = int(self.winId())
+                    self.taskbar_toolbar = TaskbarThumbnailToolbar(
+                        hwnd,
+                        on_prev=self._taskbar_prev,
+                        on_playpause=self._taskbar_playpause,
+                        on_next=self._taskbar_next
+                    )
+                except Exception as e:
+                    print(f"[Taskbar ERROR] Failed to instantiate taskbar toolbar: {e}", flush=True)
+            
+            # Map buttons if not already mapped, or sync visibility
             target_hwnd = getattr(self, '_verified_taskbar_hwnd', None) or int(self.winId())
-            if not self.taskbar_toolbar.buttons_added:
-                if getattr(self, '_os_taskbar_proxy_hwnd', None):
-                    self._exec_os_taskbar_init()
+            if self.taskbar_toolbar:
+                if not self.taskbar_toolbar.buttons_added:
+                    self._init_taskbar_buttons(target_hwnd)
                 else:
-                    self._init_taskbar_buttons()
-            else:
-                # Ensure buttons are visible again if they were previously hidden by an uninstall
-                self.taskbar_toolbar.set_buttons_visible(True, target_hwnd=target_hwnd)
-                from PySide6.QtMultimedia import QMediaPlayer
-                player = getattr(self.music_panel, '_player', None)
-                if player and hasattr(player, 'playbackState'):
-                    self._update_taskbar_play_state(player.playbackState())
+                    self.taskbar_toolbar.set_buttons_visible(True, target_hwnd=target_hwnd)
+                    player = getattr(self.music_panel, '_player', None)
+                    if player and hasattr(player, 'playbackState'):
+                        self._update_taskbar_play_state(player.playbackState())
         
         # For backward compatibility with existing code that references audio_player
         self.audio_player = None  # Deprecated - use music_panel directly
@@ -12992,7 +13445,7 @@ class GameLauncher(QWidget):
             from PySide6.QtCore import QTimer as QTimerLocal
             QTimerLocal.singleShot(5000, lambda: self._start_cpu_reapply_timer(saved_interval))
         
-        # ===== HEADER SECTION =====
+        # Header title, status badge, and control buttons
         header_container = QWidget()
         header_container.setObjectName("headerCard")
         header_layout = QHBoxLayout(header_container)
@@ -13171,7 +13624,7 @@ class GameLauncher(QWidget):
         header_container.setStyleSheet("QWidget#headerCard { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 rgba(26, 26, 26, 0.9), stop:1 rgba(45, 45, 45, 0.6)); border-radius: 16px; border: 1px solid rgba(255, 91, 6, 0.3); }")
         layout.addWidget(header_container)
         
-        # ===== PRESET CARD =====
+        # CPU profile preset selector card
         preset_card = QWidget()
         preset_card.setObjectName("presetCard")
         preset_layout = QHBoxLayout(preset_card)
@@ -13255,7 +13708,7 @@ class GameLauncher(QWidget):
         preset_card.setStyleSheet("QWidget#presetCard { background: rgba(30, 30, 30, 0.8); border-radius: 14px; border: none; }")
         layout.addWidget(preset_card)
         
-        # ===== SLIDERS SECTION =====
+        # CPU TDP and frequency control sliders
         scroll = SmoothScrollArea()
         scroll.setObjectName("cpuSlidersScrollArea")
         scroll.setWidgetResizable(True)
@@ -13368,7 +13821,7 @@ class GameLauncher(QWidget):
         self.cpu_sliders = {}
         self._cpu_slider_checkboxes = {}  # Stores enabled checkboxes for each slider
         
-        # ===== AMD BOOST PROFILE MENU =====
+        # AMD boost delay and thermal profile selector
         boost_container = QWidget()
         boost_container.setObjectName("cpuBoostProfile")
         boost_container.setFixedHeight(56)
@@ -13457,7 +13910,7 @@ class GameLauncher(QWidget):
         if is_amd:
             sliders_layout.addWidget(boost_container)
         
-        # ===== DISPLAY REFRESH RATE MENU =====
+        # Display refresh rate selection menu
         refresh_container = QWidget()
         refresh_container.setObjectName("cpuRefreshRate")
         refresh_container.setFixedHeight(56)
@@ -13548,7 +14001,7 @@ class GameLauncher(QWidget):
         """)
         sliders_layout.addWidget(refresh_container)
         
-        # ===== WINDOWS POWER MODE MENU =====
+        # Windows power plan selection menu
         power_mode_container = QWidget()
         power_mode_container.setObjectName("cpuPowerMode")
         power_mode_container.setFixedHeight(56)
@@ -14007,6 +14460,9 @@ class GameLauncher(QWidget):
     
     def _reload_cpu_panel(self):
         """Reload the CPU panel after UXTU installation with complete memory cleanup."""
+        # Preserve active page index before rebuilding
+        current_idx = self.content_stack.currentIndex() if hasattr(self, 'content_stack') else 2
+
         # Re-evaluate installation status
         from integrations.cpu_controller import is_uxtu_installed
         self.uxtu_installed = is_uxtu_installed()
@@ -14015,10 +14471,15 @@ class GameLauncher(QWidget):
         if hasattr(self, 'cpu_panel') and self.cpu_panel:
             for btn in self.cpu_panel.findChildren(QPushButton):
                 if hasattr(btn, '_rot_timer') and btn._rot_timer:
-                    btn._rot_timer.stop()
+                    try:
+                        btn._rot_timer.stop()
+                    except Exception:
+                        pass
                     btn._rot_timer = None
-                if hasattr(btn, '_rot_frames'):
-                    btn._rot_frames.clear()
+                if getattr(btn, '_rot_frames', None) is not None:
+                    if hasattr(btn._rot_frames, 'clear'):
+                        btn._rot_frames.clear()
+                    btn._rot_frames = None
 
         # Stop CPU auto-reapply timer if active
         if hasattr(self, '_stop_cpu_reapply_timer'):
@@ -14047,11 +14508,14 @@ class GameLauncher(QWidget):
         # Recreate the panel at correct position
         self._setup_cpu_panel()
         
-        # Always stay on CPU panel (Page 2)
-        self.switch_panel(2)
+        # Restore active page
+        self.switch_panel(current_idx)
     
     def _reload_music_panel(self):
         """Reload the music panel after FFmpeg installation or uninstallation."""
+        # Preserve active page index before rebuilding
+        current_idx = self.content_stack.currentIndex() if hasattr(self, 'content_stack') else 1
+
         # Stop playback gracefully before destroying the widget
         if hasattr(self, 'music_panel'):
             try:
@@ -14071,8 +14535,8 @@ class GameLauncher(QWidget):
         # Recreate the music panel (will render either the setup gate or the full player)
         self._setup_music_panel()
 
-        # Always stay on Music panel (Page 1)
-        self.switch_panel(1)
+        # Restore active page
+        self.switch_panel(current_idx)
 
     def _on_boost_profile_changed(self, profile: str):
         """Handle boost profile selection change."""
@@ -14188,15 +14652,15 @@ class GameLauncher(QWidget):
             icon_label.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(icon_label)
             
-            title = QLabel("LibreHardwareMonitor Required")
+            title = QLabel("HELXTATS SDK Required")
             title.setObjectName("hardwareLhmMissingTitleLabel")
-            title.setStyleSheet("color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
+            title.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #e0e0e0; font-size: 28px; font-weight: bold; background: transparent;")
             title.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(title)
             
-            desc = QLabel("HELXTATS requires LibreHardwareMonitor to read temperatures, fan speeds, and voltages.\nClick below to download and install it automatically.")
+            desc = QLabel("HELXTATS requires LibreHardwareMonitor to read temperatures, fan speeds, and voltages.\nCrystalDiskInfo is also supported for advanced Drive S.M.A.R.T telemetry & health monitoring.\nClick below to download and install it automatically.")
             desc.setObjectName("hardwareLhmMissingDescLabel")
-            desc.setStyleSheet("color: #888888; font-size: 14px; background: transparent;")
+            desc.setStyleSheet("font-family: 'Orbitron', sans-serif; color: #a0a5ad; font-size: 14px; background: transparent; line-height: 1.5;")
             desc.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(desc)
             # Auto-download button
@@ -14261,9 +14725,10 @@ class GameLauncher(QWidget):
                 QPushButton {
                     background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:1 #FDA903);
                     color: #1a1a1a;
+                    font-family: 'Orbitron', sans-serif;
                     border: none;
                     border-radius: 12px;
-                    font-size: 16px;
+                    font-size: 15px;
                     font-weight: bold;
                 }
                 QPushButton:hover {
@@ -14274,17 +14739,27 @@ class GameLauncher(QWidget):
             download_btn.clicked.connect(do_download)
             container_layout.addWidget(download_btn, alignment=Qt.AlignCenter)
             
-            from integrations.tools_downloader import SplitImportButton, import_lhm_tool
-            import_btn = SplitImportButton("LibreHardwareMonitor", import_lhm_tool, self._reload_hardware_panel, self)
-            import_btn.setObjectName("hardwareLhmImportBtn")
-            container_layout.addWidget(import_btn, alignment=Qt.AlignCenter)
+            from integrations.tools_downloader import SplitImportButton, import_lhm_tool, import_crystaldiskinfo_tool
+            import_btn_layout = QHBoxLayout()
+            import_btn_layout.setSpacing(12)
+            import_btn_layout.setAlignment(Qt.AlignCenter)
+            
+            import_lhm_btn = SplitImportButton("LibreHardwareMonitor", import_lhm_tool, self._reload_hardware_panel, self)
+            import_lhm_btn.setObjectName("hardwareLhmImportBtn")
+            import_btn_layout.addWidget(import_lhm_btn)
+            
+            import_cdi_btn = SplitImportButton("CrystalDiskInfo", import_crystaldiskinfo_tool, self._reload_hardware_panel, self)
+            import_cdi_btn.setObjectName("hardwareCdiImportBtn")
+            import_btn_layout.addWidget(import_cdi_btn)
+            
+            container_layout.addLayout(import_btn_layout)
             
             try:
-                from integrations.tools_downloader import LIBREHWMON_DIR
-                install_path = LIBREHWMON_DIR
+                from integrations.tools_downloader import LIBREHWMON_DIR, CRYSTALDISKINFO_DIR
+                install_path = f"LHM: {LIBREHWMON_DIR}\nCDI: {CRYSTALDISKINFO_DIR}"
             except ImportError:
                 install_path = "%APPDATA%\\HELXAID\\tools\\librehwmon"
-            instructions = QLabel(f"Installs to\n{install_path}")
+            instructions = QLabel(f"Tools Directory:\n{install_path}")
             instructions.setObjectName("hardwareMissingToolPath")
             instructions.setStyleSheet("font-family: 'Orbitron', sans-serif; font-size: 11px; color: #a0a5ad; margin-top: 10px; background: transparent;")
             instructions.setAlignment(Qt.AlignCenter)
@@ -14308,6 +14783,8 @@ class GameLauncher(QWidget):
         if not hasattr(self, 'hardware_panel'):
             return
             
+        current_idx = self.content_stack.currentIndex() if hasattr(self, 'content_stack') else 5
+
         hw_slot = self.content_stack.indexOf(self.hardware_panel)
         self.content_stack.removeWidget(self.hardware_panel)
         self.hardware_panel.deleteLater()
@@ -14316,8 +14793,8 @@ class GameLauncher(QWidget):
             self._hardware_panel_insert_index = hw_slot
         
         self._setup_hardware_panel()
-        # Always stay on Hardware panel (Page 5)
-        self.switch_panel(5)
+        # Restore active page
+        self.switch_panel(current_idx)
         
     def _on_power_mode_changed(self, mode: str):
         """Handle Windows power mode selection change."""
@@ -14814,6 +15291,10 @@ class GameLauncher(QWidget):
             self.service_status_label.setStyleSheet("color: #4CAF50; font-size: 13px; font-weight: bold;")
             self.install_service_btn.setVisible(False)
             self.uninstall_service_btn.setVisible(True)
+            # Re-start CPU reapply timer if enabled in settings
+            if hasattr(self, '_cpu_reapply_timer') and hasattr(self, 'cpu_settings'):
+                if self.cpu_settings.profile.get("auto_reapply", False):
+                    self._start_cpu_reapply_timer()
         else:
             self.service_status_label.setText("Status: Not Installed")
             self.service_status_label.setStyleSheet("color: #aaaaaa; font-size: 13px;")
@@ -14855,7 +15336,7 @@ class GameLauncher(QWidget):
             else:
                 pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
                 exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
-                script_path = os.path.abspath(sys.argv[0])
+                script_path = os.path.abspath(__file__)
                 setup_args = f'"{script_path}" --run-service --setup'
                 
             ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
@@ -14864,7 +15345,8 @@ class GameLauncher(QWidget):
                 save_settings(self.settings)
                 if hasattr(self, '_qs_init_zero_uac_cb') and self._qs_init_zero_uac_cb:
                     self._qs_init_zero_uac_cb.setChecked(True)
-                QTimer.singleShot(3000, self._update_service_ui_status)
+                for delay in (1000, 2500, 4000, 6000):
+                    QTimer.singleShot(delay, self._update_service_ui_status)
 
     def _uninstall_helper_service(self):
         import ctypes
@@ -14887,7 +15369,7 @@ class GameLauncher(QWidget):
             else:
                 pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
                 exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
-                script_path = os.path.abspath(sys.argv[0])
+                script_path = os.path.abspath(__file__)
                 remove_args = f'"{script_path}" --run-service --teardown'
                 
             ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, remove_args, None, 0)
@@ -16020,9 +16502,7 @@ class GameLauncher(QWidget):
         app_name_lower = (app_name or "").lower().strip()
         combined_identity = f"{app_name_lower} {exe_stem}".lower().strip()
         
-        # =========================================================================
-        # TIER 1: Known Steam Utility App IDs & Steam Tools Manifest
-        # =========================================================================
+        # Tier 1: known Steam utility AppIDs and tools manifest prober
         STEAM_UTILITY_APPIDS = {
             "431960": "Wallpaper Engine",
             "1118310": "Wallpaper Engine Workshop",
@@ -16088,9 +16568,7 @@ class GameLauncher(QWidget):
             except Exception:
                 pass
 
-        # =========================================================================
-        # TIER 2: Exhaustive Known Utility Catalog & Exact Process Names
-        # =========================================================================
+        # Tier 2: exhaustive known utility catalog and exact process names
         UTILITY_EXACT_NAMES = {
             # System, Hardware Monitoring, Benchmarks & Overclocking
             "hwinfo.exe", "hwinfo32.exe", "hwinfo64.exe", "cpu-z.exe", "cpuz.exe", "gpu-z.exe", "gpuz.exe",
@@ -16120,12 +16598,13 @@ class GameLauncher(QWidget):
             "krita.exe", "figma.exe", "notion.exe", "obsidian.exe", "chrome.exe", "firefox.exe",
             "msedge.exe", "brave.exe", "opera.exe", "vivaldi.exe", "telegram.exe", "whatsapp.exe",
             "slack.exe", "zoom.exe", "teams.exe", "anydesk.exe", "teamviewer.exe", "rustdesk.exe",
-            # Desktop Customization & System Helpers
+            # Desktop Customization, Uninstallers & System Helpers
             "wallpaper32.exe", "wallpaper64.exe", "rainmeter.exe", "translucenttb.exe", "startallback.exe",
             "start11.exe", "powertoys.exe", "autohotkey.exe", "everything.exe", "winrar.exe", "7zfm.exe",
             "rufus.exe", "losslessscaling.exe", "borderlessgaming.exe", "crosshairx.exe", "crosshair v2.exe",
             "hudsight.exe", "cheatengine.exe", "wemod.exe", "vortex.exe", "modorganizer.exe", "curseforge.exe",
-            "sandman.exe", "cleanmgr.exe", "msconfig.exe", "regedit.exe"
+            "sandman.exe", "cleanmgr.exe", "msconfig.exe", "regedit.exe", "unwise.exe", "unwise32.exe",
+            "unins000.exe", "unins001.exe", "uninstall.exe", "uninstaller.exe"
         }
         
         if exe_name in UTILITY_EXACT_NAMES:
@@ -16156,9 +16635,7 @@ class GameLauncher(QWidget):
             if re.search(pattern, combined_identity):
                 return "utility"
 
-        # =========================================================================
-        # TIER 3: Game Engine Signatures & Asset Prober (Prioritized for Games)
-        # =========================================================================
+        # Tier 3: game engine signatures and asset directory probing
         # Unreal Engine Binaries Pattern
         if re.search(r"win(32|64)-shipping\.exe$", exe_name) or "binaries/win64" in path_lower or "binaries/win32" in path_lower:
             return "game"
@@ -16216,9 +16693,7 @@ class GameLauncher(QWidget):
         except Exception:
             pass
 
-        # =========================================================================
-        # TIER 4: Windows PE Version Information Metadata
-        # =========================================================================
+        # Tier 4: Windows PE version information metadata inspection
         try:
             import win32api
             translations = win32api.GetFileVersionInfo(exe_path, '\\VarFileInfo\\Translation')
@@ -16239,9 +16714,7 @@ class GameLauncher(QWidget):
         except Exception:
             pass
 
-        # =========================================================================
-        # TIER 5: Scored Path Context & Heuristic Fallback
-        # =========================================================================
+        # Tier 5: scored path context and heuristic fallback
         # Definite game installation root paths
         GAME_PATH_INDICATORS = [
             "/games/", "/game/", "/steamapps/common/", "/epic games/", "/gog games/",
@@ -16632,7 +17105,7 @@ class GameLauncher(QWidget):
 
         create_card = self._create_card
 
-        # === Background & Theme Group ===
+        # Background and theme configuration card
         bg_group, bg_layout = create_card("Background & Theme", icon_name="theme-icon.svg")
         bg_group.setObjectName("quickSettingsBgGroup")
         
@@ -16731,7 +17204,7 @@ class GameLauncher(QWidget):
         
         layout.addWidget(bg_group)
 
-        # === System Settings Group ===
+        # Core system and window behavior settings card
         sys_group, sys_layout = create_card("System Settings", icon_name="settings-icon.svg")
         sys_group.setObjectName("quickSettingsSysGroup")
         
@@ -16846,7 +17319,7 @@ class GameLauncher(QWidget):
         
         layout.addWidget(sys_group)
 
-        # === Background Service Settings Group ===
+        # Background helper service and zero-UAC settings card
         service_group, service_layout = create_card("Zero-UAC Mode", icon_name="sparkle-icon.svg")
         service_group.setObjectName("quickSettingsServiceGroup")
         service_layout.setSpacing(6)
@@ -16919,7 +17392,7 @@ class GameLauncher(QWidget):
         # Initial status update
         self._update_service_ui_status()
 
-        # === Developer Mode Section ===
+        # Developer mode and dependency maintenance section
         # Placed at the very bottom before Ok/Cancel.
         # The Uninstall External Tools button is hidden behind this toggle
         # to prevent accidental removal of critical runtime dependencies.
@@ -17401,22 +17874,30 @@ class GameLauncher(QWidget):
             QMessageBox.critical(self, "Reset Failed", f"Could not reset AppData:\n{e}")
 
     def uninstall_external_tools(self):
-        """Remove external runtime tools from the system.
-
-        downloaded to AppData, a legacy assets folder, or a user-specified path.
-        For system-installed apps (like UXTU), it triggers their official uninstaller.
-
-        Tools targeted:
-        - FFmpeg/FFprobe: resolved from 'ffprobe_path' in PlaylistWidget settings
-        - UXTU (Universal x86 Tuning Utility): Triggers system MSI uninstaller and cleans leftovers.
-
-        Only the tool files/folders are removed; user data is left intact.
-        The button is gated behind Developer Mode to prevent accidental use.
-        """
-        import shutil
+        """Remove external runtime tools from the system via modern floating panel."""
+        if hasattr(self, '_uninstall_tools_panel') and self._uninstall_tools_panel:
+            try:
+                self._uninstall_tools_panel.close_panel()
+            except Exception:
+                pass
+            self._uninstall_tools_panel = None
 
         targets = []   # List of (absolute_path_or_command, display_name) to be deleted
         seen_paths = set()
+
+        def _is_valid_target(p):
+            if not p or not os.path.exists(p):
+                return False
+            if os.path.isdir(p):
+                try:
+                    return bool(os.listdir(p))
+                except Exception:
+                    return False
+            return True
+        
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        local_tools_dir = os.path.join(base_dir, "tools")
+        exe_tools_dir = os.path.join(os.path.dirname(sys.executable), "tools")
         
         # ---- UXTU ----
         from integrations.cpu_controller import is_uxtu_installed
@@ -17426,36 +17907,93 @@ class GameLauncher(QWidget):
         # ---- RyzenAdj ----
         try:
             from integrations.tools_downloader import RYZENADJ_DIR
-            if os.path.exists(RYZENADJ_DIR) and RYZENADJ_DIR not in seen_paths:
-                targets.append((RYZENADJ_DIR, f"RyzenAdj  ({RYZENADJ_DIR})"))
-                seen_paths.add(RYZENADJ_DIR)
+            ryzen_candidates = [
+                RYZENADJ_DIR,
+                os.path.join(local_tools_dir, "ryzenadj"),
+                os.path.join(exe_tools_dir, "ryzenadj"),
+            ]
+            for p in ryzen_candidates:
+                if _is_valid_target(p) and p not in seen_paths:
+                    targets.append((p, f"RyzenAdj  ({p})"))
+                    seen_paths.add(p)
         except Exception as e:
             print(f"[UninstallTools] Could not resolve RyzenAdj path: {e}")
+
+        # ---- ThrottleStop ----
+        try:
+            from integrations.tools_downloader import THROTTLESTOP_DIR
+            ts_candidates = [
+                THROTTLESTOP_DIR,
+                os.path.join(local_tools_dir, "throttlestop"),
+                os.path.join(base_dir, "assets", "throttlestop"),
+                os.path.join(exe_tools_dir, "throttlestop"),
+            ]
+            for p in ts_candidates:
+                if _is_valid_target(p) and p not in seen_paths:
+                    targets.append((p, f"ThrottleStop  ({p})"))
+                    seen_paths.add(p)
+        except Exception as e:
+            print(f"[UninstallTools] Could not resolve ThrottleStop path: {e}")
 
         # ---- LibreHardwareMonitor ----
         try:
             from integrations.tools_downloader import LIBREHWMON_DIR
-            if os.path.exists(LIBREHWMON_DIR) and LIBREHWMON_DIR not in seen_paths:
-                targets.append((LIBREHWMON_DIR, f"LibreHardwareMonitor  ({LIBREHWMON_DIR})"))
-                seen_paths.add(LIBREHWMON_DIR)
+            lhm_candidates = [
+                LIBREHWMON_DIR,
+                os.path.join(local_tools_dir, "librehardwaremonitor"),
+                os.path.join(local_tools_dir, "librehwmon"),
+                os.path.join(exe_tools_dir, "librehardwaremonitor"),
+                os.path.join(exe_tools_dir, "librehwmon"),
+            ]
+            for p in lhm_candidates:
+                if _is_valid_target(p) and p not in seen_paths:
+                    targets.append((p, f"LibreHardwareMonitor  ({p})"))
+                    seen_paths.add(p)
         except Exception as e:
             print(f"[UninstallTools] Could not resolve LHM path: {e}")
 
         # ---- HWiNFO ----
         try:
             from integrations.tools_downloader import HWINFO_DIR
-            if os.path.exists(HWINFO_DIR) and HWINFO_DIR not in seen_paths:
-                targets.append((HWINFO_DIR, f"HWiNFO  ({HWINFO_DIR})"))
-                seen_paths.add(HWINFO_DIR)
+            hwinfo_candidates = [
+                HWINFO_DIR,
+                os.path.join(local_tools_dir, "hwinfo"),
+                os.path.join(exe_tools_dir, "hwinfo"),
+            ]
+            for p in hwinfo_candidates:
+                if _is_valid_target(p) and p not in seen_paths:
+                    targets.append((p, f"HWiNFO  ({p})"))
+                    seen_paths.add(p)
         except Exception as e:
             print(f"[UninstallTools] Could not resolve HWiNFO path: {e}")
+
+        # ---- CrystalDiskInfo ----
+        try:
+            from integrations.tools_downloader import CRYSTALDISKINFO_DIR
+            cdi_candidates = [
+                CRYSTALDISKINFO_DIR,
+                os.path.join(local_tools_dir, "crystaldiskinfo"),
+                os.path.join(exe_tools_dir, "crystaldiskinfo"),
+            ]
+            for p in cdi_candidates:
+                if _is_valid_target(p) and p not in seen_paths:
+                    targets.append((p, f"CrystalDiskInfo  ({p})"))
+                    seen_paths.add(p)
+        except Exception as e:
+            print(f"[UninstallTools] Could not resolve CrystalDiskInfo path: {e}")
 
         # ---- FFmpeg/FFprobe ----
         try:
             from integrations.tools_downloader import FFMPEG_DIR
-            if os.path.exists(FFMPEG_DIR) and FFMPEG_DIR not in seen_paths:
-                targets.append((FFMPEG_DIR, f"FFmpeg/FFprobe  ({FFMPEG_DIR})"))
-                seen_paths.add(FFMPEG_DIR)
+            ffmpeg_candidates = [
+                FFMPEG_DIR,
+                os.path.join(local_tools_dir, "ffmpeg"),
+                os.path.join(exe_tools_dir, "ffmpeg"),
+            ]
+            for p in ffmpeg_candidates:
+                if _is_valid_target(p) and p not in seen_paths:
+                    targets.append((p, f"FFmpeg/FFprobe  ({p})"))
+                    seen_paths.add(p)
         except Exception as e:
             print(f"[UninstallTools] Could not resolve FFmpeg path: {e}")
 
@@ -17466,384 +18004,34 @@ class GameLauncher(QWidget):
             ahk_mgr = AHKPluginManager()
             # Stop AHK process before deletion
             ahk_mgr.stop()
-            if os.path.exists(AHK_DIR) and AHK_DIR not in seen_paths:
-                targets.append((AHK_DIR, f"AutoHotkey Macro Engine  ({AHK_DIR})"))
-                seen_paths.add(AHK_DIR)
-            if os.path.exists(ahk_mgr.plugin_dir) and ahk_mgr.plugin_dir not in seen_paths:
+            ahk_candidates = [
+                AHK_DIR,
+                os.path.join(local_tools_dir, "ahk"),
+                os.path.join(exe_tools_dir, "ahk"),
+            ]
+            for p in ahk_candidates:
+                if _is_valid_target(p) and p not in seen_paths:
+                    targets.append((p, f"AutoHotkey Macro Engine  ({p})"))
+                    seen_paths.add(p)
+            if _is_valid_target(ahk_mgr.plugin_dir) and ahk_mgr.plugin_dir not in seen_paths:
                 targets.append((ahk_mgr.plugin_dir, f"AutoHotkey Plugin Scripts  ({ahk_mgr.plugin_dir})"))
                 seen_paths.add(ahk_mgr.plugin_dir)
         except Exception as e:
             print(f"[UninstallTools] Could not resolve AHK path: {e}")
 
         if not targets:
-            QMessageBox.information(
-                self, "Uninstall External Tools",
+            from integrations.tools_downloader import HELXAIDMessagePanel
+            HELXAIDMessagePanel(
+                "Uninstall External Tools",
                 "No installed external tools were found on this system.\n\n"
                 "Either they were never downloaded, already removed,\n"
-                "or stored in a location HELXAID does not manage."
+                "or stored in a location HELXAID does not manage.",
+                self
             )
             return
 
-        # Custom Selection QDialog
-        dialog = QDialog(self)
-        dialog.setObjectName("uninstallToolsDialog")
-        dialog.setWindowTitle("Uninstall External Tools - HELXAID")
-        dialog.setFixedWidth(560)
-        dialog.setStyleSheet("""
-            QDialog#uninstallToolsDialog {
-                background-color: #14161c;
-                border: 1px solid rgba(255, 255, 255, 0.05);
-                border-radius: 12px;
-            }
-            QLabel {
-                font-family: 'Orbitron', sans-serif;
-                color: #e0e0e0;
-            }
-            QCheckBox {
-                font-family: 'Orbitron', sans-serif;
-                color: #ffffff;
-                font-size: 10px;
-                padding: 6px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border-radius: 4px;
-                background: #1e2128;
-                border: none;
-            }
-            QCheckBox::indicator:hover {
-                background: #2a2d35;
-            }
-            QCheckBox::indicator:checked {
-                background: #FF5B06;
-                image: url('');
-            }
-            QScrollArea {
-                background: transparent;
-                border: none;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: rgba(255, 255, 255, 0.02);
-                width: 8px;
-                margin: 0px 0px 0px 0px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: #3a3d45;
-                min-height: 20px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #FF5B06;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                border: none;
-                background: none;
-                height: 0px;
-            }
-        """)
-        apply_custom_titlebar(dialog, "#000000")
-
-        dlg_layout = QVBoxLayout(dialog)
-        dlg_layout.setContentsMargins(24, 20, 24, 20)
-        dlg_layout.setSpacing(14)
-
-        # Header Title
-        title_label = QLabel("Uninstall External Tools")
-        title_label.setObjectName("uninstallTitleLabel")
-        title_label.setFont(QFont("Orbitron", 13, QFont.Bold))
-        title_label.setStyleSheet("color: #e0e0e0;")
-        dlg_layout.addWidget(title_label)
-
-        # Warning / Info
-        desc_label = QLabel("Select the external tools you want to remove. Checked items will be permanently deleted.")
-        desc_label.setObjectName("uninstallDescLabel")
-        desc_label.setWordWrap(True)
-        desc_label.setFont(QFont("Orbitron", 10))
-        desc_label.setStyleSheet("color: #FF5B06; margin-bottom: 4px;")
-        dlg_layout.addWidget(desc_label)
-
-        # Checkboxes Scroll Area
-        scroll = QScrollArea()
-        scroll.setObjectName("toolsSelectionScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("background: transparent; border: none;")
-
-        scroll_content = QWidget()
-        scroll_content.setObjectName("scrollContentWidget")
-        scroll_content.setStyleSheet("background: rgba(255, 255, 255, 0.02); border-radius: 8px; padding: 8px;")
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(8)
-
-        checkbox_map = []  # list of (checkbox_widget, path, display_name, label)
-        for path, label in targets:
-            cb = AnimatedCheckBox(label)
-            cb.setObjectName(f"toolCheckbox_{len(checkbox_map)}")
-            cb.setChecked(True)  # checked by default so user can uncheck
-            cb.setFont(QFont("Orbitron", 10))
-            scroll_layout.addWidget(cb)
-            checkbox_map.append((cb, path, label))
-
-        scroll.setWidget(scroll_content)
-        dlg_layout.addWidget(scroll, 1)
-
-        # Select All / Deselect All Bar
-        select_bar = QHBoxLayout()
-        select_all_btn = AnimatedButton("Select All")
-        select_all_btn.setObjectName("selectAllBtn")
-        select_all_btn.setFont(QFont("Orbitron", 10))
-        select_all_btn.setCursor(Qt.PointingHandCursor)
-        select_all_btn.setStyleSheet("background: #2a2d35; color: #ccc; border: none; border-radius: 4px; padding: 6px 12px;")
-        
-        deselect_all_btn = AnimatedButton("Deselect All")
-        deselect_all_btn.setObjectName("deselectAllBtn")
-        deselect_all_btn.setFont(QFont("Orbitron", 10))
-        deselect_all_btn.setCursor(Qt.PointingHandCursor)
-        deselect_all_btn.setStyleSheet("background: #2a2d35; color: #ccc; border: none; border-radius: 4px; padding: 6px 12px;")
-
-        def _select_all(checked=True):
-            for cb, _, _ in checkbox_map:
-                cb.setChecked(checked)
-
-        select_all_btn.clicked.connect(lambda: _select_all(True))
-        deselect_all_btn.clicked.connect(lambda: _select_all(False))
-
-        select_bar.addWidget(select_all_btn)
-        select_bar.addWidget(deselect_all_btn)
-        select_bar.addStretch()
-        dlg_layout.addLayout(select_bar)
-
-        # Action Buttons Layout (Uninstall Selected / Cancel)
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(12)
-
-        cancel_btn = AnimatedButton("Cancel")
-        cancel_btn.setObjectName("cancelUninstallBtn")
-        cancel_btn.setFont(QFont("Orbitron", 10, QFont.Bold))
-        cancel_btn.setCursor(Qt.PointingHandCursor)
-        cancel_btn.setStyleSheet("""
-            QPushButton#cancelUninstallBtn {
-                background: #2a2d35;
-                border: none;
-                color: white;
-                border-radius: 6px;
-                padding: 8px 18px;
-            }
-            QPushButton#cancelUninstallBtn:hover { background: #3a3d45; }
-        """)
-        cancel_btn.clicked.connect(dialog.reject)
-
-        uninstall_btn = AnimatedButton("Uninstall Selected")
-        uninstall_btn.setObjectName("confirmUninstallBtn")
-        uninstall_btn.setFont(QFont("Orbitron", 10, QFont.Bold))
-        uninstall_btn.setCursor(Qt.PointingHandCursor)
-        uninstall_btn.setStyleSheet("""
-            QPushButton#confirmUninstallBtn {
-                background: #c82828;
-                border: none;
-                color: white;
-                border-radius: 6px;
-                padding: 8px 18px;
-            }
-            QPushButton#confirmUninstallBtn:hover { background: #e63232; }
-        """)
-        uninstall_btn.clicked.connect(dialog.accept)
-
-        btn_layout.addStretch()
-        btn_layout.addWidget(cancel_btn)
-        btn_layout.addWidget(uninstall_btn)
-        dlg_layout.addLayout(btn_layout)
-
-        if dialog.exec() != QDialog.Accepted:
-            return
-
-        # Filter targets to only checked checkboxes
-        selected_targets = [(path, label) for cb, path, label in checkbox_map if cb.isChecked()]
-        if not selected_targets:
-            return
-
-        targets = selected_targets
-
-        # Move deletion logic to a background thread to prevent UI freezing (especially from WMI UXTU uninstaller)
-        from PySide6.QtCore import QThread, Signal as QSignal
-        from PySide6.QtWidgets import QProgressDialog
-
-        class _UninstallWorker(QThread):
-            finished_signal = QSignal(list, list)
-
-            def __init__(self, targets):
-                super().__init__()
-                self.targets = targets
-
-            def run(self):
-                removed, failed = [], []
-                import subprocess, shutil, glob, os
-                for path, label in self.targets:
-                    display_name = label.split("  ")[0]
-                    try:
-                        if path == "SYSTEM_UNINSTALL_UXTU":
-                            # Use Registry lookup (milliseconds) instead of Win32_Product (minutes)
-                            ps_cmd = (
-                                "$paths = 'HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', "
-                                "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*', "
-                                "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'; "
-                                "$app = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'Universal x86 Tuning Utility' }; "
-                                "if ($app -and $app.PSChildName -match '^{') { Start-Process msiexec.exe -ArgumentList \"/x $($app.PSChildName) /qn\" -Wait -NoNewWindow }"
-                            )
-                            subprocess.run(['powershell', '-NoProfile', '-Command', ps_cmd], creationflags=subprocess.CREATE_NO_WINDOW)
-                            
-                            # Revo-style cleanup: remove leftovers in Program Files, AppData, and Registry
-                            uxtu_leftover = r"C:\Program Files\JamesCJ60\Universal x86 Tuning Utility"
-                            if os.path.exists(uxtu_leftover):
-                                shutil.rmtree(uxtu_leftover, ignore_errors=True)
-                                
-                            local_appdata = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'JamesCJ60')
-                            if os.path.exists(local_appdata):
-                                shutil.rmtree(local_appdata, ignore_errors=True)
-                                
-                            ps_reg = "Remove-Item -Path 'HKCU:\\Software\\JamesCJ60' -Recurse -Force -ErrorAction SilentlyContinue"
-                            subprocess.run(['powershell', '-NoProfile', '-Command', ps_reg], creationflags=subprocess.CREATE_NO_WINDOW)
-                            
-                            try:
-                                prefetch_files = glob.glob(r"C:\Windows\Prefetch\UNIVERSAL X86 TUNING UTILITY*.pf")
-                                for pf in prefetch_files:
-                                    os.remove(pf)
-                            except Exception:
-                                pass
-                                
-                            removed.append(display_name)
-                            continue
-
-                        # Multi-tier robust removal with In-Use Evacuation & Zero-UAC integration
-                        import stat, tempfile, uuid
-                        success = False
-
-                        # Tier 1: Recursive chmod + rmtree
-                        try:
-                            if os.path.isdir(path):
-                                for root, dirs, files in os.walk(path):
-                                    for d in dirs:
-                                        try: os.chmod(os.path.join(root, d), stat.S_IWRITE)
-                                        except Exception: pass
-                                    for f in files:
-                                        try: os.chmod(os.path.join(root, f), stat.S_IWRITE)
-                                        except Exception: pass
-                                shutil.rmtree(path, ignore_errors=True)
-                            else:
-                                try: os.chmod(path, stat.S_IWRITE)
-                                except Exception: pass
-                                os.remove(path)
-                            success = not os.path.exists(path)
-                        except Exception:
-                            pass
-
-                        # Tier 2: In-Use File Evacuation (Move locked/mapped files out to %TEMP% so directory can be removed)
-                        if not success and os.path.exists(path):
-                            try:
-                                if os.path.isdir(path):
-                                    for root, dirs, files in os.walk(path, topdown=False):
-                                        for f in files:
-                                            f_path = os.path.join(root, f)
-                                            try:
-                                                os.chmod(f_path, stat.S_IWRITE)
-                                                os.remove(f_path)
-                                            except Exception:
-                                                try:
-                                                    os.rename(f_path, os.path.join(tempfile.gettempdir(), f"{f}.del_{uuid.uuid4().hex[:4]}"))
-                                                except Exception:
-                                                    pass
-                                    shutil.rmtree(path, ignore_errors=True)
-                                else:
-                                    try:
-                                        os.rename(path, os.path.join(tempfile.gettempdir(), f"{os.path.basename(path)}.del_{uuid.uuid4().hex[:4]}"))
-                                    except Exception:
-                                        pass
-                                success = not os.path.exists(path)
-                            except Exception:
-                                pass
-
-                        # Tier 3: Zero-UAC Service Deletion
-                        if not success and os.path.exists(path):
-                            try:
-                                from utils.drive_utils import _send_ipc_command
-                                res = _send_ipc_command({"action": "delete_path", "path": path})
-                                success = not os.path.exists(path)
-                            except Exception:
-                                pass
-
-                        # Tier 4: Windows Shell Forced Deletion
-                        if not success and os.path.exists(path):
-                            try:
-                                if os.path.isdir(path):
-                                    subprocess.run(['cmd.exe', '/c', f'attrib -r -s -h "{path}\\*" /s /d & rd /s /q "{path}"'],
-                                                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
-                                else:
-                                    subprocess.run(['cmd.exe', '/c', f'attrib -r -s -h "{path}" & del /f /q "{path}"'],
-                                                   capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
-                                success = not os.path.exists(path)
-                            except Exception:
-                                pass
-
-                        if not os.path.exists(path):
-                            removed.append(display_name)
-                        else:
-                            failed.append(f"{display_name}: Access is denied (In use or locked)")
-                    except Exception as e:
-                        failed.append(f"{display_name}: {e}")
-
-                self.finished_signal.emit(removed, failed)
-
-        progress = QProgressDialog("Uninstalling selected tools. Please wait, this may take a few minutes...", None, 0, 0, self)
-        progress.setWindowTitle("Uninstalling...")
-        progress.setWindowModality(Qt.WindowModal)
-        apply_custom_titlebar(progress, "#000000")
-
-        self._uninstall_worker = _UninstallWorker(targets)
-
-        def on_uninstall_finished(removed, failed):
-            progress.accept()
-            
-            # Clear stored ffprobe_path setting so it no longer references a deleted file
-            if any("FFmpeg" in n for n in removed):
-                self.settings.pop("ffprobe_path", None)
-                self.settings.pop("ffprobe_exe", None)
-                save_settings(self.settings)
-
-            # Clean up empty tools directory if all managed tools were removed
-            try:
-                from integrations.tools_downloader import TOOLS_DIR
-                if os.path.exists(TOOLS_DIR) and not os.listdir(TOOLS_DIR):
-                    os.rmdir(TOOLS_DIR)
-            except Exception:
-                pass
-
-            # Build and show result summary
-            msg = ""
-            if removed:
-                msg += "Successfully removed:\n" + "\n".join(f"  - {n}" for n in removed)
-            if failed:
-                msg += "\n\nFailed to remove:\n" + "\n".join(f"  - {n}" for n in failed)
-
-            # Trigger live panel reload for CPU if UXTU or RyzenAdj was removed
-            if any("UXTU" in n or "RyzenAdj" in n for n in removed):
-                self._reload_cpu_panel()
-                
-            # Trigger live panel reload for HELXTATS if LHM or HWiNFO was removed.
-            if any("LibreHardwareMonitor" in n or "HWiNFO" in n for n in removed):
-                self._reload_hardware_panel()
-                
-            # Trigger live panel reload for HELXAIC if FFprobe/FFmpeg was removed.
-            if any("FFprobe" in n or "FFmpeg" in n for n in removed):
-                self._reload_music_panel()
-
-            from integrations.tools_downloader import HELXAIDMessagePanel
-            HELXAIDMessagePanel("Uninstall Complete", msg.strip(), self, is_error=bool(failed and not removed))
-
-        self._uninstall_worker.finished_signal.connect(on_uninstall_finished)
-        self._uninstall_worker.start()
-        progress.exec()
+        self._uninstall_tools_panel = UninstallExternalToolsFloatingPanel(targets, launcher=self, parent=self)
+        self._uninstall_tools_panel.show_panel()
 
     def check_for_updates(self):
         """Check for application updates."""
@@ -18147,36 +18335,11 @@ class GameLauncher(QWidget):
         
         menu = QMenu(self)
         menu.setObjectName("mostPlayedContextMenu")
-        self.apply_qmenu_blur(menu)
         menu.setStyleSheet("""
-            QMenu#mostPlayedContextMenu, QMenu {
-                background-color: #1e2128;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-                padding: 4px;
-                font-family: 'Orbitron', sans-serif;
-            }
-            QMenu::item {
-                color: #e0e0e0;
-                padding: 6px 14px 6px 10px;
-                min-height: 26px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-family: 'Orbitron', sans-serif;
-                background-color: transparent;
-            }
-            QMenu::item:selected, QMenu::item:hover {
-                background-color: rgba(255, 255, 255, 0.12);
-                color: #ffffff;
-            }
-            QMenu::separator {
-                height: 1px;
-                background: rgba(255, 255, 255, 0.08);
-                margin: 3px 4px;
-            }
-            QMenu::icon {
-                padding-left: 4px;
-            }
+            QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; font-family: 'Orbitron', sans-serif; }
+            QMenu::item { padding: 6px 20px; border-radius: 4px; font-size: 12px; }
+            QMenu::item:selected { background-color: #FF5B06; }
+            QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 4px 6px; }
         """)
         
         icons_dir = os.path.join(SCRIPT_DIR, "UI Icons")
@@ -18822,6 +18985,10 @@ class GameLauncher(QWidget):
                 self.center_on_main_display()
         if hasattr(self, 'floating_loading_panel') and self.floating_loading_panel and self.floating_loading_panel.isVisible():
             self.floating_loading_panel.show_centered()
+        
+        # Fallback: ensure taskbar thumbnail toolbar buttons are mapped if not already registered
+        if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar and not self.taskbar_toolbar.buttons_added:
+            QTimer.singleShot(250, self._init_taskbar_buttons)
                 
     def _on_taskbar_button_clicked(self, button_id):
         """Safely route taskbar button clicks directly to handler methods."""
@@ -18841,62 +19008,64 @@ class GameLauncher(QWidget):
     
     def _init_taskbar_buttons(self, proxy_hwnd=None):
         """Initialize taskbar thumbnail buttons using the main window HWND."""
-        print(f"[Taskbar DEBUG] _init_taskbar_buttons running for [id={id(self)}]", flush=True)
-        if not hasattr(self, 'taskbar_toolbar') or not self.taskbar_toolbar:
-            print(f"[Taskbar DEBUG] _init_taskbar_buttons ABORT: taskbar_toolbar is None for [id={id(self)}]", flush=True)
-            return
-            
-        # Gate: Do NOT add media buttons to taskbar if HELXAIC (FFmpeg) is not installed yet
-        from integrations.tools_downloader import is_ffmpeg_available
-        if not is_ffmpeg_available():
-            print("[Taskbar DEBUG] FFmpeg not available yet; deferring taskbar media button mapping until setup.", flush=True)
-            return
-            
-        # FORCE using the main window HWND instead of the explorer proxy HWND.
-        # This ensures that WM_COMMAND (THBN_CLICKED) messages are sent directly to
-        # our main window, allowing us to catch them in QWidget.nativeEvent safely
-        # without requiring ANY dangerous ctypes hooks (which crash on drag-and-drop).
-        target_hwnd = int(self.winId())
+        target_hwnd = proxy_hwnd or int(self.winId())
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            root_hwnd = user32.GetAncestor(target_hwnd, 2)  # GA_ROOT
+            if root_hwnd:
+                target_hwnd = root_hwnd
+        except Exception:
+            pass
         
-        if proxy_hwnd: 
-            self._verified_taskbar_hwnd = proxy_hwnd
+        tb = getattr(self, 'taskbar_toolbar', None)
+        if not tb:
+            if TASKBAR_TOOLBAR_AVAILABLE and TaskbarThumbnailToolbar:
+                try:
+                    self.taskbar_toolbar = TaskbarThumbnailToolbar(
+                        target_hwnd,
+                        on_prev=self._taskbar_prev,
+                        on_playpause=self._taskbar_playpause,
+                        on_next=self._taskbar_next
+                    )
+                    tb = self.taskbar_toolbar
+                except Exception as e:
+                    print(f"[Taskbar ERROR] Failed to instantiate TaskbarThumbnailToolbar in _init: {e}", flush=True)
+                    return
+            else:
+                return
         
-        if self.taskbar_toolbar.buttons_added:
+        tb.hwnd = target_hwnd
+        if tb.buttons_added:
             return
 
-        print(f"[Taskbar DEBUG] Attempting to map thumbnail buttons (Attempt {getattr(self, '_taskbar_init_attempts', 0) + 1})...")
-        success = self.taskbar_toolbar.add_buttons(target_hwnd)
-        
+        print(f"[Taskbar DEBUG] Attempting to map thumbnail buttons for HWND {hex(target_hwnd)}...", flush=True)
+        success = tb.add_buttons(target_hwnd)
         if success:
-            print("[Taskbar SUCCESS] Native Windows Taskbar Buttons engaged.")
-            return
-            
-        # Robust escalating retry mechanism if DWM hasn't generated the thumbnail frame yet
-        self._taskbar_init_attempts = getattr(self, '_taskbar_init_attempts', 0) + 1
-        if self._taskbar_init_attempts <= 5:
-            delay = 1000 * self._taskbar_init_attempts
-            print(f"[Taskbar DEBUG] DWM rejected mapping. Next retry queued in {delay}ms...")
-            # Maintain strong reference to prevent PySide6 GC of callbacks
-            self._retry_taskbar_hwnd = target_hwnd
-            self._retry_taskbar_timer = QTimer(self)
-            self._retry_taskbar_timer.setSingleShot(True)
-            self._retry_taskbar_timer.timeout.connect(self._exec_taskbar_retry)
-            self._retry_taskbar_timer.start(delay)
-        else:
-            print("[Taskbar FATAL] Exhausted all bounds waiting for DWM thumbnail generation.")
-            
-    def _exec_taskbar_retry(self):
-        """Executes taskbar init retry using strongly referenced target."""
-        self._init_taskbar_buttons(getattr(self, '_retry_taskbar_hwnd', None))
+            print(f"[Taskbar SUCCESS] Native Windows Taskbar Buttons engaged on HWND {hex(target_hwnd)}.", flush=True)
         
     def _exec_os_taskbar_init(self):
-        """Executes taskbar init specifically triggered by Explorer OS message."""
-        hwnd = getattr(self, '_os_taskbar_proxy_hwnd', None)
-        # Only bind buttons if HELXAIC has already been opened and initialized
-        if hasattr(self, 'music_panel') and self.music_panel is not None:
-            self._init_taskbar_buttons(hwnd)
+        """Executes taskbar init triggered by WM_TASKBARBUTTONCREATED from Explorer.
+        This is the ONLY correct time to call ThumbBarAddButtons (VLC/Chrome pattern).
+        """
+        hwnd = int(self.winId())
+        print(f"[Taskbar] WM_TASKBARBUTTONCREATED handler executing on HWND {hex(hwnd)}", flush=True)
+
+        tb = getattr(self, 'taskbar_toolbar', None)
+        if tb:
+            tb.hwnd = hwnd
+            if not tb.buttons_added:
+                self._init_taskbar_buttons(hwnd)
+            else:
+                # Explorer restarted: reinitialize COM manager and re-register
+                try:
+                    tb.reset()
+                    print("[Taskbar] TaskbarManager reset complete after Explorer event.", flush=True)
+                except Exception as e:
+                    print(f"[Taskbar] TaskbarManager reset error: {e}", flush=True)
+                self._init_taskbar_buttons(hwnd)
         else:
-            print("[Taskbar DEBUG] OS Taskbar init deferred: HELXAIC not opened yet.", flush=True)
+            self._init_taskbar_buttons(hwnd)
 
     def _install_wndproc_hook(self, hwnd):
         """No-op: QWidget.nativeEvent natively handles Windows messages safely without ctypes hook."""
@@ -18910,6 +19079,16 @@ class GameLauncher(QWidget):
             msg_ptr = int(message)
             msg = ctypes.cast(msg_ptr, ctypes.POINTER(wintypes.MSG)).contents
             
+            # --- WM_TASKBARBUTTONCREATED: The ONLY correct trigger for ThumbBarAddButtons ---
+            # This message is sent by Explorer when the taskbar button for this window is
+            # created (or recreated after Explorer restart). ThumbBarAddButtons MUST be called
+            # inside this handler - not in showEvent timers - or DWM will ignore the buttons.
+            if hasattr(self, '_WM_TASKBARBUTTONCREATED') and self._WM_TASKBARBUTTONCREATED:
+                if msg.message == self._WM_TASKBARBUTTONCREATED:
+                    print(f"[Taskbar] nativeEvent: WM_TASKBARBUTTONCREATED received! HWND={hex(msg.hWnd)}", flush=True)
+                    self._exec_os_taskbar_init()
+                    return True, 0
+
             # Intercept Taskbar Thumbnail Toolbar button clicks (Layer 2)
             if msg.message == 0x0111:  # WM_COMMAND
                 hi_word = (msg.wParam >> 16) & 0xFFFF
@@ -19009,8 +19188,8 @@ class GameLauncher(QWidget):
                     print(f"[Taskbar ERROR] Failed to recreate toolbar for icon update: {e}", flush=True)
                     
         if hasattr(self, 'taskbar_toolbar') and self.taskbar_toolbar:
-            # Force buttons_added to True just in case
-            self.taskbar_toolbar.buttons_added = True
+            if not self.taskbar_toolbar.buttons_added:
+                self.taskbar_toolbar.add_buttons(target_hwnd)
             self.taskbar_toolbar.update_play_state(is_playing, target_hwnd=target_hwnd)
     
     def _setup_single_instance_server(self):
@@ -19081,10 +19260,28 @@ class GameLauncher(QWidget):
             # Get window handle
             hwnd = int(self.winId())
             
-            # Allow drag-drop messages through UIPI
+            # Allow drag-drop and taskbar media messages through UIPI
+            WM_COMMAND = 0x0111
+            WM_APPCOMMAND = 0x0319
             ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, None)
             ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, None)
             ChangeWindowMessageFilterEx(hwnd, WM_COPYGLOBALDATA, MSGFLT_ALLOW, None)
+            ChangeWindowMessageFilterEx(hwnd, WM_COMMAND, MSGFLT_ALLOW, None)
+            ChangeWindowMessageFilterEx(hwnd, WM_APPCOMMAND, MSGFLT_ALLOW, None)
+            if hasattr(self, '_WM_TASKBARBUTTONCREATED') and self._WM_TASKBARBUTTONCREATED:
+                ChangeWindowMessageFilterEx(hwnd, self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW, None)
+            
+            # Process-wide filter fallback
+            try:
+                ChangeWindowMessageFilter = user32.ChangeWindowMessageFilter
+                ChangeWindowMessageFilter.argtypes = [wintypes.UINT, wintypes.DWORD]
+                ChangeWindowMessageFilter.restype = wintypes.BOOL
+                ChangeWindowMessageFilter(WM_COMMAND, MSGFLT_ALLOW)
+                ChangeWindowMessageFilter(WM_APPCOMMAND, MSGFLT_ALLOW)
+                if hasattr(self, '_WM_TASKBARBUTTONCREATED') and self._WM_TASKBARBUTTONCREATED:
+                    ChangeWindowMessageFilter(self._WM_TASKBARBUTTONCREATED, MSGFLT_ALLOW)
+            except Exception:
+                pass
             
             # Register window as accepting native WM_DROPFILES drops
             shell32 = ctypes.windll.shell32
@@ -19945,6 +20142,7 @@ class GameLauncher(QWidget):
         Returns list of lowercase exe names including:
         - The launcher/main exe (from 'exe' field)
         - The actual game process (from 'game_exe' field if set)
+        - Known companion/child binaries for bootstrappers (e.g. Bloxstrap -> RobloxPlayerBeta)
         
         Automatically filters out system processes from SYSTEM_PROCESS_BLACKLIST
         to prevent false positives from corrupted game_exe data.
@@ -19953,8 +20151,11 @@ class GameLauncher(QWidget):
         
         # Main exe (the launcher or game itself)
         exe_path = game.get("exe", "")
+        main_name = ""
         if exe_path:
-            exe_names.append(os.path.basename(exe_path).lower())
+            main_name = os.path.basename(exe_path).lower().strip()
+            if main_name and not is_blacklisted_process(main_name):
+                exe_names.append(main_name)
         
         # Game exe (for games that have separate launchers)
         # This can be a single exe name or comma-separated list
@@ -19962,8 +20163,23 @@ class GameLauncher(QWidget):
         if game_exe:
             for name in game_exe.split(","):
                 name = name.strip().lower()
-                if name and not is_blacklisted_process(name):
+                if name and not is_blacklisted_process(name) and name not in exe_names:
                     exe_names.append(name)
+        
+        # Check known bootstrapper/companion mappings
+        matched_bootstrappers = [main_name] + [e for e in exe_names if e != main_name]
+        for b_exe in matched_bootstrappers:
+            if b_exe in KNOWN_BOOTSTRAPPER_GAME_MAP:
+                for comp_exe in KNOWN_BOOTSTRAPPER_GAME_MAP[b_exe]:
+                    if comp_exe not in exe_names and not is_blacklisted_process(comp_exe):
+                        exe_names.append(comp_exe)
+        
+        # Additional heuristics for Roblox / Bloxstrap by game name/path
+        game_name_lower = game.get("name", "").lower()
+        if "bloxstrap" in game_name_lower or "roblox" in game_name_lower or "bloxstrap" in exe_path.lower() or "roblox" in exe_path.lower():
+            for roblox_binary in ("robloxplayerbeta.exe", "robloxplayerlauncher.exe"):
+                if roblox_binary not in exe_names and not is_blacklisted_process(roblox_binary):
+                    exe_names.append(roblox_binary)
         
         return exe_names
     
@@ -20195,10 +20411,7 @@ class GameLauncher(QWidget):
             return set(), {}, {}
 
     def _evaluate_session_in_background(self, pid_name_dict: dict, ppid_dict: dict, path_dict: dict):
-        """Unified background watchdog evaluating session liveness and child adoption
-        using the fresh in-memory process snapshot. Runs on the ProcessScanner thread.
-        Zero psutil overhead, zero UI freezes, zero 'Not Responding' states!
-        """
+        """Unified background watchdog evaluating session liveness and child adoption."""
         with self._session_lock:
             if not self.current_session or self.current_session.get("terminated"):
                 return
@@ -20210,14 +20423,16 @@ class GameLauncher(QWidget):
         install_dir = session.get("install_dir", "")
         exe_names = self._get_game_exe_names(game)
         tracked_pids = session.setdefault("tracked_pids", {})
+        all_session_pids = session.setdefault("all_session_pids", set())
         
-        # 1. Seed initial process if tracked_pids is empty (e.g. just launched)
+        # Seed matching processes if tracking is not yet initialized
         if not tracked_pids:
             for pid, name in pid_name_dict.items():
                 if is_blacklisted_process(name):
                     continue
                 if name in exe_names:
                     tracked_pids[pid] = now
+                    all_session_pids.add(pid)
                 elif install_dir:
                     paths = path_dict.get(name, set())
                     if not paths:
@@ -20227,16 +20442,20 @@ class GameLauncher(QWidget):
                     for pth in paths:
                         if pth.lower().startswith(install_dir):
                             tracked_pids[pid] = now
+                            all_session_pids.add(pid)
                             break
+        else:
+            for pid in tracked_pids:
+                all_session_pids.add(pid)
         
-        # 2. Child Process Adoption (during first 60s adoption window)
+        # Adopt spawned children or companion binaries within the adoption window
         if now < session.get("adoption_deadline", 0):
             newly_adopted_name = None
             for pid, name in pid_name_dict.items():
                 if pid in tracked_pids or is_blacklisted_process(name):
                     continue
                 parent_pid = ppid_dict.get(pid)
-                is_child = parent_pid in tracked_pids if parent_pid else False
+                is_child = (parent_pid in tracked_pids or parent_pid in all_session_pids) if parent_pid else False
                 is_in_dir = False
                 if install_dir:
                     paths = path_dict.get(name, set())
@@ -20248,9 +20467,10 @@ class GameLauncher(QWidget):
                         if pth.lower().startswith(install_dir):
                             is_in_dir = True
                             break
-                if is_child or is_in_dir:
+                is_associated = (name in exe_names)
+                if is_child or is_in_dir or is_associated:
                     tracked_pids[pid] = now
-                    # Add newly discovered binary to game_exe in library
+                    all_session_pids.add(pid)
                     game_exe_str = game.get("game_exe", "")
                     existing = set(x.strip().lower() for x in game_exe_str.split(",") if x.strip())
                     main_exe = os.path.basename(game.get("exe", "")).lower()
@@ -20266,44 +20486,38 @@ class GameLauncher(QWidget):
                 except Exception:
                     pass
         
-        # 3. Liveness Check: O(1) in-memory check against pid_name_dict
+        # Purge dead PIDs
         dead_pids = [pid for pid in tracked_pids if pid not in pid_name_dict]
         for pid in dead_pids:
             tracked_pids.pop(pid, None)
         
         is_alive = len(tracked_pids) > 0
         
-        # Fallback check if tracked_pids was emptied prematurely:
+        # Recover tracking if bootstrapper closed before child was adopted
         if not is_alive:
             for pid, name in pid_name_dict.items():
                 if name in exe_names and not is_blacklisted_process(name):
                     tracked_pids[pid] = now
+                    all_session_pids.add(pid)
                     is_alive = True
                     break
         
         if is_alive:
-            # Alive! Clear grace deadline
             session["grace_deadline"] = None
-            
-            # Status check (game vs launcher)
             current_status = self._is_in_game_by_window_title(game)
             if session.get("last_status") != current_status:
                 session["last_status"] = current_status
-                # Notify UI thread via Qt Signal
                 self._session_status_changed_signal.emit()
         else:
-            # No tracked processes alive
-            # Check if within adoption deadline or grace window
+            # Grant a grace period before stopping to allow bootstrapper child handoff
             if now < session.get("adoption_deadline", 0):
                 if session.get("grace_deadline") is None:
                     session["grace_deadline"] = now + 15.0
                     print(f"[Watchdog] Launcher/process exited early for {game_name}. Entering 15s grace window...")
                     return
                 elif now < session.get("grace_deadline", 0):
-                    # Still in grace window, waiting for child process to spawn
                     return
             
-            # Session finished!
             print(f"[Watchdog] All processes ended for {game_name}. Stopping session.")
             self._session_stopped_signal.emit()
 
@@ -20571,9 +20785,7 @@ class GameLauncher(QWidget):
         game_exe_list = game.get("game_exe", "")
         launcher_exe = os.path.basename(game.get("exe", "")).lower()
         
-        # ===== STEP 0: Ultra-Fast O(1) Foreground Window Probe =====
-        # If the user is actively focused on a tracked game window,
-        # return immediately without running desktop-wide EnumWindows
+        # Fast foreground window probe
         if WINDOWS_API_AVAILABLE:
             try:
                 import ctypes
@@ -20595,9 +20807,7 @@ class GameLauncher(QWidget):
             except Exception:
                 pass
         
-        # ===== STEP 1: Special case for java.exe games (TLauncher/Minecraft) =====
-        # Java-based games need exact window title matching because java.exe is
-        # shared by many non-game applications
+        # Verify Java titles to prevent false matches with non-game JVM instances
         exe_names_all = self._get_game_exe_names(game)
         if any(n in ("java.exe", "javaw.exe") for n in exe_names_all):
             if "tlauncher" in game_name or "minecraft" in game_name:
@@ -20606,86 +20816,59 @@ class GameLauncher(QWidget):
                     return mc_status
                 return "unknown"
         
-        # ===== STEP 2: Collect window titles from all related processes =====
         all_titles = []
-        
-        # Titles from the launcher exe
         if launcher_exe:
             all_titles.extend(self._get_window_titles_for_process(launcher_exe))
         
-        # Titles from game exe(s)
         game_exe_titles = []
-        if game_exe_list:
-            for exe in game_exe_list.split(","):
-                exe = exe.strip()
-                if exe:
-                    titles = self._get_window_titles_for_process(exe)
-                    game_exe_titles.extend(titles)
-                    all_titles.extend(titles)
+        companion_exes = [e for e in exe_names_all if e != launcher_exe]
+        for exe in companion_exes:
+            titles = self._get_window_titles_for_process(exe)
+            game_exe_titles.extend(titles)
+            all_titles.extend(titles)
         
-        # ===== STEP 3: If game_exe has a visible window, check its title =====
         if game_exe_titles:
             for title in game_exe_titles:
                 title_lower = title.lower()
-                # game_exe window that is NOT a launcher keyword -> definitely playing
                 is_launcher_window = any(kw in title_lower for kw in LAUNCHER_TITLE_KEYWORDS)
                 if not is_launcher_window:
                     return "game"
         
         if not all_titles:
-            # No windows found — fallback to process-based detection
-            if game_exe_list:
-                for exe in game_exe_list.split(","):
-                    exe_name = exe.strip().lower()
-                    if exe_name and self._is_process_running(exe_name):
-                        return "game"
+            for exe in companion_exes:
+                if exe and self._is_process_running(exe):
+                    return "game"
             return "unknown"
         
-        # ===== STEP 4: Analyze window titles generically =====
         has_game_window = False
         has_launcher_window = False
         
         for title in all_titles:
             title_lower = title.lower()
-            
-            # Check for launcher keywords in the title
-            is_launcher = any(kw in title_lower for kw in LAUNCHER_TITLE_KEYWORDS)
-            if is_launcher:
+            if any(kw in title_lower for kw in LAUNCHER_TITLE_KEYWORDS):
                 has_launcher_window = True
                 continue
-            
-            # Fuzzy match: does the window title match the game name?
             if self._fuzzy_match_game_name(game.get("name", ""), title):
                 has_game_window = True
         
-        # Decide based on what we found
         if has_game_window:
             return "game"
         if has_launcher_window:
             return "launcher"
         
-        # ===== STEP 5: Main exe is a known platform launcher =====
         if launcher_exe in KNOWN_LAUNCHERS:
-            # The library entry's main exe is just a platform launcher (Steam, Epic, etc.)
-            # If no game_exe window was found, user is just browsing the launcher
-            if game_exe_list:
-                for exe in game_exe_list.split(","):
-                    exe_name = exe.strip().lower()
-                    if exe_name and self._is_process_running(exe_name):
-                        return "game"
+            for exe in companion_exes:
+                if exe and self._is_process_running(exe):
+                    return "game"
             return "launcher"
         
-        # ===== STEP 6: UE generic exe detection =====
-        # If the game uses a generic Unreal Engine exe name, compare install directories
         if launcher_exe in GENERIC_UE_EXES and game.get("exe"):
             game_install_dir = os.path.dirname(game["exe"]).lower()
             running_paths = self._get_process_exe_path(launcher_exe)
             for rpath in running_paths:
-                # Check if the running exe is inside the game's install directory
                 if game_install_dir and rpath.lower().startswith(game_install_dir):
                     return "game"
         
-        # ===== STEP 7: Fallback - check if game_exe process is running =====
         if game_exe_list:
             for exe in game_exe_list.split(","):
                 exe_name = exe.strip().lower()
@@ -20723,6 +20906,7 @@ class GameLauncher(QWidget):
                 "start_time": time.time(),
                 "from_launcher": False,
                 "tracked_pids": tracked_pids,
+                "all_session_pids": set(tracked_pids.keys()),
                 "install_dir": self._get_game_install_dir(game),
                 "status": "game",
                 "adoption_deadline": time.time() + 60.0,
@@ -21724,7 +21908,7 @@ class GameLauncher(QWidget):
         # Patterns to exclude (utilities, runtimes, not the main game)
         exclude_patterns = [
             "vcredist", "vc_redist", "dxsetup", "setup", "installer",
-            "unins", "crashhandler", "unitycrashhandler", "ue4prereqsetup",
+            "unins", "unwise", "crashhandler", "unitycrashhandler", "ue4prereqsetup",
             "dotnet", "directx", "redist", "helper", "updater",
             # Java runtime exclusions
             "javaw", "java", "javaws", "jre", "jdk", "runtime",
@@ -22068,6 +22252,7 @@ class GameLauncher(QWidget):
                                 "start_time": time.time(),
                                 "from_launcher": True,
                                 "tracked_pids": {},
+                                "all_session_pids": set(),
                                 "install_dir": self._get_game_install_dir(game),
                                 "status": "launcher",
                                 "adoption_deadline": time.time() + 60.0,
@@ -22239,36 +22424,11 @@ class GameLauncher(QWidget):
     def show_context_menu(self, pos, game, button):
         menu = QMenu(self)
         menu.setObjectName("GameContextMenu")
-        self.apply_qmenu_blur(menu)
         menu.setStyleSheet("""
-            QMenu#GameContextMenu, QMenu {
-                background-color: #1e2128;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-                padding: 4px;
-                font-family: 'Orbitron', sans-serif;
-            }
-            QMenu::item {
-                color: #e0e0e0;
-                padding: 6px 14px 6px 10px;
-                min-height: 26px;
-                border-radius: 4px;
-                font-size: 12px;
-                font-family: 'Orbitron', sans-serif;
-                background-color: transparent;
-            }
-            QMenu::item:selected, QMenu::item:hover {
-                background-color: rgba(255, 255, 255, 0.12);
-                color: #ffffff;
-            }
-            QMenu::separator {
-                height: 1px;
-                background: rgba(255, 255, 255, 0.08);
-                margin: 3px 4px;
-            }
-            QMenu::icon {
-                padding-left: 4px;
-            }
+            QMenu { background-color: #28282d; color: #ffffff; border: 1px solid #3c3c41; padding: 4px; font-family: 'Orbitron', sans-serif; }
+            QMenu::item { padding: 6px 20px; border-radius: 4px; font-size: 12px; }
+            QMenu::item:selected { background-color: #FF5B06; }
+            QMenu::separator { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 4px 6px; }
         """)
 
         icons_dir = os.path.join(SCRIPT_DIR, "UI Icons")
@@ -22855,32 +23015,30 @@ if __name__ == "__main__":
     
     update_splash(50, "Initializing launcher...")
 
-    # Check if Zero-UAC should be initialized in Software Initialize Panel
+    # Ensure Zero-UAC helper service is active
     try:
-        _s = load_settings()
-        if _s.get("init_zero_uac_in_panel", False):
-            from integrations.cpu_controller import is_service_running
+        from integrations.cpu_controller import is_service_running
+        if is_service_running():
+            print("[Init] Zero-UAC Service is already running.")
+        else:
+            try:
+                subprocess.run(['net.exe', 'start', 'HelxaidHelperService'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=4)
+            except Exception:
+                pass
             if is_service_running():
-                print("[Init] Zero-UAC Service is already running.")
+                print("[Init] Zero-UAC Service started successfully.")
             else:
-                try:
-                    subprocess.run(['net.exe', 'start', 'HelxaidHelperService'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=3)
-                except Exception:
-                    pass
-                if is_service_running():
-                    print("[Init] Zero-UAC Service started successfully.")
+                update_splash(70, "Initializing Zero-UAC Service...")
+                import ctypes
+                if getattr(sys, 'frozen', False):
+                    exe_path = sys.executable
+                    setup_args = "--run-service --setup"
                 else:
-                    update_splash(70, "Initializing Zero-UAC Service...")
-                    import ctypes
-                    if getattr(sys, 'frozen', False):
-                        exe_path = sys.executable
-                        setup_args = "--run-service --setup"
-                    else:
-                        pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
-                        exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
-                        script_path = os.path.abspath(sys.argv[0])
-                        setup_args = f'"{script_path}" --run-service --setup'
-                    ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
+                    pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+                    exe_path = pythonw_path if os.path.exists(pythonw_path) else sys.executable
+                    script_path = os.path.abspath(__file__)
+                    setup_args = f'"{script_path}" --run-service --setup'
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", exe_path, setup_args, None, 0)
     except Exception as e:
         print(f"[Init] Zero-UAC panel init error: {e}")
     

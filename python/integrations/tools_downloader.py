@@ -30,6 +30,7 @@ FFMPEG_DIR = os.path.join(TOOLS_DIR, "ffmpeg")
 LIBREHWMON_DIR = os.path.join(TOOLS_DIR, "librehardwaremonitor")
 HWINFO_DIR = os.path.join(TOOLS_DIR, "hwinfo")
 AHK_DIR = os.path.join(TOOLS_DIR, "ahk")
+CRYSTALDISKINFO_DIR = os.path.join(TOOLS_DIR, "crystaldiskinfo")
 
 # Download URLs
 RYZENADJ_URL = "https://github.com/FlyGoat/RyzenAdj/releases/latest/download/ryzenadj-win64.zip"
@@ -39,6 +40,7 @@ LIBREHWMON_URL = "https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/r
 AHK_URL = "https://www.autohotkey.com/download/ahk.zip"
 # HWiNFO Portable (~5MB, latest stable version)
 HWINFO_URL = "https://www.hwinfo.com/files/hwi_848.zip"  # v8.48 portable
+CRYSTALDISKINFO_URL = "https://github.com/hiyohiyo/CrystalDiskInfo/releases/download/9.4.4/CrystalDiskInfo9_4_4.zip"
 
 # Checksums for verifying download integrity (SHA256)
 # Note: RyzenAdj uses dynamic version checking instead of a hardcoded checksum
@@ -303,11 +305,37 @@ def is_hwinfo_available() -> bool:
     return os.path.exists(get_hwinfo_path()) or os.path.exists(get_hwinfo32_path())
 
 
+def get_crystaldiskinfo_path() -> str:
+    """Get path to DiskInfo64.exe or DiskInfo32.exe across tools, AppData, and system."""
+    try:
+        from integrations.crystal_disk_info import get_crystal_disk_info_path as _get_cdi
+        p = _get_cdi()
+        if p and os.path.exists(p):
+            return p
+    except Exception:
+        pass
+    appdata_path = os.path.join(CRYSTALDISKINFO_DIR, "DiskInfo64.exe")
+    if os.path.exists(appdata_path):
+        return appdata_path
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    tools_path = os.path.join(base_dir, "tools", "crystaldiskinfo", "DiskInfo64.exe")
+    if os.path.exists(tools_path):
+        return tools_path
+    return appdata_path
+
+
+def is_crystaldiskinfo_available() -> bool:
+    """Check if CrystalDiskInfo executable is present."""
+    p = get_crystaldiskinfo_path()
+    return bool(p and os.path.exists(p))
+
+
 # Aliases for backward compatibility and intuitive naming
 is_ffmpeg_installed = is_ffmpeg_available
 is_ryzenadj_installed = is_ryzenadj_available
 is_lhm_installed = is_librehwmon_available
 is_librehwmon_installed = is_librehwmon_available
+is_crystaldiskinfo_installed = is_crystaldiskinfo_available
 
 
 
@@ -853,6 +881,62 @@ def download_hwinfo(progress_callback: Optional[Callable[[int, int], None]] = No
             return False, "HWiNFO64.exe not found after extraction"
     except Exception as e:
         return False, str(e)
+
+
+def download_crystaldiskinfo(progress_callback: Optional[Callable[[int, int], None]] = None) -> Tuple[bool, Optional[str]]:
+    """
+    Download and install CrystalDiskInfo Portable to AppData using atomic structural validation.
+    
+    Returns:
+        (success, error_message)
+    """
+    import time
+    
+    try:
+        temp_dir = tempfile.gettempdir()
+        zip_path = os.path.join(temp_dir, f"crystaldiskinfo_portable-{uuid.uuid4().hex}.zip")
+        
+        last_error = None
+        success = False
+        for attempt in range(5):
+            print(f"[Tools] Downloading CrystalDiskInfo from {CRYSTALDISKINFO_URL} (attempt {attempt + 1}/5)...")
+            success, error = download_file(
+                CRYSTALDISKINFO_URL,
+                zip_path,
+                progress_callback,
+                expected_checksum=None
+            )
+            if success:
+                print(f"[Tools] CrystalDiskInfo download validated successfully")
+                last_error = None
+                break
+            else:
+                print(f"[Tools] Download failed: {error}")
+                if attempt < 4:
+                    backoff_time = 2 ** attempt
+                    print(f"[Tools] Waiting {backoff_time}s before retry...")
+                    time.sleep(backoff_time)
+                last_error = error
+        if not success:
+            return False, f"Download failed: {last_error}"
+        
+        # Atomic Staging Installation
+        success, error = atomic_install_tool_archive(
+            zip_path=zip_path,
+            target_dir=CRYSTALDISKINFO_DIR,
+            required_binaries=["DiskInfo64.exe"]
+        )
+        if not success:
+            return False, f"Install failed: {error}"
+            
+        if os.path.exists(get_crystaldiskinfo_path()):
+            print("[Tools] CrystalDiskInfo installed successfully!")
+            return True, None
+        else:
+            return False, "DiskInfo64.exe not found after extraction"
+    except Exception as e:
+        return False, str(e)
+
 
 # Qt UI functions (require PySide6)
 class HELXAIDProgressDialog:
@@ -1817,6 +1901,14 @@ def import_lhm_tool(source_path: str) -> Tuple[bool, str]:
     success, msg = import_tool_from_path(LIBREHWMON_DIR, ["LibreHardwareMonitorLib.dll"], source_path)
     if success and not is_librehwmon_available():
         return False, "LibreHardwareMonitorLib.dll was not found in the imported package."
+    return success, msg
+
+
+def import_crystaldiskinfo_tool(source_path: str) -> Tuple[bool, str]:
+    """Import CrystalDiskInfo archive or folder into CRYSTALDISKINFO_DIR."""
+    success, msg = import_tool_from_path(CRYSTALDISKINFO_DIR, ["DiskInfo64.exe", "DiskInfo32.exe"], source_path)
+    if success and not is_crystaldiskinfo_available():
+        return False, "DiskInfo64.exe was not found in the imported package."
     return success, msg
 
 

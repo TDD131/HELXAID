@@ -8335,7 +8335,7 @@ class CinematicLightingFloatingPanel(QFrame):
         self.viz_style_combo.setObjectName("vizStyleCombo")
         self.viz_style_combo.setFixedHeight(30)
         self.viz_style_combo.setIconSize(QSize(16, 16))
-        self.viz_style_combo.addItem(make_icon("viz-style-bars.svg"), "Bottom Spectrum Bars", "bars")
+        self.viz_style_combo.addItem(make_icon("visualizer-icon.svg"), "Bottom Spectrum Bars", "bars")
         self.viz_style_combo.addItem(make_icon("viz-style-waves.svg"), "Silk Fluid Ambient Waves", "waves")
         cur_style = self.viz_config.get("style_mode", "bars")
         idx_style = self.viz_style_combo.findData(cur_style)
@@ -9933,7 +9933,50 @@ class PlaylistTable(QWidget):
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
         self.tree.setDropIndicatorShown(True)
-        self.tree.setDragDropMode(QAbstractItemView.InternalMove)
+        self.tree.setDragDropMode(QAbstractItemView.DragDrop)
+        
+        orig_tree_dragEnterEvent = self.tree.dragEnterEvent
+        orig_tree_dragMoveEvent = self.tree.dragMoveEvent
+        orig_tree_dropEvent = self.tree.dropEvent
+
+        def _playlist_dragEnterEvent(event):
+            if event.source() == self.tree:
+                orig_tree_dragEnterEvent(event)
+            elif event.mimeData().hasUrls():
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+
+        def _playlist_dragMoveEvent(event):
+            if event.source() == self.tree:
+                orig_tree_dragMoveEvent(event)
+            elif event.mimeData().hasUrls():
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+
+        def _playlist_dropEvent(event):
+            if event.source() == self.tree:
+                orig_tree_dropEvent(event)
+                return
+            if event.mimeData().hasUrls():
+                w = self.parent()
+                music_panel = None
+                while w:
+                    if hasattr(w, '_playlist') and hasattr(w, '_save_state'):
+                        music_panel = w
+                        break
+                    w = w.parent()
+                if music_panel and hasattr(music_panel, 'dropEvent'):
+                    music_panel.dropEvent(event)
+                elif hasattr(self.parent(), 'dropEvent'):
+                    self.parent().dropEvent(event)
+                event.acceptProposedAction()
+
+        self.tree.dragEnterEvent = _playlist_dragEnterEvent
+        self.tree.dragMoveEvent = _playlist_dragMoveEvent
+        self.tree.dropEvent = _playlist_dropEvent
+
         orig_playlist_keyPressEvent = self.tree.keyPressEvent
         def _playlist_keyPressEvent(event):
             if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
@@ -9986,29 +10029,7 @@ class PlaylistTable(QWidget):
                 should_rubber_band = False
                 if not item or column == -1:
                     should_rubber_band = True
-                elif column >= 2:
-                    should_rubber_band = True
-                else:
-                    from PySide6.QtGui import QFontMetrics
-                    font = item.font(column) if item.font(column).family() else self.tree.font()
-                    fm = QFontMetrics(font)
-                    text_width = fm.horizontalAdvance(item.text(column))
-                    
-                    cell_x = self.tree.header().sectionPosition(column)
-                    depth = 0
-                    p = item.parent()
-                    while p:
-                        depth += 1
-                        p = p.parent()
-                        
-                    indent = 0
-                    if column == 0:
-                        indent = depth * self.tree.indentation() + 24
-                        
-                    if event.pos().x() > (cell_x + indent + text_width + 30):
-                        should_rubber_band = True
-                        
-                if item and item.isSelected():
+                elif item and item.isSelected():
                     should_rubber_band = False
                 
                 if should_rubber_band:
@@ -10931,6 +10952,7 @@ class PlayerBar(QFrame):
         self._is_playing = False
         self._loop_mode = "off"  # off, all, one
         self._is_shuffled = False
+        self._is_lyrics_active = False
         self._setup_ui()
         self._apply_style()
     
@@ -11185,7 +11207,8 @@ class PlayerBar(QFrame):
             QPushButton#prevBtn,
             QPushButton#nextBtn,
             QPushButton#loopOneBtn,
-            QPushButton#visualizerBtn {
+            QPushButton#visualizerBtn,
+            QPushButton#lyricsBtn {
                 background: transparent;
                 border: none;
                 border-radius: 24px;
@@ -11196,7 +11219,8 @@ class PlayerBar(QFrame):
             QPushButton#prevBtn:hover,
             QPushButton#nextBtn:hover,
             QPushButton#loopOneBtn:hover,
-            QPushButton#visualizerBtn:hover {
+            QPushButton#visualizerBtn:hover,
+            QPushButton#lyricsBtn:hover {
                 background: rgba(255, 255, 255, 0.1);
             }
             
@@ -11267,6 +11291,7 @@ class PlayerBar(QFrame):
             }
             
         """)
+        self._update_lyrics_style()
     
     def _toggle_shuffle(self):
         self._is_shuffled = not self._is_shuffled
@@ -11325,11 +11350,11 @@ class PlayerBar(QFrame):
                 # Transparent background with orange border
                 self.loop_btn.setStyleSheet("""
                     QPushButton {
-                        background: transparent;
-                        border: 2px solid #FF5B06;
-                        border-radius: 16px;
-                    }
-                """)
+                    background: transparent;
+                    border: 2px solid #FF5B06;
+                    border-radius: 16px;
+                }
+            """)
             else:
                 # Off - no background, transparent border (to keep size consistent)
                 self.loop_btn.setStyleSheet("""
@@ -11337,6 +11362,47 @@ class PlayerBar(QFrame):
                         background: transparent;
                         border: 2px solid transparent;
                         border-radius: 16px;
+                    }
+                """)
+
+    def set_lyrics_active(self, active: bool):
+        """Update lyrics toggle button active state and apply Solid Highlight Badge styling."""
+        self._is_lyrics_active = bool(active)
+        self._update_lyrics_style()
+
+    def _update_lyrics_style(self):
+        """Apply Solid Highlight Badge style for Lyrics toggle button matching visualizerBtn."""
+        status_text = "ON" if getattr(self, '_is_lyrics_active', False) else "OFF"
+        if hasattr(self, 'lyrics_btn') and self.lyrics_btn:
+            self.lyrics_btn.setToolTip(f"Lyrics View (Ctrl+L) [{status_text}]")
+            if getattr(self, '_is_lyrics_active', False):
+                # Active (ON): Solid Orange Badge with circular border-radius matching visualizerBtn (24px)
+                self.lyrics_btn.setStyleSheet("""
+                    QPushButton#lyricsBtn {
+                        background-color: #FF5B06;
+                        border: none;
+                        border-radius: 24px;
+                    }
+                    QPushButton#lyricsBtn:hover {
+                        background-color: #E04F03;
+                    }
+                    QPushButton#lyricsBtn:pressed {
+                        background-color: #C24402;
+                    }
+                """)
+            else:
+                # Idle (OFF): Transparent background with dark hover and 24px border-radius
+                self.lyrics_btn.setStyleSheet("""
+                    QPushButton#lyricsBtn {
+                        background-color: transparent;
+                        border: none;
+                        border-radius: 24px;
+                    }
+                    QPushButton#lyricsBtn:hover {
+                        background-color: rgba(255, 255, 255, 0.1);
+                    }
+                    QPushButton#lyricsBtn:pressed {
+                        background-color: rgba(255, 255, 255, 0.06);
                     }
                 """)
     
@@ -13402,7 +13468,7 @@ class MusicPanelWidget(QWidget):
             
             import os
             import datetime
-            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
+            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.hxstream', '.strm'}
             
             if not hasattr(self, '_playlist'):
                 self._playlist = []
@@ -13416,43 +13482,58 @@ class MusicPanelWidget(QWidget):
                     folder_tracks = []
                     try:
                         for entry in os.scandir(path):
-                            if entry.is_file() and os.path.splitext(entry.name)[1].lower() in audio_exts:
-                                title = os.path.splitext(entry.name)[0]
-                                try:
-                                    mtime = entry.stat().st_mtime
-                                    dt = datetime.datetime.fromtimestamp(mtime)
-                                    date_str = dt.strftime("%b %d, %Y")
-                                except Exception:
-                                    date_str = ""
-                                folder_tracks.append({
-                                    'path': entry.path,
-                                    'title': title,
-                                    'artist': 'Dropped File',
-                                    'duration': 0,
-                                    'date_added': date_str,
-                                    'playlist_group': folder_name
-                                })
+                            if entry.is_file():
+                                ext = os.path.splitext(entry.name)[1].lower()
+                                if ext in audio_exts:
+                                    if ext in ('.hxstream', '.strm'):
+                                        from StreamFileEngine import read_stream_file
+                                        st_meta = read_stream_file(entry.path)
+                                        if st_meta:
+                                            st_meta['playlist_group'] = folder_name
+                                            folder_tracks.append(st_meta)
+                                    else:
+                                        title = os.path.splitext(entry.name)[0]
+                                        try:
+                                            mtime = entry.stat().st_mtime
+                                            dt = datetime.datetime.fromtimestamp(mtime)
+                                            date_str = dt.strftime("%b %d, %Y")
+                                        except Exception:
+                                            date_str = ""
+                                        folder_tracks.append({
+                                            'path': entry.path,
+                                            'title': title,
+                                            'artist': 'Dropped File',
+                                            'duration': 0,
+                                            'date_added': date_str,
+                                            'playlist_group': folder_name
+                                        })
                     except Exception:
                         pass
                     tracks_to_add.extend(folder_tracks)
                 elif os.path.isfile(path):
                     ext = os.path.splitext(path)[1].lower()
                     if ext in audio_exts:
-                        title = os.path.splitext(os.path.basename(path))[0]
-                        try:
-                            mtime = os.path.getmtime(path)
-                            dt = datetime.datetime.fromtimestamp(mtime)
-                            date_str = dt.strftime("%b %d, %Y")
-                        except Exception:
-                            date_str = ""
-                            
-                        tracks_to_add.append({
-                            'path': path,
-                            'title': title,
-                            'artist': 'Dropped File',
-                            'duration': 0,
-                            'date_added': date_str
-                        })
+                        if ext in ('.hxstream', '.strm'):
+                            from StreamFileEngine import read_stream_file
+                            st_meta = read_stream_file(path)
+                            if st_meta:
+                                tracks_to_add.append(st_meta)
+                        else:
+                            title = os.path.splitext(os.path.basename(path))[0]
+                            try:
+                                mtime = os.path.getmtime(path)
+                                dt = datetime.datetime.fromtimestamp(mtime)
+                                date_str = dt.strftime("%b %d, %Y")
+                            except Exception:
+                                date_str = ""
+                                
+                            tracks_to_add.append({
+                                'path': path,
+                                'title': title,
+                                'artist': 'Dropped File',
+                                'duration': 0,
+                                'date_added': date_str
+                            })
                         
             if tracks_to_add:
                 self._playlist.extend(tracks_to_add)
@@ -13465,10 +13546,10 @@ class MusicPanelWidget(QWidget):
                 if hasattr(self, '_track_count_label'):
                     self._track_count_label.setText(f"{len(self._playlist)} tracks")
                 
-                # Fetch metadata asynchronously for the newly added tracks
-                self._fetch_metadata_async(self._playlist, "Playlist")
-                # Removed autoplay on drag & drop per user request
-                # self._play_track(start_idx)
+                # Fetch metadata asynchronously for the newly added local tracks (skip stream files)
+                local_new_tracks = [t for t in self._playlist if not t.get('is_stream') and not t.get('is_online') and not str(t.get('path', '')).lower().endswith(('.hxstream', '.strm'))]
+                if local_new_tracks:
+                    self._fetch_metadata_async(self._playlist, "Playlist")
     
     def _save_sidebar_button_order(self, order_keys: list):
         try:
@@ -13655,6 +13736,17 @@ class MusicPanelWidget(QWidget):
                     self.update()
 
                     self.reorder_button(dragged_key, target_idx)
+                    return
+
+                if event.mimeData().hasUrls():
+                    event.acceptProposedAction()
+                    self._drag_hover_timer.stop()
+                    self._drag_hover_target = None
+                    if hasattr(self.parent_panel, 'btn_playlist') and hasattr(self.parent_panel, 'stack'):
+                        if self.parent_panel.stack.currentIndex() != 0:
+                            self.parent_panel.btn_playlist.click()
+                    if hasattr(self.parent_panel, 'dropEvent'):
+                        self.parent_panel.dropEvent(event)
                     return
 
                 event.acceptProposedAction()
@@ -13891,10 +13983,10 @@ class MusicPanelWidget(QWidget):
             "stream": self.btn_stream
         }
         order = self._load_sidebar_button_order()
-        top_key = order[0] if order else "stream"
-        self.btn_playlist.setProperty("active", top_key == "playlist")
-        self.btn_media_lib.setProperty("active", top_key == "media_lib")
-        self.btn_stream.setProperty("active", top_key == "stream")
+        cur_idx = getattr(self.stack, 'currentIndex', lambda: 0)() if hasattr(self, 'stack') else 0
+        self.btn_playlist.setProperty("active", cur_idx == 0)
+        self.btn_media_lib.setProperty("active", cur_idx == 1)
+        self.btn_stream.setProperty("active", cur_idx == 2)
 
         for k in order:
             if k in button_map:
@@ -13902,40 +13994,41 @@ class MusicPanelWidget(QWidget):
         sidebar_layout.addStretch()
         parent_container.addWidget(self.sidebar_widget)
 
+    def _on_stack_current_changed(self, idx: int):
+        target = "playlist" if idx == 0 else ("media_lib" if idx == 1 else ("stream" if idx == 2 else ""))
+        if target:
+            if hasattr(self, 'btn_playlist') and self.btn_playlist:
+                self.btn_playlist.setProperty("active", target == "playlist")
+            if hasattr(self, 'btn_media_lib') and self.btn_media_lib:
+                self.btn_media_lib.setProperty("active", target == "media_lib")
+            if hasattr(self, 'btn_stream') and self.btn_stream:
+                self.btn_stream.setProperty("active", target == "stream")
+                
+            for btn in (getattr(self, 'btn_playlist', None), getattr(self, 'btn_media_lib', None), getattr(self, 'btn_stream', None)):
+                if btn:
+                    btn.style().unpolish(btn)
+                    btn.style().polish(btn)
+                    btn.setStyleSheet("")
+
     def _on_sidebar_nav(self, target):
         if target == "playlist":
-            self.btn_playlist.setProperty("active", True)
-            self.btn_media_lib.setProperty("active", False)
-            if hasattr(self, 'btn_stream') and self.btn_stream:
-                self.btn_stream.setProperty("active", False)
             if hasattr(self, 'stack'):
                 self.stack.setCurrentIndex(0)
+            self._on_stack_current_changed(0)
         elif target == "media_lib":
-            self.btn_playlist.setProperty("active", False)
-            self.btn_media_lib.setProperty("active", True)
-            if hasattr(self, 'btn_stream') and self.btn_stream:
-                self.btn_stream.setProperty("active", False)
             if hasattr(self, '_init_media_lib_func') and self._init_media_lib_func:
                 self._init_media_lib_func()
             if hasattr(self, 'stack'):
                 self.stack.setCurrentIndex(1)
+            self._on_stack_current_changed(1)
         elif target == "stream":
-            self.btn_playlist.setProperty("active", False)
-            self.btn_media_lib.setProperty("active", False)
-            if hasattr(self, 'btn_stream') and self.btn_stream:
-                self.btn_stream.setProperty("active", True)
             if hasattr(self, '_init_stream_page_func') and self._init_stream_page_func:
                 self._init_stream_page_func()
             if hasattr(self, 'stack'):
                 self.stack.setCurrentIndex(2)
+            self._on_stack_current_changed(2)
             if hasattr(self, 'stream_page') and self.stream_page and hasattr(self.stream_page, 'on_page_activated'):
                 self.stream_page.on_page_activated()
-
-        for btn in (getattr(self, 'btn_playlist', None), getattr(self, 'btn_media_lib', None), getattr(self, 'btn_stream', None)):
-            if btn:
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
-                btn.setStyleSheet("")
 
     def _update_splitter_gradient(self):
         if not hasattr(self, 'main_splitter'):
@@ -13994,6 +14087,7 @@ class MusicPanelWidget(QWidget):
         # Main content stack
         self.stack = QStackedWidget()
         self.stack.setMinimumWidth(200)
+        self.stack.currentChanged.connect(self._on_stack_current_changed)
         
         # === Page 0: Playlist View ===
         playlist_page = QWidget()
@@ -14553,10 +14647,13 @@ class MusicPanelWidget(QWidget):
     def _ensure_player(self):
         """Ensure main QMediaPlayer is initialized lazily."""
         if getattr(self, '_player', None) is None:
+            from PySide6.QtMultimedia import QVideoSink
             self._player = QMediaPlayer()
             self._audio_output = QAudioOutput()
             self._player.setAudioOutput(self._audio_output)
             self._audio_output.setVolume(getattr(self, '_user_volume', 1.0))
+            self._video_sink = QVideoSink(self)
+            self._player.setVideoSink(self._video_sink)
             self._player.positionChanged.connect(self._on_position)
             self._player.durationChanged.connect(self._on_duration_changed)
             self._player.playbackStateChanged.connect(self._on_state)
@@ -14758,7 +14855,7 @@ class MusicPanelWidget(QWidget):
     def _on_media_status(self, status):
         """Handle media status changes (for end-of-track, auto-play, and loop handling)."""
         # Guarantee auto-play when a new track finishes buffering/loading
-        if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia, QMediaPlayer.BufferingMedia):
+        if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
             should_play = (getattr(self, '_playback_intent', '') == 'play') or getattr(self, '_switching_track', False)
             if should_play:
                 if hasattr(self, '_player') and self._player:
@@ -14766,11 +14863,14 @@ class MusicPanelWidget(QWidget):
                         self._player.play()
                 if hasattr(self, '_player') and self._player and self._player.playbackState() == QMediaPlayer.PlayingState:
                     self.player_bar.set_playing(True)
+                    if hasattr(self, '_playlist') and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
+                        curr_t = self._playlist[self._current_index]
+                        if isinstance(curr_t, dict) and curr_t.get('title'):
+                            self.player_bar.set_track_info(curr_t.get('title', ''), curr_t.get('artist', ''))
                     self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
                     if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
                         self._taskbar_media_widget.set_playback_state(True)
-                    from PySide6.QtCore import QTimer
-                    QTimer.singleShot(500, lambda: setattr(self, '_switching_track', False))
+                    self._switching_track = False
 
         if status == QMediaPlayer.EndOfMedia:
             # If crossfade handled the transition, don't do auto-next
@@ -15402,9 +15502,12 @@ class MusicPanelWidget(QWidget):
         
         # Ensure secondary player is initialized lazily
         if self._player2 is None:
+            from PySide6.QtMultimedia import QVideoSink
             self._player2 = QMediaPlayer()
             self._audio_output2 = QAudioOutput()
             self._player2.setAudioOutput(self._audio_output2)
+            self._video_sink2 = QVideoSink(self)
+            self._player2.setVideoSink(self._video_sink2)
             self._audio_output2.setVolume(0.0)
             
         # Load next track into secondary player
@@ -15643,6 +15746,10 @@ class MusicPanelWidget(QWidget):
         self._ensure_dl_panel()
         self._toggle_right_panel(1)
 
+    def _toggle_lyrics_view(self):
+        """Toggle the lyrics panel view."""
+        self._toggle_right_panel(0)
+
     def _toggle_right_panel(self, target_idx: int):
         """Unified right panel stack manager for Lyrics (0) and Universal Downloader (1)."""
         if not hasattr(self, 'right_panel_stack') or not hasattr(self, 'main_splitter'):
@@ -15654,6 +15761,8 @@ class MusicPanelWidget(QWidget):
         if is_visible and cur_idx == target_idx:
             # Collapse right panel
             self.right_panel_stack.hide()
+            if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'set_lyrics_active'):
+                self.player_bar.set_lyrics_active(False)
             if hasattr(self, 'btn_lyrics') and self.btn_lyrics:
                 self.btn_lyrics.setProperty("active", False)
                 self.btn_lyrics.style().unpolish(self.btn_lyrics)
@@ -15670,6 +15779,8 @@ class MusicPanelWidget(QWidget):
             self.right_panel_stack.show()
 
             if target_idx == 0:  # Lyrics
+                if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'set_lyrics_active'):
+                    self.player_bar.set_lyrics_active(True)
                 if hasattr(self, 'btn_lyrics') and self.btn_lyrics:
                     self.btn_lyrics.setProperty("active", True)
                     self.btn_lyrics.style().unpolish(self.btn_lyrics)
@@ -15683,6 +15794,8 @@ class MusicPanelWidget(QWidget):
                     if getattr(self, '_player', None):
                         self.lyrics_page.on_position_changed(self._player.position())
             else:  # Downloader
+                if hasattr(self, 'player_bar') and hasattr(self.player_bar, 'set_lyrics_active'):
+                    self.player_bar.set_lyrics_active(False)
                 if hasattr(self, 'btn_lyrics') and self.btn_lyrics:
                     self.btn_lyrics.setProperty("active", False)
                     self.btn_lyrics.style().unpolish(self.btn_lyrics)
@@ -15961,11 +16074,16 @@ class MusicPanelWidget(QWidget):
             
             path = track.get('path', '')
             is_stream_ext = bool(path and path.lower().endswith(('.hxstream', '.strm')))
-            is_online = track.get('is_online', False) or track.get('is_stream', False) or is_stream_ext
+            is_url = bool(path and path.startswith(('http://', 'https://')))
+            is_online = track.get('is_online', False) or track.get('is_stream', False) or is_stream_ext or is_url
             
             if is_online:
                 print(f"Loading online stream: {title}")
-                self._load_and_play_stream(track)
+                seek_pos = 0
+                if hasattr(self, '_pending_seek_position') and self._pending_seek_position > 0:
+                    seek_pos = self._pending_seek_position
+                    self._pending_seek_position = 0
+                self._load_and_play_stream(track, start_pos=seek_pos)
             elif path and os.path.exists(path):
                 print(f"Playing: {title}")
                 # Set flag to ignore StoppedState during track switch
@@ -16018,6 +16136,11 @@ class MusicPanelWidget(QWidget):
             self.resume_banner.hide()
             self._pending_seek_position = 0
         
+        # If no track is currently selected/playing and there's a pending single track
+        if getattr(self, '_pending_single_track_resume', None) and (not hasattr(self, '_playlist') or not self._playlist or getattr(self, '_current_index', -1) < 0):
+            self._finalize_resume()
+            return
+
         # If no track is currently selected/playing, play the first or a random track
         if getattr(self, '_current_index', -1) < 0 and hasattr(self, '_playlist') and self._playlist:
             is_shuffled = getattr(self.player_bar, '_is_shuffled', False) if hasattr(self, 'player_bar') else False
@@ -16059,6 +16182,7 @@ class MusicPanelWidget(QWidget):
                 self._playback_intent = "play"
                 if hasattr(self, '_player') and self._player:
                     self._player.play()
+                self.player_bar.set_playing(True)
                 if hasattr(self, '_playlist') and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
                     trk = self._playlist[self._current_index]
                     if isinstance(trk, dict):
@@ -16242,6 +16366,15 @@ class MusicPanelWidget(QWidget):
             volume = 1.0 + (linear - 1.0)
         
         self._user_volume = volume  # Store for crossfade
+        
+        # VLC audio output synchronization
+        if hasattr(self, '_vlc_player') and self._vlc_player and getattr(self, '_playing_vlc', False):
+            try:
+                # libvlc accepts 0-100 integer volume
+                self._vlc_player.audio_set_volume(int(volume * 100))
+            except Exception:
+                pass
+                
         self._audio_output.setVolume(volume)
         self._save_state()
 
@@ -16299,8 +16432,12 @@ class MusicPanelWidget(QWidget):
         if not force_fallback:
             direct_url = track.get('stream_url')
             if direct_url and (direct_url.startswith('http://') or direct_url.startswith('https://')):
-                self._play_resolved_stream(direct_url, track, request_id, start_pos=start_pos)
-                return
+                from fast_stream_resolver import is_stream_url_expired
+                if not is_stream_url_expired(direct_url):
+                    self._play_resolved_stream(direct_url, track, request_id, start_pos=start_pos)
+                    return
+                else:
+                    track.pop('stream_url', None)
 
         raw_url = track.get('original_url') or track.get('path', '')
         if raw_url.lower().endswith(('.hxstream', '.strm')) and os.path.exists(raw_url):
@@ -16353,6 +16490,7 @@ class MusicPanelWidget(QWidget):
         artist = track.get('artist', '')
         status_sub = f"{artist} • {loading_prefix}..." if artist else f"{loading_prefix}..."
         self.player_bar.set_track_info(title, status_sub)
+        self.player_bar.set_playing(True)
 
         # Flush media pipeline immediately so old audio never continues while buffering
         if hasattr(self, '_player') and self._player:
@@ -16379,7 +16517,7 @@ class MusicPanelWidget(QWidget):
                     track['duration'] = res['duration']
                     
                 from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._play_resolved_stream(stream_url, track, request_id, start_pos=start_pos))
+                QTimer.singleShot(0, self, lambda: self._play_resolved_stream(stream_url, track, request_id, start_pos=start_pos))
             else:
                 print(f"[FastStream] Resolution failed for {target_url}: {res.get('error')}")
                 self._revert_loading_ui(track, request_id)
@@ -16398,7 +16536,8 @@ class MusicPanelWidget(QWidget):
             artist = track.get('artist', '')
             status_sub = f"{artist} • Stream Unavailable" if artist else "Stream Unavailable"
             self.player_bar.set_track_info(title, status_sub)
-        QTimer.singleShot(0, restore)
+            self.player_bar.set_playing(False)
+        QTimer.singleShot(0, self, restore)
         
     def _stop_stream_watchdog(self):
         """Safely stop and cleanup stream playback watchdog timer."""
@@ -16474,9 +16613,18 @@ class MusicPanelWidget(QWidget):
             if not hasattr(self, '_player') or not self._player:
                 self._stop_stream_watchdog()
                 return
-                
-            if self._player.playbackState() == QMediaPlayer.PlayingState:
-                # Successfully playing!
+
+            current_pos = self._player.position()
+            current_status = self._player.mediaStatus()
+            current_state = self._player.playbackState()
+
+            # Ensure play() is called if player paused/stopped during buffering
+            if current_state != QMediaPlayer.PlayingState:
+                self._player.play()
+                current_state = self._player.playbackState()
+
+            # If audio position is progressing (> 0) OR buffer is ready and playing:
+            if current_pos > 0 or (current_state == QMediaPlayer.PlayingState and current_status in (QMediaPlayer.BufferedMedia, QMediaPlayer.LoadedMedia)):
                 set_audio_playback_active(True)
                 self.player_bar.set_playing(True)
                 self.player_bar.set_track_info(title, artist)
@@ -16486,15 +16634,12 @@ class MusicPanelWidget(QWidget):
                 self._switching_track = False
                 self._stop_stream_watchdog()
                 return
-                
+
             self._stream_watchdog_ticks += 1
-            # Re-kick play() periodically while buffering / paused
-            if self._player.playbackState() != QMediaPlayer.PlayingState:
-                self._player.play()
-                
-            # Timeout after 24 ticks (~8.4 seconds)
+
+            # Timeout after 24 ticks (~8.4 seconds of no position advance)
             if self._stream_watchdog_ticks >= 24:
-                print(f"[FastStream] Stream watchdog reached 8.4s timeout for '{title}', initiating auto-recovery...")
+                print(f"[FastStream] Stream watchdog reached 8.4s timeout for '{title}' (pos: {current_pos}, status: {current_status}), initiating auto-recovery...")
                 self._stop_stream_watchdog()
                 if not getattr(self, '_is_auto_recovering', False):
                     self._recover_stream_playback(track)
@@ -16521,10 +16666,10 @@ class MusicPanelWidget(QWidget):
         self._is_auto_recovering = False
         self._stream_error_retry_count = 0
         
-        # UI reflects buffering state, NOT premature playing state
+        # UI reflects buffering state with active playback intent
         status_sub = f"{artist} • Buffering..." if artist else "Buffering..."
         self.player_bar.set_track_info(title, status_sub)
-        self.player_bar.set_playing(False)  # Remains Play icon until playback actually starts
+        self.player_bar.set_playing(True)
         
         # In-place metadata update if title or duration resolved by yt-dlp, avoiding full tree re-render
         if hasattr(self.table, 'update_track_metadata_inplace'):
@@ -16551,24 +16696,27 @@ class MusicPanelWidget(QWidget):
 
         # Dedicated auto-play enforcer when media backend finishes buffering/loading
         def _on_stream_media_status(status):
-            if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia, QMediaPlayer.BufferingMedia):
+            if status in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia):
                 if hasattr(self, '_player') and self._player:
                     if getattr(self, '_playback_intent', '') == 'play':
                         if self._player.playbackState() != QMediaPlayer.PlayingState:
                             self._player.play()
-                        if self._player.playbackState() == QMediaPlayer.PlayingState:
-                            set_audio_playback_active(True)
-                            self.player_bar.set_playing(True)
-                            self.player_bar.set_track_info(title, artist)
-                            self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
-                            if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
-                                self._taskbar_media_widget.set_playback_state(True)
-                            self._switching_track = False
-                            self._stop_stream_watchdog()
-                            try:
-                                self._player.mediaStatusChanged.disconnect(_on_stream_media_status)
-                            except Exception:
-                                pass
+                        set_audio_playback_active(True)
+                        self.player_bar.set_playing(True)
+                        self.player_bar.set_track_info(title, artist)
+                        self.playbackStateChanged.emit(QMediaPlayer.PlayingState)
+                        if hasattr(self, '_taskbar_media_widget') and self._taskbar_media_widget:
+                            self._taskbar_media_widget.set_playback_state(True)
+                        self._switching_track = False
+                        self._stop_stream_watchdog()
+                        try:
+                            self._player.mediaStatusChanged.disconnect(_on_stream_media_status)
+                        except Exception:
+                            pass
+            elif status == QMediaPlayer.BufferingMedia:
+                if hasattr(self, '_player') and self._player:
+                    if getattr(self, '_playback_intent', '') == 'play' and self._player.playbackState() != QMediaPlayer.PlayingState:
+                        self._player.play()
 
         try:
             self._player.mediaStatusChanged.connect(_on_stream_media_status)
@@ -16591,7 +16739,7 @@ class MusicPanelWidget(QWidget):
                         from PySide6.QtCore import QTimer
                         def _apply():
                             self._handoff_to_local_cache(cached_vid, local_path)
-                        QTimer.singleShot(0, _apply)
+                        QTimer.singleShot(0, self, _apply)
 
                     download_stream_background(raw_target, stream_url, on_finished=_on_cached_ready)
                 except Exception:
@@ -16815,6 +16963,17 @@ class MusicPanelWidget(QWidget):
         is_dragging = getattr(self.player_bar, '_is_dragging_timeline', False)
         self.player_bar.set_position(pos / 1000.0, dur / 1000.0, skip_throttle=is_dragging)
 
+        # Ensure buffering state is cleared and clean track info is restored as soon as audio position advances
+        if pos > 0:
+            if getattr(self, '_switching_track', False) or (hasattr(self.player_bar, 'artist_label') and ("Buffering" in self.player_bar.artist_label.text() or "Reconnecting" in self.player_bar.artist_label.text())):
+                self._switching_track = False
+                self._stop_stream_watchdog()
+                if hasattr(self, '_playlist') and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
+                    trk = self._playlist[self._current_index]
+                    if isinstance(trk, dict) and trk.get('title'):
+                        self.player_bar.set_track_info(trk.get('title', ''), trk.get('artist', ''))
+                self.player_bar.set_playing(True)
+
         # Record position and heartbeat timestamp
         now = time.time()
         if pos > getattr(self, '_last_known_position', 0):
@@ -16973,7 +17132,10 @@ class MusicPanelWidget(QWidget):
             if hasattr(self, '_playlist') and 0 <= getattr(self, '_current_index', -1) < len(self._playlist):
                 curr = self._playlist[self._current_index]
                 if isinstance(curr, dict) and curr.get('title'):
-                    self.player_bar.set_track_info(curr.get('title', ''), curr.get('artist', ''))
+                    if hasattr(self, '_player') and self._player and self._player.position() > 0:
+                        self._switching_track = False
+                    if not getattr(self, '_switching_track', False):
+                        self.player_bar.set_track_info(curr.get('title', ''), curr.get('artist', ''))
         
         # Sync with background audio spectrum visualizer
         if hasattr(self, 'visualizer_bg') and self.visualizer_bg:
@@ -17074,7 +17236,17 @@ class MusicPanelWidget(QWidget):
             last_pos = getattr(self, '_last_known_position', 0)
 
         if last_path and (os.path.exists(last_path) or last_path.startswith(('http://', 'https://'))):
-            title = os.path.splitext(os.path.basename(last_path))[0] if os.path.exists(last_path) else "Stream Track"
+            title = state.get('last_track_title', '')
+            if not title and hasattr(self, '_pending_single_track_resume') and self._pending_single_track_resume:
+                title = self._pending_single_track_resume.get('title', '')
+            if not title:
+                if last_path.lower().endswith(('.hxstream', '.strm')) and os.path.exists(last_path):
+                    from StreamFileEngine import read_stream_file
+                    st_meta = read_stream_file(last_path)
+                    if st_meta and st_meta.get('title'):
+                        title = st_meta.get('title')
+            if not title:
+                title = os.path.splitext(os.path.basename(last_path))[0] if os.path.exists(last_path) else "Stream Track"
             
             # Format seek timestamp
             sec = int(last_pos // 1000)
@@ -17083,16 +17255,20 @@ class MusicPanelWidget(QWidget):
             time_str = f"{m:02d}:{s:02d}" if last_pos > 0 else "00:00"
 
             # Format parent folder name
-            parent_folder = folder if (folder and os.path.isdir(folder)) else os.path.dirname(last_path)
-            folder_name = os.path.basename(parent_folder) or "Folder"
+            parent_folder = folder if (folder and os.path.isdir(folder)) else (os.path.dirname(last_path) if os.path.exists(last_path) else "")
+            folder_name = os.path.basename(parent_folder) if parent_folder else ""
 
             if hasattr(self, 'action_resume_last_played'):
                 self.action_resume_last_played.setText(f"Resume: {title} ({time_str})")
                 self.action_resume_last_played.setEnabled(True)
 
             if hasattr(self, 'action_resume_folder_last_played'):
-                self.action_resume_folder_last_played.setText(f"Resume and folder ({folder_name})")
-                self.action_resume_folder_last_played.setEnabled(os.path.isdir(parent_folder))
+                if folder_name and os.path.isdir(parent_folder):
+                    self.action_resume_folder_last_played.setText(f"Resume and folder ({folder_name})")
+                    self.action_resume_folder_last_played.setEnabled(True)
+                else:
+                    self.action_resume_folder_last_played.setText("Resume and folder (No saved folder)")
+                    self.action_resume_folder_last_played.setEnabled(False)
         else:
             if hasattr(self, 'action_resume_last_played'):
                 self.action_resume_last_played.setText("Resume (No saved track)")
@@ -17208,6 +17384,8 @@ class MusicPanelWidget(QWidget):
                     
                 if hasattr(self, 'stack'):
                     self.stack.setCurrentIndex(0)
+                if hasattr(self, '_on_stack_current_changed'):
+                    self._on_stack_current_changed(0)
                 self._play_track(found_idx)
                 return
 
@@ -17226,10 +17404,28 @@ class MusicPanelWidget(QWidget):
                         s_data = json.load(f)
                     p = s_data.get('last_track_path', '')
                     if p and (os.path.exists(p) or p.startswith(('http://', 'https://'))):
-                        title = os.path.splitext(os.path.basename(p))[0] if os.path.exists(p) else "Stream Track"
+                        title = s_data.get('last_track_title', '')
+                        artist = s_data.get('last_track_artist', '')
+                        duration = s_data.get('last_track_duration', 0)
+                        thumb = s_data.get('last_track_thumbnail', '')
+                        is_stream = s_data.get('last_track_is_stream', p.startswith(('http://', 'https://')) or p.lower().endswith(('.hxstream', '.strm')))
+                        is_online = s_data.get('last_track_is_online', p.startswith(('http://', 'https://')) or p.lower().endswith(('.hxstream', '.strm')))
+                        orig_url = s_data.get('last_track_original_url', p)
+                        stream_url = s_data.get('last_track_stream_url', '')
+                        if not title:
+                            title = os.path.splitext(os.path.basename(p))[0] if os.path.exists(p) else "Stream Track"
+                        if not artist:
+                            artist = "Cloud Stream" if p.startswith(('http://', 'https://')) else "Single Track"
                         self._pending_single_track_resume = {
                             'path': p,
                             'title': title,
+                            'artist': artist,
+                            'duration': duration,
+                            'thumbnail': thumb,
+                            'is_stream': is_stream,
+                            'is_online': is_online,
+                            'original_url': orig_url,
+                            'stream_url': stream_url,
                             'position': s_data.get('last_position', 0),
                             'playlist_name': s_data.get('playlist_name', 'Previous Session')
                         }
@@ -17248,30 +17444,39 @@ class MusicPanelWidget(QWidget):
                 except Exception:
                     pass
                 
+            target_path = track_info.get('path', '')
+            is_url = bool(target_path and target_path.startswith(('http://', 'https://')))
+            is_stream_ext = bool(target_path and target_path.lower().endswith(('.hxstream', '.strm')))
+            is_online = track_info.get('is_online', False) or track_info.get('is_stream', False) or is_url or is_stream_ext
+
             track = {
-                'path': track_info['path'],
-                'title': track_info['title'],
-                'artist': 'Single Track',
-                'duration': 0,
-                'date_added': date_str
+                'path': target_path,
+                'title': track_info.get('title', 'Unknown Track'),
+                'artist': track_info.get('artist', 'Single Track' if not is_online else 'Cloud Stream'),
+                'duration': track_info.get('duration', 0),
+                'date_added': date_str or ("Cloud Stream" if is_online else ""),
+                'is_stream': track_info.get('is_stream', is_online),
+                'is_online': is_online,
+                'original_url': track_info.get('original_url', target_path),
+                'stream_url': track_info.get('stream_url', ''),
+                'thumbnail': track_info.get('thumbnail', '')
             }
-            target_path = track_info['path']
             if not hasattr(self, '_playlist') or self._playlist is None:
                 self._playlist = []
                 
-            found_index = next((i for i, t in enumerate(self._playlist) if t.get('path') == target_path), -1)
+            found_index = next((i for i, t in enumerate(self._playlist) if t.get('path') == target_path or (target_path and t.get('original_url') == target_path)), -1)
             if found_index == -1:
                 self._playlist.append(track)
                 found_index = len(self._playlist) - 1
                 
-            print(f"[Music DEBUG] Resuming pending single track: '{track_info['title']}' at index {found_index}")
+            print(f"[Music DEBUG] Resuming pending single track: '{track.get('title')}' at index {found_index}")
             self.table.set_tracks(self._playlist)
             
-            parent_dir = os.path.dirname(target_path) if target_path else ''
+            parent_dir = os.path.dirname(target_path) if (target_path and os.path.exists(target_path)) else ''
             folder_pl = (os.path.basename(parent_dir) + "'s Playlist") if parent_dir else ''
             pl_name = track_info.get('playlist_name', '')
             if pl_name in ('Previous Session', 'Single Track', 'My Playlist', ''):
-                pl_name = folder_pl or getattr(self.header, '_name', '') or 'My Playlist'
+                pl_name = folder_pl or getattr(self.header, '_name', '') or ('Online Streams' if is_online else 'My Playlist')
                 
             if hasattr(self, 'header') and hasattr(self.header, 'set_info'):
                 self.header.set_info(pl_name, len(self._playlist), self._format_playlist_duration())
@@ -17283,6 +17488,8 @@ class MusicPanelWidget(QWidget):
                 
             if hasattr(self, 'stack'):
                 self.stack.setCurrentIndex(0)
+            if hasattr(self, '_on_stack_current_changed'):
+                self._on_stack_current_changed(0)
             self._play_track(found_index)
             return
 
@@ -17291,6 +17498,8 @@ class MusicPanelWidget(QWidget):
             self.table.set_tracks(self._playlist)
             if hasattr(self, 'stack'):
                 self.stack.setCurrentIndex(0)
+            if hasattr(self, '_on_stack_current_changed'):
+                self._on_stack_current_changed(0)
             if hasattr(self, '_last_known_position') and self._last_known_position > 0:
                 self._pending_seek_position = self._last_known_position
             self._play_track(self._current_index)
@@ -17362,14 +17571,33 @@ class MusicPanelWidget(QWidget):
                     
                     if not track_found and (os.path.exists(last_path) or last_path.startswith(('http://', 'https://'))):
                         last_pos = state.get('last_position', 0)
-                        title = ""
+                        title = state.get('last_track_title', '')
+                        artist = state.get('last_track_artist', '')
+                        duration = state.get('last_track_duration', 0)
+                        thumb = state.get('last_track_thumbnail', '')
+                        is_stream = state.get('last_track_is_stream', last_path.startswith(('http://', 'https://')) or last_path.lower().endswith(('.hxstream', '.strm')))
+                        is_online = state.get('last_track_is_online', last_path.startswith(('http://', 'https://')) or last_path.lower().endswith(('.hxstream', '.strm')))
+                        orig_url = state.get('last_track_original_url', last_path)
+                        stream_url = state.get('last_track_stream_url', '')
+
                         if last_path.lower().endswith(('.hxstream', '.strm')) and os.path.exists(last_path):
                             from StreamFileEngine import read_stream_file
                             st_meta = read_stream_file(last_path)
                             if st_meta:
-                                title = st_meta.get('title', '')
+                                if not title:
+                                    title = st_meta.get('title', '')
+                                if not artist:
+                                    artist = st_meta.get('artist', '')
+                                if not duration:
+                                    duration = st_meta.get('duration', 0)
+                                if not thumb:
+                                    thumb = st_meta.get('thumbnail', '')
+                                if not orig_url:
+                                    orig_url = st_meta.get('original_url', last_path)
                         if not title:
                             title = os.path.splitext(os.path.basename(last_path))[0] if os.path.exists(last_path) else "Stream Track"
+                        if not artist:
+                            artist = "Cloud Stream" if last_path.startswith(('http://', 'https://')) else "Single Track"
                             
                         parent_dir = os.path.dirname(last_path) if os.path.exists(last_path) else ''
                         folder_pl = (os.path.basename(parent_dir) + "'s Playlist") if parent_dir else ''
@@ -17380,14 +17608,23 @@ class MusicPanelWidget(QWidget):
                         self._pending_single_track_resume = {
                             'path': last_path,
                             'title': title,
+                            'artist': artist,
+                            'duration': duration,
+                            'thumbnail': thumb,
+                            'is_stream': is_stream,
+                            'is_online': is_online,
+                            'original_url': orig_url,
+                            'stream_url': stream_url,
                             'position': last_pos,
                             'playlist_name': saved_pl
                         }
                         if hasattr(self, 'header') and hasattr(self.header, 'load_saved_cover'):
                             self.header.load_saved_cover(saved_pl)
                             
+                        self.player_bar.set_track_info(title, artist)
                         if last_pos > 0:
                             self._last_known_position = last_pos
+                            self._pending_seek_position = last_pos
                             self.resume_banner.set_track_title(title)
                             self.resume_banner.show()
                             self.resume_banner.raise_()
@@ -17561,18 +17798,47 @@ class MusicPanelWidget(QWidget):
                 return
                 
             current_track_path = ''
+            current_track_title = ''
+            current_track_artist = ''
+            current_track_duration = 0
+            current_track_thumbnail = ''
+            current_track_is_stream = False
+            current_track_is_online = False
+            current_track_original_url = ''
+            current_track_stream_url = ''
             position = 0
             
             if hasattr(self, '_playlist') and self._playlist and len(self._playlist) > 0:
                 if 0 <= self._current_index < len(self._playlist):
-                    current_track_path = self._playlist[self._current_index].get('path', '')
+                    trk = self._playlist[self._current_index]
+                    current_track_path = trk.get('path', '')
+                    current_track_title = trk.get('title', '')
+                    current_track_artist = trk.get('artist', '')
+                    current_track_duration = trk.get('duration', 0)
+                    current_track_thumbnail = trk.get('thumbnail', '')
+                    current_track_is_stream = bool(trk.get('is_stream', False) or (current_track_path and (current_track_path.startswith(('http://', 'https://')) or current_track_path.lower().endswith(('.hxstream', '.strm')))))
+                    current_track_is_online = bool(trk.get('is_online', False) or (current_track_path and (current_track_path.startswith(('http://', 'https://')) or current_track_path.lower().endswith(('.hxstream', '.strm')))))
+                    current_track_original_url = trk.get('original_url', '') or current_track_path
+                    current_track_stream_url = trk.get('stream_url', '')
                 # Use tracked position (player.position() returns 0 when stopped)
                 position = getattr(self, '_last_known_position', 0) or (self._player.position() if hasattr(self, '_player') and self._player else 0)
             elif getattr(self, '_pending_single_track_resume', None):
-                current_track_path = self._pending_single_track_resume.get('path', '')
-                position = getattr(self, '_last_known_position', 0) or self._pending_single_track_resume.get('position', 0)
+                p_trk = self._pending_single_track_resume
+                current_track_path = p_trk.get('path', '')
+                current_track_title = p_trk.get('title', '')
+                current_track_artist = p_trk.get('artist', '')
+                current_track_duration = p_trk.get('duration', 0)
+                current_track_thumbnail = p_trk.get('thumbnail', '')
+                current_track_is_stream = bool(p_trk.get('is_stream', False) or (current_track_path and (current_track_path.startswith(('http://', 'https://')) or current_track_path.lower().endswith(('.hxstream', '.strm')))))
+                current_track_is_online = bool(p_trk.get('is_online', False) or (current_track_path and (current_track_path.startswith(('http://', 'https://')) or current_track_path.lower().endswith(('.hxstream', '.strm')))))
+                current_track_original_url = p_trk.get('original_url', '') or current_track_path
+                current_track_stream_url = p_trk.get('stream_url', '')
+                position = getattr(self, '_last_known_position', 0) or p_trk.get('position', 0)
             elif getattr(self, '_current_media_path', None) and (os.path.exists(self._current_media_path) or self._current_media_path.startswith(('http://', 'https://'))):
                 current_track_path = self._current_media_path
+                current_track_is_stream = bool(current_track_path.startswith(('http://', 'https://')) or current_track_path.lower().endswith(('.hxstream', '.strm')))
+                current_track_is_online = bool(current_track_path.startswith(('http://', 'https://')))
+                current_track_original_url = current_track_path
                 position = getattr(self, '_last_known_position', 0) or (self._player.position() if hasattr(self, '_player') and self._player else 0)
             else:
                 # Preserve existing on-disk state if no new media was loaded in this quick session
@@ -17581,11 +17847,28 @@ class MusicPanelWidget(QWidget):
                         with open(self._config_path, 'r', encoding='utf-8') as f:
                             old_s = json.load(f)
                         current_track_path = old_s.get('last_track_path', '')
+                        current_track_title = old_s.get('last_track_title', '')
+                        current_track_artist = old_s.get('last_track_artist', '')
+                        current_track_duration = old_s.get('last_track_duration', 0)
+                        current_track_thumbnail = old_s.get('last_track_thumbnail', '')
+                        current_track_is_stream = old_s.get('last_track_is_stream', False)
+                        current_track_is_online = old_s.get('last_track_is_online', False)
+                        current_track_original_url = old_s.get('last_track_original_url', '')
+                        current_track_stream_url = old_s.get('last_track_stream_url', '')
                         position = old_s.get('last_position', 0)
                         if not self._music_folder:
                             self._music_folder = old_s.get('folder', '')
                     except Exception:
                         pass
+
+            if not current_track_title and hasattr(self, 'player_bar') and self.player_bar and hasattr(self.player_bar, 'title_label'):
+                lbl_t = self.player_bar.title_label.text()
+                if lbl_t and lbl_t not in ('No media selected', 'Unknown Track', 'Stream Track', 'Stream'):
+                    current_track_title = lbl_t
+            if not current_track_artist and hasattr(self, 'player_bar') and self.player_bar and hasattr(self.player_bar, 'artist_label'):
+                lbl_a = self.player_bar.artist_label.text()
+                if lbl_a and lbl_a not in ('No media selected', 'Unknown Artist', 'Single Track'):
+                    current_track_artist = lbl_a
                 
             print(f"[Music] Saving position: {position}ms (_last_known: {getattr(self, '_last_known_position', 'not set')})")
             
@@ -17607,6 +17890,14 @@ class MusicPanelWidget(QWidget):
                 'folder': self._music_folder or '',
                 'playlist_name': getattr(self.header, '_name', '') or (os.path.basename(self._music_folder) + "'s Playlist" if self._music_folder else 'My Playlist'),
                 'last_track_path': current_track_path,
+                'last_track_title': current_track_title,
+                'last_track_artist': current_track_artist,
+                'last_track_duration': current_track_duration,
+                'last_track_thumbnail': current_track_thumbnail,
+                'last_track_is_stream': current_track_is_stream,
+                'last_track_is_online': current_track_is_online,
+                'last_track_original_url': current_track_original_url,
+                'last_track_stream_url': current_track_stream_url,
                 'last_position': position,
                 'volume': self.player_bar.volume_slider.value(),
                 'shuffle': getattr(self.player_bar, '_is_shuffled', False),
@@ -17644,7 +17935,7 @@ class MusicPanelWidget(QWidget):
             import threading
             threading.Thread(target=_async_save, args=(self._config_path, state), daemon=True).start()
             
-            print(f"Saved state (async): {current_track_path.encode('ascii', 'replace').decode('ascii')}")
+            print(f"Saved state (async): {current_track_path}")
         except Exception as e:
             print(f"Failed to save state: {e}")
     

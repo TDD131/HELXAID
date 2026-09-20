@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize, QFileInfo
 from PySide6.QtGui import QFont, QIcon, QColor
 import pyqtgraph as pg
+pg.setConfigOptions(antialias=True, background=None, foreground='#888888')
 
 from NetworkHistoryEngine import (
     get_usage_summary, get_daily_timeline, get_top_apps,
@@ -196,9 +197,9 @@ class NetworkHistoryPanel(QWidget):
         self.timeline_chart.setMouseEnabled(x=False, y=False)
         self.timeline_chart.setMenuEnabled(False)
 
-        pen = pg.mkPen(color=QColor("#00E5FF"), width=2)
+        pen = pg.mkPen(color=QColor("#00E5FF"), width=1.5)
         brush = pg.mkBrush(color=QColor(0, 229, 255, 35))
-        self.timeline_curve = self.timeline_chart.plot(pen=pen, brush=brush, fillLevel=0)
+        self.timeline_curve = self.timeline_chart.plot(pen=pen, brush=brush, fillLevel=0, antialias=True)
 
         c_layout.addWidget(self.timeline_chart)
         main_layout.addWidget(chart_frame)

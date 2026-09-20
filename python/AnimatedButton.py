@@ -550,7 +550,51 @@ class AnimatedCheckBox(QAbstractButton):
         self._anim.setEasingCurve(QEasingCurve.OutQuad)
         self._anim.valueChanged.connect(self._update_anim)
         
+        from PySide6.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.toggled.connect(self._on_toggled)
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        from PySide6.QtCore import QRect, Qt
+        fm = self.fontMetrics()
+        box_size = 18
+        available_text_w = max(10, width - box_size - 12)
+        bounding_rect = fm.boundingRect(
+            QRect(0, 0, available_text_w, 10000),
+            Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap,
+            self.text()
+        )
+        return max(26, bounding_rect.height() + 8)
+
+    def sizeHint(self):
+        from PySide6.QtCore import QSize, QRect, Qt
+        fm = self.fontMetrics()
+        box_size = 18
+        w = self.width() if self.width() > 50 else 460
+        available_text_w = max(10, w - box_size - 12)
+        bounding_rect = fm.boundingRect(
+            QRect(0, 0, available_text_w, 10000),
+            Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap,
+            self.text()
+        )
+        natural_w = box_size + 12 + fm.horizontalAdvance(self.text()) + 10
+        h = max(26, bounding_rect.height() + 8)
+        return QSize(int(natural_w), int(h))
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+    def setText(self, text: str):
+        super().setText(text)
+        self.updateGeometry()
+        self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.updateGeometry()
 
     def _animate_to(self, target: float):
         if hasattr(self, '_anim'):
@@ -597,17 +641,6 @@ class AnimatedCheckBox(QAbstractButton):
                 self._anim.stop()
             self._progress = 1.0 if checked else 0.0
             self.update()
-
-    def sizeHint(self):
-        from PySide6.QtCore import QSize
-        font_metrics = self.fontMetrics()
-        lines = self.text().split("\n")
-        max_line_w = max([font_metrics.horizontalAdvance(line) for line in lines]) if lines else 0
-        line_count = len(lines)
-        text_height = line_count * font_metrics.height() + (line_count - 1) * 2
-        width = 18 + 8 + max_line_w + 10
-        height = max(24, text_height + 6)
-        return QSize(int(width), int(height))
         
     def _update_anim(self, value):
         self._progress = value
@@ -631,9 +664,15 @@ class AnimatedCheckBox(QAbstractButton):
         p.setRenderHint(QPainter.Antialiasing)
         
         box_size = 18
-        lines = self.text().split("\n")
-        if len(lines) > 1:
-            box_y = 2
+        fm = self.fontMetrics()
+        bounding_rect = fm.boundingRect(
+            QRect(0, 0, max(10, self.width() - box_size - 12), 10000),
+            Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap,
+            self.text()
+        )
+        is_multiline = bounding_rect.height() > fm.height() + 4
+        if is_multiline:
+            box_y = max(2, (fm.height() - box_size) // 2 + 2)
         else:
             box_y = (self.height() - box_size) / 2
         box_rect = QRectF(0, box_y, box_size, box_size)
@@ -703,7 +742,7 @@ class AnimatedCheckBox(QAbstractButton):
         p.setPen(QColor("#e0e0e0"))
         font = self.font()
         p.setFont(font)
-        text_rect = QRect(int(box_size + 8), 0, int(self.width() - box_size - 8), int(self.height()))
+        text_rect = QRect(int(box_size + 10), 0, int(self.width() - box_size - 10), int(self.height()))
         p.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, self.text())
 
 

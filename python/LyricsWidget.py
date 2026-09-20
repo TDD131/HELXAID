@@ -17,12 +17,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QSize, QRectF, Property, QPoint
 from PySide6.QtGui import QFont, QColor, QCursor, QPainter, QFontMetrics, QAction
 
-from LyricsEngine import LyricData, LyricLine, LyricsCacheManager, LyricsFetchWorker
+from LyricsEngine import LyricData, LyricLine, LyricsCacheManager, LyricsFetchWorker, LyricQuerySanitizer
 
 
 class LyricLineWidget(QWidget):
     """
-    Zero-ghosting custom-painted lyric line item with smooth transitions.
+    Zero-ghosting custom-painted lyric line item with dynamic geometry and smooth transitions.
     Renders animated background pills, smooth color/scale interpolation,
     neon glowing highlights, and Orbitron typography via QPainter.
     """
@@ -37,17 +37,22 @@ class LyricLineWidget(QWidget):
         self.translation = line_data.translation
 
         self.font_main = QFont("Orbitron", 13, QFont.Bold)
+        self.font_main.setFamilies(["Orbitron", "Yu Gothic UI", "Meiryo", "MS Gothic", "Segoe UI", "sans-serif"])
+
         self.font_sub = QFont("Orbitron", 10, QFont.Normal)
+        self.font_sub.setFamilies(["Orbitron", "Yu Gothic UI", "Meiryo", "MS Gothic", "Segoe UI", "sans-serif"])
 
         self.setObjectName(f"lyricLineItem_{index}")
         self.setCursor(QCursor(Qt.PointingHandCursor) if self.time_ms >= 0 else QCursor(Qt.ArrowCursor))
         self.setAttribute(Qt.WA_Hover, True)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self._is_active = False
         self._is_hovered = False
         self._anim_progress = 0.0
         self._hover_progress = 0.0
+        self._main_h = 26
+        self._sub_h = 18
 
         # Active transition animation (0.0 = inactive, 1.0 = active)
         self._active_anim = QPropertyAnimation(self, b"animProgress", self)
@@ -59,13 +64,42 @@ class LyricLineWidget(QWidget):
         self._hover_anim.setDuration(160)
         self._hover_anim.setEasingCurve(QEasingCurve.OutQuad)
 
+        self._recalculate_height()
+
+    def _recalculate_height(self):
+        """Calculate exact dynamic height required to fit main text and subtext with padding."""
+        parent_w = self.parent().width() if self.parent() else 550
+        w = max(200, self.width() if self.width() > 0 else parent_w)
+        avail_w = max(100, w - 48)
+
+        fm_main = QFontMetrics(self.font_main)
+        main_rect = fm_main.boundingRect(0, 0, avail_w, 2000, Qt.AlignCenter | Qt.TextWordWrap, self.text)
+        self._main_h = max(26, main_rect.height())
+
+        if self.translation:
+            fm_sub = QFontMetrics(self.font_sub)
+            sub_rect = fm_sub.boundingRect(0, 0, avail_w, 2000, Qt.AlignCenter | Qt.TextWordWrap, self.translation)
+            self._sub_h = max(18, sub_rect.height())
+            total_h = 10 + self._main_h + 6 + self._sub_h + 10
+        else:
+            self._sub_h = 0
+            total_h = 12 + self._main_h + 12
+
+        final_h = max(48 if not self.translation else 70, total_h)
+        self.setFixedHeight(final_h)
+
     def set_subtext(self, text: Optional[str]):
         """Dynamically update secondary subtext (Romaji / Translation / None)."""
         clean = text.strip() if text else None
         if self.translation != clean:
             self.translation = clean
+            self._recalculate_height()
             self.updateGeometry()
             self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._recalculate_height()
 
     def get_anim_progress(self) -> float:
         return self._anim_progress
@@ -118,14 +152,7 @@ class LyricLineWidget(QWidget):
 
     def sizeHint(self) -> QSize:
         w = max(200, self.width() if self.width() > 0 else 600)
-        fm = QFontMetrics(self.font_main)
-        text_rect = fm.boundingRect(0, 0, w - 48, 2000, Qt.AlignCenter | Qt.TextWordWrap, self.text)
-        h = text_rect.height() + 24
-        if self.translation:
-            sub_fm = QFontMetrics(self.font_sub)
-            sub_rect = sub_fm.boundingRect(0, 0, w - 48, 2000, Qt.AlignCenter | Qt.TextWordWrap, self.translation)
-            h += sub_rect.height() + 8
-        return QSize(w, max(48, h))
+        return QSize(w, self.height() if self.height() > 0 else 48)
 
     def minimumSizeHint(self) -> QSize:
         return self.sizeHint()
@@ -140,29 +167,25 @@ class LyricLineWidget(QWidget):
         t = self._anim_progress      # 0.0 (inactive) -> 1.0 (active)
         ht = self._hover_progress    # 0.0 (unhovered) -> 1.0 (hovered)
 
-        # 1. Text Bounds (No background color box)
-        if self.translation:
-            main_h = (h - 12) * 0.6
-            main_rect = QRectF(24, 6, w - 48, main_h)
-            sub_rect = QRectF(24, 6 + main_h, w - 48, (h - 12) * 0.4)
-        else:
-            main_rect = QRectF(24, 6, w - 48, h - 12)
+        top_y = 10
+        main_h = getattr(self, '_main_h', 26)
+        main_rect = QRectF(24, top_y, w - 48, main_h)
 
-        # 2. Main Lyric Typography Interpolation (Smooth RGB + Alpha without font-size snapping)
-        base_r = 115 + (255 - 115) * ht
-        base_g = 121 + (255 - 121) * ht
-        base_b = 144 + (255 - 144) * ht
+        # Main Lyric Typography Interpolation
+        base_r = 140 + (255 - 140) * ht
+        base_g = 145 + (255 - 145) * ht
+        base_b = 165 + (255 - 165) * ht
 
         cur_r = int(base_r + (255 - base_r) * t)
         cur_g = int(base_g + (91 - base_g) * t)
         cur_b = int(base_b + (6 - base_b) * t)
-        cur_a = int(160 + (255 - 160) * max(t, ht * 0.7))
+        cur_a = int(170 + (255 - 170) * max(t, ht * 0.7))
 
         painter.setFont(self.font_main)
 
         # Ambient neon glow behind active text
         if t > 0.05:
-            glow_alpha = int(70 * t)
+            glow_alpha = int(80 * t)
             painter.setPen(QColor(255, 91, 6, glow_alpha))
             painter.drawText(main_rect.translated(0, 1), Qt.AlignCenter | Qt.TextWordWrap, self.text)
             painter.drawText(main_rect.translated(0, -1), Qt.AlignCenter | Qt.TextWordWrap, self.text)
@@ -170,17 +193,34 @@ class LyricLineWidget(QWidget):
         painter.setPen(QColor(cur_r, cur_g, cur_b, cur_a))
         painter.drawText(main_rect, Qt.AlignCenter | Qt.TextWordWrap, self.text)
 
-        # 3. Optional Translation Subtext Interpolation
+        # Translation / Romaji Subtext
         if self.translation:
-            sub_r = int(100 + (253 - 100) * t)
-            sub_g = int(105 + (169 - 105) * t)
-            sub_b = int(120 + (3 - 120) * t)
-            sub_a = int(140 + (240 - 140) * max(t, ht * 0.6))
+            sub_y = top_y + main_h + 6
+            sub_h = getattr(self, '_sub_h', 18)
+            sub_rect = QRectF(24, sub_y, w - 48, sub_h)
+
+            s_base_r = 155 + (255 - 155) * ht
+            s_base_g = 175 + (255 - 175) * ht
+            s_base_b = 205 + (255 - 205) * ht
+
+            sub_r = int(s_base_r + (253 - s_base_r) * t)
+            sub_g = int(s_base_g + (169 - s_base_g) * t)
+            sub_b = int(s_base_b + (3 - s_base_b) * t)
+            sub_a = int(185 + (255 - 185) * max(t, ht * 0.6))
+
             painter.setFont(self.font_sub)
             painter.setPen(QColor(sub_r, sub_g, sub_b, sub_a))
             painter.drawText(sub_rect, Qt.AlignCenter | Qt.TextWordWrap, self.translation)
 
-        painter.end()
+    def cleanup(self):
+        """Stop all running QPropertyAnimations before destruction."""
+        try:
+            if hasattr(self, '_active_anim'):
+                self._active_anim.stop()
+            if hasattr(self, '_hover_anim'):
+                self._hover_anim.stop()
+        except Exception:
+            pass
 
 
 def is_instrumental_line(text: Optional[str]) -> bool:
@@ -245,9 +285,11 @@ class LyricsWidget(QWidget):
         header_bar = QHBoxLayout()
         header_bar.setContentsMargins(4, 2, 4, 2)
         header_bar.setSpacing(8)
+        header_bar.setAlignment(Qt.AlignVCenter)
 
         self.title_label = QLabel("LYRICS")
         self.title_label.setObjectName("lyricsHeaderTitle")
+        self.title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.title_label.setStyleSheet("""
             QLabel#lyricsHeaderTitle {
                 font-family: 'Orbitron', 'Segoe UI', sans-serif;
@@ -257,31 +299,32 @@ class LyricsWidget(QWidget):
                 background: transparent;
             }
         """)
-        header_bar.addWidget(self.title_label, stretch=1)
+        header_bar.addWidget(self.title_label, stretch=1, alignment=Qt.AlignVCenter)
 
         # Close / Collapse Button
         self.btn_close = QPushButton("✕")
         self.btn_close.setObjectName("lyricsCloseBtn")
         self.btn_close.setCursor(QCursor(Qt.PointingHandCursor))
         self.btn_close.setToolTip("Close Lyrics Panel")
-        self.btn_close.setFixedSize(26, 26)
+        self.btn_close.setFixedSize(22, 22)
         self.btn_close.setStyleSheet("""
             QPushButton#lyricsCloseBtn {
                 font-family: 'Orbitron', sans-serif;
                 font-size: 12px;
                 font-weight: bold;
                 color: #8c92a4;
-                background-color: rgba(255, 255, 255, 0.06);
+                background: transparent;
                 border: none;
-                border-radius: 6px;
+                padding: 0;
+                margin: 0;
             }
             QPushButton#lyricsCloseBtn:hover {
                 color: #ffffff;
-                background-color: rgba(255, 60, 60, 0.35);
+                background: transparent;
             }
         """)
         self.btn_close.clicked.connect(self.closeRequested.emit)
-        header_bar.addWidget(self.btn_close)
+        header_bar.addWidget(self.btn_close, 0, Qt.AlignVCenter)
 
         main_layout.addLayout(header_bar)
 
@@ -770,13 +813,26 @@ class LyricsWidget(QWidget):
             }
         """)
 
+        cd = self.current_data
+        has_g = bool(cd and getattr(cd, 'has_google_romaji', False))
+        has_gn = bool(cd and getattr(cd, 'has_genius_romaji', False))
+        has_ne = bool(cd and getattr(cd, 'has_netease_romaji', False))
+        has_ro = bool(cd and (getattr(cd, 'has_romaji', False) or has_g or has_gn or has_ne))
+        has_tr = bool(cd and getattr(cd, 'has_translation', False))
+
+        tag_g = "  [✓ Available]" if has_g else "  [⚡ AI]"
+        tag_gn = "  [✓ Available]" if has_gn else "  [⚡ Search]"
+        tag_ne = "  [✓ Available]" if has_ne else "  [⚡ Query]"
+        tag_ro = "  [✓ Available]" if has_ro else "  [⚡ Auto]"
+        tag_tr = "  [✓ Available]" if has_tr else "  [⚡ Query]"
+
         options = [
             ("auto", "Auto (Best Available Romaji)"),
-            ("google", "Google Romaji (AI Transliteration)"),
-            ("genius", "Genius (Community Romanized)"),
-            ("netease", "NetEase (Timed Romaji)"),
-            ("romaji", "General Romaji"),
-            ("translation", "Translation (NetEase Chinese)"),
+            ("google", f"Google Romaji (AI Transliteration){tag_g}"),
+            ("genius", f"Genius (Community Romanized){tag_gn}"),
+            ("netease", f"NetEase (Timed Romaji){tag_ne}"),
+            ("romaji", f"General Romaji{tag_ro}"),
+            ("translation", f"Translation (NetEase Chinese){tag_tr}"),
             ("none", "Off (Original Lyrics Only)"),
         ]
 
@@ -793,20 +849,23 @@ class LyricsWidget(QWidget):
         menu.exec(pos)
 
     def _set_subtext_mode(self, mode: str):
-        """Change active subtext mode and dynamically update line widgets."""
+        """Change active subtext mode and dynamically update line widgets with on-demand background fetch."""
         self.subtext_mode = mode
-        # If user explicitly selected google and current_data lacks google_romaji, trigger on-demand background fetch
-        if mode == "google" and self.current_data and not getattr(self.current_data, 'has_google_romaji', False):
+        cd = self.current_data
+        req_id = getattr(self, 'active_request_id', 0)
+
+        # 1. On-demand fetch for Google AI Romaji
+        if mode == "google" and cd and not getattr(cd, 'has_google_romaji', False):
             from LyricsEngine import GoogleRomajiClient
             if not GoogleRomajiClient.breaker.can_execute():
                 rem = GoogleRomajiClient.breaker.get_remaining_cooldown()
                 print(f"[Lyrics] Google Romaji cooldown active ({rem}s remaining). Using available alternative romaji.")
             else:
+                self._set_subtext_badge("ENRICHING...", "#00E5FF", "rgba(0, 229, 255, 0.20)", "Generating Google AI Romaji...")
                 import threading
-                req_id = getattr(self, 'active_request_id', 0)
                 def _bg_manual_google():
                     success = GoogleRomajiClient.enrich_lyrics(
-                        self.current_data,
+                        cd,
                         cancellation_check=lambda: getattr(self, 'active_request_id', 0) != req_id
                     )
                     if success and getattr(self, 'active_request_id', 0) == req_id:
@@ -814,14 +873,54 @@ class LyricsWidget(QWidget):
                             title = self.current_track.get('title', '')
                             artist = self.current_track.get('artist', '')
                             duration = self.current_track.get('duration', 0.0)
-                            self.cache_mgr.put(title, artist, duration, self.current_data)
-                        QTimer.singleShot(0, self._apply_subtext_mode)
+                            self.cache_mgr.put(title, artist, duration, cd)
+                        QTimer.singleShot(0, lambda: self._render_lyrics(cd))
                 threading.Thread(target=_bg_manual_google, daemon=True).start()
+
+        # 2. On-demand fetch for Genius Romanized
+        elif mode == "genius" and cd and not getattr(cd, 'has_genius_romaji', False):
+            from LyricsEngine import GeniusClient
+            self._set_subtext_badge("SEARCHING GENIUS...", "#00E5FF", "rgba(0, 229, 255, 0.20)", "Searching Genius.com Romanizations...")
+            import threading
+            def _bg_manual_genius():
+                title = self.current_track.get('title', '') if self.current_track else cd.title
+                artist = self.current_track.get('artist', '') if self.current_track else cd.artist
+                duration = self.current_track.get('duration', 0.0) if self.current_track else 0.0
+                success = GeniusClient.enrich_lyrics(
+                    cd, title=title, artist=artist,
+                    cancellation_check=lambda: getattr(self, 'active_request_id', 0) != req_id
+                )
+                if success and getattr(self, 'active_request_id', 0) == req_id:
+                    self.cache_mgr.put(title, artist, duration, cd)
+                    QTimer.singleShot(0, lambda: self._render_lyrics(cd))
+                elif not success and getattr(self, 'active_request_id', 0) == req_id:
+                    QTimer.singleShot(0, self._apply_subtext_mode)
+            threading.Thread(target=_bg_manual_genius, daemon=True).start()
+
+        # 3. On-demand fetch for NetEase Romaji / Translation
+        elif mode in ("netease", "translation") and cd and not (getattr(cd, 'has_netease_romaji', False) or getattr(cd, 'has_translation', False)):
+            from LyricsEngine import NetEaseClient
+            self._set_subtext_badge("FETCHING NETEASE...", "#00FF9D", "rgba(0, 255, 157, 0.20)", "Querying NetEase Cloud Romaji & Translation...")
+            import threading
+            def _bg_manual_netease():
+                title = self.current_track.get('title', '') if self.current_track else cd.title
+                artist = self.current_track.get('artist', '') if self.current_track else cd.artist
+                duration = self.current_track.get('duration', 0.0) if self.current_track else 0.0
+                success = NetEaseClient.enrich_lyrics(
+                    cd, title=title, artist=artist, duration=duration,
+                    cancellation_check=lambda: getattr(self, 'active_request_id', 0) != req_id
+                )
+                if success and getattr(self, 'active_request_id', 0) == req_id:
+                    self.cache_mgr.put(title, artist, duration, cd)
+                    QTimer.singleShot(0, lambda: self._render_lyrics(cd))
+                elif not success and getattr(self, 'active_request_id', 0) == req_id:
+                    QTimer.singleShot(0, self._apply_subtext_mode)
+            threading.Thread(target=_bg_manual_netease, daemon=True).start()
 
         self._apply_subtext_mode()
 
     def _apply_subtext_mode(self):
-        """Apply active subtext mode across all displayed lyric line items with subtext_line_offset support and instrumental skipping."""
+        """Apply active subtext mode across all displayed lyric line items with subtext_line_offset support, smart fallback, and instrumental skipping."""
         mode = getattr(self, "subtext_mode", "auto")
         sub_offset = getattr(self, "subtext_line_offset", 0)
         has_any_sub = False
@@ -855,12 +954,15 @@ class LyricsWidget(QWidget):
 
             vocal_line_widgets.append(lw)
 
+            target = ""
             if mode == "google":
-                target = getattr(ld, 'google_romaji', None) or ""
+                target = getattr(ld, 'google_romaji', None) or getattr(ld, 'romaji', None) or ""
             elif mode == "genius":
-                target = getattr(ld, 'genius_romaji', None) or ""
+                # Smart fallback: If Genius wasn't found, fallback to Google Romaji or general Romaji
+                target = getattr(ld, 'genius_romaji', None) or getattr(ld, 'google_romaji', None) or getattr(ld, 'romaji', None) or ""
             elif mode == "netease":
-                target = getattr(ld, 'netease_romaji', None) or ""
+                # Smart fallback: If NetEase wasn't found, fallback to Google Romaji or general Romaji
+                target = getattr(ld, 'netease_romaji', None) or getattr(ld, 'google_romaji', None) or getattr(ld, 'romaji', None) or ""
             elif mode == "romaji":
                 target = (
                     getattr(ld, 'google_romaji', None)
@@ -870,7 +972,8 @@ class LyricsWidget(QWidget):
                     or ""
                 )
             elif mode == "translation":
-                target = getattr(ld, 'raw_translation', None) or ""
+                # Smart fallback: If translation wasn't found, fallback to Romaji
+                target = getattr(ld, 'raw_translation', None) or getattr(ld, 'google_romaji', None) or getattr(ld, 'romaji', None) or ""
             elif mode == "none":
                 target = ""
             else:  # auto
@@ -896,6 +999,14 @@ class LyricsWidget(QWidget):
             lw.set_subtext(clean)
             if clean:
                 has_any_sub = True
+
+        # Refresh container and scroll layout to prevent squishing or clipping
+        if hasattr(self, 'container_layout') and self.container_layout:
+            self.container_layout.activate()
+        if hasattr(self, 'container') and self.container:
+            self.container.adjustSize()
+        if hasattr(self, 'scroll_area') and self.scroll_area:
+            self.scroll_area.update()
 
         # Update subtext pill badge UI
         if mode == "google":
@@ -993,15 +1104,14 @@ class LyricsWidget(QWidget):
             self.sub_offset_spin.setValue(0)
             self.sub_offset_spin.blockSignals(False)
 
-        from LyricsEngine import LRCLibClient
         raw_title = track.get('title', 'Unknown Track')
         raw_artist = track.get('artist', '')
-        c_title = LRCLibClient.clean_query_title(raw_title)
-        c_artist = LRCLibClient.clean_query_artist(raw_artist)
-        cand_artist, cand_title = LRCLibClient.split_artist_title(c_title)
-
-        disp_title = cand_title if cand_title else (c_title or raw_title)
-        disp_artist = cand_artist if cand_artist else c_artist
+        candidates = LyricQuerySanitizer.extract_candidates(raw_title, raw_artist)
+        if candidates:
+            disp_title, disp_artist = candidates[0]
+        else:
+            disp_title = LyricQuerySanitizer.clean_title(raw_title) or raw_title
+            disp_artist = LyricQuerySanitizer.clean_artist(raw_artist)
 
         if disp_artist:
             self.title_label.setText(f"{disp_title}  —  {disp_artist}")
@@ -1093,6 +1203,9 @@ class LyricsWidget(QWidget):
     def _clear_lines(self):
         if hasattr(self, '_scroll_anim'):
             self._scroll_anim.stop()
+        for w in self.line_widgets:
+            if hasattr(w, 'cleanup'):
+                w.cleanup()
         while self.container_layout.count():
             item = self.container_layout.takeAt(0)
             w = item.widget()
@@ -1104,6 +1217,20 @@ class LyricsWidget(QWidget):
         self.timestamps.clear()
 
     def _render_lyrics(self, data: LyricData):
+        if not data:
+            self._clear_lines()
+            return
+
+        # Smooth in-place update if widgets already match the line count (e.g. Romaji / translation arrival)
+        if self.line_widgets and len(self.line_widgets) == len(data.lines):
+            for idx, line in enumerate(data.lines):
+                if idx < len(self.line_widgets):
+                    self.line_widgets[idx].line_data = line
+                    if line.text and self.line_widgets[idx].text != line.text:
+                        self.line_widgets[idx].text = line.text
+            self._apply_subtext_mode()
+            return
+
         self._clear_lines()
         for idx, line in enumerate(data.lines):
             item_widget = LyricLineWidget(idx, line, self.container)

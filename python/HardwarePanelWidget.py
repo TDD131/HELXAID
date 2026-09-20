@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QCheckBox, QGroupBox, QDialog, QListWidget, QListWidgetItem,
     QGraphicsOpacityEffect, QSplitter, QSplitterHandle
 )
-from AnimatedButton import AnimatedCheckBox
+from AnimatedButton import AnimatedCheckBox, FadeHoverButton
 from smooth_scroll import SmoothScrollArea, SmoothTableWidget
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, Slot, QThread, QPropertyAnimation, QEasingCurve, QRect, Property
 from PySide6.QtGui import (
@@ -32,11 +32,14 @@ from PySide6.QtSvg import QSvgRenderer
 import collections
 import threading
 import pyqtgraph as pg
+# Configure pyqtgraph with smooth antialiasing enabled by default
+pg.setConfigOptions(antialias=True, background=None, foreground='#888888')
 from datetime import datetime
 from hardware_wrapper import get_monitor, HardwareMonitor
 
 import os
 import io
+import re
 import time
 
 # Maximum chart history points (10 minutes at 500ms = 1200 points)
@@ -51,9 +54,7 @@ except ImportError:
     print("[Hardware] icoextract not available, using default icons")
 
 
-# ============================================
-# CUSTOM WIDGETS
-# ============================================
+# Custom hardware gauges, graphs, and UI widgets
 
 class CircularGauge(QWidget):
     """
@@ -420,9 +421,10 @@ class NetworkDetailPanel(QWidget):
         fill_color = QColor(self.color)
         fill_color.setAlpha(20)
         
-        self.curve = self.chart.plot(pen=pg.mkPen(self.color, width=2), 
+        self.curve = self.chart.plot(pen=pg.mkPen(self.color, width=1.5), 
                                      brush=pg.mkBrush(fill_color),
-                                     fillLevel=0)
+                                     fillLevel=0,
+                                     antialias=True)
         self.bar_item = None
         
         layout.addWidget(self.chart)
@@ -431,13 +433,17 @@ class NetworkDetailPanel(QWidget):
         stats_layout.setContentsMargins(0, 0, 0, 0)
         
         self.lbl_peak_title = QLabel("Peak:")
+        self.lbl_peak_title.setObjectName("lblPeakTitle")
         self.lbl_peak_title.setStyleSheet("color: #888888; font-size: 10px; font-weight: 500; background: transparent;")
         self.lbl_peak_val = QLabel("0 B/s")
+        self.lbl_peak_val.setObjectName("lblPeakVal")
         self.lbl_peak_val.setStyleSheet("color: #ffffff; font-size: 12px; font-family: 'Orbitron'; font-weight: 700; background: transparent;")
         
         self.lbl_low_title = QLabel("Lowest:")
+        self.lbl_low_title.setObjectName("lblLowTitle")
         self.lbl_low_title.setStyleSheet("color: #888888; font-size: 10px; font-weight: 500; background: transparent;")
         self.lbl_low_val = QLabel("0 B/s")
+        self.lbl_low_val.setObjectName("lblLowVal")
         self.lbl_low_val.setStyleSheet("color: #ffffff; font-size: 12px; font-family: 'Orbitron'; font-weight: 700; background: transparent;")
         
         stats_layout.addWidget(self.lbl_peak_title)
@@ -578,6 +584,61 @@ class StatsCard(QGroupBox):
         self.content_layout.addWidget(widget)
 
 
+class DriveIORowWidget(QFrame):
+    """
+    Sleek row displaying Physical Disk name and real-time Read/Write I/O speeds.
+    
+    Component Name: DriveIORowWidget
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DriveIORowWidget")
+        self.setFixedHeight(30)
+        self.setStyleSheet("""
+            QFrame#DriveIORowWidget {
+                background: rgba(255, 255, 255, 0.04);
+                border: none;
+                border-radius: 5px;
+            }
+            QFrame#DriveIORowWidget:hover {
+                background: rgba(255, 255, 255, 0.07);
+            }
+        """)
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(8)
+        
+        self.name_label = QLabel("Disk 0")
+        self.name_label.setObjectName("driveIONameLabel")
+        self.name_label.setStyleSheet("color: #e0e0e0; font-family: 'Orbitron'; font-size: 12px; font-weight: 700; background: transparent;")
+        layout.addWidget(self.name_label)
+        
+        layout.addStretch()
+        
+        # Read Speed
+        self.read_label = QLabel("R: 0.0 MB/s")
+        self.read_label.setObjectName("driveIOReadLabel")
+        self.read_label.setStyleSheet("color: #22d3ee; font-family: 'Orbitron'; font-size: 12px; font-weight: 600; background: transparent;")
+        layout.addWidget(self.read_label)
+        
+        # Separator dot
+        dot_label = QLabel("•")
+        dot_label.setStyleSheet("color: #555555; font-size: 12px; background: transparent;")
+        layout.addWidget(dot_label)
+        
+        # Write Speed
+        self.write_label = QLabel("W: 0.0 MB/s")
+        self.write_label.setObjectName("driveIOWriteLabel")
+        self.write_label.setStyleSheet("color: #f97316; font-family: 'Orbitron'; font-size: 12px; font-weight: 600; background: transparent;")
+        layout.addWidget(self.write_label)
+
+    def set_data(self, title: str, read_mbps: float, write_mbps: float):
+        self.name_label.setText(title)
+        self.read_label.setText(f"R: {read_mbps:.1f} MB/s")
+        self.write_label.setText(f"W: {write_mbps:.1f} MB/s")
+
+
 class ProgressBarWidget(QWidget):
     """
     Custom styled progress bar with left percent and right info text.
@@ -588,15 +649,16 @@ class ProgressBarWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("ProgressBarWidget")
-        self._value = 0
-        self._max_value = 100
+        self._value = 0.0
+        self._max_value = 100.0
         self._label = ""
         self._right_label = ""  # For GB info on right side
         self._show_percent = True
+        self._bar_color = QColor("#FF5B06")
         self.setFixedHeight(24)
     
     def setValue(self, value: float):
-        self._value = max(0, min(self._max_value, value))
+        self._value = max(0.0, min(float(self._max_value), float(value)))
         self.update()
     
     def setLabel(self, label: str):
@@ -607,6 +669,14 @@ class ProgressBarWidget(QWidget):
         """Set text to display on the right side (e.g., '150 GB / 500 GB')."""
         self._right_label = label
         self.update()
+
+    def setShowPercent(self, show: bool):
+        self._show_percent = show
+        self.update()
+
+    def setBarColor(self, color: QColor):
+        self._bar_color = color
+        self.update()
     
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -614,17 +684,17 @@ class ProgressBarWidget(QWidget):
         
         bg_rect = self.rect()
         text_rect = bg_rect.adjusted(8, 0, -8, 0)
-        font = QFont("Orbitron", 10)
+        font = QFont("Orbitron", 9, QFont.Bold)
         painter.setFont(font)
         
         left_text = self._label
         if self._show_percent:
-            left_text = f"{left_text}  {int(self._value)}%" if left_text else f"{int(self._value)}%"
+            left_text = f"{left_text}  {self._value:.1f}%" if left_text else f"{self._value:.1f}%"
         
-        # 1. Background track (#2a2a2a)
-        painter.setBrush(QColor("#2a2a2a"))
+        # 1. Background track (#242424)
+        painter.setBrush(QColor("#242424"))
         painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(bg_rect, 6, 6)
+        painter.drawRoundedRect(bg_rect, 4, 4)
         
         # 2. PASS 1: Render light text for the unfilled/dark area
         painter.setPen(QColor("#e0e0e0"))
@@ -634,19 +704,16 @@ class ProgressBarWidget(QWidget):
             painter.setPen(QColor("#cccccc"))
             painter.drawText(text_rect, Qt.AlignVCenter | Qt.AlignRight, self._right_label)
             
-        # 3. PASS 2: Progress Fill & Inverted Dark Text for the filled area
-        if self._value > 0:
+        # 3. PASS 2: Solid Progress Fill & Inverted Dark Text for the filled area
+        if self._value > 0 and self.width() > 0:
             progress_width = int((self._value / self._max_value) * self.width())
             if progress_width > 0:
                 progress_rect = bg_rect.adjusted(0, 0, -(self.width() - progress_width), 0)
                 
-                # Gradient Fill (#FF5B06 -> #FDA903)
-                gradient = QLinearGradient(0, 0, progress_width, 0)
-                gradient.setColorAt(0, QColor("#FF5B06"))
-                gradient.setColorAt(1, QColor("#FDA903"))
-                painter.setBrush(gradient)
+                # Solid Fill (#FF5B06)
+                painter.setBrush(self._bar_color)
                 painter.setPen(Qt.NoPen)
-                painter.drawRoundedRect(progress_rect, 6, 6)
+                painter.drawRoundedRect(progress_rect, 4, 4)
                 
                 # Clip drawing strictly to filled progress rectangle
                 painter.setClipRect(progress_rect)
@@ -742,6 +809,10 @@ class DriveInfoWorker(QThread):
     data_ready = Signal(list, dict, list, list)
 
     def run(self):
+        partitions = []
+        hardware = {}
+        physical_disks = []
+        smart_disks = []
         try:
             import pythoncom
             pythoncom.CoInitialize()
@@ -752,28 +823,70 @@ class DriveInfoWorker(QThread):
                     get_physical_disks_info,
                 )
                 from hardware_wrapper import get_monitor
-                partitions = get_drive_partitions_info()
-                hardware = get_drive_hardware_info(partitions=partitions)
-                physical_disks = get_physical_disks_info(partitions=partitions)
-                monitor = get_monitor()
-                smart_disks = monitor.get_smart_disks() if monitor else []
-                self.data_ready.emit(partitions, hardware, physical_disks, smart_disks)
+
+                try:
+                    partitions = get_drive_partitions_info() or []
+                except Exception as e_p:
+                    print(f"[DriveInfoWorker] Partitions query error: {e_p}")
+                    partitions = []
+
+                try:
+                    hardware = get_drive_hardware_info(partitions=partitions) or {}
+                except Exception as e_h:
+                    print(f"[DriveInfoWorker] Hardware info error: {e_h}")
+                    hardware = {}
+
+                try:
+                    physical_disks = get_physical_disks_info(partitions=partitions) or []
+                except Exception as e_pd:
+                    print(f"[DriveInfoWorker] Physical disks error: {e_pd}")
+                    physical_disks = []
+
+                try:
+                    monitor = get_monitor()
+                    smart_disks = monitor.get_smart_disks() if monitor else []
+                except Exception as e_s:
+                    print(f"[DriveInfoWorker] SMART disks error: {e_s}")
+                    smart_disks = []
+
             finally:
                 pythoncom.CoUninitialize()
         except Exception as e:
-            print(f"[DriveInfoWorker] Error querying drive info: {e}")
+            print(f"[DriveInfoWorker] COM initialization error: {e}")
+
+        # Always guarantee data emission even on partial or total fallback
+        try:
+            self.data_ready.emit(partitions, hardware, physical_disks, smart_disks)
+        except Exception as e_emit:
+            print(f"[DriveInfoWorker] Signal emission error: {e_emit}")
 
 
 class DriveSplitterHandle(QSplitterHandle):
     """
-    Custom vertical splitter handle rendering resize-handle-vertical-white.svg vector icon.
+    Custom vertical splitter handle with animated flowing gradient drag effect matching HELXAIC.
     Component Name: DriveSplitterHandle
     """
+    COLOR_NORMAL = (255, 255, 255, 30)   # subtle white
+    COLOR_HOVER  = (255, 91,  6,   180)  # glowing orange
+
     def __init__(self, orientation, parent):
         super().__init__(orientation, parent)
         self.setObjectName("DriveSplitterHandle")
         self.setCursor(Qt.SplitVCursor)
+        self.setAttribute(Qt.WA_Hover, True)
+        
         self._is_pressed = False
+        self._gradient_offset = 0.0
+        self._gradient_colors = ['#ff3da7', '#ff0c2b', '#ff5700', '#ffab00', '#ff3da7']
+        
+        self._r, self._g, self._b, self._a = self.COLOR_NORMAL
+        self._target = self.COLOR_NORMAL
+
+        # 60 FPS animation engine
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(16)
+        self._anim_timer.timeout.connect(self._tick)
+        self._anim_timer.start()
         
         script_dir = os.path.dirname(os.path.abspath(__file__))
         svg_path = os.path.join(script_dir, "UI Icons", "resize-handle-vertical-white.svg")
@@ -781,23 +894,49 @@ class DriveSplitterHandle(QSplitterHandle):
         if os.path.exists(svg_path):
             self._svg_renderer = QSvgRenderer(svg_path)
 
+    def _tick(self):
+        speed = 0.15
+        tr, tg, tb, ta = self._target
+        changed = False
+        
+        for attr, tval in [('_r', tr), ('_g', tg), ('_b', tb), ('_a', ta)]:
+            cur = getattr(self, attr)
+            nxt = cur + (tval - cur) * speed
+            if abs(nxt - tval) < 1.0:
+                nxt = tval
+            if abs(nxt - cur) > 0.1:
+                changed = True
+            setattr(self, attr, nxt)
+
+        if self._is_pressed:
+            self._gradient_offset = (self._gradient_offset + 0.006) % 1.0
+            changed = True
+
+        if changed:
+            self.update()
+
     def mousePressEvent(self, event):
-        self._is_pressed = True
-        self.update()
+        if event.button() == Qt.LeftButton:
+            self._is_pressed = True
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
-        self._is_pressed = False
-        self.update()
+        if event.button() == Qt.LeftButton:
+            self._is_pressed = False
+            if self.rect().contains(event.position().toPoint()):
+                self._target = self.COLOR_HOVER
+            else:
+                self._target = self.COLOR_NORMAL
         super().mouseReleaseEvent(event)
 
     def enterEvent(self, event):
-        self.update()
+        if not self._is_pressed:
+            self._target = self.COLOR_HOVER
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._is_pressed = False
-        self.update()
+        if not self._is_pressed:
+            self._target = self.COLOR_NORMAL
         super().leaveEvent(event)
 
     def paintEvent(self, event):
@@ -807,34 +946,60 @@ class DriveSplitterHandle(QSplitterHandle):
         rect = self.rect()
         active = self.underMouse() or self._is_pressed
         
-        # 1. Subtle horizontal track line across full width
-        line_height = 2 if not active else 4
+        # 1. Setup Flowing Linear Gradient if Pressed / Dragging
+        gradient = None
+        if self._is_pressed:
+            w = rect.width()
+            shift = self._gradient_offset * w
+            gradient = QLinearGradient(shift, 0, w + shift, 0)
+            gradient.setSpread(QGradient.RepeatSpread)
+            for i, color in enumerate(self._gradient_colors):
+                base = i / (len(self._gradient_colors) - 1)
+                gradient.setColorAt(base, QColor(color))
+
+        # 2. Subtle horizontal track line across full width
+        line_height = 2 if active else 1
         line_y = rect.center().y() - line_height // 2
-        line_rect = QRect(rect.x() + 10, line_y, rect.width() - 20, line_height)
+        line_rect = QRect(rect.x() + 4, line_y, rect.width() - 8, line_height)
         
-        line_color = QColor(255, 91, 6, 220) if active else QColor(255, 255, 255, 30)
-        painter.fillRect(line_rect, line_color)
+        if self._is_pressed and gradient:
+            painter.fillRect(line_rect, gradient)
+        else:
+            line_color = QColor(int(self._r), int(self._g), int(self._b), int(self._a))
+            painter.fillRect(line_rect, line_color)
         
-        # 2. Centered White 90-degree rotated SVG resize handle icon pill
+        # 3. Centered White 90-degree rotated SVG resize handle icon pill
         center_x = rect.center().x()
         center_y = rect.center().y()
         
-        pill_w = 52
-        pill_h = 22
+        pill_w = 46
+        pill_h = 18
         pill_rect = QRect(center_x - pill_w // 2, center_y - pill_h // 2, pill_w, pill_h)
         
-        # Pill background
-        pill_bg = QColor(255, 91, 6) if active else QColor(28, 28, 35)
-        painter.setBrush(QBrush(pill_bg))
-        border_pen = QPen(QColor(255, 91, 6) if active else QColor(255, 255, 255, 50), 1)
-        painter.setPen(border_pen)
-        painter.drawRoundedRect(pill_rect, 11, 11)
+        if self._is_pressed and gradient:
+            painter.setBrush(QBrush(gradient))
+            painter.setPen(QPen(QColor(255, 91, 6), 1.5))
+        elif active:
+            painter.setBrush(QBrush(QColor(255, 91, 6)))
+            painter.setPen(QPen(QColor(255, 91, 6), 1))
+        else:
+            painter.setBrush(QBrush(QColor(28, 28, 35)))
+            painter.setPen(QPen(QColor(255, 255, 255, 50), 1))
+            
+        painter.drawRoundedRect(pill_rect, 9, 9)
         
-        # 3. Render SVG Icon
+        # 4. Render SVG Icon
         if self._svg_renderer and self._svg_renderer.isValid():
-            icon_size = 20
+            icon_size = 16
             icon_rect = QRect(center_x - icon_size // 2, center_y - icon_size // 2, icon_size, icon_size)
             self._svg_renderer.render(painter, icon_rect)
+            
+        painter.end()
+
+    def sizeHint(self):
+        parent = self.parent()
+        w = parent.width() if parent else 100
+        return QSize(w, 40)
 
 
 class DrivePageSplitter(QSplitter):
@@ -845,6 +1010,8 @@ class DrivePageSplitter(QSplitter):
     def __init__(self, orientation, parent=None):
         super().__init__(orientation, parent)
         self.setObjectName("DrivePageSplitter")
+        self.setHandleWidth(40)
+        self.setChildrenCollapsible(False)
 
     def createHandle(self):
         return DriveSplitterHandle(self.orientation(), self)
@@ -917,6 +1084,7 @@ class DriveOverviewWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("DriveOverviewWidget")
         self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFixedWidth(240)
         self.setStyleSheet("""
             QWidget#DriveOverviewWidget {
                 background: rgba(255, 255, 255, 0.04);
@@ -946,7 +1114,7 @@ class DriveOverviewWidget(QWidget):
         self.combo_drive_selector.setFixedHeight(24)
         self.combo_drive_selector.setCursor(Qt.PointingHandCursor)
         self.combo_drive_selector.setStyleSheet(_DRIVE_OVERVIEW_COMBO_STYLESHEET)
-        self.combo_drive_selector.addItem("TOTAL STORAGE")
+        self.combo_drive_selector.addItem("ALL DRIVE HEALTH")
         self.combo_drive_selector.currentIndexChanged.connect(self._on_selector_changed)
 
         self.lbl_disk_type = QLabel("STORAGE")
@@ -993,6 +1161,7 @@ class DriveOverviewWidget(QWidget):
         bottom_col.addLayout(io_col)
 
         layout.addLayout(bottom_col)
+        self._update_display()
 
     def _on_selector_changed(self, index):
         self._update_display()
@@ -1005,7 +1174,7 @@ class DriveOverviewWidget(QWidget):
 
         if physical_disks is not None:
             self._latest_physical_disks = physical_disks
-            new_labels = ["TOTAL STORAGE"] + [
+            new_labels = ["ALL DRIVE HEALTH"] + [
                 ((d.get('model') or f"Disk {d.get('index', 0)}") if len(d.get('model') or '') <= 24 else (d.get('model') or '')[:21] + "...")
                 for d in physical_disks
             ]
@@ -1030,29 +1199,93 @@ class DriveOverviewWidget(QWidget):
         idx = self.combo_drive_selector.currentIndex()
 
         if idx <= 0 or not self._latest_physical_disks or idx > len(self._latest_physical_disks):
-            # Aggregated Total Storage View — hide SMART HEALTH and LIVE I/O
-            self.lbl_health_title.setVisible(False)
-            self.lbl_health_score.setVisible(False)
+            # ALL DRIVE HEALTH mode — hide storage capacity and Live I/O, purely show drive health
+            self.lbl_disk_type.setVisible(False)
+            self.lbl_total_capacity.setVisible(False)
             self.lbl_io_title.setVisible(False)
             self.lbl_live_io.setVisible(False)
 
-            media_types = set()
-            for d in self._latest_physical_disks:
-                if d.get("media_type"):
-                    media_types.add(d["media_type"].upper())
-            if not media_types:
-                type_str = "SYSTEM STORAGE"
-            elif len(media_types) == 1:
-                type_str = f"{next(iter(media_types))} STORAGE"
-            else:
-                type_str = "HYBRID STORAGE"
-            self.lbl_disk_type.setText(type_str)
+            self.lbl_health_title.setVisible(True)
+            self.lbl_health_score.setVisible(True)
 
-            total = sum(int(p.get("total_bytes", 0)) for p in self._latest_partitions)
-            used = sum(int(p.get("used_bytes", 0)) for p in self._latest_partitions)
-            self.lbl_total_capacity.setText(f"{format_bytes(used)} / {format_bytes(total)}")
+            disks = self._latest_physical_disks or []
+            if len(disks) > 1:
+                self.lbl_health_title.setText("ALL DRIVES HEALTH")
+                health_lines = []
+                for d in disks:
+                    d_idx = d.get("index", 0)
+                    logicals = d.get("logicals", [])
+                    log_str = ",".join([l.rstrip("\\") for l in logicals if l])
+                    if log_str:
+                        disk_tag = f"Disk {d_idx} ({log_str})"
+                    else:
+                        model_short = (d.get("model") or f"Disk {d_idx}").strip()
+                        if len(model_short) > 12:
+                            model_short = model_short[:10] + ".."
+                        disk_tag = f"Disk {d_idx} [{model_short}]"
+
+                    smart_status = str(d.get("smart_status", "OK")).upper()
+                    health_pct = float(d.get("health_pct", 100) or 100)
+                    health_text = d.get("health_text", "")
+                    if not health_text:
+                        status_suffix = "HEALTHY" if health_pct >= 90 else ("WARN" if health_pct >= 60 else "CRIT")
+                        health_text = f"{int(health_pct)}% {status_suffix}"
+                    temp_c = int(d.get("temp_c", 0) or 0)
+
+                    if health_pct >= 90 and "CRITICAL" not in smart_status and "WARN" not in smart_status:
+                        color = "#00FF66"
+                    elif health_pct >= 60 and "CRITICAL" not in smart_status:
+                        color = "#FFCC00"
+                    else:
+                        color = "#FF3355"
+
+                    h_str = f"{health_text} | {temp_c}°C" if temp_c > 0 else health_text
+                    health_lines.append(
+                        f'<div style="margin-top: 4px; margin-bottom: 6px;">'
+                        f'<div style="color: #888888; font-size: 10px; font-weight: 700; font-family: \'Orbitron\';">{disk_tag}</div>'
+                        f'<div style="color: {color}; font-size: 14px; font-weight: 800; font-family: \'Orbitron\';">{h_str}</div>'
+                        f'</div>'
+                    )
+
+                self.lbl_health_score.setText("".join(health_lines))
+                self.lbl_health_score.setStyleSheet("background: transparent;")
+            else:
+                target_disk = disks[0] if disks else {}
+                self.lbl_health_title.setText("DRIVE HEALTH")
+                d_idx = target_disk.get("index", 0)
+                logicals = target_disk.get("logicals", [])
+                log_str = ",".join([l.rstrip("\\") for l in logicals if l])
+                disk_tag = f"Disk {d_idx} ({log_str})" if log_str else (target_disk.get("model") or f"Disk {d_idx}")
+
+                smart_status = str(target_disk.get("smart_status", "OK")).upper()
+                health_pct = float(target_disk.get("health_pct", 100) or 100)
+                health_text = target_disk.get("health_text", "")
+                if not health_text:
+                    status_suffix = "HEALTHY" if health_pct >= 90 else ("WARNING" if health_pct >= 60 else "CRITICAL")
+                    health_text = f"{int(health_pct)}% {status_suffix}"
+                temp_c = int(target_disk.get("temp_c", 0) or 0)
+
+                if health_pct >= 90 and "CRITICAL" not in smart_status and "WARN" not in smart_status:
+                    color = "#00FF66"
+                elif health_pct >= 60 and "CRITICAL" not in smart_status:
+                    color = "#FFCC00"
+                else:
+                    color = "#FF3355"
+
+                h_str = f"{health_text} | {temp_c}°C" if temp_c > 0 else health_text
+                html = (
+                    f'<div style="margin-top: 6px;">'
+                    f'<div style="color: #888888; font-size: 10px; font-weight: 700; font-family: \'Orbitron\'; margin-bottom: 4px;">{disk_tag}</div>'
+                    f'<div style="color: {color}; font-size: 16px; font-weight: 800; font-family: \'Orbitron\';">{h_str}</div>'
+                    f'</div>'
+                )
+                self.lbl_health_score.setText(html)
+                self.lbl_health_score.setStyleSheet("background: transparent;")
+
         else:
-            # Selected Physical Drive View — show SMART HEALTH and LIVE I/O
+            # Selected Physical Drive View — show specific physical drive with full capacity & live I/O
+            self.lbl_disk_type.setVisible(True)
+            self.lbl_total_capacity.setVisible(True)
             self.lbl_health_title.setVisible(True)
             self.lbl_health_score.setVisible(True)
             self.lbl_io_title.setVisible(True)
@@ -1076,9 +1309,13 @@ class DriveOverviewWidget(QWidget):
 
             self.lbl_total_capacity.setText(f"{format_bytes(used)} / {format_bytes(total)}")
 
+            self.lbl_health_title.setText("SMART HEALTH")
             smart_status = str(target_disk.get("smart_status", "OK")).upper()
+            health_pct = float(target_disk.get("health_pct", 100) or 100)
             health_text = target_disk.get("health_text", "")
-            health_pct = target_disk.get("health_pct", 100)
+            if not health_text:
+                status_suffix = "HEALTHY" if health_pct >= 90 else ("WARNING" if health_pct >= 60 else "CRITICAL")
+                health_text = f"{int(health_pct)}% {status_suffix}"
             temp_c = int(target_disk.get("temp_c", 0) or 0)
 
             if health_pct >= 90 and "CRITICAL" not in smart_status and "WARN" not in smart_status:
@@ -1374,10 +1611,10 @@ class DiskCleanerPanel(QWidget):
         self.setStyleSheet("QWidget#DiskCleanerPanel { background: transparent; }")
 
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(0, 10, 0, 10)
         main_layout.setSpacing(12)
 
-        # === LEFT PANEL: HERO SCAN PANEL (Booster-style with CircularGauge) ===
+        # Left panel: hero scan trigger and circular progress gauge
         self.hero_panel = QWidget()
         self.hero_panel.setObjectName("DriveScanHeroWidget")
         self.hero_panel.setFixedWidth(240)
@@ -1454,7 +1691,7 @@ class DiskCleanerPanel(QWidget):
         hero_layout.addStretch()
         main_layout.addWidget(self.hero_panel, stretch=0)
 
-        # === RIGHT PANEL: CLEANUP CATEGORIES LIST ===
+        # Right panel: cleanup category list and category sub-tabs
         self.category_panel = QWidget()
         self.category_panel.setObjectName("DriveCleanerCategoryPanel")
         self.category_panel.setStyleSheet("""
@@ -1622,7 +1859,7 @@ class DiskCleanerPanel(QWidget):
         # Bottom Bar with Status Label & RESET TO DEFAULT button (matching essentialBottom in Booster tab)
         bottom_bar = QFrame()
         bottom_bar.setObjectName("driveCleanerBottomBar")
-        bottom_bar.setFixedHeight(58)
+        bottom_bar.setFixedHeight(75)
         bottom_bar.setStyleSheet("""
             QFrame#driveCleanerBottomBar {
                 background: rgba(30, 30, 30, 0.8);
@@ -1632,7 +1869,7 @@ class DiskCleanerPanel(QWidget):
             }
         """)
         bottom_layout = QHBoxLayout(bottom_bar)
-        bottom_layout.setContentsMargins(15, 8, 15, 8)
+        bottom_layout.setContentsMargins(15, 0, 15, 0)
         bottom_layout.setSpacing(10)
 
         self.status_label = QLabel("Tier 1 selected by default. Review before cleaning.")
@@ -1641,36 +1878,10 @@ class DiskCleanerPanel(QWidget):
         self.status_label.setWordWrap(True)
         bottom_layout.addWidget(self.status_label, stretch=1, alignment=Qt.AlignVCenter)
 
-        self.btn_reset = QPushButton("RESET TO DEFAULT")
+        self.btn_reset = FadeHoverButton("RESET TO DEFAULT", is_secondary=True, border_radius=6.0, font_size=11)
         self.btn_reset.setObjectName("driveCleanerResetBtn")
-        self.btn_reset.setFixedSize(180, 35)
-        self.btn_reset.setCursor(Qt.PointingHandCursor)
+        self.btn_reset.setFixedSize(170, 38)
         self.btn_reset.setToolTip("Reset all selections to default tier configuration")
-        self.btn_reset.setStyleSheet("""
-            QPushButton#driveCleanerResetBtn {
-                background: #3a3a3a;
-                color: #e0e0e0;
-                border: 1px solid #555;
-                border-radius: 4px;
-                height: 30px;
-                min-height: 30px;
-                max-height: 30px;
-                padding: 0px;
-                margin: 0px;
-                text-align: center;
-                font-family: 'Orbitron';
-                font-size: 9px;
-                font-weight: 600;
-            }
-            QPushButton#driveCleanerResetBtn:hover {
-                background: #444;
-                border-color: #FF5B06;
-                color: #ffffff;
-            }
-            QPushButton#driveCleanerResetBtn:pressed {
-                background: #2a2a2a;
-            }
-        """)
         self.btn_reset.clicked.connect(self._reset_cleanup_selections)
         bottom_layout.addWidget(self.btn_reset, alignment=Qt.AlignVCenter)
 
@@ -1991,13 +2202,26 @@ class DiskCleanerPanel(QWidget):
         btn_folder.setFixedSize(22, 22)
         btn_folder.setCursor(Qt.PointingHandCursor)
         btn_folder.setToolTip(f"Inspect junk paths for {cat_name}")
+        btn_folder.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 0px;
+                margin: 0px 4px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 91, 6, 0.22);
+            }
+            QPushButton:pressed {
+                background: rgba(255, 91, 6, 0.35);
+            }
+        """)
         folder_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon-white.svg")
         folder_icon = _get_cached_drive_icon(folder_icon_path)
         if not folder_icon.isNull():
             btn_folder.setIcon(folder_icon)
-            btn_folder.setIconSize(QSize(13, 13))
-        else:
-            btn_folder.setText("📁")
+            btn_folder.setIconSize(QSize(16, 16))
         btn_folder.clicked.connect(lambda checked=False, cid=cat_id: self._show_junk_items_panel(cid))
         row_layout.addWidget(btn_folder, alignment=Qt.AlignVCenter)
 
@@ -2058,10 +2282,18 @@ class DiskCleanerPanel(QWidget):
                 background: transparent;
                 border: none;
                 border-radius: 4px;
-                padding: 2px;
+                padding: 0px;
+                margin: 0px 4px;
+                min-width: 22px;
+                max-width: 22px;
+                min-height: 22px;
+                max-height: 22px;
             }
             QPushButton[class="driveCleanFolderBtn"]:hover {
-                background: rgba(255, 91, 6, 0.25);
+                background: rgba(255, 91, 6, 0.22);
+            }
+            QPushButton[class="driveCleanFolderBtn"]:pressed {
+                background: rgba(255, 91, 6, 0.35);
             }
         """)
 
@@ -2211,11 +2443,6 @@ class DiskCleanerPanel(QWidget):
                 sub_h_layout.addWidget(btn_sub_toggle, alignment=Qt.AlignVCenter)
                 sub_h_layout.addWidget(sub_cb, alignment=Qt.AlignVCenter)
 
-                sub_title = QLabel(subgrp_info["name"])
-                sub_title.setObjectName(f"driveSubGroupTitle_{sgid}")
-                sub_title.setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
-                sub_h_layout.addWidget(sub_title, alignment=Qt.AlignVCenter)
-
                 icon_filename = SUBGROUP_ICON_MAP.get(sgid)
                 if icon_filename:
                     icon_path = os.path.join(script_dir, "UI Icons", icon_filename)
@@ -2227,6 +2454,11 @@ class DiskCleanerPanel(QWidget):
                         sub_icon_lbl.setPixmap(sub_pix)
                         sub_icon_lbl.setStyleSheet("background: transparent;")
                         sub_h_layout.addWidget(sub_icon_lbl, alignment=Qt.AlignVCenter)
+
+                sub_title = QLabel(subgrp_info["name"])
+                sub_title.setObjectName(f"driveSubGroupTitle_{sgid}")
+                sub_title.setStyleSheet("color: #e0e0e0; font-size: 11px; font-weight: 700; font-family: 'Orbitron'; background: transparent;")
+                sub_h_layout.addWidget(sub_title, alignment=Qt.AlignVCenter)
 
                 sub_size = QLabel("")
                 sub_size.setObjectName(f"driveSubGroupSize_{sgid}")
@@ -2444,7 +2676,7 @@ class HeaderLhmIconButton(QPushButton):
     """
     def __init__(self, icon_path, parent=None):
         super().__init__("", parent)
-        self.setObjectName("headerOpenLhmBtn")
+        self.setObjectName("btnOpenLhm")
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(38, 38)
         self.setToolTip("Open LHM Panel")
@@ -2474,18 +2706,17 @@ class HeaderLhmIconButton(QPushButton):
         self._anim.setDuration(180)
 
         self.setStyleSheet("""
-            QPushButton#headerOpenLhmBtn {
-                background: rgba(255, 255, 255, 0.06);
+            QPushButton#btnOpenLhm, QPushButton#headerOpenLhmBtn {
+                background: transparent;
                 border: none;
-                border-radius: 8px;
                 padding: 0px;
             }
-            QPushButton#headerOpenLhmBtn:hover {
-                background: rgba(255, 255, 255, 0.14);
+            QPushButton#btnOpenLhm:hover, QPushButton#headerOpenLhmBtn:hover {
+                background: transparent;
                 border: none;
             }
-            QPushButton#headerOpenLhmBtn:pressed {
-                background: rgba(255, 255, 255, 0.22);
+            QPushButton#btnOpenLhm:pressed, QPushButton#headerOpenLhmBtn:pressed {
+                background: transparent;
                 border: none;
             }
         """)
@@ -2536,9 +2767,7 @@ class HeaderLhmIconButton(QPushButton):
             painter.drawPixmap(icon_rect, pix)
 
 
-# ============================================
-# MAIN HARDWARE PANEL
-# ============================================
+# Hardware panel root widget and tab management
 
 def _is_tab_profiling_enabled():
     try:
@@ -2777,6 +3006,20 @@ class HardwarePanelWidget(QWidget):
         if index == 3:
             if hasattr(self, 'drive_cleaner'):
                 self.drive_cleaner.resume_animations()
+            # Immediately render cached drive data to prevent blank tab delay
+            cached_parts = getattr(self, '_drive_partitions', None)
+            if cached_parts:
+                self._render_drive_cards(cached_parts)
+                if hasattr(self, 'drive_overview'):
+                    disk_io = getattr(self, '_last_disk_io', {"read_mbps": 0, "write_mbps": 0})
+                    self.drive_overview.set_data(
+                        cached_parts,
+                        getattr(self, "_drive_hardware_info", {}),
+                        disk_io,
+                        getattr(self, "_drive_physical_disks", [])
+                    )
+                if hasattr(self, "drive_refresh_label"):
+                    self.drive_refresh_label.setText(f"{len(cached_parts)} volumes")
             self._request_async_drive_info()
 
         # Resume timer after page switch is complete
@@ -2889,7 +3132,7 @@ class HardwarePanelWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(20)
         
-        # ====== Left Side: Gauge + Controls ======
+        # Left panel: booster gauge and manual controls
         left_panel = QWidget()
         left_panel.setObjectName("ramLeftPanel")
         left_panel.setFixedWidth(220)
@@ -2959,7 +3202,7 @@ class HardwarePanelWidget(QWidget):
         
         main_layout.addWidget(left_panel)
         
-        # ====== Right Side: Embedded 4-Tab Content ======
+        # Right panel: embedded optimization sub-tabs
         right_panel = QWidget()
         right_panel.setObjectName("ramRightPanel")
         right_panel.setStyleSheet("""
@@ -3513,7 +3756,7 @@ class HardwarePanelWidget(QWidget):
                 cancelled = True
                 raise Exception("Cancelled by user")
             
-            # ========== 1. ESSENTIAL TAB ==========
+            # Apply essential system optimizations
             _essential_needs_elevation = []
             
             selected_essential = boost_data.get('selected_essential', [])
@@ -3543,7 +3786,7 @@ class HardwarePanelWidget(QWidget):
                 except Exception as e:
                     print(f"[Boost] Essential error: {e}")
             
-            # ========== 2. PROCESSES TAB ==========
+            # Terminate non-essential background processes
             if getattr(self, '_boost_cancel_requested', False) or generation_id != getattr(self, '_boost_generation_id', 0):
                 cancelled = True
                 raise Exception("Cancelled by user")
@@ -3551,51 +3794,133 @@ class HardwarePanelWidget(QWidget):
             process_data = boost_data.get('process_data', [])
             if process_data:
                 any_selected = True
-                process_names = [proc_info['name'] for proc_info in process_data]
-                
+
+                # Check if Helper Service is running (Zero-UAC elevation)
+                from integrations.cpu_controller import is_service_running, send_service_command
+                service_ok = is_service_running()
+
+                proc_items = []
+                for p in process_data:
+                    name = p.get('name', '').strip()
+                    if not name:
+                        continue
+                    pids = p.get('pids', [])
+                    if not pids and p.get('pid'):
+                        pids = [p['pid']]
+                    proc_items.append({'name': name, 'pids': pids})
+
+                # If service is available, batch request to service for elevated termination
+                service_results = {}
+                if service_ok and proc_items:
+                    try:
+                        resp = send_service_command({
+                            "action": "kill_processes",
+                            "process_names": [pi['name'] for pi in proc_items],
+                            "pids": [pid for pi in proc_items for pid in pi['pids'] if pid]
+                        })
+                        if resp and resp.get("status") == "success":
+                            service_results = resp.get("results", {})
+                    except Exception as e:
+                        print(f"[Boost] Zero-UAC kill_processes exception: {e}")
+
                 import native_wrapper
                 boost_engine = native_wrapper.get_boost_engine()
-                
-                if boost_engine:
-                    kill_results = boost_engine.kill_processes(process_names)
-                    for r in kill_results:
-                        if r.success and r.killed_pids > 0:
-                            results['processes']['closed'] += 1
-                            count_str = f" ({r.killed_pids} instances)" if r.total_pids > 1 else ""
-                            results['processes']['items'].append(f"✓ {r.name}{count_str}")
-                            print(f"[Boost] Closed process: {r.name} ({r.killed_pids}/{r.total_pids} PIDs)")
-                        else:
-                            results['processes']['failed'] += 1
-                            reason = "access denied" if r.total_pids > 0 else "not running"
-                            results['processes']['items'].append(f"✗ {r.name} ({reason})")
-                            print(f"[Boost] Failed to close {r.name}")
-                else:
-                    # Python fallback
-                    for proc_info in process_data:
-                        pids = proc_info.get('pids', [proc_info.get('pid')])
-                        closed_count = 0
-                        failed_count = 0
-                        
-                        for pid in pids:
+                CF_NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+
+                for proc_item in proc_items:
+                    name = proc_item['name']
+                    pids = proc_item['pids']
+                    closed_successfully = False
+                    instances_killed = 0
+                    reason = ""
+
+                    # 1. Check Service result
+                    if name in service_results:
+                        s_res = service_results[name]
+                        if s_res.get("success"):
+                            closed_successfully = True
+                            if s_res.get("killed"):
+                                instances_killed = 1
+                            else:
+                                reason = "already stopped"
+
+                    # 2. Try native engine if not confirmed closed by service
+                    if not closed_successfully and boost_engine:
+                        try:
+                            k_res = boost_engine.kill_processes([name])
+                            if k_res:
+                                r = k_res[0]
+                                if r.killed_pids > 0:
+                                    closed_successfully = True
+                                    instances_killed = r.killed_pids
+                                elif r.total_pids == 0:
+                                    closed_successfully = True
+                                    reason = "already stopped"
+                        except Exception as e:
+                            print(f"[Boost] Native kill failed for {name}: {e}")
+
+                    # 3. Try local taskkill if still not confirmed
+                    if not closed_successfully:
+                        try:
+                            tk_res = subprocess.run(
+                                ["taskkill.exe", "/F", "/T", "/IM", name],
+                                capture_output=True, text=True,
+                                creationflags=CF_NO_WINDOW, timeout=5
+                            )
+                            tk_out = ((tk_res.stdout or "") + (tk_res.stderr or "")).lower()
+                            if tk_res.returncode == 0 or "success" in tk_out or "terminated" in tk_out:
+                                closed_successfully = True
+                                instances_killed = 1
+                            elif "not found" in tk_out:
+                                closed_successfully = True
+                                reason = "already stopped"
+                        except Exception:
+                            pass
+
+                    # 4. Try psutil fallback (match by name or by known pids)
+                    if not closed_successfully:
+                        matched_pids = set(pids)
+                        name_lower = name.lower()
+                        for p in psutil.process_iter(['pid', 'name']):
                             try:
-                                p = psutil.Process(pid)
-                                p.terminate()
-                                p.wait(timeout=2)
-                                closed_count += 1
-                            except Exception:
-                                failed_count += 1
-                        
-                        if closed_count > 0:
-                            results['processes']['closed'] += 1
-                            count_str = f" ({closed_count} instances)" if len(pids) > 1 else ""
-                            results['processes']['items'].append(f"✓ {proc_info['name']}{count_str}")
-                            print(f"[Boost] Closed process: {proc_info['name']} ({closed_count}/{len(pids)} PIDs)")
+                                if p.info['name'] and p.info['name'].lower() == name_lower:
+                                    matched_pids.add(p.info['pid'])
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+
+                        if not matched_pids:
+                            closed_successfully = True
+                            reason = "already stopped"
                         else:
-                            results['processes']['failed'] += 1
-                            results['processes']['items'].append(f"✗ {proc_info['name']} (access denied)")
-                            print(f"[Boost] Failed to close {proc_info['name']}")
+                            for pid in matched_pids:
+                                try:
+                                    proc_obj = psutil.Process(pid)
+                                    proc_obj.kill()
+                                    proc_obj.wait(timeout=1)
+                                    instances_killed += 1
+                                    closed_successfully = True
+                                except (psutil.NoSuchProcess, psutil.ZombieProcess):
+                                    closed_successfully = True
+                                except Exception:
+                                    pass
+
+                    # Record results
+                    if closed_successfully:
+                        results['processes']['closed'] += 1
+                        if instances_killed > 1:
+                            count_str = f" ({instances_killed} instances)"
+                        elif reason == "already stopped":
+                            count_str = " (already stopped)"
+                        else:
+                            count_str = ""
+                        results['processes']['items'].append(f"✓ {name}{count_str}")
+                        print(f"[Boost] Closed process: {name} ({instances_killed} PIDs, status: {'killed' if instances_killed else reason})")
+                    else:
+                        results['processes']['failed'] += 1
+                        results['processes']['items'].append(f"✗ {name} (access denied)")
+                        print(f"[Boost] Failed to close {name} (access denied)")
             
-            # ========== 3 & 4. SERVICES (BASIC = START, ADVANCED = STOP) ==========
+            # Toggle basic and advanced Windows services
             if getattr(self, '_boost_cancel_requested', False) or generation_id != getattr(self, '_boost_generation_id', 0):
                 cancelled = True
                 raise Exception("Cancelled by user")
@@ -3700,7 +4025,7 @@ class HardwarePanelWidget(QWidget):
                             reason = 'access denied' if st == 'ACCESS_DENIED' else 'failed'
                             results['advanced_services']['items'].append(f'X {display} ({reason})')
 
-            # ========== SHOW RESULTS ==========
+            # Build and display optimization summary
             if not any_selected:
                 from PySide6.QtCore import QTimer
                 QTimer.singleShot(0, lambda: self._boost_complete(None, "No Items Selected", 
@@ -3836,7 +4161,10 @@ class HardwarePanelWidget(QWidget):
         
         # Refresh processes list after closing some
         if results and results.get('processes', {}).get('closed', 0) > 0:
-            self._populate_processes_tab()
+            try:
+                self._populate_processes_tab()
+            except Exception as e:
+                print(f"[Boost] Process tab refresh error: {e}")
         
         # Refresh service status labels after starting/stopping services
         if results and (results.get('basic_services', {}).get('started', 0) > 0 or results.get('advanced_services', {}).get('stopped', 0) > 0):
@@ -3918,9 +4246,7 @@ class HardwarePanelWidget(QWidget):
             print(f"[Hardware] Error during closeEvent: {e}")
         super().closeEvent(event)
     
-    # ============================================
-    # EMBEDDED RAM TAB METHODS
-    # ============================================
+    # RAM and booster tab lifecycle methods
     
     def _refresh_service_statuses(self):
         """Re-query and update service status labels in the Basic/Advanced tables.
@@ -4099,7 +4425,7 @@ class HardwarePanelWidget(QWidget):
         # Header row with Select All, Name, Description columns
         from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
         
-        # ========== SELECT ALL ROW ==========
+        # Select all header control
         select_row = QFrame()
         select_row.setObjectName("essentialSelectRow")
         select_row.setFixedHeight(35)
@@ -4127,7 +4453,7 @@ class HardwarePanelWidget(QWidget):
         
         page_layout.addWidget(select_row)
         
-        # ========== TABLE WIDGET ==========
+        # Optimizations list table
         table = QTableWidget()
         table.setObjectName("essentialTable")
         table.setColumnCount(3)
@@ -4135,6 +4461,7 @@ class HardwarePanelWidget(QWidget):
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.NoSelection)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setFocusPolicy(Qt.NoFocus)
         table.setShowGrid(False)
         table.setSortingEnabled(True)
         
@@ -4156,10 +4483,26 @@ class HardwarePanelWidget(QWidget):
                 border: none;
                 color: #e0e0e0;
                 gridline-color: transparent;
+                outline: none;
+            }
+            QTableWidget:focus {
+                outline: none;
+                border: none;
             }
             QTableWidget::item {
                 padding: 8px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                outline: none;
+            }
+            QTableWidget::item:focus {
+                outline: none;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                background: transparent;
+            }
+            QTableWidget::item:selected {
+                outline: none;
+                background: transparent;
             }
             QTableWidget::item:hover {
                 background: rgba(255, 91, 6, 0.08);
@@ -4216,11 +4559,13 @@ class HardwarePanelWidget(QWidget):
             
             # Column 1: Name
             name_item = QTableWidgetItem(item["name"])
+            name_item.setFlags(Qt.ItemIsEnabled)
             name_item.setForeground(QColor("#e0e0e0"))
             table.setItem(idx, 1, name_item)
             
             # Column 2: Description
             desc_item = QTableWidgetItem(item["description"])
+            desc_item.setFlags(Qt.ItemIsEnabled)
             desc_item.setForeground(QColor("#666666"))
             table.setItem(idx, 2, desc_item)
         
@@ -4636,7 +4981,7 @@ class HardwarePanelWidget(QWidget):
         # Header row
         from PySide6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView
         
-        # ========== SELECT ALL ROW ==========
+        # Select all header control
         select_row = QFrame()
         select_row.setObjectName("processesSelectRow")
         select_row.setFixedHeight(35)
@@ -4705,7 +5050,7 @@ class HardwarePanelWidget(QWidget):
         
         page_layout.addWidget(select_row)
         
-        # ========== TABLE WIDGET ==========
+        # Active processes table
         self._processes_sort_column = "memory"  # Default sort by memory
         self._processes_sort_asc = False  # Default descending (highest first)
         
@@ -4715,6 +5060,7 @@ class HardwarePanelWidget(QWidget):
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.NoSelection)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setFocusPolicy(Qt.NoFocus)
         table.setShowGrid(False)
         table.setSortingEnabled(False)  # Disable built-in sorting, we handle it manually
         
@@ -4745,10 +5091,26 @@ class HardwarePanelWidget(QWidget):
                 border: none;
                 color: #e0e0e0;
                 gridline-color: transparent;
+                outline: none;
+            }
+            QTableWidget:focus {
+                outline: none;
+                border: none;
             }
             QTableWidget::item {
                 padding: 8px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                outline: none;
+            }
+            QTableWidget::item:focus {
+                outline: none;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                background: transparent;
+            }
+            QTableWidget::item:selected {
+                outline: none;
+                background: transparent;
             }
             QTableWidget::item:hover {
                 background: rgba(255, 91, 6, 0.08);
@@ -4858,6 +5220,9 @@ class HardwarePanelWidget(QWidget):
     
     def _sort_processes(self, column: str):
         """Sort processes by column."""
+        if not hasattr(self, '_processes_table') or self._processes_table is None:
+            return
+
         if self._processes_sort_column == column:
             self._processes_sort_asc = not self._processes_sort_asc
         else:
@@ -4894,7 +5259,9 @@ class HardwarePanelWidget(QWidget):
         Updates RAM numbers on existing QTableWidgetItems without destroying widgets.
         Only performs full table rebuild if process list items change.
         """
-        if not hasattr(self, '_processes_table') or self._processes_table.rowCount() == 0:
+        if not hasattr(self, '_processes_table') or self._processes_table is None:
+            return
+        if self._processes_table.rowCount() == 0:
             self._populate_processes_tab()
             return
             
@@ -5090,6 +5457,9 @@ class HardwarePanelWidget(QWidget):
     
     def _populate_processes_tab(self):
         """Populate processes tab with running processes using QTableWidget."""
+        if not hasattr(self, '_processes_table') or self._processes_table is None:
+            return
+
         import psutil
         import json
         import os
@@ -5240,6 +5610,7 @@ class HardwarePanelWidget(QWidget):
                 
                 # Column 2: Name
                 name_item = QTableWidgetItem(proc['name'])
+                name_item.setFlags(Qt.ItemIsEnabled)
                 name_item.setForeground(QColor("#e0e0e0"))
                 table.setItem(idx, 2, name_item)
                 
@@ -5247,6 +5618,7 @@ class HardwarePanelWidget(QWidget):
                 mem = proc['memory']
                 mem_str = f"{mem / (1024**3):.2f} GB" if mem >= 1024**3 else f"{mem / (1024**2):.0f} MB"
                 mem_item = QTableWidgetItem(mem_str)
+                mem_item.setFlags(Qt.ItemIsEnabled)
                 mem_item.setForeground(QColor("#888888"))
                 mem_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 mem_item.setData(Qt.UserRole, mem)
@@ -5329,7 +5701,7 @@ class HardwarePanelWidget(QWidget):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
         
-        # ========== SELECT ALL ROW ==========
+        # Select all header control
         select_row = QFrame()
         select_row.setObjectName(f"{tab_id}SelectRow")
         select_row.setFixedHeight(35)
@@ -5367,7 +5739,7 @@ class HardwarePanelWidget(QWidget):
         
         page_layout.addWidget(select_row)
         
-        # ========== TABLE WIDGET ==========
+        # Service configuration table
         table = QTableWidget()
         table.setObjectName(f"{tab_id}Table")
         table.setColumnCount(4)
@@ -5375,6 +5747,7 @@ class HardwarePanelWidget(QWidget):
         table.verticalHeader().setVisible(False)
         table.setSelectionMode(QTableWidget.NoSelection)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setFocusPolicy(Qt.NoFocus)
         table.setShowGrid(False)
         table.setSortingEnabled(True)
         
@@ -5400,10 +5773,26 @@ class HardwarePanelWidget(QWidget):
                 border: none;
                 color: #e0e0e0;
                 gridline-color: transparent;
+                outline: none;
+            }}
+            QTableWidget:focus {{
+                outline: none;
+                border: none;
             }}
             QTableWidget::item {{
                 padding: 8px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                outline: none;
+            }}
+            QTableWidget::item:focus {{
+                outline: none;
+                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                background: transparent;
+            }}
+            QTableWidget::item:selected {{
+                outline: none;
+                background: transparent;
             }}
             QTableWidget::item:hover {{
                 background: rgba(255, 91, 6, 0.08);
@@ -5469,17 +5858,20 @@ class HardwarePanelWidget(QWidget):
             
             # Column 1: Name
             name_item = QTableWidgetItem(svc["display"])
+            name_item.setFlags(Qt.ItemIsEnabled)
             name_item.setForeground(QColor("#e0e0e0"))
             table.setItem(idx, 1, name_item)
             
             # Column 2: Status
             status_item = QTableWidgetItem(status)
+            status_item.setFlags(Qt.ItemIsEnabled)
             status_color = "#4ade80" if status == "Running" else "#888888"
             status_item.setForeground(QColor(status_color))
             table.setItem(idx, 2, status_item)
             
             # Column 3: Description
             desc_item = QTableWidgetItem(svc["desc"])
+            desc_item.setFlags(Qt.ItemIsEnabled)
             desc_item.setForeground(QColor("#666666"))
             table.setItem(idx, 3, desc_item)
         
@@ -5494,7 +5886,7 @@ class HardwarePanelWidget(QWidget):
             self._advanced_table_smoother = SmoothTableWidget(table)
         
         
-        # ========== BOTTOM BAR ==========
+        # Bottom action bar
         bottom = QFrame()
         bottom.setObjectName(f"{tab_id}Bottom")
         bottom.setFixedHeight(75)
@@ -5650,20 +6042,20 @@ class HardwarePanelWidget(QWidget):
         page.setUpdatesEnabled(False)
 
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 10, 0, 0)
+        layout.setContentsMargins(0, 10, 0, 10)
         layout.setSpacing(12)
 
-        # === TOP SECTION: Total Storage Card (Left) + Drive Volumes Panel (Right) ===
+        # Top section: storage summary card and drive volumes list
         top_container = QWidget()
         top_container.setObjectName("DriveTopContainer")
         top_container.setStyleSheet("background: transparent;")
         top_row = QHBoxLayout(top_container)
-        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setContentsMargins(0, 0, 0, 10)
         top_row.setSpacing(12)
 
-        # 1. Total Storage Overview Card (Left side of top row)
+        # 1. Total Storage Overview Card (Left side of top row, 240px matching Disk Cleaner Hero)
         self.drive_overview = DriveOverviewWidget()
-        self.drive_overview.setMaximumWidth(360)
+        self.drive_overview.setFixedWidth(240)
         top_row.addWidget(self.drive_overview)
 
         # 2. Drive Volumes Panel (Right side of top row, side-by-side with Total Storage)
@@ -5717,17 +6109,18 @@ class HardwarePanelWidget(QWidget):
 
         top_row.addWidget(volumes_panel, stretch=1)
 
-        # === BOTTOM SECTION: Disk Cleaner (Full Width) ===
+        # Bottom section: disk cleaner panel
         self.drive_cleaner = DiskCleanerPanel()
         self.drive_cleaner.scan_requested.connect(self._start_drive_scan)
         self.drive_cleaner.clean_requested.connect(self._start_drive_clean)
 
-        # === VERTICAL SPLITTER WITH RESIZE HANDLE LINE BELOW TOP CARDS ===
+        # Splitter dividing overview cards and cleaner workspace
         drive_splitter = DrivePageSplitter(Qt.Vertical)
         drive_splitter.setObjectName("DrivePageSplitter")
+        drive_splitter.setHandleWidth(40)
         drive_splitter.setStyleSheet("""
-            QSplitter#DrivePageSplitter::handle {
-                height: 24px;
+            QSplitter#DrivePageSplitter::handle:vertical {
+                height: 40px;
                 background: transparent;
             }
         """)
@@ -5739,6 +6132,19 @@ class HardwarePanelWidget(QWidget):
         layout.addWidget(drive_splitter, stretch=1)
 
         self._drive_refresh_counter = 0
+        cached_parts = getattr(self, '_drive_partitions', None)
+        if cached_parts:
+            self._render_drive_cards(cached_parts)
+            if hasattr(self, 'drive_overview'):
+                disk_io = getattr(self, '_last_disk_io', {"read_mbps": 0, "write_mbps": 0})
+                self.drive_overview.set_data(
+                    cached_parts,
+                    getattr(self, "_drive_hardware_info", {}),
+                    disk_io,
+                    getattr(self, "_drive_physical_disks", [])
+                )
+            if hasattr(self, "drive_refresh_label"):
+                self.drive_refresh_label.setText(f"{len(cached_parts)} volumes")
         self._request_async_drive_info()
         page.setUpdatesEnabled(True)
         return page
@@ -5763,8 +6169,32 @@ class HardwarePanelWidget(QWidget):
             if cached_lhm:
                 lhm_drives = cached_lhm
                 self._smart_disks = cached_lhm
-            elif lhm_drives is None:
+            elif physical_disks:
+                # Synthesize SMART records directly from physical_disks
+                synth_smart = []
+                for pdisk in physical_disks:
+                    mname = pdisk.get('model') or 'Storage Drive'
+                    mtype = str(pdisk.get('media_type', '')).upper()
+                    if 'HDD' in mtype:
+                        is_ssd = False
+                    elif 'SSD' in mtype or 'NVME' in mtype:
+                        is_ssd = True
+                    else:
+                        is_ssd = any(kw in mname.upper() for kw in ["NVME", "SSD", "M.2", "970 EVO", "980", "990 PRO", "WD_BLACK SN"])
+                    synth_smart.append({
+                        'model': mname,
+                        'temp': float(pdisk.get('temp_c') or 0),
+                        'health_percent': float(pdisk.get('health_pct') or 100),
+                        'status': pdisk.get('smart_status') or 'OK',
+                        'type': 'SSD' if is_ssd else 'HDD',
+                        'device': pdisk.get('device_id', mname)
+                    })
+                lhm_drives = synth_smart
+                self._smart_disks = synth_smart
+                self._disk_smart_fetched = True
+            else:
                 lhm_drives = []
+                self._smart_disks = []
         
         def _is_match(n1_str, n2_str):
             if not n1_str or not n2_str:
@@ -5786,22 +6216,33 @@ class HardwarePanelWidget(QWidget):
                 if _is_match(d_model, lhm_name):
                     matched_lhm = lhm_disk
                     break
-            if not matched_lhm and len(lhm_drives) > 0:
+            if not matched_lhm and len(lhm_drives) > 0 and len(lhm_drives) == len(physical_disks):
+                # Only use index-based fallback when drive counts match (1:1 mapping)
                 lhm_idx = min(idx_d, len(lhm_drives) - 1)
-                matched_lhm = lhm_drives[lhm_idx]
+                candidate = lhm_drives[lhm_idx]
+                # Validate type compatibility: don't assign SSD health to HDD or vice versa
+                disk_type = str(disk.get('media_type', '')).upper()
+                cand_type = str(candidate.get('type', '')).upper()
+                is_disk_ssd = any(kw in disk_type for kw in ['SSD', 'NVME']) or any(kw in d_model.upper() for kw in ['NVME', 'SSD', 'M.2'])
+                is_cand_ssd = 'SSD' in cand_type
+                if is_disk_ssd == is_cand_ssd:
+                    matched_lhm = candidate
 
             if matched_lhm:
                 lhm_name = matched_lhm.get('model') or matched_lhm.get('name', '')
-                if lhm_name and any(gen in d_model.lower() for gen in ('system storage', 'physical drive', 'storage')):
+                if lhm_name and not lhm_name.lower().startswith('physical drive') and any(gen in d_model.lower() for gen in ('system storage', 'physical drive', 'storage')):
                     disk['model'] = lhm_name
                 if matched_lhm.get('temp', 0) > 0:
                     disk['temp_c'] = matched_lhm['temp']
                 lhm_health = matched_lhm.get('health_percent', 0)
                 if lhm_health > 0:
                     disk['health_pct'] = lhm_health
-                    disk['health_text'] = f"{int(lhm_health)}% HEALTHY"
-                    if lhm_health < 90:
+                    if lhm_health < 20:
+                        disk['health_text'] = f"{int(lhm_health)}% CRITICAL"
+                    elif lhm_health < 90:
                         disk['health_text'] = f"{int(lhm_health)}% WARNING"
+                    else:
+                        disk['health_text'] = f"{int(lhm_health)}% HEALTHY"
 
         for hw_key, hw_val in hardware_info.items():
             hw_model = hw_val.get('model', '')
@@ -5811,12 +6252,13 @@ class HardwarePanelWidget(QWidget):
                 if _is_match(hw_model, lhm_name):
                     matched_lhm = lhm_disk
                     break
-            if not matched_lhm and len(lhm_drives) > 0:
+            if not matched_lhm and len(lhm_drives) > 0 and len(lhm_drives) == len(physical_disks):
+                # Only fallback to first entry when counts match (avoid cross-type contamination)
                 matched_lhm = lhm_drives[0]
 
             if matched_lhm:
                 lhm_name = matched_lhm.get('model') or matched_lhm.get('name', '')
-                if lhm_name and any(gen in hw_model.lower() for gen in ('system storage', 'physical drive', 'storage')):
+                if lhm_name and not lhm_name.lower().startswith('physical drive') and any(gen in hw_model.lower() for gen in ('system storage', 'physical drive', 'storage')):
                     hw_val['model'] = lhm_name
                 if matched_lhm.get('temp', 0) > 0:
                     hw_val['temperature'] = matched_lhm['temp']
@@ -5825,6 +6267,28 @@ class HardwarePanelWidget(QWidget):
                     hw_val['health_pct'] = lhm_health
                     if lhm_health >= 90 and 'CRITICAL' not in hw_val.get('smart_status', '').upper():
                         hw_val['smart_status'] = 'OK'
+
+        # Guarantee self._smart_disks contains authoritative hardware model names and live telemetry
+        resolved_smart = []
+        for disk in physical_disks:
+            mname = disk.get('model') or 'Storage Drive'
+            mtype = str(disk.get('media_type', '')).upper()
+            if 'HDD' in mtype:
+                is_ssd = False
+            elif 'SSD' in mtype or 'NVME' in mtype:
+                is_ssd = True
+            else:
+                is_ssd = any(kw in mname.upper() for kw in ["NVME", "SSD", "M.2", "970 EVO", "980", "990 PRO", "WD_BLACK SN"])
+            resolved_smart.append({
+                'model': mname,
+                'temp': float(disk.get('temp_c') or 0),
+                'health_percent': float(disk.get('health_pct') or 100),
+                'status': disk.get('smart_status') or 'OK',
+                'type': 'SSD' if is_ssd else 'HDD',
+                'device': disk.get('device_id', mname)
+            })
+        self._smart_disks = resolved_smart
+        self._disk_smart_fetched = True
 
         self._drive_partitions = partitions
         self._drive_hardware_info = hardware_info
@@ -5897,8 +6361,8 @@ class HardwarePanelWidget(QWidget):
         self._last_disk_io = disk_io or {}
         current_tab = self._page_stack.currentIndex() if hasattr(self, '_page_stack') else -1
 
-        # Only process if Drive Tab (3) or Overview Tab (0) is active
-        if current_tab not in (0, 3):
+        # Process if Drive Tab (3), Booster Tab (1), or Quick Setup Tab (0) is active, or if partitions missing
+        if current_tab not in (0, 1, 3) and getattr(self, "_drive_partitions", None):
             return
 
         try:
@@ -6909,6 +7373,7 @@ class HardwarePanelWidget(QWidget):
         # LHM Panel Button right next to HELXTATS title with full icon
         icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "libre.png")
         self.btn_open_lhm = HeaderLhmIconButton(icon_path)
+        self.btn_open_lhm.setObjectName("btnOpenLhm")
         self.btn_open_lhm.clicked.connect(lambda: self._start_librehwmon(silent_launch=False))
         title_layout.addWidget(self.btn_open_lhm, alignment=Qt.AlignVCenter)
 
@@ -6962,6 +7427,7 @@ class HardwarePanelWidget(QWidget):
         interval_layout.addWidget(self.interval_input)
         
         ms_label = QLabel("ms")
+        ms_label.setObjectName("intervalMsLabel")
         ms_label.setStyleSheet("color: #888888; font-size: 11px; font-weight: 600; margin-left: 2px;")
         interval_layout.addWidget(ms_label)
         
@@ -6988,6 +7454,7 @@ class HardwarePanelWidget(QWidget):
         
         # Inner horizontal layout for RAM Cleaner + Stats Grid
         inner_widget = QWidget()
+        inner_widget.setObjectName("overviewInnerWidget")
         main_layout = QHBoxLayout(inner_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(16)
@@ -7080,8 +7547,8 @@ class HardwarePanelWidget(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(12)
         
-        # Configure pyqtgraph with transparent background and lightweight rasterization
-        pg.setConfigOptions(antialias=False, background=None, foreground='#888888')
+        # Configure pyqtgraph with transparent background and smooth antialiasing
+        pg.setConfigOptions(antialias=True, background=None, foreground='#888888')
         
         # CPU Usage card with chart
         cpu_card = StatsCard("CPU Usage")
@@ -7097,12 +7564,7 @@ class HardwarePanelWidget(QWidget):
         self.cpu_chart.getAxis('left').setWidth(30)
         self.cpu_chart.disableAutoRange(axis='y')  # Keep Y fixed at 0-100
         self.cpu_chart.enableAutoRange(axis='x')   # X auto-range
-        self.cpu_curve = self.cpu_chart.plot(pen=pg.mkPen('#FF5B06', width=2))
-        try:
-            self.cpu_curve.setDownsampling(mode='peak', auto=True)
-            self.cpu_curve.setClipToView(True)
-        except Exception:
-            pass
+        self.cpu_curve = self.cpu_chart.plot(pen=pg.mkPen('#FF5B06', width=1.5), antialias=True)
         # Text label at leading edge showing current value
         self.cpu_leading_text = pg.TextItem(text='0%', color='#FF5B06', anchor=(0, 0.5))
         self.cpu_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
@@ -7157,12 +7619,7 @@ class HardwarePanelWidget(QWidget):
         self.ram_chart.getAxis('left').setWidth(30)
         self.ram_chart.disableAutoRange(axis='y')  # Keep Y fixed at 0-100
         self.ram_chart.enableAutoRange(axis='x')   # X auto-range
-        self.ram_curve = self.ram_chart.plot(pen=pg.mkPen('#FDA903', width=2))
-        try:
-            self.ram_curve.setDownsampling(mode='peak', auto=True)
-            self.ram_curve.setClipToView(True)
-        except Exception:
-            pass
+        self.ram_curve = self.ram_chart.plot(pen=pg.mkPen('#FDA903', width=1.5), antialias=True)
         # Text label at leading edge showing current value
         self.ram_leading_text = pg.TextItem(text='0%', color='#FDA903', anchor=(0, 0.5))
         self.ram_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
@@ -7276,12 +7733,7 @@ class HardwarePanelWidget(QWidget):
         self.disk_chart.hideAxis('bottom')
         self.disk_chart.getAxis('left').setWidth(30)
         self.disk_chart.disableAutoRange(axis='y')  # Keep Y fixed at 0-100
-        self.disk_usage_curve = self.disk_chart.plot(pen=pg.mkPen('#f97316', width=2), name='Usage')
-        try:
-            self.disk_usage_curve.setDownsampling(mode='peak', auto=True)
-            self.disk_usage_curve.setClipToView(True)
-        except Exception:
-            pass
+        self.disk_usage_curve = self.disk_chart.plot(pen=pg.mkPen('#f97316', width=1.5), name='Usage', antialias=True)
         # Text label at leading edge showing current value
         self.disk_leading_text = pg.TextItem(text='0%', color='#f97316', anchor=(0, 0.5))
         self.disk_leading_text.setFont(QFont('Orbitron', 9, QFont.Bold))
@@ -7352,6 +7804,7 @@ class HardwarePanelWidget(QWidget):
         def _vline():
             """Thin vertical separator between columns."""
             f = QFrame()
+            f.setObjectName("vitalsVLine")
             f.setFrameShape(QFrame.VLine)
             f.setStyleSheet("background: #2a2a3a; max-width: 1px; border: none;")
             f.setFixedWidth(1)
@@ -7360,6 +7813,7 @@ class HardwarePanelWidget(QWidget):
         def _hline(cols=7):
             """Thin horizontal separator spanning all grid columns."""
             f = QFrame()
+            f.setObjectName("vitalsHLine")
             f.setFrameShape(QFrame.HLine)
             f.setStyleSheet("background: #2a2a3a; max-height: 1px; border: none;")
             f.setFixedHeight(1)
@@ -7368,6 +7822,8 @@ class HardwarePanelWidget(QWidget):
         def _hdr(text, align=Qt.AlignCenter):
             """Small column header label."""
             lbl = QLabel(text)
+            clean_text = "".join(c if c.isalnum() else "_" for c in str(text)).strip("_")
+            lbl.setObjectName(f"vitalsHdr_{clean_text}" if clean_text else "vitalsHdr_blank")
             lbl.setStyleSheet("color: #555577; font-size: 9px; font-weight: 600; background: transparent;")
             lbl.setAlignment(align)
             return lbl
@@ -7718,51 +8174,90 @@ class HardwarePanelWidget(QWidget):
                 # Update history (deque auto-evicts oldest)
                 self._drive_history[drive].append(disk["percent"])
             
-            # Update disk bars in-place (no widget recreation)
-            if not hasattr(self, '_disk_bar_widgets'):
-                self._disk_bar_widgets = {}
+            # Clean up old progress bars if any
+            if hasattr(self, '_disk_bar_widgets') and self._disk_bar_widgets:
+                for w in self._disk_bar_widgets.values():
+                    self.disk_bars_container.removeWidget(w)
+                    w.deleteLater()
+                self._disk_bar_widgets.clear()
+
+            # Update disk IO rows in-place (Physical Drives, not logical partitions)
+            if not hasattr(self, '_disk_io_row_widgets'):
+                self._disk_io_row_widgets = {}
             
-            current_drives = set()
-            for i, disk in enumerate(disks[:5]):  # Show up to 5 drives
-                drive = disk["drive"]
-                current_drives.add(drive)
-                percent = disk["percent"]
-                used = disk["used"]
-                total = disk["total"]
-                
-                # Clamp gradient stops to valid range [0.0, 1.0] (Bug #12)
-                stop1 = min(percent / 100, 0.99)
-                stop2 = min(stop1 + 0.01, 1.0)
-                
-                if drive not in self._disk_bar_widgets:
-                    # Create new bar only for new drives
-                    bar_label = QLabel()
-                    bar_label.setFixedHeight(24)
-                    self.disk_bars_container.addWidget(bar_label)
-                    self._disk_bar_widgets[drive] = bar_label
-                
-                bar_label = self._disk_bar_widgets[drive]
-                bar_label.setText(f"{drive} {percent:.1f}%        {used:.1f} GB / {total:.1f} GB")
-                if abs(getattr(bar_label, '_last_percent', -1.0) - percent) >= 0.5:
-                    bar_label._last_percent = percent
-                    bar_label.setStyleSheet(f"""
-                        QLabel {{
-                            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                                stop:0 rgba(255,107,53,0.7), stop:{stop1} rgba(255,107,53,0.7), 
-                                stop:{stop2} rgba(40,40,40,0.8), stop:1 rgba(40,40,40,0.8));
-                            border: 1px solid rgba(100,100,100,0.4);
-                            border-radius: 4px;
-                            color: #e0e0e0;
-                            font-size: 10px;
-                            font-weight: 600;
-                            padding-left: 8px;
-                        }}
-                    """)
+            from utils.drive_utils import get_drive_to_physical_disk_map, get_physical_disk_model_map
+            drive_to_pdisk = get_drive_to_physical_disk_map()
+            pdisk_model_map = get_physical_disk_model_map()
+            per_disk = disk_io.get("per_disk", {})
             
-            # Remove bars for drives that disappeared
-            for drive in list(self._disk_bar_widgets.keys()):
-                if drive not in current_drives:
-                    widget = self._disk_bar_widgets.pop(drive)
+            # Map physical disk indices to partition drive letters (e.g. 0 -> ['C:', 'D:'])
+            pdisk_to_letters = {}
+            for disk in disks:
+                drive_str = str(disk.get("drive", "")).rstrip("\\/")
+                if not drive_str:
+                    continue
+                clean_let = drive_str.upper()
+                pdisk_idx = drive_to_pdisk.get(clean_let, drive_to_pdisk.get(str(disk.get("drive", "")), 0))
+                if drive_str not in pdisk_to_letters.setdefault(pdisk_idx, []):
+                    pdisk_to_letters[pdisk_idx].append(drive_str)
+            
+            # Identify active physical disks
+            physical_disk_keys = []
+            if per_disk:
+                for k in sorted(per_disk.keys()):
+                    m = re.search(r'\d+', k)
+                    idx = int(m.group()) if m else 0
+                    physical_disk_keys.append((idx, k))
+            else:
+                indices = sorted(pdisk_to_letters.keys()) if pdisk_to_letters else [0]
+                for idx in indices:
+                    physical_disk_keys.append((idx, f"PhysicalDrive{idx}"))
+            
+            current_pdisk_ids = set()
+            for pdisk_idx, pdisk_key in physical_disk_keys[:5]:
+                current_pdisk_ids.add(pdisk_key)
+
+                # Resolve actual hardware model name for this physical disk
+                raw_model = pdisk_model_map.get(pdisk_idx)
+                if not raw_model and hasattr(self, '_smart_disks'):
+                    for sm in getattr(self, '_smart_disks', []):
+                        if str(sm.get('device', '')) == str(pdisk_idx):
+                            raw_model = sm.get('model', '')
+                            break
+                if not raw_model and hasattr(self, '_drive_physical_disks'):
+                    for pd in getattr(self, '_drive_physical_disks', []):
+                        if pd.get('index') == pdisk_idx:
+                            raw_model = pd.get('model', '')
+                            break
+
+                base_name = raw_model or f"Disk {pdisk_idx}"
+                if len(base_name) > 22:
+                    base_name = base_name[:20] + "..."
+
+                letters_list = pdisk_to_letters.get(pdisk_idx, [])
+                letters_str = f" ({', '.join(letters_list)})" if letters_list else ""
+                row_title = f"{base_name}{letters_str}"
+                
+                if pdisk_key in per_disk:
+                    drive_read = float(per_disk[pdisk_key].get("read_mbps", 0.0) or 0.0)
+                    drive_write = float(per_disk[pdisk_key].get("write_mbps", 0.0) or 0.0)
+                else:
+                    drive_read = float(read_speed or 0.0)
+                    drive_write = float(write_speed or 0.0)
+                
+                if pdisk_key not in self._disk_io_row_widgets:
+                    row_widget = DriveIORowWidget()
+                    clean_key = "".join(c if c.isalnum() else "_" for c in str(pdisk_key)).strip("_")
+                    row_widget.setObjectName(f"diskIORow_{clean_key}")
+                    self.disk_bars_container.addWidget(row_widget)
+                    self._disk_io_row_widgets[pdisk_key] = row_widget
+                
+                self._disk_io_row_widgets[pdisk_key].set_data(row_title, drive_read, drive_write)
+            
+            # Remove rows for physical disks that are no longer present
+            for old_key in list(self._disk_io_row_widgets.keys()):
+                if old_key not in current_pdisk_ids:
+                    widget = self._disk_io_row_widgets.pop(old_key)
                     self.disk_bars_container.removeWidget(widget)
                     widget.deleteLater()
 
@@ -7779,15 +8274,22 @@ class HardwarePanelWidget(QWidget):
             if not hasattr(self, '_smart_disk_row_widgets'):
                 self._smart_disk_row_widgets = {}
             
+            current_keys = set()
             for pdisk in display_disks:
                 model_name = pdisk['model']
                 disk_key = pdisk.get('device', model_name)
+                current_keys.add(disk_key)
                 health_pct = pdisk['health_percent']
                 status_color = "#4ade80" if pdisk['status'] == "OK" else "#f97316" if pdisk['status'] == "Warning" else "#ef4444"
+                disp_name = model_name if len(model_name) <= 30 else model_name[:27] + "..."
+                disk_type = pdisk['type']
+                type_color = "#22d3ee" if disk_type == 'SSD' else "#fbbf24"
                 
                 if disk_key not in self._smart_disk_row_widgets:
                     # Create row ONCE (Object Pooling)
                     disk_row = QWidget()
+                    clean_key = "".join(c if c.isalnum() else "_" for c in str(disk_key)).strip("_")
+                    disk_row.setObjectName(f"smartDiskRow_{clean_key}")
                     disk_row.setStyleSheet("background: transparent;")
                     main_layout = QVBoxLayout()
                     main_layout.setContentsMargins(8, 6, 8, 6)
@@ -7796,18 +8298,18 @@ class HardwarePanelWidget(QWidget):
                     top_row = QHBoxLayout()
                     top_row.setSpacing(8)
                     
-                    disp_name = model_name if len(model_name) <= 30 else model_name[:27] + "..."
                     drive_label = QLabel(disp_name)
+                    drive_label.setObjectName(f"smartDriveLabel_{clean_key}")
                     drive_label.setStyleSheet("color: #e0e0e0; font-size: 12px; font-weight: 600; background: transparent;")
                     top_row.addWidget(drive_label, alignment=Qt.AlignVCenter)
                     
                     health_label = QLabel(pdisk['status'])
+                    health_label.setObjectName(f"smartHealthStatusLabel_{clean_key}")
                     health_label.setStyleSheet(f"color: {status_color}; font-size: 10px; font-weight: 600; background: transparent;")
                     top_row.addWidget(health_label, alignment=Qt.AlignVCenter)
                     
-                    disk_type = pdisk['type']
-                    type_color = "#22d3ee" if disk_type == 'SSD' else "#fbbf24"
                     type_label = QLabel(disk_type)
+                    type_label.setObjectName(f"smartTypeLabel_{clean_key}")
                     type_label.setStyleSheet(f"""
                         color: {type_color}; 
                         font-size: 9px; 
@@ -7819,16 +8321,19 @@ class HardwarePanelWidget(QWidget):
                     top_row.addWidget(type_label, alignment=Qt.AlignVCenter)
                     
                     temp_label = QLabel(f"{pdisk['temp']:.0f}°C" if pdisk['temp'] > 0 else "")
+                    temp_label.setObjectName(f"smartTempLabel_{clean_key}")
                     temp_label.setStyleSheet("color: #60a5fa; font-size: 9px; background: transparent; font-weight: bold;")
                     top_row.addWidget(temp_label, alignment=Qt.AlignVCenter)
                     
                     top_row.addStretch()
                     
                     health_label_value = QLabel(f"{health_pct:.0f}%")
+                    health_label_value.setObjectName(f"smartHealthPercentLabel_{clean_key}")
                     health_label_value.setStyleSheet(f"color: {status_color}; font-size: 11px; font-weight: 600; background: transparent;")
                     top_row.addWidget(health_label_value, alignment=Qt.AlignVCenter)
                     
                     top_widget = QWidget()
+                    top_widget.setObjectName(f"smartTopWidget_{clean_key}")
                     top_widget.setLayout(top_row)
                     top_widget.setStyleSheet("background: transparent;")
                     main_layout.addWidget(top_widget)
@@ -7836,6 +8341,7 @@ class HardwarePanelWidget(QWidget):
                     bar_row = QHBoxLayout()
                     bar_row.setSpacing(10)
                     bar = QProgressBar()
+                    bar.setObjectName(f"smartHealthProgressBar_{clean_key}")
                     bar.setFixedHeight(6)
                     bar.setValue(int(health_pct))
                     bar.setTextVisible(False)
@@ -7853,6 +8359,7 @@ class HardwarePanelWidget(QWidget):
                     bar_row.addWidget(bar, stretch=1)
                     
                     bar_widget = QWidget()
+                    bar_widget.setObjectName(f"smartBarWidget_{clean_key}")
                     bar_widget.setLayout(bar_row)
                     bar_widget.setStyleSheet("background: transparent;")
                     main_layout.addWidget(bar_widget)
@@ -7861,6 +8368,9 @@ class HardwarePanelWidget(QWidget):
                     self.disk_health_container.addWidget(disk_row)
                     
                     self._smart_disk_row_widgets[disk_key] = {
+                        'row_widget': disk_row,
+                        'drive_lbl': drive_label,
+                        'type_lbl': type_label,
                         'temp_lbl': temp_label,
                         'health_lbl': health_label,
                         'pct_lbl': health_label_value,
@@ -7869,11 +8379,32 @@ class HardwarePanelWidget(QWidget):
                 else:
                     # Update existing pooled widget (Zero widget allocation)
                     w_dict = self._smart_disk_row_widgets[disk_key]
-                    if pdisk['temp'] > 0:
-                        w_dict['temp_lbl'].setText(f"{pdisk['temp']:.0f}°C")
+                    w_dict['drive_lbl'].setText(disp_name)
+                    w_dict['temp_lbl'].setText(f"{pdisk['temp']:.0f}°C" if pdisk['temp'] > 0 else "")
                     w_dict['health_lbl'].setText(pdisk['status'])
+                    w_dict['health_lbl'].setStyleSheet(f"color: {status_color}; font-size: 10px; font-weight: 600; background: transparent;")
                     w_dict['pct_lbl'].setText(f"{health_pct:.0f}%")
+                    w_dict['pct_lbl'].setStyleSheet(f"color: {status_color}; font-size: 11px; font-weight: 600; background: transparent;")
                     w_dict['bar'].setValue(int(health_pct))
+                    w_dict['bar'].setStyleSheet(f"""
+                        QProgressBar {{
+                            background: rgba(60, 60, 60, 0.5);
+                            border-radius: 3px;
+                            border: none;
+                        }}
+                        QProgressBar::chunk {{
+                            background: {status_color};
+                            border-radius: 3px;
+                        }}
+                    """)
+
+            # Remove stale rows
+            for old_key in list(self._smart_disk_row_widgets.keys()):
+                if old_key not in current_keys:
+                    old_data = self._smart_disk_row_widgets.pop(old_key)
+                    if 'row_widget' in old_data:
+                        self.disk_health_container.removeWidget(old_data['row_widget'])
+                        old_data['row_widget'].deleteLater()
             
             # Temps and Hardware Stats from LHM
             temps = snapshot["temps"]
@@ -8082,14 +8613,19 @@ class HardwarePanelWidget(QWidget):
             from PySide6.QtWidgets import QProgressDialog, QMessageBox, QInputDialog
             from integrations.tools_downloader import (
                 download_librehwmon, LIBREHWMON_DIR,
-                download_hwinfo, HWINFO_DIR
+                download_hwinfo, HWINFO_DIR,
+                download_crystaldiskinfo, CRYSTALDISKINFO_DIR
             )
             
             # Show choice dialog
-            items = ["LibreHardwareMonitor (~2MB, WMI support)", "HWiNFO Portable (~5MB, more accurate)"]
+            items = [
+                "LibreHardwareMonitor (~2MB, WMI & Core Sensors)",
+                "HWiNFO Portable (~5MB, Hardware Telemetry)",
+                "CrystalDiskInfo (~2.9MB, S.M.A.R.T & Drive Health)"
+            ]
             item, ok = QInputDialog.getItem(
                 self, "Choose Hardware Monitor",
-                "Select which hardware monitor to install:",
+                "Select which hardware tool to install:",
                 items, 0, False
             )
             
@@ -8102,6 +8638,11 @@ class HardwarePanelWidget(QWidget):
                 download_func = download_hwinfo
                 install_dir = HWINFO_DIR
                 note = "Remember to enable 'Shared Memory Support' in HWiNFO settings for real-time data."
+            elif "CrystalDiskInfo" in item:
+                tool_name = "CrystalDiskInfo"
+                download_func = download_crystaldiskinfo
+                install_dir = CRYSTALDISKINFO_DIR
+                note = "CrystalDiskInfo provides advanced S.M.A.R.T telemetry for USB enclosures and NVMe/SATA drives."
             else:
                 tool_name = "LibreHardwareMonitor"
                 download_func = download_librehwmon

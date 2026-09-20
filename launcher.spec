@@ -25,6 +25,7 @@ datas = [
     # (os.path.join(python_dir, 'macro_profiles'), 'macro_profiles'),  # NOT bundled
     (os.path.join(python_dir, 'macro_scripts'), 'macro_scripts'),
     (os.path.join(python_dir, 'macro_system'), 'macro_system'),
+    (os.path.join(os.path.dirname(python_dir), 'tools', 'crystaldiskinfo'), 'tools/crystaldiskinfo'),
 ]
 
 # Hidden imports for dynamic imports

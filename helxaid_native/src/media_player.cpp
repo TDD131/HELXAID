@@ -495,6 +495,28 @@ TrackInfo MediaPlayer::extractMetadata(const std::string &path) {
   return info;
 }
 
+#ifdef _WIN32
+namespace {
+inline std::wstring utf8ToWide(const std::string &str) {
+  if (str.empty()) return std::wstring();
+  int size = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+  if (size <= 1) return std::wstring();
+  std::wstring result(size - 1, 0);
+  MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &result[0], size);
+  return result;
+}
+
+inline std::string wideToUtf8(const std::wstring &wstr) {
+  if (wstr.empty()) return std::string();
+  int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+  if (size <= 1) return std::string();
+  std::string result(size - 1, 0);
+  WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &result[0], size, nullptr, nullptr);
+  return result;
+}
+} // anonymous namespace
+#endif
+
 std::vector<TrackInfo> MediaPlayer::scanFolder(const std::string &folderPath,
                                                bool recursive) {
   std::vector<TrackInfo> tracks;
@@ -507,9 +529,9 @@ std::vector<TrackInfo> MediaPlayer::scanFolder(const std::string &folderPath,
   const std::vector<std::string> videoExts = {".mp4", ".mkv", ".avi", ".webm",
                                               ".mov"};
 
-  // Use Windows FindFirstFile/FindNextFile for scanning
-  std::wstring searchPath =
-      std::wstring(folderPath.begin(), folderPath.end()) + L"\\*";
+#ifdef _WIN32
+  // Use Windows FindFirstFileW/FindNextFileW for scanning with UTF-8 support
+  std::wstring searchPath = utf8ToWide(folderPath) + L"\\*";
 
   WIN32_FIND_DATAW findData;
   HANDLE hFind = FindFirstFileW(searchPath.c_str(), &findData);
@@ -518,13 +540,15 @@ std::vector<TrackInfo> MediaPlayer::scanFolder(const std::string &folderPath,
     do {
       if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
         std::wstring wName = findData.cFileName;
-        std::string name(wName.begin(), wName.end());
+        std::string name = wideToUtf8(wName);
 
         // Get extension
         size_t dotPos = name.find_last_of('.');
         if (dotPos != std::string::npos) {
           std::string ext = name.substr(dotPos);
-          std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+          std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+          });
 
           // Check if it's a media file
           bool isAudio = std::find(audioExts.begin(), audioExts.end(), ext) !=
@@ -541,8 +565,7 @@ std::vector<TrackInfo> MediaPlayer::scanFolder(const std::string &folderPath,
                  wcscmp(findData.cFileName, L"..") != 0) {
         // Recurse into subdirectory
         std::wstring wName = findData.cFileName;
-        std::string subPath =
-            folderPath + "\\" + std::string(wName.begin(), wName.end());
+        std::string subPath = folderPath + "\\" + wideToUtf8(wName);
         auto subTracks = scanFolder(subPath, recursive);
         tracks.insert(tracks.end(), subTracks.begin(), subTracks.end());
       }
@@ -550,6 +573,7 @@ std::vector<TrackInfo> MediaPlayer::scanFolder(const std::string &folderPath,
 
     FindClose(hFind);
   }
+#endif
 
   return tracks;
 }

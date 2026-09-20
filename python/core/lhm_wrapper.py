@@ -86,11 +86,28 @@ class LHMEmbeddedReader:
             self._computer = Computer()
             self._computer.IsCpuEnabled = True
             self._computer.IsGpuEnabled = True
+            self._computer.IsStorageEnabled = True
             self._computer.IsMotherboardEnabled = True
             self._computer.IsControllerEnabled = True
-            self._computer.IsStorageEnabled = True
-            self._computer.Open()
-            self._initialized = True
+            try:
+                self._computer.Open()
+                self._initialized = True
+            except Exception as e_open:
+                # Safe fallback: Open without Motherboard/Controller SuperIO to avoid NullReferenceException on non-admin / custom motherboards
+                logger.debug(f"[LHM Engine] Full Open notice ({e_open}), falling back to CPU/GPU/Storage only.")
+                try:
+                    self._computer.Close()
+                except Exception:
+                    pass
+                self._computer = Computer()
+                self._computer.IsCpuEnabled = True
+                self._computer.IsGpuEnabled = True
+                self._computer.IsStorageEnabled = True
+                self._computer.IsMotherboardEnabled = False
+                self._computer.IsControllerEnabled = False
+                self._computer.Open()
+                self._initialized = True
+
             print("[LHM Engine] LibreHardwareMonitorLib opened successfully (100% Exclusive)")
             try:
                 import System  # type: ignore[import-not-found, import-untyped]  # noqa: F401
@@ -142,6 +159,7 @@ class LHMEmbeddedReader:
             "cpu_fan": 0.0,
             "gpu_fan": 0.0,
             "sys_fan": 0.0,
+            "storage": [],
             "status": "lhm_embedded"
         }
 
@@ -156,12 +174,22 @@ class LHMEmbeddedReader:
             is_igpu = "GPUAMD" in hw_type or "GPUINTEL" in hw_type
             is_dgpu = "GPUNVIDIA" in hw_type
             is_mobo = "MOTHERBOARD" in hw_type or "CONTROLLER" in hw_type or "SUPERIO" in hw_type
+            is_storage = "STORAGE" in hw_type
 
             # Edge-case: some boards enumerate a generic "GpuAmd" that is actually the iGPU
             # while others might show it differently. Force by name:
             if "NVIDIA" in hw_name:
                 is_dgpu = True
                 is_igpu = False
+
+            if is_storage:
+                disk_info = {
+                    "name": str(hardware.Name),
+                    "model": str(hardware.Name),
+                    "temp": 0.0,
+                    "health_percent": 100.0,
+                    "status": "OK"
+                }
 
             for sensor in hardware.Sensors:
                 try:
@@ -233,6 +261,30 @@ class LHMEmbeddedReader:
                             metrics["sys_fan"] = max(metrics["sys_fan"], fval)
                         metrics["fan_speed"] = max(metrics["fan_speed"], fval)
 
+                # --- Storage (NVMe / SSD / HDD) ---
+                elif is_storage:
+                    if stype == "TEMPERATURE" and disk_info["temp"] == 0:
+                        disk_info["temp"] = fval
+                    elif 'PERCENTAGE USED' in sname or 'DEGRADATION' in sname or 'WEAR' in sname:
+                        disk_info["health_percent"] = max(0.0, min(100.0, 100.0 - fval))
+                    elif 'REMAINING LIFE' in sname or 'LIFE REMAINING' in sname or 'DRIVE LIFE' in sname or 'SSD LIFE' in sname:
+                        disk_info["health_percent"] = max(0.0, min(100.0, fval))
+
+            if is_storage:
+                name_u = str(hardware.Name).upper()
+                if any(h_kw in name_u for h_kw in ["HDD", "HARD DISK", "SPINNING", "7200", "5400", "BARRACUDA", "IRONWOLF", "WD BLUE WD", "WD BLACK WD", "WD RED WD", "WD PURPLE", "WDC WD", "TOSHIBA DT", "TOSHIBA MQ"]):
+                    is_ssd = False
+                elif any(kw in name_u for kw in ["NVME", "SSD", "M.2", "SOLID STATE", "970 EVO", "980", "990 PRO", "SN740", "SN770", "SN850", "SN580", "SN530", "MX500", "BX500", "SA400"]):
+                    is_ssd = True
+                else:
+                    is_ssd = False
+                disk_info["type"] = "SSD" if is_ssd else "HDD"
+                if disk_info["health_percent"] < 20:
+                    disk_info["status"] = "Warning"
+                if disk_info["health_percent"] < 5:
+                    disk_info["status"] = "Critical"
+                metrics["storage"].append(disk_info)
+
             # Recurse into sub-hardware (e.g. CPU cores on some platforms)
             try:
                 for sub in hardware.SubHardware:
@@ -252,6 +304,59 @@ class LHMEmbeddedReader:
             logger.error(f"[LHM Engine] Error polling sensors: {e}")
             metrics["status"] = "error"
             return metrics
+
+    def get_storage_disks(self) -> list:
+        """Poll storage hardware and sensors specifically for SMART telemetry."""
+        if not self.is_available():
+            return []
+        storage = []
+        try:
+            for hardware in self._computer.Hardware:
+                hw_type = str(hardware.HardwareType).upper()
+                if "STORAGE" in hw_type:
+                    hardware.Update()
+                    disk_info = {
+                        "name": str(hardware.Name),
+                        "model": str(hardware.Name),
+                        "temp": 0.0,
+                        "health_percent": 100.0,
+                        "status": "OK"
+                    }
+                    for sensor in hardware.Sensors:
+                        try:
+                            val = sensor.Value
+                            if val is None:
+                                continue
+                            fval = float(val)
+                            if math.isnan(fval):
+                                continue
+                        except Exception:
+                            continue
+                        stype = str(sensor.SensorType).upper()
+                        sname = str(sensor.Name).upper()
+                        if stype == "TEMPERATURE" and disk_info["temp"] == 0:
+                            disk_info["temp"] = fval
+                        elif 'PERCENTAGE USED' in sname or 'DEGRADATION' in sname or 'WEAR' in sname:
+                            disk_info["health_percent"] = max(0.0, min(100.0, 100.0 - fval))
+                        elif 'REMAINING LIFE' in sname or 'LIFE REMAINING' in sname or 'DRIVE LIFE' in sname or 'SSD LIFE' in sname:
+                            disk_info["health_percent"] = max(0.0, min(100.0, fval))
+
+                    name_u = str(hardware.Name).upper()
+                    if any(h_kw in name_u for h_kw in ["HDD", "HARD DISK", "SPINNING", "7200", "5400", "BARRACUDA", "IRONWOLF", "WD BLUE WD", "WD BLACK WD", "WD RED WD", "WD PURPLE", "WDC WD", "TOSHIBA DT", "TOSHIBA MQ"]):
+                        is_ssd = False
+                    elif any(kw in name_u for kw in ["NVME", "SSD", "M.2", "SOLID STATE", "970 EVO", "980", "990 PRO", "SN740", "SN770", "SN850", "SN580", "SN530", "MX500", "BX500", "SA400"]):
+                        is_ssd = True
+                    else:
+                        is_ssd = False
+                    disk_info["type"] = "SSD" if is_ssd else "HDD"
+                    if disk_info["health_percent"] < 20:
+                        disk_info["status"] = "Warning"
+                    if disk_info["health_percent"] < 5:
+                        disk_info["status"] = "Critical"
+                    storage.append(disk_info)
+        except Exception as e:
+            logger.error(f"[LHM] Failed to read storage disks: {e}")
+        return storage
 
     def close(self):
         """Close computer hardware handle."""

@@ -70,6 +70,24 @@ def is_youtube_target(url_or_query: str) -> bool:
     return extract_youtube_video_id(url_or_query) is not None
 
 
+def is_stream_url_expired(url: str) -> bool:
+    """Check if googlevideo or signed stream URL has expired."""
+    if not url or not str(url).startswith('http'):
+        return False
+    import urllib.parse
+    try:
+        parsed = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed.query)
+        expire_list = params.get('expire')
+        if expire_list:
+            exp_ts = float(expire_list[0])
+            if time.time() >= (exp_ts - 60):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 class StreamResolutionCache:
     """Thread-safe LRU memory cache with TTL for resolved audio stream URLs."""
     def __init__(self, max_entries: int = 250, default_ttl_seconds: int = 14400):
@@ -95,6 +113,10 @@ class StreamResolutionCache:
             if norm_key in self._cache:
                 expiry, data = self._cache[norm_key]
                 if time.time() < expiry:
+                    s_url = data.get('stream_url', '')
+                    if s_url and is_stream_url_expired(s_url):
+                        del self._cache[norm_key]
+                        return None
                     res = dict(data)
                     res['cached'] = True
                     return res
@@ -345,7 +367,7 @@ def _get_shared_ydl():
             if _shared_ydl is None:
                 import yt_dlp
                 ydl_opts = {
-                    'format': 'bestaudio[ext=m4a]/bestaudio[itag=140]/bestaudio[ext=webm]/bestaudio/best',
+                    'format': 'bestaudio[ext=m4a]/bestaudio[itag=140]/bestaudio[ext=webm]/bestaudio[itag=251]/bestaudio/best[ext=mp4]/best',
                     'quiet': True,
                     'no_warnings': True,
                     'noplaylist': True,

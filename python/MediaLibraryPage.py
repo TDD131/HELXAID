@@ -149,13 +149,23 @@ except ImportError:
 from AnimatedButton import AnimatedCheckBox
 
 class MediaLibraryTree(QTreeWidget):
-    """Custom QTreeWidget subclass with native C++ virtual overrides for Drag & Drop and viewport events."""
+    """Custom QTreeWidget subclass with native C++ virtual overrides for Drag & Drop, selection, and viewport events."""
     def __init__(self, page_parent=None, parent=None):
         super().__init__(parent)
         self.page_parent = page_parent
         self.setAcceptDrops(True)
         self.viewport().setAcceptDrops(True)
         self.viewport().installEventFilter(self)
+        
+        self._drag_start_pos = None
+        self._click_start_pos = None
+        
+        from PySide6.QtWidgets import QRubberBand
+        from PySide6.QtCore import QRect
+        self._rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
+        self._rubber_band_origin = None
+        self._rubber_band_active = False
+        self._rubber_band_dragged = False
 
     def eventFilter(self, obj, event):
         if obj == self.viewport():
@@ -209,6 +219,224 @@ class MediaLibraryTree(QTreeWidget):
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+            self._click_start_pos = event.pos()
+            item = self.itemAt(event.pos())
+            
+            if item is None:
+                # Clicked on empty space -> Rubber band selection
+                self._rubber_band_origin = event.pos()
+                from PySide6.QtCore import QRect
+                self._rubber_band.setGeometry(QRect(self._rubber_band_origin, self._rubber_band_origin))
+                self._rubber_band.show()
+                self._rubber_band_active = True
+                self._rubber_band_dragged = False
+                if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
+                    self.clearSelection()
+                    if self.page_parent:
+                        self.page_parent._update_item_selection_styles()
+                super().mousePressEvent(event)
+                return
+            else:
+                self._rubber_band_active = False
+                # If item is not selected and no modifier held, select it
+                if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
+                    if not item.isSelected():
+                        self.clearSelection()
+                        item.setSelected(True)
+                        self.setCurrentItem(item)
+                        if self.page_parent:
+                            self.page_parent._update_item_selection_styles()
+                        super().mousePressEvent(event)
+                        return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, '_rubber_band_active', False) and getattr(self, '_rubber_band_origin', None) is not None:
+            if (event.pos() - self._rubber_band_origin).manhattanLength() > 3:
+                self._rubber_band_dragged = True
+            from PySide6.QtCore import QRect
+            rect = QRect(self._rubber_band_origin, event.pos()).normalized()
+            self._rubber_band.setGeometry(rect)
+            
+            def check_item(it):
+                item_rect = self.visualItemRect(it)
+                if rect.top() <= item_rect.bottom() and rect.bottom() >= item_rect.top():
+                    it.setSelected(True)
+                else:
+                    it.setSelected(False)
+                if it.isExpanded():
+                    for j in range(it.childCount()):
+                        check_item(it.child(j))
+                        
+            for i in range(self.topLevelItemCount()):
+                check_item(self.topLevelItem(i))
+            if self.page_parent:
+                self.page_parent._update_item_selection_styles()
+            return
+
+        if (event.buttons() & Qt.LeftButton) and self._drag_start_pos is not None:
+            dist = (event.pos() - self._drag_start_pos).manhattanLength()
+            if dist >= QApplication.startDragDistance():
+                selected = self.selectedItems()
+                if selected:
+                    self.startDrag(Qt.CopyAction | Qt.MoveAction)
+                    self._drag_start_pos = None
+                    return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if getattr(self, '_rubber_band_active', False):
+                self._rubber_band.hide()
+                self._rubber_band_active = False
+                self._rubber_band_origin = None
+                if getattr(self, '_rubber_band_dragged', False):
+                    if self.page_parent:
+                        self.page_parent._update_item_selection_styles()
+                    return
+            else:
+                if self._click_start_pos and (event.pos() - self._click_start_pos).manhattanLength() < 5:
+                    if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
+                        item = self.itemAt(event.pos())
+                        if item:
+                            self.clearSelection()
+                            item.setSelected(True)
+                            self.setCurrentItem(item)
+                        else:
+                            self.clearSelection()
+                        if self.page_parent:
+                            self.page_parent._update_item_selection_styles()
+                        return
+        self._drag_start_pos = None
+        super().mouseReleaseEvent(event)
+        if self.page_parent:
+            self.page_parent._update_item_selection_styles()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            item = self.itemAt(event.pos())
+            if item and item.data(0, Qt.UserRole) == "folder":
+                item.setExpanded(not item.isExpanded())
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_A and bool(event.modifiers() & Qt.ControlModifier):
+            if self.page_parent:
+                self.page_parent.select_all()
+            event.accept()
+            return
+        elif event.key() == Qt.Key_Delete:
+            if self.page_parent:
+                self.page_parent._on_delete_selected()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def mimeData(self, items):
+        import os
+        import tempfile
+        from PySide6.QtCore import QMimeData, QUrl
+        
+        mime = QMimeData()
+        urls = []
+        for item in items:
+            role = item.data(0, Qt.UserRole)
+            path = item.data(1, Qt.UserRole)
+            
+            if role == "folder":
+                if path and os.path.isdir(path):
+                    urls.append(QUrl.fromLocalFile(path))
+                else:
+                    # Virtual folder / online group -> Export child tracks
+                    for c_idx in range(item.childCount()):
+                        c_item = item.child(c_idx)
+                        c_path = c_item.data(1, Qt.UserRole)
+                        if c_path and os.path.exists(c_path):
+                            urls.append(QUrl.fromLocalFile(c_path))
+                        elif c_path:
+                            try:
+                                from StreamFileEngine import write_stream_file
+                                temp_drag_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_DragExport')
+                                os.makedirs(temp_drag_dir, exist_ok=True)
+                                track_meta = {
+                                    'title': c_item.text(1) or 'Unknown Stream',
+                                    'artist': c_item.text(2) or '',
+                                    'album': c_item.text(3) or '',
+                                    'duration': 0,
+                                    'original_url': c_path
+                                }
+                                stream_file = write_stream_file(temp_drag_dir, track_meta, format_ext=".hxstream")
+                                if stream_file and os.path.exists(stream_file):
+                                    urls.append(QUrl.fromLocalFile(stream_file))
+                            except Exception as e:
+                                print(f"[MediaLibrary] Error creating child .hxstream for drag: {e}")
+            else:
+                # Single track item
+                if path and os.path.exists(path):
+                    urls.append(QUrl.fromLocalFile(path))
+                elif path:
+                    try:
+                        from StreamFileEngine import write_stream_file
+                        temp_drag_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_DragExport')
+                        os.makedirs(temp_drag_dir, exist_ok=True)
+                        track_meta = {
+                            'title': item.text(1) or 'Unknown Stream',
+                            'artist': item.text(2) or '',
+                            'album': item.text(3) or '',
+                            'duration': 0,
+                            'original_url': path
+                        }
+                        stream_file = write_stream_file(temp_drag_dir, track_meta, format_ext=".hxstream")
+                        if stream_file and os.path.exists(stream_file):
+                            urls.append(QUrl.fromLocalFile(stream_file))
+                    except Exception as e:
+                        print(f"[MediaLibrary] Error creating .hxstream for drag: {e}")
+        if urls:
+            mime.setUrls(urls)
+        return mime
+
+    def startDrag(self, supportedActions):
+        from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont
+        from PySide6.QtCore import Qt, QPoint
+        
+        selected_items = self.selectedItems()
+        if not selected_items:
+            return
+            
+        drag = QDrag(self)
+        drag.setMimeData(self.mimeData(selected_items))
+        
+        count = len(selected_items)
+        text = f"Dragging {count} item{'s' if count > 1 else ''}"
+        if count == 1:
+            text = selected_items[0].text(1)
+            if len(text) > 25:
+                text = text[:22] + "..."
+            
+        pixmap = QPixmap(200, 36)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QColor(40, 40, 45, 230))
+        painter.setPen(QColor("#FF5B06"))
+        painter.drawRoundedRect(1, 1, 198, 34, 6, 6)
+        
+        painter.setPen(QColor("#ffffff"))
+        font = QFont("Orbitron", 9, QFont.Bold)
+        painter.setFont(font)
+        painter.drawText(0, 0, 200, 36, Qt.AlignCenter, text)
+        painter.end()
+        
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
+        drag.exec_(supportedActions)
 
 class MediaLibraryPage(QWidget):
     """The Media Library tab using a Tree View for folders and tracks."""
@@ -401,220 +629,6 @@ class MediaLibraryPage(QWidget):
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
         self.tree.setDropIndicatorShown(False)
-        
-        orig_tree_keyPressEvent = self.tree.keyPressEvent
-        def _tree_keyPressEvent(event):
-            print(f"[DEBUG MediaLibraryTree] keyPressEvent key={event.key()}, modifiers={event.modifiers()}")
-            if event.key() == Qt.Key_A and bool(event.modifiers() & Qt.ControlModifier):
-                print("[DEBUG MediaLibraryTree] Ctrl+A matched in tree.keyPressEvent!")
-                self.select_all()
-                event.accept()
-                return
-            elif event.key() == Qt.Key_Delete:
-                print("[DEBUG MediaLibraryTree] Delete matched in tree.keyPressEvent!")
-                self._on_delete_selected()
-                event.accept()
-                return
-            orig_tree_keyPressEvent(event)
-        self.tree.keyPressEvent = _tree_keyPressEvent
-
-        # --- Rubber Band Setup ---
-        from PySide6.QtWidgets import QRubberBand
-        from PySide6.QtCore import QRect
-        self.tree._rubber_band = QRubberBand(QRubberBand.Rectangle, self.tree.viewport())
-        self.tree._rubber_band_origin = None
-        self.tree._rubber_band_active = False
-        
-        orig_mousePressEvent = self.tree.mousePressEvent
-        orig_mouseMoveEvent = self.tree.mouseMoveEvent
-        orig_mouseReleaseEvent = self.tree.mouseReleaseEvent
-        
-        def _tree_mousePressEvent(event):
-            if event.button() == Qt.LeftButton:
-                self.tree._click_start_pos = event.pos()
-                item = self.tree.itemAt(event.pos())
-                column = self.tree.columnAt(event.pos().x())
-                
-                should_rubber_band = False
-                if not item or column == -1:
-                    should_rubber_band = True
-                elif column >= 2:
-                    should_rubber_band = True
-                else:
-                    from PySide6.QtGui import QFontMetrics
-                    font = item.font(column) if item.font(column).family() else self.tree.font()
-                    fm = QFontMetrics(font)
-                    text_width = fm.horizontalAdvance(item.text(column))
-                    
-                    cell_x = self.tree.header().sectionPosition(column)
-                    depth = 0
-                    p = item.parent()
-                    while p:
-                        depth += 1
-                        p = p.parent()
-                        
-                    indent = 0
-                    if column == 0:
-                        indent = depth * self.tree.indentation() + 24
-                        
-                    if event.pos().x() > (cell_x + indent + text_width + 30):
-                        should_rubber_band = True
-                        
-                if item and item.isSelected():
-                    should_rubber_band = False
-                
-                if should_rubber_band:
-                    self.tree._rubber_band_origin = event.pos()
-                    self.tree._rubber_band.setGeometry(QRect(self.tree._rubber_band_origin, self.tree._rubber_band_origin))
-                    self.tree._rubber_band.show()
-                    self.tree._rubber_band_active = True
-                    self.tree._rubber_band_dragged = False
-                    
-                    if not item and not (event.modifiers() & Qt.ControlModifier):
-                        self.tree.clearSelection()
-                        self._update_item_selection_styles()
-                        
-                    orig_mousePressEvent(event)
-                    return
-                else:
-                    self.tree._rubber_band_active = False
-                    
-            orig_mousePressEvent(event)
-            
-        def _tree_mouseMoveEvent(event):
-            if getattr(self.tree, '_rubber_band_active', False) and getattr(self.tree, '_rubber_band_origin', None) is not None:
-                if (event.pos() - self.tree._rubber_band_origin).manhattanLength() > 3:
-                    self.tree._rubber_band_dragged = True
-                    
-                rect = QRect(self.tree._rubber_band_origin, event.pos()).normalized()
-                self.tree._rubber_band.setGeometry(rect)
-                
-                def check_item(item):
-                    item_rect = self.tree.visualItemRect(item)
-                    if rect.top() <= item_rect.bottom() and rect.bottom() >= item_rect.top():
-                        item.setSelected(True)
-                    else:
-                        item.setSelected(False)
-                    if item.isExpanded():
-                        for j in range(item.childCount()):
-                            check_item(item.child(j))
-                            
-                for i in range(self.tree.topLevelItemCount()):
-                    check_item(self.tree.topLevelItem(i))
-                self._update_item_selection_styles()
-                return
-            orig_mouseMoveEvent(event)
-            
-        def _tree_mouseReleaseEvent(event):
-            if event.button() == Qt.LeftButton:
-                if getattr(self.tree, '_rubber_band_active', False):
-                    self.tree._rubber_band.hide()
-                    self.tree._rubber_band_active = False
-                    self.tree._rubber_band_origin = None
-                    if getattr(self.tree, '_rubber_band_dragged', False):
-                        self._update_item_selection_styles()
-                        return
-                else:
-                    click_pos = getattr(self.tree, '_click_start_pos', None)
-                    if click_pos and (event.pos() - click_pos).manhattanLength() < 5:
-                        if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
-                            item = self.tree.itemAt(event.pos())
-                            if item:
-                                self.tree.clearSelection()
-                                item.setSelected(True)
-                                self.tree.setCurrentItem(item)
-                            else:
-                                self.tree.clearSelection()
-                            self._update_item_selection_styles()
-                            return
-            orig_mouseReleaseEvent(event)
-            
-        orig_mouseDoubleClickEvent = self.tree.mouseDoubleClickEvent
-        def _tree_mouseDoubleClickEvent(event):
-            if event.button() == Qt.LeftButton:
-                item = self.tree.itemAt(event.pos())
-                if item and item.data(0, Qt.UserRole) == "folder":
-                    item.setExpanded(not item.isExpanded())
-                    event.accept()
-                    return
-            orig_mouseDoubleClickEvent(event)
-
-        self.tree.mousePressEvent = _tree_mousePressEvent
-        self.tree.mouseMoveEvent = _tree_mouseMoveEvent
-        self.tree.mouseReleaseEvent = _tree_mouseReleaseEvent
-        self.tree.mouseDoubleClickEvent = _tree_mouseDoubleClickEvent
-        # ------------------------
-        
-        # Override mimeData to allow dragging items out (to OS or other widgets)
-        orig_mimeData = self.tree.mimeData
-        def _tree_mimeData(items):
-            from PySide6.QtCore import QUrl
-            import os
-            import tempfile
-            mime = orig_mimeData(items)
-            urls = []
-            for item in items:
-                path = item.data(1, Qt.UserRole)
-                if path and os.path.exists(path):
-                    urls.append(QUrl.fromLocalFile(path))
-                elif path and (path.startswith('http://') or path.startswith('https://')):
-                    try:
-                        from StreamFileEngine import write_stream_file
-                        temp_drag_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_DragExport')
-                        os.makedirs(temp_drag_dir, exist_ok=True)
-                        track_meta = {
-                            'title': item.text(1) or 'Unknown Stream',
-                            'artist': item.text(2) or '',
-                            'duration': 0,
-                            'original_url': path
-                        }
-                        stream_file = write_stream_file(temp_drag_dir, track_meta, format_ext=".hxstream")
-                        if stream_file and os.path.exists(stream_file):
-                            urls.append(QUrl.fromLocalFile(stream_file))
-                    except Exception as e:
-                        print(f"[MediaLibrary] Error creating .hxstream for drag: {e}")
-            if urls:
-                mime.setUrls(urls)
-            return mime
-        self.tree.mimeData = _tree_mimeData
-        
-        # Override startDrag to show a custom clean pixmap instead of a huge row snapshot
-        def _custom_startDrag(supportedActions):
-            from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont
-            from PySide6.QtCore import Qt, QPoint
-            
-            selected_items = self.tree.selectedItems()
-            if not selected_items:
-                return
-                
-            drag = QDrag(self.tree)
-            drag.setMimeData(self.tree.mimeData(selected_items))
-            
-            count = len(selected_items)
-            text = f"Dragging {count} item{'s' if count > 1 else ''}"
-            if count == 1:
-                text = selected_items[0].text(1)
-                if len(text) > 25: text = text[:22] + "..."
-                
-            pixmap = QPixmap(200, 36)
-            pixmap.fill(Qt.transparent)
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setBrush(QColor(40, 40, 45, 230))
-            painter.setPen(QColor("#FF5B06"))
-            painter.drawRoundedRect(1, 1, 198, 34, 6, 6)
-            
-            painter.setPen(QColor("#ffffff"))
-            font = QFont("Orbitron", 9, QFont.Bold)
-            painter.setFont(font)
-            painter.drawText(0, 0, 200, 36, Qt.AlignCenter, text)
-            painter.end()
-            
-            drag.setPixmap(pixmap)
-            drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
-            drag.exec_(supportedActions)
-            
-        self.tree.startDrag = _custom_startDrag
 
         self.tree.setStyleSheet(self.tree.styleSheet() + """
             QHeaderView::section {

@@ -18,6 +18,7 @@ Usage:
     icons = extractor.extract_batch(["file1.exe", "file2.exe"], num_threads=4)
 """
 
+from PySide6.QtGui import QPixmap
 import os
 import sys
 from typing import List, Optional, Callable
@@ -260,82 +261,79 @@ class FileScanner:
             self._native = None
     
     def scan(
-        self,
-        directory: str,
+        self, 
+        directory: str, 
         recursive: bool = True,
         filter_func: Optional[Callable[[FileData], bool]] = None
     ) -> List[FileData]:
-        """
-        Scan directory for files.
-        
-        Args:
-            directory: Path to scan
-            recursive: Include subdirectories
-            filter_func: Optional filter function
-            
-        Returns:
-            List of FileData results
-        """
+        """Scan directory with full Unicode path preservation."""
         if self._native:
             try:
-                # Native module doesn't support Python filter directly
-                results = self._native.scan(directory, recursive, None)
-                files = [
-                    FileData(
-                        path=f.path,
-                        name=f.name,
-                        extension=f.extension,
-                        size=f.size,
-                        modified_time=f.modified_time,
-                        is_directory=f.is_directory
-                    )
-                    for f in results
-                ]
-                if filter_func:
-                    files = [f for f in files if filter_func(f)]
-                return files
+                results = self._native.scan(directory, recursive)
+                if results is not None:
+                    files = [
+                        FileData(
+                            path=f.path,
+                            name=f.name,
+                            extension=f.extension,
+                            size=f.size,
+                            modified_time=f.modified_time,
+                            is_directory=f.is_directory
+                        )
+                        for f in results
+                    ]
+                    if not any('?' in f.name for f in files):
+                        if filter_func:
+                            files = [f for f in files if filter_func(f)]
+                        return files
             except Exception as e:
                 print(f"[Native] Scan error: {e}")
         
         return self._python_scan(directory, recursive, filter_func)
     
     def find_executables(self, directory: str) -> List[FileData]:
-        """Find executable files."""
+        """Find executable files with Unicode preservation."""
         if self._native:
             try:
                 results = self._native.find_executables(directory)
-                return [
-                    FileData(
-                        path=f.path,
-                        name=f.name,
-                        extension=f.extension,
-                        size=f.size,
-                        modified_time=f.modified_time,
-                        is_directory=f.is_directory
-                    )
-                    for f in results
-                ]
+                if results is not None:
+                    files = [
+                        FileData(
+                            path=f.path,
+                            name=f.name,
+                            extension=f.extension,
+                            size=f.size,
+                            modified_time=f.modified_time,
+                            is_directory=f.is_directory
+                        )
+                        for f in results
+                    ]
+                    if not any('?' in f.name for f in files):
+                        return files
             except Exception as e:
                 print(f"[Native] Find executables error: {e}")
         
         return self._python_find_executables(directory)
     
     def find_media_files(self, directory: str) -> List[FileData]:
-        """Find audio and video files."""
+        """Find audio and video files with universal Unicode protection."""
         if self._native:
             try:
                 results = self._native.find_media_files(directory)
-                return [
-                    FileData(
-                        path=f.path,
-                        name=f.name,
-                        extension=f.extension,
-                        size=f.size,
-                        modified_time=f.modified_time,
-                        is_directory=f.is_directory
-                    )
-                    for f in results
-                ]
+                if results is not None:
+                    files = [
+                        FileData(
+                            path=f.path,
+                            name=f.name,
+                            extension=f.extension,
+                            size=f.size,
+                            modified_time=f.modified_time,
+                            is_directory=f.is_directory
+                        )
+                        for f in results
+                    ]
+                    if not any('?' in f.name for f in files):
+                        return files
             except Exception as e:
                 print(f"[Native] Find media files error: {e}")
         
@@ -347,46 +345,47 @@ class FileScanner:
         recursive: bool,
         filter_func: Optional[Callable]
     ) -> List[FileData]:
-        """Pure Python fallback using os.walk."""
-        results = []
-        try:
-            if recursive:
-                for root, dirs, files in os.walk(directory):
-                    for name in files:
-                        path = os.path.join(root, name)
-                        info = self._get_file_data(path, name)
-                        if filter_func is None or filter_func(info):
-                            results.append(info)
-            else:
-                for name in os.listdir(directory):
-                    path = os.path.join(directory, name)
-                    if os.path.isfile(path):
-                        info = self._get_file_data(path, name)
-                        if filter_func is None or filter_func(info):
-                            results.append(info)
-        except Exception as e:
-            print(f"[Native] Python scan error: {e}")
+        """Pure Python fallback using high-performance os.scandir with UTF-8/Unicode preservation."""
+        results: List[FileData] = []
+        if not directory or not os.path.exists(directory):
+            return results
+
+        def _scan_dir(current_dir: str):
+            try:
+                with os.scandir(current_dir) as it:
+                    for entry in it:
+                        try:
+                            is_dir = entry.is_dir(follow_symlinks=False)
+                            name = entry.name
+                            ext = os.path.splitext(name)[1].lower()
+                            if is_dir:
+                                if recursive:
+                                    _scan_dir(entry.path)
+                            else:
+                                try:
+                                    stat = entry.stat(follow_symlinks=False)
+                                    size = stat.st_size
+                                    mtime = int(stat.st_mtime)
+                                except Exception:
+                                    size = 0
+                                    mtime = 0
+                                info = FileData(
+                                    path=entry.path,
+                                    name=name,
+                                    extension=ext,
+                                    size=size,
+                                    modified_time=mtime,
+                                    is_directory=False
+                                )
+                                if filter_func is None or filter_func(info):
+                                    results.append(info)
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+        _scan_dir(directory)
         return results
-    
-    def _get_file_data(self, path: str, name: str) -> FileData:
-        """Get file info for Python fallback."""
-        ext = os.path.splitext(name)[1].lower()
-        try:
-            stat = os.stat(path)
-            size = stat.st_size
-            mtime = int(stat.st_mtime)
-        except:
-            size = 0
-            mtime = 0
-        
-        return FileData(
-            path=path,
-            name=name,
-            extension=ext,
-            size=size,
-            modified_time=mtime,
-            is_directory=False
-        )
     
     def _python_find_executables(self, directory: str) -> List[FileData]:
         """Python fallback for finding executables."""

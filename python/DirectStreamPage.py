@@ -43,7 +43,7 @@ from PySide6.QtSvg import QSvgRenderer
 from CanonicalMetadataEngine import CanonicalSearchEngine, InnertubeSearchClient
 from TasteProfileEngine import TasteProfileEngine
 from YouTubeAccountEngine import (
-    YouTubeAccountEngine, FetchYTLikedMusicWorker, FetchYTMixesWorker, FetchYTPlaylistsWorker
+    YouTubeAccountEngine, FetchYTLikedMusicWorker, FetchYTMixesWorker, FetchYTPlaylistsWorker, FetchYouTubeHomeFeedWorker
 )
 from SpotifyAccountEngine import (
     SpotifyAccountEngine, FetchSpotifyLikedSongsWorker, FetchSpotifyPlaylistsWorker, FetchSpotifyAlgorithmicFeedsWorker
@@ -51,79 +51,52 @@ from SpotifyAccountEngine import (
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton, HoverCloseButton
 
 
-# === SVG ASSET STRINGS (Zero Emoji Policy) ===
+# === ICON ASSET CONSTANTS (Loaded from UI Icons/ directory) ===
+ICON_GOOGLE = "google-icon.svg"
+ICON_YOUTUBE = "youtube-icon.svg"
+ICON_SPOTIFY = "spotify-icon.svg"
+ICON_USER_AVATAR = "user-avatar.svg"
+ICON_BACK_ARROW = "back-arrow-white.svg"
+ICON_DATABASE = "database-icon.svg"
+ICON_REFRESH = "refresh.svg"
+ICON_SETTINGS = "settings.svg"
+ICON_SEARCH = "search.svg"
+ICON_SHUFFLE = "shuffle.svg"
+ICON_COMPASS = "compass-icon.svg"
+ICON_HEART = "heart-icon.svg"
+ICON_EXTERNAL_LINK = "open-browser.svg"
+ICON_PLAY = "play-icon.svg"
+ICON_CHEVRON_LEFT = "chevron-left.svg"
+ICON_CHEVRON_RIGHT = "chevron-right.svg"
 
-SVG_GOOGLE = """
-<svg viewBox="0 0 24 24" width="20" height="20">
-  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-</svg>
-"""
-
-SVG_YOUTUBE = """
-<svg viewBox="0 0 24 24" width="22" height="22">
-  <rect x="2" y="4" width="20" height="16" rx="5" fill="#FF0000"/>
-  <polygon points="10,8.5 16,12 10,15.5" fill="#FFFFFF"/>
-</svg>
-"""
-
-SVG_SPOTIFY = """
-<svg viewBox="0 0 24 24" width="22" height="22">
-  <circle cx="12" cy="12" r="10" fill="#1DB954"/>
-  <path d="M7 9.5c3.2-1 6.8-.8 9.5.8" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" fill="none"/>
-  <path d="M7.8 12.2c2.6-.8 5.6-.6 7.8.7" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" fill="none"/>
-  <path d="M8.5 14.8c2.1-.6 4.4-.5 6.1.5" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" fill="none"/>
-</svg>
-"""
-
-SVG_USER_AVATAR = """
-<svg viewBox="0 0 24 24" width="20" height="20">
-  <circle cx="12" cy="8" r="4" fill="#FF5B06"/>
-  <path d="M4 20c0-4.4 3.6-8 8-8s8 3.6 8 8" fill="none" stroke="#FF5B06" stroke-width="2" stroke-linecap="round"/>
-</svg>
-"""
-
-SVG_BACK_ARROW = """
-<svg viewBox="0 0 24 24" width="16" height="16">
-  <path d="M15 19l-7-7 7-7" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-"""
-
-SVG_DATABASE = """
-<svg viewBox="0 0 24 24" width="18" height="18">
-  <ellipse cx="12" cy="5" rx="9" ry="3" fill="none" stroke="#FF5B06" stroke-width="2"/>
-  <path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5" fill="none" stroke="#FF5B06" stroke-width="2"/>
-  <path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6" fill="none" stroke="#FF5B06" stroke-width="2"/>
-</svg>
-"""
-
-SVG_REFRESH = """
-<svg viewBox="0 0 24 24" width="16" height="16">
-  <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8M22 12.5a10 10 0 0 1-18.8 4.2L2.5 16" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-"""
-
-SVG_SETTINGS = """
-<svg viewBox="0 0 24 24" width="16" height="16">
-  <circle cx="12" cy="12" r="3" fill="none" stroke="#FFFFFF" stroke-width="2"/>
-  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-"""
-
-SVG_SEARCH = """
-<svg viewBox="0 0 24 24" width="16" height="16">
-  <circle cx="11" cy="11" r="7" fill="none" stroke="#7E849B" stroke-width="2"/>
-  <line x1="16.5" y1="16.5" x2="21.5" y2="21.5" stroke="#7E849B" stroke-width="2" stroke-linecap="round"/>
-</svg>
-"""
+# Backward compatibility aliases
+SVG_GOOGLE = ICON_GOOGLE
+SVG_YOUTUBE = ICON_YOUTUBE
+SVG_SPOTIFY = ICON_SPOTIFY
+SVG_USER_AVATAR = ICON_USER_AVATAR
+SVG_BACK_ARROW = ICON_BACK_ARROW
+SVG_DATABASE = ICON_DATABASE
+SVG_REFRESH = ICON_REFRESH
+SVG_SETTINGS = ICON_SETTINGS
+SVG_SEARCH = ICON_SEARCH
+SVG_SHUFFLE = ICON_SHUFFLE
+SVG_COMPASS = ICON_COMPASS
+SVG_HEART = ICON_HEART
+SVG_EXTERNAL_LINK = ICON_EXTERNAL_LINK
+SVG_PLAY_ICON = ICON_PLAY
+SVG_CHEVRON_LEFT = ICON_CHEVRON_LEFT
+SVG_CHEVRON_RIGHT = ICON_CHEVRON_RIGHT
 
 
 def render_svg_pixmap(name_or_data: str, width: int = 20, height: int = 20) -> QPixmap:
     """Render an SVG file from UI Icons or raw SVG string into a crisp antialiased QPixmap."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(script_dir, "UI Icons", name_or_data).replace('\\', '/')
+    if not os.path.exists(file_path):
+        alt_path = os.path.join(script_dir, "UI Taskbar Icons", name_or_data).replace('\\', '/')
+        if os.path.exists(alt_path):
+            file_path = alt_path
+
     if os.path.exists(file_path):
         renderer = QSvgRenderer(file_path)
     else:
@@ -139,9 +112,14 @@ def render_svg_pixmap(name_or_data: str, width: int = 20, height: int = 20) -> Q
 
 
 def render_colored_svg_pixmap(name_or_data: str, width: int = 16, height: int = 16, color_hex: str = "#FFFFFF") -> QPixmap:
-    """Render an SVG file or data with a dynamic custom tint color via script."""
+    """Render an SVG file or data with a dynamic custom tint color."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     file_path = os.path.join(script_dir, "UI Icons", name_or_data).replace('\\', '/')
+    if not os.path.exists(file_path):
+        alt_path = os.path.join(script_dir, "UI Taskbar Icons", name_or_data).replace('\\', '/')
+        if os.path.exists(alt_path):
+            file_path = alt_path
+
     svg_content = ""
     if os.path.exists(file_path):
         try:
@@ -173,18 +151,6 @@ def render_colored_svg_pixmap(name_or_data: str, width: int = 16, height: int = 
     p.end()
     return pix
 
-
-SVG_CHEVRON_LEFT = """
-<svg viewBox="0 0 24 24" width="14" height="14">
-  <polyline points="15 18 9 12 15 6" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-"""
-
-SVG_CHEVRON_RIGHT = """
-<svg viewBox="0 0 24 24" width="14" height="14">
-  <polyline points="9 18 15 12 9 6" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
-"""
 
 HORIZONTAL_SCROLLBAR_STYLE = """
     QScrollArea#%ID% {
@@ -306,7 +272,7 @@ class SvgHoverButton(QPushButton):
         self._update_state(False)
 
 
-def make_pixmap_from_bytes(data_bytes: bytes, max_w: int = 360, max_h: int = 360) -> Optional[QPixmap]:
+def make_pixmap_from_bytes(data_bytes: bytes, max_w: int = 800, max_h: int = 800) -> Optional[QPixmap]:
     """Safely construct a lightweight QPixmap from raw downloaded image bytes."""
     if not data_bytes:
         return None
@@ -323,7 +289,7 @@ def make_pixmap_from_bytes(data_bytes: bytes, max_w: int = 360, max_h: int = 360
     return None
 
 
-def _safe_set_card_pixmap(card_widget, data_bytes: bytes, max_w: int = 360, max_h: int = 360):
+def _safe_set_card_pixmap(card_widget, data_bytes: bytes, max_w: int = 800, max_h: int = 800):
     """Safely apply downscaled pixmap from downloaded bytes to a card widget even if it was deleted."""
     try:
         if card_widget is None:
@@ -2115,14 +2081,17 @@ class StreamOmniSearchBar(QFrame):
         search_box.setObjectName("streamSearchBox")
         search_box.setStyleSheet("""
             QFrame#streamSearchBox {
-                background: #14161F; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.08);
+                background: rgba(30, 30, 30, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
             }
             QFrame#streamSearchBox:focus-within {
-                border: 1px solid #FF5B06; background: #181A22;
+                background: #383b41;
+                border: 1px solid rgba(255, 255, 255, 0.16);
             }
         """)
         search_layout = QHBoxLayout(search_box)
-        search_layout.setContentsMargins(12, 4, 12, 4)
+        search_layout.setContentsMargins(12, 6, 12, 6)
         search_layout.setSpacing(8)
         search_layout.setAlignment(Qt.AlignVCenter)
 
@@ -2139,13 +2108,21 @@ class StreamOmniSearchBar(QFrame):
         self.input_edit = QLineEdit(search_box)
         self.input_edit.setObjectName("streamSearchInput")
         self.input_edit.setPlaceholderText("Search songs, artists, playlists, or paste direct URL / video ID...")
-        self.input_edit.setFixedHeight(24)
+        self.input_edit.setFixedHeight(28)
         self.input_edit.setStyleSheet("""
             QLineEdit#streamSearchInput {
-                background: transparent; border: none; color: #FFFFFF; font-size: 11px;
-                font-family: 'Orbitron', sans-serif; font-weight: bold;
-                selection-background-color: #ffffff; selection-color: #000000;
+                background: transparent;
+                border: none;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 13px;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
                 padding: 0px;
+            }
+            QLineEdit#streamSearchInput:focus {
+                background: transparent;
+                border: none;
             }
         """)
         self.input_edit.returnPressed.connect(self._on_enter_pressed)
@@ -2252,6 +2229,70 @@ class CardDarkPlayOverlay(QFrame):
         self.icon_lbl.setAlignment(Qt.AlignCenter)
         self.icon_lbl.setPixmap(render_colored_svg_pixmap("right-arrow-triangle.svg", icon_size, icon_size, "#FFFFFF"))
         layout.addWidget(self.icon_lbl)
+
+
+def render_ambient_thumbnail(pix: Optional[QPixmap], w: int, h: int, radius: int = 7) -> Optional[QPixmap]:
+    """
+    Renders a thumbnail into target dimensions (w, h) with rounded corners.
+    - If image is 1:1 / Square (e.g. YouTube Music Mix / Album Art, ratio < 1.35):
+      Creates a dual-layer composite with an ambient blurred background fill 
+      and a crisp, uncropped 1:1 image centered in the foreground.
+    - If image is 16:9 (Standard Video, ratio >= 1.35):
+      Performs standard 16:9 cover crop (stripping legacy 4:3 black bars if present).
+    """
+    if not pix or pix.isNull() or w <= 0 or h <= 0:
+        return None
+
+    pw = pix.width()
+    ph = pix.height()
+    if pw <= 0 or ph <= 0:
+        return None
+
+    # Detect and strip legacy 4:3 baked-in black bars (e.g. 480x360 hqdefault with 45px top/bottom bars)
+    if abs((pw / ph) - (4 / 3)) < 0.08:
+        crop_h = int(pw * 9 / 16)
+        crop_y = max(0, (ph - crop_h) // 2)
+        pix = pix.copy(0, crop_y, pw, min(crop_h, ph - crop_y))
+        pw = pix.width()
+        ph = pix.height()
+
+    ratio = pw / ph
+    rounded = QPixmap(w, h)
+    rounded.fill(Qt.transparent)
+
+    p = QPainter(rounded)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+
+    path = QPainterPath()
+    path.addRoundedRect(0, 0, w, h, radius, radius)
+    p.setClipPath(path)
+
+    if ratio < 1.35:
+        # === 1:1 SQUARE / PORTRAIT ARTWORK (AMBIENT BLUR BACKDROP) ===
+        # Layer 1: Ambient Blurred Background Fill (Fast Downscale -> Upscale)
+        tiny = pix.scaled(28, 28, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        bg_blur = tiny.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        p.drawPixmap(0, 0, bg_blur)
+
+        # Layer 1b: Dark Contrast Scrim
+        p.fillRect(0, 0, w, h, QColor(10, 12, 16, 115))
+
+        # Layer 2: Sharp 1:1 Centered Foreground (Fit height, no cutoff)
+        fg = pix.scaled(h, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        fg_x = max(0, (w - fg.width()) // 2)
+        fg_y = max(0, (h - fg.height()) // 2)
+        p.drawPixmap(fg_x, fg_y, fg)
+    else:
+        # === 16:9 WIDESCREEN VIDEO THUMBNAIL (COVER CROP) ===
+        scaled = pix.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        crop_x = max(0, (scaled.width() - w) // 2)
+        crop_y = max(0, (scaled.height() - h) // 2)
+        cropped = scaled.copy(crop_x, crop_y, w, h)
+        p.drawPixmap(0, 0, cropped)
+
+    p.end()
+    return rounded
 
 
 class YTMusicVideoCard(QFrame):
@@ -2430,27 +2471,14 @@ class YTMusicVideoCard(QFrame):
 
         w = max(40, self.thumb_frame.width() if self.thumb_frame.width() > 40 else 299)
         h = max(24, self.thumb_frame.height() if self.thumb_frame.height() > 24 else 150)
-        scaled = self._raw_pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-        crop_x = max(0, (scaled.width() - w) // 2)
-        crop_y = max(0, (scaled.height() - h) // 2)
-        cropped = scaled.copy(crop_x, crop_y, w, h)
 
-        rounded = QPixmap(w, h)
-        rounded.fill(Qt.transparent)
-        p = QPainter(rounded)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        path = QPainterPath()
-        path.addRoundedRect(0, 0, w, h, 7, 7)
-        p.setClipPath(path)
-        p.drawPixmap(0, 0, cropped)
-        p.end()
-
-        self.thumb_img_lbl.setGeometry(0, 0, w, h)
-        self.thumb_img_lbl.setPixmap(rounded)
-        self.thumb_img_lbl.show()
-        self.badge_lbl.raise_()
-        self.play_overlay.raise_()
+        rounded = render_ambient_thumbnail(self._raw_pixmap, w, h, radius=7)
+        if rounded:
+            self.thumb_img_lbl.setGeometry(0, 0, w, h)
+            self.thumb_img_lbl.setPixmap(rounded)
+            self.thumb_img_lbl.show()
+            self.badge_lbl.raise_()
+            self.play_overlay.raise_()
 
     def _apply_gradient_bg(self):
         c0 = self._bg_colors[0] if len(self._bg_colors) > 0 else "#1e1f29"
@@ -3006,10 +3034,7 @@ class CloudMediaCard(QFrame):
         self.thumb_img.setGeometry(0, 0, 299, 150)
         self.thumb_img.hide()
 
-        self.badge_lbl = QLabel(self.thumb_frame)
-        self.badge_lbl.setObjectName("cloudMediaCardBadge")
-        self.badge_lbl.hide()
-        t_layout.addStretch()
+
 
         # Hover Play Overlay (Full Thumbnail Dark Cover)
         self.play_overlay = CardDarkPlayOverlay(icon_size=38, parent=self.thumb_frame)
@@ -3036,7 +3061,7 @@ class CloudMediaCard(QFrame):
         sub_lbl = QLabel(str(sub_text), self)
         sub_lbl.setObjectName("cloudMediaCardSub")
         sub_lbl.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        sub_lbl.setStyleSheet("color: #888892; font-family: 'Orbitron', sans-serif; font-size: 9px; background: transparent;")
+        sub_lbl.setStyleSheet("color: #9DA2B4; font-family: 'Orbitron', sans-serif; font-size: 9px; background: transparent;")
         sub_lbl.setFixedHeight(18)
         layout.addWidget(sub_lbl)
         layout.addStretch()
@@ -3057,27 +3082,13 @@ class CloudMediaCard(QFrame):
                 return
             w = max(40, self.thumb_frame.width() if self.thumb_frame.width() > 40 else 299)
             h = max(40, self.thumb_frame.height() if self.thumb_frame.height() > 40 else 150)
-            scaled = self._raw_pixmap.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            crop_x = max(0, (scaled.width() - w) // 2)
-            crop_y = max(0, (scaled.height() - h) // 2)
-            cropped = scaled.copy(crop_x, crop_y, w, h)
 
-            rounded = QPixmap(w, h)
-            rounded.fill(Qt.transparent)
-            p = QPainter(rounded)
-            p.setRenderHint(QPainter.Antialiasing)
-            p.setRenderHint(QPainter.SmoothPixmapTransform)
-            path = QPainterPath()
-            path.addRoundedRect(0, 0, w, h, 7, 7)
-            p.setClipPath(path)
-            p.drawPixmap(0, 0, cropped)
-            p.end()
-
-            self.thumb_img.setGeometry(0, 0, w, h)
-            self.thumb_img.setPixmap(rounded)
-            self.thumb_img.show()
-            self.badge_lbl.raise_()
-            self.play_overlay.raise_()
+            rounded = render_ambient_thumbnail(self._raw_pixmap, w, h, radius=7)
+            if rounded:
+                self.thumb_img.setGeometry(0, 0, w, h)
+                self.thumb_img.setPixmap(rounded)
+                self.thumb_img.show()
+                self.play_overlay.raise_()
         except (RuntimeError, Exception):
             pass
 
@@ -3854,8 +3865,7 @@ class StreamPlaylistDetailView(QWidget):
                 background: #E0E0E0;
             }
         """)
-        play_svg = '<svg viewBox="0 0 24 24" width="20" height="20"><polygon points="8,5 19,12 8,19" fill="#0B0D13"/></svg>'
-        self.play_all_btn.setIcon(QIcon(render_svg_pixmap(play_svg, 18, 18)))
+        self.play_all_btn.setIcon(QIcon(render_colored_svg_pixmap(ICON_PLAY, 18, 18, "#0B0D13")))
         self.play_all_btn.setIconSize(QSize(18, 18))
         self.play_all_btn.clicked.connect(self._on_play_all_clicked)
         act_row.addWidget(self.play_all_btn, 0, Qt.AlignVCenter)
@@ -4799,6 +4809,1166 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
             self.on_proceed_callback()
 
 
+class LikedMusicPortalCard(QFrame):
+    """High-impact Cyberpunk Hero Portal Card for Liked Music Hub."""
+    shuffleClicked = Signal()
+    openClicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("streamLikedMusicPortalCard")
+        self._raw_pixmap: Optional[QPixmap] = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFixedHeight(210)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("""
+            QFrame#streamLikedMusicPortalCard {
+                background-color: #12141D;
+                border: 1px solid rgba(255, 0, 85, 0.28);
+                border-radius: 12px;
+            }
+            QFrame#streamLikedMusicPortalCard:hover {
+                background-color: #161926;
+                border: 1px solid rgba(255, 0, 85, 0.65);
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(18)
+
+        # Left Cover Frame (178x178)
+        self.cover_frame = QFrame(self)
+        self.cover_frame.setObjectName("streamLikedCoverFrame")
+        self.cover_frame.setFixedSize(178, 178)
+        self.cover_frame.setStyleSheet("""
+            QFrame#streamLikedCoverFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF0055, stop:0.5 #FF1E27, stop:1 #80002A);
+                border-radius: 8px;
+            }
+        """)
+        c_layout = QVBoxLayout(self.cover_frame)
+        c_layout.setContentsMargins(8, 8, 8, 8)
+
+        # Badge pill
+        self.badge_lbl = QLabel("FAVORITES", self.cover_frame)
+        self.badge_lbl.setObjectName("streamLikedBadge")
+        self.badge_lbl.setStyleSheet("""
+            QLabel#streamLikedBadge {
+                background-color: rgba(14, 16, 21, 0.88);
+                color: #FF0055;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 8px;
+                font-weight: 900;
+                letter-spacing: 0.5px;
+                padding: 3px 6px;
+                border-radius: 4px;
+                border: 1px solid rgba(255, 0, 85, 0.4);
+            }
+        """)
+        c_layout.addWidget(self.badge_lbl, alignment=Qt.AlignTop | Qt.AlignLeft)
+        c_layout.addStretch()
+
+        # Heart Vector Icon in Center
+        self.heart_icon_lbl = QLabel(self.cover_frame)
+        self.heart_icon_lbl.setObjectName("streamLikedHeartIcon")
+        self.heart_icon_lbl.setAlignment(Qt.AlignCenter)
+        self.heart_icon_lbl.setPixmap(render_svg_pixmap(SVG_HEART, 44, 44))
+        c_layout.addWidget(self.heart_icon_lbl, alignment=Qt.AlignCenter)
+        c_layout.addStretch()
+
+        # Custom pixmap container (hidden until loaded)
+        self.cover_img = QLabel(self.cover_frame)
+        self.cover_img.setObjectName("streamLikedCoverImg")
+        self.cover_img.setGeometry(0, 0, 178, 178)
+        self.cover_img.setStyleSheet("background: transparent; border-radius: 8px;")
+        self.cover_img.hide()
+
+        layout.addWidget(self.cover_frame)
+
+        # Right Content Column
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 2, 0, 2)
+        content_layout.setSpacing(6)
+
+        self.eyebrow_lbl = QLabel("PERSONAL HUB", self)
+        self.eyebrow_lbl.setObjectName("streamLikedEyebrow")
+        self.eyebrow_lbl.setStyleSheet("color: #FF0055; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.2px;")
+        content_layout.addWidget(self.eyebrow_lbl)
+
+        self.title_lbl = QLabel("Liked Music", self)
+        self.title_lbl.setObjectName("streamLikedTitle")
+        self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 17px; font-weight: bold; letter-spacing: 0.5px;")
+        content_layout.addWidget(self.title_lbl)
+
+        self.desc_lbl = QLabel("Your synchronized YouTube & Spotify collection. Instant access to all your favorite tracks.", self)
+        self.desc_lbl.setObjectName("streamLikedDesc")
+        self.desc_lbl.setWordWrap(True)
+        self.desc_lbl.setStyleSheet("color: #9DA2B4; font-size: 11px; line-height: 1.4;")
+        content_layout.addWidget(self.desc_lbl)
+
+        self.meta_lbl = QLabel("• Auto-Mix Station • Cloud Synced", self)
+        self.meta_lbl.setObjectName("streamLikedMeta")
+        self.meta_lbl.setStyleSheet("color: #707585; font-size: 10px;")
+        content_layout.addWidget(self.meta_lbl)
+
+        content_layout.addStretch()
+
+        # Action Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        self.shuffle_btn = QPushButton("Shuffle Play", self)
+        self.shuffle_btn.setObjectName("streamLikedShuffleBtn")
+        self.shuffle_btn.setCursor(Qt.PointingHandCursor)
+        self.shuffle_btn.setIcon(QIcon(render_svg_pixmap(SVG_SHUFFLE, 14, 14)))
+        self.shuffle_btn.setIconSize(QSize(14, 14))
+        self.shuffle_btn.setStyleSheet("""
+            QPushButton#streamLikedShuffleBtn {
+                background-color: #FF0055;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 7px 16px;
+                border: none;
+            }
+            QPushButton#streamLikedShuffleBtn:hover {
+                background-color: #E6004C;
+            }
+            QPushButton#streamLikedShuffleBtn:pressed {
+                background-color: #CC0044;
+            }
+        """)
+        self.shuffle_btn.clicked.connect(self.shuffleClicked.emit)
+        btn_layout.addWidget(self.shuffle_btn)
+
+        self.open_btn = QPushButton("Open Hub", self)
+        self.open_btn.setObjectName("streamLikedOpenBtn")
+        self.open_btn.setCursor(Qt.PointingHandCursor)
+        self.open_btn.setIcon(QIcon(render_svg_pixmap(SVG_EXTERNAL_LINK, 12, 12)))
+        self.open_btn.setIconSize(QSize(12, 12))
+        self.open_btn.setStyleSheet("""
+            QPushButton#streamLikedOpenBtn {
+                background-color: #1B1E2B;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 7px 16px;
+                border: 1px solid #2D3246;
+            }
+            QPushButton#streamLikedOpenBtn:hover {
+                background-color: #262B3D;
+                border-color: #434B68;
+            }
+            QPushButton#streamLikedOpenBtn:pressed {
+                background-color: #151824;
+            }
+        """)
+        self.open_btn.clicked.connect(self.openClicked.emit)
+        btn_layout.addWidget(self.open_btn)
+
+        btn_layout.addStretch()
+        content_layout.addLayout(btn_layout)
+
+        layout.addLayout(content_layout, stretch=1)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            shuf_rect = self.shuffle_btn.geometry()
+            open_rect = self.open_btn.geometry()
+            pos = self.mapFromGlobal(event.globalPosition().toPoint())
+            if not shuf_rect.contains(pos) and not open_rect.contains(pos):
+                self.openClicked.emit()
+        super().mousePressEvent(event)
+
+    def set_track_count(self, count: int):
+        if count > 0:
+            self.meta_lbl.setText(f"• {count} Tracks Available • Cloud Synced")
+        else:
+            self.meta_lbl.setText("• Auto-Mix Station • Cloud Synced")
+
+    def set_pixmap(self, pix: QPixmap):
+        if pix and not pix.isNull():
+            self._raw_pixmap = pix
+            scaled = pix.scaled(178, 178, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            rounded = QPixmap(178, 178)
+            rounded.fill(Qt.transparent)
+            painter = QPainter(rounded)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, 178, 178, 8, 8)
+            painter.setClipPath(path)
+            painter.drawPixmap(0, 0, scaled)
+            painter.end()
+            self.cover_img.setPixmap(rounded)
+            self.cover_img.show()
+            self.heart_icon_lbl.hide()
+
+
+class YouTubeDiscoveryPortalCard(QFrame):
+    """High-impact Cyberpunk Hero Portal Card for YouTube Algorithm Discovery Hub."""
+    exploreClicked = Signal()
+    quickPlayClicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("streamYouTubeDiscoveryPortalCard")
+        self._raw_pixmap: Optional[QPixmap] = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFixedHeight(210)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("""
+            QFrame#streamYouTubeDiscoveryPortalCard {
+                background-color: #12141D;
+                border: 1px solid rgba(255, 91, 6, 0.28);
+                border-radius: 12px;
+            }
+            QFrame#streamYouTubeDiscoveryPortalCard:hover {
+                background-color: #161926;
+                border: 1px solid rgba(255, 91, 6, 0.65);
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(18)
+
+        # Left Cover Frame (178x178)
+        self.cover_frame = QFrame(self)
+        self.cover_frame.setObjectName("streamDiscoveryCoverFrame")
+        self.cover_frame.setFixedSize(178, 178)
+        self.cover_frame.setStyleSheet("""
+            QFrame#streamDiscoveryCoverFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FF0000, stop:0.5 #CC0000, stop:1 #660000);
+                border-radius: 8px;
+            }
+        """)
+        c_layout = QVBoxLayout(self.cover_frame)
+        c_layout.setContentsMargins(8, 8, 8, 8)
+        c_layout.addStretch()
+
+        # Play Vector Icon in Center
+        self.yt_icon_lbl = QLabel(self.cover_frame)
+        self.yt_icon_lbl.setObjectName("streamDiscoveryPlayIcon")
+        self.yt_icon_lbl.setAlignment(Qt.AlignCenter)
+        self.yt_icon_lbl.setPixmap(render_svg_pixmap(ICON_PLAY, 48, 48))
+        c_layout.addWidget(self.yt_icon_lbl, alignment=Qt.AlignCenter)
+        c_layout.addStretch()
+
+        # Custom pixmap container (hidden until loaded)
+        self.cover_img = QLabel(self.cover_frame)
+        self.cover_img.setObjectName("streamDiscoveryCoverImg")
+        self.cover_img.setGeometry(0, 0, 178, 178)
+        self.cover_img.setStyleSheet("background: transparent; border-radius: 8px;")
+        self.cover_img.hide()
+
+        layout.addWidget(self.cover_frame)
+
+        # Right Content Column
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 2, 0, 2)
+        content_layout.setSpacing(6)
+
+        self.eyebrow_lbl = QLabel("RECOMMENDED FOR YOU", self)
+        self.eyebrow_lbl.setObjectName("streamDiscoveryEyebrow")
+        self.eyebrow_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.2px;")
+        content_layout.addWidget(self.eyebrow_lbl)
+
+        self.title_lbl = QLabel("Algorithm Discovery", self)
+        self.title_lbl.setObjectName("streamDiscoveryTitle")
+        self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 17px; font-weight: bold; letter-spacing: 0.5px;")
+        content_layout.addWidget(self.title_lbl)
+
+        self.desc_lbl = QLabel("Real-time video feed recommendations directly from your authentic YouTube Home stream.", self)
+        self.desc_lbl.setObjectName("streamDiscoveryDesc")
+        self.desc_lbl.setWordWrap(True)
+        self.desc_lbl.setStyleSheet("color: #9DA2B4; font-size: 11px; line-height: 1.4;")
+        content_layout.addWidget(self.desc_lbl)
+
+        self.meta_lbl = QLabel("• YouTube Web Innertube • Live Feed", self)
+        self.meta_lbl.setObjectName("streamDiscoveryMeta")
+        self.meta_lbl.setStyleSheet("color: #707585; font-size: 10px;")
+        content_layout.addWidget(self.meta_lbl)
+
+        content_layout.addStretch()
+
+        # Action Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        self.explore_btn = QPushButton("Explore Feed", self)
+        self.explore_btn.setObjectName("streamDiscoveryExploreBtn")
+        self.explore_btn.setCursor(Qt.PointingHandCursor)
+        self.explore_btn.setIcon(QIcon(render_svg_pixmap(SVG_COMPASS, 14, 14)))
+        self.explore_btn.setIconSize(QSize(14, 14))
+        self.explore_btn.setStyleSheet("""
+            QPushButton#streamDiscoveryExploreBtn {
+                background-color: #FF5B06;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 7px 16px;
+                border: none;
+            }
+            QPushButton#streamDiscoveryExploreBtn:hover {
+                background-color: #E04F03;
+            }
+            QPushButton#streamDiscoveryExploreBtn:pressed {
+                background-color: #C24402;
+            }
+        """)
+        self.explore_btn.clicked.connect(self.exploreClicked.emit)
+        btn_layout.addWidget(self.explore_btn)
+
+        self.quick_btn = QPushButton("Quick Mix", self)
+        self.quick_btn.setObjectName("streamDiscoveryQuickBtn")
+        self.quick_btn.setCursor(Qt.PointingHandCursor)
+        self.quick_btn.setIcon(QIcon(render_svg_pixmap(SVG_PLAY_ICON, 12, 12)))
+        self.quick_btn.setIconSize(QSize(12, 12))
+        self.quick_btn.setStyleSheet("""
+            QPushButton#streamDiscoveryQuickBtn {
+                background-color: #1B1E2B;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 7px 16px;
+                border: 1px solid #2D3246;
+            }
+            QPushButton#streamDiscoveryQuickBtn:hover {
+                background-color: #262B3D;
+                border-color: #434B68;
+            }
+            QPushButton#streamDiscoveryQuickBtn:pressed {
+                background-color: #151824;
+            }
+        """)
+        self.quick_btn.clicked.connect(self.quickPlayClicked.emit)
+        btn_layout.addWidget(self.quick_btn)
+
+        btn_layout.addStretch()
+        content_layout.addLayout(btn_layout)
+
+        layout.addLayout(content_layout, stretch=1)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            exp_rect = self.explore_btn.geometry()
+            q_rect = self.quick_btn.geometry()
+            pos = self.mapFromGlobal(event.globalPosition().toPoint())
+            if not exp_rect.contains(pos) and not q_rect.contains(pos):
+                self.exploreClicked.emit()
+        super().mousePressEvent(event)
+
+    def set_pixmap(self, pix: QPixmap):
+        if pix and not pix.isNull():
+            self._raw_pixmap = pix
+            scaled = pix.scaled(178, 178, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            rounded = QPixmap(178, 178)
+            rounded.fill(Qt.transparent)
+            painter = QPainter(rounded)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, 178, 178, 8, 8)
+            painter.setClipPath(path)
+            painter.drawPixmap(0, 0, scaled)
+            painter.end()
+            self.cover_img.setPixmap(rounded)
+            self.cover_img.show()
+            self.yt_icon_lbl.hide()
+
+
+class YouTubeVideoCard(QFrame):
+    """Modern YouTube Grid Video Card with 16:9 thumbnail, duration pill, channel avatar, and metadata."""
+    playClicked = Signal(dict)
+
+    def __init__(self, video_data: dict, parent=None):
+        super().__init__(parent)
+        self.setObjectName("youtubeVideoCard")
+        self.video_data = video_data
+        self._raw_pixmap: Optional[QPixmap] = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.setMinimumWidth(200)
+        self.setMinimumHeight(200)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet("""
+            QFrame#youtubeVideoCard {
+                background-color: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.07);
+                border-radius: 10px;
+            }
+            QFrame#youtubeVideoCard:hover {
+                background-color: rgba(255, 91, 6, 0.07);
+                border-color: rgba(255, 91, 6, 0.5);
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        # Dynamic 16:9 Thumbnail Frame
+        self.thumb_frame = QFrame(self)
+        self.thumb_frame.setObjectName("ytVideoThumbFrame")
+        self.thumb_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.thumb_frame.setFixedHeight(135)
+        self.thumb_frame.setStyleSheet("""
+            QFrame#ytVideoThumbFrame {
+                background: #0E1015;
+                border-radius: 7px;
+            }
+        """)
+
+        # Main thumbnail image
+        self.thumb_img = QLabel(self.thumb_frame)
+        self.thumb_img.setObjectName("ytVideoThumbImg")
+        self.thumb_img.setStyleSheet("background: transparent; border-radius: 7px;")
+        self.thumb_img.setAlignment(Qt.AlignCenter)
+        self.thumb_img.hide()
+
+        # Hover Play Overlay
+        self.play_overlay = CardDarkPlayOverlay(icon_size=36, parent=self.thumb_frame)
+        self.play_opacity = QGraphicsOpacityEffect(self.play_overlay)
+        self.play_opacity.setOpacity(0.0)
+        self.play_overlay.setGraphicsEffect(self.play_opacity)
+
+        layout.addWidget(self.thumb_frame)
+
+        # Info Row (Avatar + Details)
+        info_layout = QHBoxLayout()
+        info_layout.setContentsMargins(2, 0, 2, 0)
+        info_layout.setSpacing(8)
+
+        # Circular Avatar
+        self.avatar_lbl = QLabel(self)
+        self.avatar_lbl.setObjectName("ytVideoAvatar")
+        self.avatar_lbl.setFixedSize(28, 28)
+        self.avatar_lbl.setStyleSheet("""
+            QLabel#ytVideoAvatar {
+                background-color: #1E2230;
+                border-radius: 14px;
+            }
+        """)
+        self.avatar_lbl.setAlignment(Qt.AlignCenter)
+        self.avatar_lbl.setPixmap(render_svg_pixmap(SVG_USER_AVATAR, 16, 16))
+        info_layout.addWidget(self.avatar_lbl, alignment=Qt.AlignTop)
+
+        # Detail text layout
+        detail_layout = QVBoxLayout()
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(2)
+
+        self.title_lbl = QLabel(self.video_data.get("title", "Video Title"), self)
+        self.title_lbl.setObjectName("ytVideoTitle")
+        self.title_lbl.setWordWrap(True)
+        self.title_lbl.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.title_lbl.setStyleSheet("""
+            QLabel#ytVideoTitle {
+                color: #FFFFFF;
+                font-size: 11px;
+                font-weight: bold;
+                line-height: 1.2;
+            }
+        """)
+        self.title_lbl.setMaximumHeight(38)
+        detail_layout.addWidget(self.title_lbl)
+
+        self.channel_lbl = QLabel(self.video_data.get("channel_name", "Channel"), self)
+        self.channel_lbl.setObjectName("ytVideoChannel")
+        self.channel_lbl.setStyleSheet("color: #9DA2B4; font-size: 10px;")
+        detail_layout.addWidget(self.channel_lbl)
+
+        info_layout.addLayout(detail_layout, stretch=1)
+        layout.addLayout(info_layout)
+
+    def enterEvent(self, event):
+        self.play_opacity.setOpacity(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.play_opacity.setOpacity(0.0)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.playClicked.emit(self.video_data)
+        super().mousePressEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = max(1, self.thumb_frame.width())
+        h = max(1, int(w * 9 / 16))
+        if self.thumb_frame.height() != h:
+            self.thumb_frame.setFixedHeight(h)
+        self.thumb_img.setGeometry(0, 0, w, h)
+        self.play_overlay.setGeometry(0, 0, w, h)
+        needed_h = h + 16 + 8 + 58
+        if self.height() != needed_h:
+            self.setFixedHeight(needed_h)
+        if self._raw_pixmap and not self._raw_pixmap.isNull():
+            self._render_thumbnail(w, h)
+
+    def _render_thumbnail(self, w: int, h: int):
+        if not self._raw_pixmap or self._raw_pixmap.isNull() or w <= 0 or h <= 0:
+            return
+
+        rounded = render_ambient_thumbnail(self._raw_pixmap, w, h, radius=7)
+        if rounded:
+            self.thumb_img.setGeometry(0, 0, w, h)
+            self.thumb_img.setPixmap(rounded)
+            self.thumb_img.show()
+            self.play_overlay.raise_()
+
+    def set_pixmap(self, pix: QPixmap):
+        if pix and not pix.isNull():
+            self._raw_pixmap = pix
+            w = max(1, self.thumb_frame.width() if self.thumb_frame.width() > 0 else 240)
+            h = max(1, int(w * 9 / 16))
+            if self.thumb_frame.height() != h:
+                self.thumb_frame.setFixedHeight(h)
+            self._render_thumbnail(w, h)
+
+    def set_avatar_pixmap(self, pix: QPixmap):
+        if pix and not pix.isNull():
+            scaled = pix.scaled(28, 28, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            rounded = QPixmap(28, 28)
+            rounded.fill(Qt.transparent)
+            painter = QPainter(rounded)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            path = QPainterPath()
+            path.addEllipse(0, 0, 28, 28)
+            painter.setClipPath(path)
+            painter.drawPixmap(0, 0, scaled)
+            painter.end()
+            self.avatar_lbl.setPixmap(rounded)
+
+
+class SpinningLoader(QWidget):
+    """Smooth animated spinning arc loading indicator for stream feeds."""
+    def __init__(self, parent=None, size: int = 36, color: str = "#FF5B06"):
+        super().__init__(parent)
+        self.setObjectName("streamDiscoverySpinningLoader")
+        self._angle = 0
+        self._color = QColor(color)
+        self._timer = QTimer(self)
+        self._timer.setInterval(20)
+        self._timer.timeout.connect(self._rotate)
+        self.setFixedSize(size, size)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.hide()
+        
+    def start(self):
+        self._angle = 0
+        if not self._timer.isActive():
+            self._timer.start()
+        self.show()
+        if self.parentWidget():
+            self.raise_()
+
+    def stop(self):
+        self._timer.stop()
+        self.hide()
+
+    def _rotate(self):
+        self._angle = (self._angle + 12) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        
+        margin = 4
+        w = self.width() - margin * 2
+        rect = QRectF(margin, margin, w, w)
+        
+        # Track ring
+        track_color = QColor(self._color.red(), self._color.green(), self._color.blue(), 35)
+        pen_bg = QPen(track_color, 2.5)
+        p.setPen(pen_bg)
+        p.drawEllipse(rect)
+        
+        # Rotating arc
+        arc_color = QColor(self._color.red(), self._color.green(), self._color.blue(), 240)
+        pen_arc = QPen(arc_color, 2.5)
+        pen_arc.setCapStyle(Qt.RoundCap)
+        p.setPen(pen_arc)
+        
+        p.drawArc(rect, -int(self._angle * 16), -int(110 * 16))
+        p.end()
+
+
+class YouTubeDiscoveryView(QWidget):
+    """Full-Page Authentic YouTube Recommendation Feed (Home Browse FEwhat_to_watch) with infinite scrolling and filter chips."""
+    backClicked = Signal()
+    playVideoRequested = Signal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("streamYouTubeDiscoveryView")
+        self._active_chip = "All"
+        self._continuation_token = ""
+        self._is_loading = False
+        self._worker: Optional[FetchYouTubeHomeFeedWorker] = None
+        self._image_loaders: List[AsyncImageLoader] = []
+        self._chip_params: Dict[str, str] = {
+            "All": "",
+            "Relax": "ggM8SgQIBxADSgQICBABSgQICRABSgQIBRABSgQIChABSgQIAxABSgQIDRABSgQIDhABSgQIBBABSgQIBhAB",
+            "Feel good": "ggM8SgQIBxABSgQICBADSgQICRABSgQIBRABSgQIChABSgQIAxABSgQIDRABSgQIDhABSgQIBBABSgQIBhAB",
+            "Energize": "ggM8SgQIBxABSgQICBABSgQICRADSgQIBRABSgQIChABSgQIAxABSgQIDRABSgQIDhABSgQIBBABSgQIBhAB",
+            "Sleep": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRADSgQIChABSgQIAxABSgQIDRABSgQIDhABSgQIBBABSgQIBhAB",
+            "Sad": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRABSgQIChADSgQIAxABSgQIDRABSgQIDhABSgQIBBABSgQIBhAB",
+            "Commute": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRABSgQIChABSgQIAxADSgQIDRABSgQIDhABSgQIBBABSgQIBhAB",
+            "Romance": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRABSgQIChABSgQIAxABSgQIDRADSgQIDhABSgQIBBABSgQIBhAB",
+            "Party": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRABSgQIChABSgQIAxABSgQIDRABSgQIDhADSgQIBBABSgQIBhAB",
+            "Workout": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRABSgQIChABSgQIAxABSgQIDRABSgQIDhABSgQIBBADSgQIBhAB",
+            "Focus": "ggM8SgQIBxABSgQICBABSgQICRABSgQIBRABSgQIChABSgQIAxABSgQIDRABSgQIDhABSgQIBBABSgQIBhAD"
+        }
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setStyleSheet("QWidget#streamYouTubeDiscoveryView { background: transparent; }")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 32)
+        layout.setSpacing(20)
+
+        # Top Navigation & Header Bar
+        top_bar = QHBoxLayout()
+        top_bar.setSpacing(14)
+
+        self.back_btn = QPushButton("  BACK", self)
+        self.back_btn.setObjectName("streamDiscoveryBackBtn")
+        self.back_btn.setCursor(Qt.PointingHandCursor)
+        self.back_btn.setIcon(QIcon(render_svg_pixmap(SVG_BACK_ARROW, 14, 14)))
+        self.back_btn.setIconSize(QSize(14, 14))
+        self.back_btn.setStyleSheet("""
+            QPushButton#streamDiscoveryBackBtn {
+                background-color: #161923;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 8px 16px;
+                border: 1px solid #2D3246;
+            }
+            QPushButton#streamDiscoveryBackBtn:hover {
+                background-color: #FF5B06;
+                border-color: #FF5B06;
+            }
+            QPushButton#streamDiscoveryBackBtn:pressed {
+                background-color: #E04F03;
+            }
+        """)
+        self.back_btn.clicked.connect(self.backClicked.emit)
+        top_bar.addWidget(self.back_btn)
+
+        # Title block
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+
+        self.title_lbl = QLabel("YTM ALGORITHM DISCOVERY", self)
+        self.title_lbl.setObjectName("streamDiscoveryMainTitle")
+        self.title_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: bold; letter-spacing: 0.8px;")
+        title_box.addWidget(self.title_lbl)
+
+        self.subtitle_lbl = QLabel("Personalized music recommendations synced from your YouTube Music algorithm", self)
+        self.subtitle_lbl.setObjectName("streamDiscoverySubtitle")
+        self.subtitle_lbl.setStyleSheet("color: #9DA2B4; font-size: 11px;")
+        title_box.addWidget(self.subtitle_lbl)
+
+        top_bar.addLayout(title_box)
+        top_bar.addStretch()
+
+        # Sync Status Pill
+        self.status_pill = QLabel(self)
+        self.status_pill.setObjectName("streamDiscoveryStatusPill")
+        self._update_status_pill()
+        top_bar.addWidget(self.status_pill)
+
+        # Refresh Button
+        self.refresh_btn = QPushButton("  REFRESH", self)
+        self.refresh_btn.setObjectName("streamDiscoveryRefreshBtn")
+        self.refresh_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_btn.setIcon(QIcon(render_svg_pixmap(SVG_REFRESH, 12, 12)))
+        self.refresh_btn.setIconSize(QSize(12, 12))
+        self.refresh_btn.setStyleSheet("""
+            QPushButton#streamDiscoveryRefreshBtn {
+                background-color: #FF5B06;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+                border-radius: 6px;
+                padding: 7px 14px;
+                border: none;
+            }
+            QPushButton#streamDiscoveryRefreshBtn:hover {
+                background-color: #E04F03;
+            }
+            QPushButton#streamDiscoveryRefreshBtn:pressed {
+                background-color: #C24402;
+            }
+        """)
+        self.refresh_btn.clicked.connect(lambda: self.load_feed(refresh=True))
+        top_bar.addWidget(self.refresh_btn)
+
+        layout.addLayout(top_bar)
+
+        # Filter Chips Bar
+        self.chips_layout = QHBoxLayout()
+        self.chips_layout.setSpacing(8)
+        self.chip_buttons: Dict[str, QPushButton] = {}
+        initial_categories = list(self._chip_params.keys())
+        for cat in initial_categories:
+            btn = QPushButton(cat, self)
+            btn.setObjectName(f"streamChip_{cat.replace(' ', '_')}")
+            btn.setCursor(Qt.PointingHandCursor)
+            self._apply_chip_style(btn, is_active=(cat == "All"))
+            btn.clicked.connect(lambda checked=False, c=cat: self._on_chip_selected(c))
+            self.chip_buttons[cat] = btn
+            self.chips_layout.addWidget(btn)
+
+        self.chips_layout.addStretch()
+        layout.addLayout(self.chips_layout)
+
+        # Loading / Status message banner
+        self.status_banner = QLabel(self)
+        self.status_banner.setObjectName("streamDiscoveryStatusBanner")
+        self.status_banner.setStyleSheet("color: #FF5B06; font-family: 'Orbitron'; font-size: 11px; padding: 6px 0px;")
+        self.status_banner.hide()
+        layout.addWidget(self.status_banner)
+
+        # --- Section 1: MIXED FOR YOU ---
+        self.mix_section_widget = QWidget(self)
+        self.mix_section_widget.setObjectName("streamDiscoveryMixSection")
+        self.mix_section_widget.setStyleSheet("QWidget#streamDiscoveryMixSection { background: transparent; }")
+        mix_sec_layout = QVBoxLayout(self.mix_section_widget)
+        mix_sec_layout.setContentsMargins(0, 0, 0, 0)
+        mix_sec_layout.setSpacing(12)
+
+        mix_header_box = QVBoxLayout()
+        mix_header_box.setSpacing(2)
+        self.mix_section_title = QLabel("MIXED FOR YOU", self.mix_section_widget)
+        self.mix_section_title.setObjectName("streamDiscoveryMixTitle")
+        self.mix_section_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; letter-spacing: 0.8px;")
+        mix_header_box.addWidget(self.mix_section_title)
+
+        self.mix_section_subtitle = QLabel("Personalized algorithmic stations, artist radios, and daily blends", self.mix_section_widget)
+        self.mix_section_subtitle.setObjectName("streamDiscoveryMixSubtitle")
+        self.mix_section_subtitle.setStyleSheet("color: #7E849B; font-size: 11px;")
+        mix_header_box.addWidget(self.mix_section_subtitle)
+        mix_sec_layout.addLayout(mix_header_box)
+
+        self.mix_grid_container = QWidget(self.mix_section_widget)
+        self.mix_grid_container.setObjectName("streamDiscoveryMixGridContainer")
+        self.mix_grid_container.setStyleSheet("background: transparent;")
+        self.mix_grid_layout = QGridLayout(self.mix_grid_container)
+        self.mix_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.mix_grid_layout.setSpacing(14)
+        for col in range(4):
+            self.mix_grid_layout.setColumnStretch(col, 1)
+        mix_sec_layout.addWidget(self.mix_grid_container)
+
+        self.mix_section_widget.hide()
+        layout.addWidget(self.mix_section_widget)
+
+        # --- Section 2: RECOMMENDED TRACKS ---
+        self.track_section_widget = QWidget(self)
+        self.track_section_widget.setObjectName("streamDiscoveryTrackSection")
+        self.track_section_widget.setStyleSheet("QWidget#streamDiscoveryTrackSection { background: transparent; }")
+        track_sec_layout = QVBoxLayout(self.track_section_widget)
+        track_sec_layout.setContentsMargins(0, 0, 0, 0)
+        track_sec_layout.setSpacing(12)
+
+        track_header_box = QVBoxLayout()
+        track_header_box.setSpacing(2)
+        self.track_section_title = QLabel("RECOMMENDED TRACKS", self.track_section_widget)
+        self.track_section_title.setObjectName("streamDiscoveryTrackTitle")
+        self.track_section_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: bold; letter-spacing: 0.8px;")
+        track_header_box.addWidget(self.track_section_title)
+
+        self.track_section_subtitle = QLabel("Individual tracks and singles curated from your taste profile", self.track_section_widget)
+        self.track_section_subtitle.setObjectName("streamDiscoveryTrackSubtitle")
+        self.track_section_subtitle.setStyleSheet("color: #7E849B; font-size: 11px;")
+        track_header_box.addWidget(self.track_section_subtitle)
+        track_sec_layout.addLayout(track_header_box)
+
+        self.grid_container = QWidget(self.track_section_widget)
+        self.grid_container.setObjectName("streamDiscoveryGridContainer")
+        self.grid_container.setStyleSheet("background: transparent;")
+        self.grid_layout = QGridLayout(self.grid_container)
+        self.grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.grid_layout.setSpacing(14)
+        for col in range(4):
+            self.grid_layout.setColumnStretch(col, 1)
+        track_sec_layout.addWidget(self.grid_container)
+
+        # Load More Button (Signature HELXAID Animated Fade Button)
+        self.load_more_btn = FadeHoverButton("LOAD MORE TRACKS", is_secondary=False, border_radius=6.0, font_size=11, parent=self.track_section_widget)
+        self.load_more_btn.setObjectName("streamDiscoveryLoadMoreBtn")
+        self.load_more_btn.setFixedHeight(38)
+        self.load_more_btn.setFixedWidth(230)
+        self.load_more_btn.clicked.connect(self.load_more_feed)
+        self.load_more_btn.hide()
+        track_sec_layout.addWidget(self.load_more_btn, alignment=Qt.AlignCenter)
+
+        # Loading Spinner (Animated Spinning Arc)
+        self.load_more_spinner = SpinningLoader(parent=self.track_section_widget, size=36, color="#FF5B06")
+        self.load_more_spinner.setObjectName("streamDiscoverySpinningLoader")
+        self.load_more_spinner.hide()
+        track_sec_layout.addWidget(self.load_more_spinner, alignment=Qt.AlignCenter)
+
+        self.track_section_widget.hide()
+        layout.addWidget(self.track_section_widget)
+
+    def _update_status_pill(self):
+        yt = YouTubeAccountEngine.get_instance()
+        if yt.is_authenticated():
+            self.status_pill.setText("● SYNCHRONIZED YTM FEED")
+            self.status_pill.setStyleSheet("""
+                QLabel#streamDiscoveryStatusPill {
+                    background-color: rgba(16, 185, 129, 0.12);
+                    color: #10B981;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 9px;
+                    font-weight: 900;
+                    letter-spacing: 0.5px;
+                    padding: 5px 10px;
+                    border-radius: 6px;
+                    border: 1px solid rgba(16, 185, 129, 0.35);
+                }
+            """)
+        else:
+            self.status_pill.setText("● GUEST YTM FEED")
+            self.status_pill.setStyleSheet("""
+                QLabel#streamDiscoveryStatusPill {
+                    background-color: rgba(255, 91, 6, 0.12);
+                    color: #FF5B06;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 9px;
+                    font-weight: 900;
+                    letter-spacing: 0.5px;
+                    padding: 5px 10px;
+                    border-radius: 6px;
+                    border: 1px solid rgba(255, 91, 6, 0.35);
+                }
+            """)
+
+    def _apply_chip_style(self, btn: QPushButton, is_active: bool):
+        if is_active:
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #FF5B06;
+                    color: #FFFFFF;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border-radius: 14px;
+                    padding: 6px 14px;
+                    border: none;
+                }
+            """)
+        else:
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #161923;
+                    color: #9DA2B4;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border-radius: 14px;
+                    padding: 6px 14px;
+                    border: 1px solid #2D3246;
+                }
+                QPushButton:hover {
+                    background-color: #1F2333;
+                    color: #FFFFFF;
+                    border-color: #434B68;
+                }
+            """)
+
+    def _on_chips_loaded(self, chips: list):
+        if not chips:
+            return
+        for ch in chips:
+            title = ch.get("title", "")
+            if title:
+                self._chip_params[title] = ch.get("params", "")
+
+        new_categories = [c.get("title", "") for c in chips if c.get("title")]
+        current_categories = list(self.chip_buttons.keys())
+        if new_categories and new_categories != current_categories:
+            while self.chips_layout.count():
+                child = self.chips_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+            self.chip_buttons.clear()
+            for cat in new_categories:
+                btn = QPushButton(cat, self)
+                btn.setObjectName(f"streamChip_{cat.replace(' ', '_')}")
+                btn.setCursor(Qt.PointingHandCursor)
+                self._apply_chip_style(btn, is_active=(cat == self._active_chip))
+                btn.clicked.connect(lambda checked=False, c=cat: self._on_chip_selected(c))
+                self.chip_buttons[cat] = btn
+                self.chips_layout.addWidget(btn)
+            self.chips_layout.addStretch()
+
+    def _on_chip_selected(self, category: str):
+        if self._active_chip == category:
+            return
+        self._active_chip = category
+        for cat, btn in self.chip_buttons.items():
+            self._apply_chip_style(btn, is_active=(cat == category))
+        params = self._chip_params.get(category, "")
+        self.load_feed(params=params, refresh=True)
+
+    def load_feed(self, params: Optional[str] = None, refresh: bool = False):
+        if self._is_loading and not refresh:
+            return
+
+        self._update_status_pill()
+
+        if self._worker:
+            self._worker.cancel()
+            self._worker = None
+
+        for l in self._image_loaders:
+            l.cancel()
+        self._image_loaders.clear()
+
+        if params is None:
+            params = self._chip_params.get(self._active_chip, "")
+
+        # --- Fast Stale-While-Revalidate Disk Cache Check (0ms Instant UI) ---
+        has_cached = False
+        if not refresh:
+            try:
+                cache_key = f"yt_music_feed_{params or 'all'}.json"
+                cache_file = os.path.join(YouTubeAccountEngine.get_instance().CACHE_DIR, cache_key)
+                if os.path.exists(cache_file):
+                    with open(cache_file, "r", encoding="utf-8") as f:
+                        cached_data = json.load(f)
+                    if isinstance(cached_data, dict):
+                        m_list = cached_data.get("mixes", [])
+                        t_list = cached_data.get("tracks") or cached_data.get("videos", [])
+                        c_list = cached_data.get("chips", [])
+                        tok = cached_data.get("token", "")
+                        if c_list:
+                            self._on_chips_loaded(c_list)
+                        if m_list or t_list:
+                            self._on_feed_loaded(m_list, t_list, tok)
+                            has_cached = True
+            except Exception:
+                pass
+
+        if not has_cached:
+            if refresh or not self._continuation_token:
+                while self.mix_grid_layout.count():
+                    child = self.mix_grid_layout.takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+                while self.grid_layout.count():
+                    child = self.grid_layout.takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+                self._continuation_token = ""
+                self.status_banner.setText("Connecting to YouTube Music recommendations...")
+                self.status_banner.show()
+                self.mix_section_widget.hide()
+                self.track_section_widget.hide()
+                self.load_more_btn.hide()
+                self.load_more_spinner.stop()
+
+        self._is_loading = True
+        self._worker = FetchYouTubeHomeFeedWorker(params=params, parent=self)
+        self._worker.feedLoaded.connect(self._on_feed_loaded)
+        self._worker.moreFeedLoaded.connect(self._on_more_feed_loaded)
+        self._worker.chipsLoaded.connect(self._on_chips_loaded)
+        self._worker.errorOccurred.connect(self._on_feed_error)
+        self._worker.start()
+
+    def _get_scroll_area(self) -> Optional[QScrollArea]:
+        p = self.parent()
+        while p:
+            if isinstance(p, QScrollArea):
+                return p
+            p = p.parent()
+        return None
+
+    def _lock_scroll_position(self, scroll_area: QScrollArea, target_val: int):
+        try:
+            if scroll_area and scroll_area.verticalScrollBar():
+                sb = scroll_area.verticalScrollBar()
+                sb.setValue(target_val)
+                if hasattr(scroll_area, '_target'):
+                    scroll_area._target = target_val
+                if hasattr(scroll_area, '_animation') and scroll_area._animation:
+                    scroll_area._animation.stop()
+        except Exception:
+            pass
+
+    def load_more_feed(self):
+        if self._is_loading or not self._continuation_token:
+            return
+
+        scroll_area = self._get_scroll_area()
+        self._saved_scroll_pos = scroll_area.verticalScrollBar().value() if scroll_area else 0
+
+        self._is_loading = True
+        self.load_more_btn.hide()
+        self.load_more_spinner.start()
+        self._worker = FetchYouTubeHomeFeedWorker(continuation=self._continuation_token, parent=self)
+        self._worker.moreFeedLoaded.connect(self._on_more_feed_loaded)
+        self._worker.errorOccurred.connect(self._on_feed_error)
+        self._worker.start()
+
+    def _on_feed_loaded(self, mixes: list, tracks: list, next_token: str):
+        self._is_loading = False
+        self.status_banner.hide()
+        self.load_more_spinner.stop()
+        self._continuation_token = next_token
+
+        while self.mix_grid_layout.count():
+            child = self.mix_grid_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        while self.grid_layout.count():
+            child = self.grid_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        if not mixes and not tracks:
+            self.status_banner.setText("No recommendations found. Click Refresh to retry.")
+            self.status_banner.show()
+            self.mix_section_widget.hide()
+            self.track_section_widget.hide()
+            self.load_more_btn.hide()
+            return
+
+        if mixes:
+            self._populate_grid(mixes, self.mix_grid_layout, self.mix_grid_container, start_idx=0)
+            self.mix_section_widget.show()
+        else:
+            self.mix_section_widget.hide()
+
+        if tracks:
+            self._populate_grid(tracks, self.grid_layout, self.grid_container, start_idx=0)
+            self.track_section_widget.show()
+            if self._continuation_token:
+                self.load_more_btn.show()
+            else:
+                self.load_more_btn.hide()
+        else:
+            self.track_section_widget.hide()
+            self.load_more_btn.hide()
+
+    def _on_more_feed_loaded(self, tracks: list, next_token: str):
+        self._is_loading = False
+        self._continuation_token = next_token
+        self.load_more_spinner.stop()
+
+        start_idx = self.grid_layout.count()
+        self._populate_grid(tracks, self.grid_layout, self.grid_container, start_idx=start_idx)
+
+        if self._continuation_token:
+            self.load_more_btn.show()
+        else:
+            self.load_more_btn.hide()
+
+        # Preserve exact scroll position when appending new tracks
+        scroll_area = self._get_scroll_area()
+        if scroll_area and getattr(self, '_saved_scroll_pos', None) is not None:
+            saved = self._saved_scroll_pos
+            self._lock_scroll_position(scroll_area, saved)
+            QTimer.singleShot(0, lambda: self._lock_scroll_position(scroll_area, saved))
+            QTimer.singleShot(50, lambda: self._lock_scroll_position(scroll_area, saved))
+            QTimer.singleShot(150, lambda: self._lock_scroll_position(scroll_area, saved))
+
+    def _on_feed_error(self, err: str):
+        self._is_loading = False
+        self.load_more_spinner.stop()
+        if self._continuation_token:
+            self.load_more_btn.show()
+        else:
+            self.load_more_btn.hide()
+        if self.grid_layout.count() == 0 and self.mix_grid_layout.count() == 0:
+            self.status_banner.setText(f"Unable to load feed: {err}")
+            self.status_banner.show()
+
+    def _populate_grid(self, videos: list, target_grid: QGridLayout, target_container: QWidget, start_idx: int = 0):
+        cols = 4
+        for col in range(cols):
+            target_grid.setColumnStretch(col, 1)
+
+        for i, v_data in enumerate(videos):
+            global_idx = start_idx + i
+            row = global_idx // cols
+            col = global_idx % cols
+
+            card = YouTubeVideoCard(v_data, parent=target_container)
+            card.playClicked.connect(self.playVideoRequested.emit)
+            target_grid.addWidget(card, row, col)
+
+            thumb = v_data.get("thumbnail_url")
+            if thumb:
+                cached_bytes = None
+                try:
+                    from ImageCacheEngine import ImageCacheEngine
+                    cached_bytes = ImageCacheEngine.get_instance().get_bytes(thumb)
+                except Exception:
+                    pass
+
+                if cached_bytes:
+                    _safe_set_card_pixmap(card, cached_bytes, 480, 270)
+                else:
+                    loader = AsyncImageLoader(thumb, self)
+                    loader.loaded.connect(lambda u, b, c=card: _safe_set_card_pixmap(c, b, 480, 270))
+                    loader.finished.connect(lambda l=loader: (self._image_loaders.remove(l) if l in self._image_loaders else None, l.deleteLater()))
+                    self._image_loaders.append(loader)
+                    loader.start()
+
+            avatar_url = v_data.get("channel_avatar")
+            if avatar_url:
+                c_cached = None
+                try:
+                    from ImageCacheEngine import ImageCacheEngine
+                    c_cached = ImageCacheEngine.get_instance().get_bytes(avatar_url)
+                except Exception:
+                    pass
+
+                if c_cached:
+                    pix = make_pixmap_from_bytes(c_cached, 28, 28)
+                    if pix:
+                        card.set_avatar_pixmap(pix)
+                else:
+                    av_loader = AsyncImageLoader(avatar_url, self)
+                    av_loader.loaded.connect(lambda u, b, c=card: c.set_avatar_pixmap(make_pixmap_from_bytes(b, 28, 28)))
+                    av_loader.finished.connect(lambda l=av_loader: (self._image_loaders.remove(l) if l in self._image_loaders else None, l.deleteLater()))
+                    self._image_loaders.append(av_loader)
+                    av_loader.start()
+
+
 class DirectStreamPage(QWidget):
     """
     Master Page for HELXAIC Dedicated Direct Streaming & Cloud Accounts Hub.
@@ -4969,48 +6139,33 @@ class DirectStreamPage(QWidget):
         # Gap between Section 2 and Section 3
         home_layout.addSpacing(28)
 
-        # Section 3: Cloud Playlists & Liked Songs
+        # Section 3: Liked Music & Algorithm Discovery Hero Portals
         pl_hdr = QHBoxLayout()
-        pl_lbl = QLabel("YOUR CLOUD PLAYLISTS & LIKED MUSIC", self.home_view)
-        pl_lbl.setObjectName("streamCloudPlaylistsSectionTitle")
+        pl_lbl = QLabel("PERSONAL HUB & ALGORITHM DISCOVERY", self.home_view)
+        pl_lbl.setObjectName("streamDiscoveryFeedsSectionTitle")
         pl_lbl.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: bold; letter-spacing: 0.5px;")
         pl_hdr.addWidget(pl_lbl)
         pl_hdr.addStretch()
-
-        pl_nav_layout = QHBoxLayout()
-        pl_nav_layout.setSpacing(6)
-        self.playlists_prev_btn = create_section_nav_button("streamPlaylistsPrevBtn", is_next=False, parent=self.home_view)
-        self.playlists_prev_btn.setToolTip("Previous playlists")
-        self.playlists_prev_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.playlists_scroll, -1, 319, 12, 2))
-        pl_nav_layout.addWidget(self.playlists_prev_btn)
-
-        self.playlists_next_btn = create_section_nav_button("streamPlaylistsNextBtn", is_next=True, parent=self.home_view)
-        self.playlists_next_btn.setToolTip("Next playlists")
-        self.playlists_next_btn.clicked.connect(lambda: scroll_horizontal_by_items(self.playlists_scroll, 1, 319, 12, 2))
-        pl_nav_layout.addWidget(self.playlists_next_btn)
-        pl_hdr.addLayout(pl_nav_layout)
         home_layout.addLayout(pl_hdr)
 
-        # Dedicated Horizontal Scroll Area for Cloud Playlists
-        self.playlists_scroll = QScrollArea(self.home_view)
-        self.playlists_scroll.setObjectName("playlistsHorizontalScrollArea")
-        self.playlists_scroll.setWidgetResizable(True)
-        self.playlists_scroll.setFrameShape(QFrame.NoFrame)
-        self.playlists_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.playlists_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.playlists_scroll.setFixedHeight(264)
-        self.playlists_scroll.setStyleSheet(HORIZONTAL_SCROLLBAR_STYLE.replace("%ID%", "playlistsHorizontalScrollArea"))
+        # 2 Hero Portal Cards Layout
+        self.portal_hubs_layout = QHBoxLayout()
+        self.portal_hubs_layout.setContentsMargins(0, 0, 0, 0)
+        self.portal_hubs_layout.setSpacing(16)
 
-        self.playlists_container = QWidget()
-        self.playlists_container.setObjectName("playlistsContainerWidget")
-        self.playlists_container.setStyleSheet("QWidget#playlistsContainerWidget { background: transparent; }")
-        self.cloud_playlists_layout = QHBoxLayout(self.playlists_container)
-        self.cloud_playlists_layout.setContentsMargins(0, 0, 0, 0)
-        self.cloud_playlists_layout.setSpacing(12)
-        self.cloud_playlists_layout.addStretch()
+        # Left Portal: Liked Music Hub
+        self.liked_portal_card = LikedMusicPortalCard(self.home_view)
+        self.liked_portal_card.shuffleClicked.connect(self._shuffle_play_liked_music)
+        self.liked_portal_card.openClicked.connect(self._show_liked_music_detail)
+        self.portal_hubs_layout.addWidget(self.liked_portal_card, stretch=1)
 
-        self.playlists_scroll.setWidget(self.playlists_container)
-        home_layout.addWidget(self.playlists_scroll)
+        # Right Portal: YouTube Algorithm Discovery Feed
+        self.discovery_portal_card = YouTubeDiscoveryPortalCard(self.home_view)
+        self.discovery_portal_card.exploreClicked.connect(self._show_youtube_discovery_view)
+        self.discovery_portal_card.quickPlayClicked.connect(self._show_youtube_discovery_view)
+        self.portal_hubs_layout.addWidget(self.discovery_portal_card, stretch=1)
+
+        home_layout.addLayout(self.portal_hubs_layout)
 
         # Gap between Section 3 and Section 4
         home_layout.addSpacing(28)
@@ -5129,6 +6284,12 @@ class DirectStreamPage(QWidget):
         self._playlist_placeholder = QWidget()
         self.view_stack.addWidget(self._playlist_placeholder)  # Index 3
 
+        # --- View 4: YouTube Discovery Panel (Lazy-loaded on first click) ---
+        self.youtube_discovery_view = None
+        self.youtube_discovery_scroll = None
+        self._youtube_discovery_placeholder = QWidget()
+        self.view_stack.addWidget(self._youtube_discovery_placeholder)  # Index 4
+
         # Add View Stack directly to Master Layout with stretch
         master_layout.addWidget(self.view_stack, stretch=1)
         self.view_stack.currentChanged.connect(self._on_view_changed)
@@ -5197,6 +6358,135 @@ class DirectStreamPage(QWidget):
                 self._playlist_placeholder.deleteLater()
                 self._playlist_placeholder = None
             self.view_stack.insertWidget(3, self.playlist_detail_view)
+
+    def _ensure_youtube_discovery_view(self):
+        if self.youtube_discovery_view is None:
+            self.youtube_discovery_view = YouTubeDiscoveryView(self)
+            self.youtube_discovery_view.backClicked.connect(self._show_home_panel)
+            self.youtube_discovery_view.playVideoRequested.connect(self._on_play_youtube_video)
+
+            from smooth_scroll import SmoothScrollArea
+            self.youtube_discovery_scroll = SmoothScrollArea(self)
+            self.youtube_discovery_scroll.setObjectName("streamYouTubeDiscoveryScroll")
+            self.youtube_discovery_scroll.setFrameShape(QFrame.NoFrame)
+            self.youtube_discovery_scroll.setWidgetResizable(True)
+            self.youtube_discovery_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.youtube_discovery_scroll.setStyleSheet("""
+                QScrollArea#streamYouTubeDiscoveryScroll { background: transparent; border: none; }
+                QScrollArea#streamYouTubeDiscoveryScroll > QWidget > QWidget { background: transparent; }
+                QScrollBar:vertical {
+                    background: transparent;
+                    width: 16px;
+                    border-radius: 8px;
+                    margin: 4px;
+                }
+                QScrollBar::handle:vertical {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF5B06, stop:0.5 #FDA903, stop:1 #FF5B06);
+                    border-radius: 7px;
+                    min-height: 40px;
+                    border: 2px solid rgba(253, 169, 3, 0.8);
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FDA903, stop:0.5 #FFFF00, stop:1 #FDA903);
+                    border: 2px solid #FFFF00;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px; background: none; border: none;
+                }
+                QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                    background: transparent;
+                }
+            """)
+            if self.youtube_discovery_scroll.viewport():
+                self.youtube_discovery_scroll.viewport().setStyleSheet("background: transparent;")
+            self.youtube_discovery_scroll.setWidget(self.youtube_discovery_view)
+            if self._youtube_discovery_placeholder:
+                self.view_stack.removeWidget(self._youtube_discovery_placeholder)
+                self._youtube_discovery_placeholder.deleteLater()
+                self._youtube_discovery_placeholder = None
+            self.view_stack.insertWidget(4, self.youtube_discovery_scroll)
+
+    def _show_youtube_discovery_view(self):
+        self._ensure_youtube_discovery_view()
+        self.search_bar.hide()
+        self.view_stack.setCurrentIndex(4)
+        if self.youtube_discovery_scroll and self.youtube_discovery_scroll.verticalScrollBar():
+            self.youtube_discovery_scroll.verticalScrollBar().setValue(0)
+        self.youtube_discovery_view.load_feed(refresh=False)
+
+    def _show_liked_music_detail(self):
+        liked_item = {
+            "id": "LM",
+            "title": "Liked Music",
+            "description": "Auto-Mix • Your Liked Tracks",
+            "track_count": 50,
+            "thumbnail_url": "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png",
+            "source": "youtube",
+            "is_algorithmic": True,
+            "badge": "FAVORITES"
+        }
+        self._show_playlist_detail(liked_item)
+
+    def _shuffle_play_liked_music(self):
+        yt = YouTubeAccountEngine.get_instance()
+        tracks = []
+        if yt.is_authenticated():
+            tracks = yt.fetch_playlist_tracks("FEmusic_liked_videos")
+            if not tracks:
+                tracks = yt.fetch_playlist_tracks("LM")
+        if not tracks:
+            sp = SpotifyAccountEngine.get_instance()
+            if sp.is_authenticated():
+                tracks = sp.fetch_liked_songs()
+
+        if tracks:
+            shuffled = list(tracks)
+            random.shuffle(shuffled)
+            payload = {
+                "title": "Liked Music (Shuffled)",
+                "thumbnail": "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png",
+                "thumbnail_url": "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png",
+                "is_playlist": True,
+                "tracks": shuffled
+            }
+            self._record_history(payload)
+            self._emit_play_stream(payload)
+        else:
+            self._show_liked_music_detail()
+
+    def _on_play_youtube_video(self, video_data: dict):
+        vid = video_data.get("video_id") or video_data.get("id") or video_data.get("videoId") or ""
+        if vid and vid.startswith(("MPREb_", "OLAK5uy_", "VL", "PL", "RD", "FEmusic_")):
+            pl_id = vid
+            vid = ""
+        else:
+            pl_id = video_data.get("playlist_id") or ""
+
+        if not vid and video_data.get("original_url"):
+            from fast_stream_resolver import extract_youtube_video_id
+            vid = extract_youtube_video_id(video_data["original_url"]) or ""
+
+        if vid:
+            payload = {
+                "title": video_data.get("title", "YouTube Video"),
+                "artist": video_data.get("channel_name", "YouTube"),
+                "duration": video_data.get("duration_text", "0:00"),
+                "thumbnail": video_data.get("thumbnail_url", f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"),
+                "thumbnail_url": video_data.get("thumbnail_url", f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"),
+                "original_url": f"https://www.youtube.com/watch?v={vid}",
+                "video_id": vid,
+                "is_single_track": True,
+                "is_playlist": False,
+                "source": "youtube"
+            }
+            self._record_history(payload)
+            self._emit_play_stream(payload)
+        elif pl_id:
+            playlist_item = dict(video_data)
+            playlist_item["id"] = pl_id
+            if not playlist_item.get("thumbnail_url") and playlist_item.get("thumbnail"):
+                playlist_item["thumbnail_url"] = playlist_item["thumbnail"]
+            self._show_playlist_detail(playlist_item)
 
     def _toggle_profile_panel(self):
         """Toggle between Home view (Index 0) and Cloud Profile panel (Index 2)."""
@@ -5477,75 +6767,31 @@ class DirectStreamPage(QWidget):
         pass
 
     def _on_cloud_playlists_loaded(self, playlists: list):
-        while self.cloud_playlists_layout.count() > 1:
-            child = self.cloud_playlists_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        if not playlists:
-            is_yt = YouTubeAccountEngine.get_instance().is_authenticated()
-            is_sp = SpotifyAccountEngine.get_instance().is_authenticated()
-            if is_yt or is_sp:
-                playlists = [{
-                    "id": "LM",
-                    "title": "Liked Music",
-                    "description": "Auto-Playlist • All your liked tracks",
-                    "track_count": 50,
-                    "thumbnail_url": "https://www.gstatic.com/youtube/media/ytm/images/pbg/liked-music-@576.png",
-                    "source": "youtube" if is_yt else "spotify",
-                    "is_algorithmic": False,
-                    "badge": "LIKED"
-                }]
-            else:
-                prompt_card = QFrame(self.playlists_container)
-                prompt_card.setObjectName("streamCloudPromptCard")
-                prompt_card.setStyleSheet("background: #12141D; border-radius: 8px; padding: 16px;")
-                p_layout = QHBoxLayout(prompt_card)
-                p_lbl = QLabel("Connect YouTube or Spotify via the top-right profile button to sync your private playlists.", prompt_card)
-                p_lbl.setObjectName("streamCloudPromptDesc")
-                p_lbl.setStyleSheet("color: #8C90A0; font-size: 11px;")
-                p_layout.addWidget(p_lbl)
-                p_layout.addStretch()
-
-                link_btn = QPushButton("Link Accounts", prompt_card)
-                link_btn.setObjectName("streamCloudPromptLinkBtn")
-                link_btn.setCursor(Qt.PointingHandCursor)
-                link_btn.setStyleSheet("background: #FF5B06; color: #FFFFFF; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 4px; padding: 4px 12px; border: none;")
-                link_btn.clicked.connect(self._toggle_profile_panel)
-                p_layout.addWidget(link_btn)
-                self.cloud_playlists_layout.insertWidget(0, prompt_card)
-                return
-
-        for idx, item in enumerate(playlists[:12]):
-            accent = "#1DB954" if item.get("source") == "spotify" else "#FF0000"
-            card = CloudMediaCard(item, accent_color=accent, parent=self.playlists_container)
-            card.setFixedSize(319, 236)
-            card.playClicked.connect(self._show_playlist_detail)
-            self.cloud_playlists_layout.insertWidget(idx, card)
-
-            thumb = item.get("thumbnail_url")
-            if not thumb:
-                from fast_stream_resolver import extract_youtube_video_id
-                vid = extract_youtube_video_id(item.get("original_url") or "")
-                if vid:
-                    thumb = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-
-            if thumb:
-                cached_bytes = None
-                try:
-                    from ImageCacheEngine import ImageCacheEngine
-                    cached_bytes = ImageCacheEngine.get_instance().get_bytes(thumb)
-                except Exception:
-                    pass
-
-                if cached_bytes:
-                    _safe_set_card_pixmap(card, cached_bytes)
-                else:
-                    loader = AsyncImageLoader(thumb, self)
-                    loader.loaded.connect(lambda u, b, c=card: _safe_set_card_pixmap(c, b))
-                    loader.finished.connect(lambda l=loader: (self._image_loaders.remove(l) if l in self._image_loaders else None, l.deleteLater()))
-                    self._image_loaders.append(loader)
-                    loader.start()
+        # Update Liked Music Portal Card with genuine synchronized track count and cover art
+        for it in (playlists or []):
+            if isinstance(it, dict):
+                t_low = str(it.get("title", "")).lower()
+                if it.get("id") in ("LM", "VLLM", "FEmusic_liked_videos") or "liked music" in t_low or "musik yang disukai" in t_low:
+                    cnt = it.get("track_count") or 0
+                    if hasattr(self, 'liked_portal_card') and self.liked_portal_card:
+                        self.liked_portal_card.set_track_count(cnt)
+                        thumb = it.get("thumbnail_url")
+                        if thumb:
+                            cached_bytes = None
+                            try:
+                                from ImageCacheEngine import ImageCacheEngine
+                                cached_bytes = ImageCacheEngine.get_instance().get_bytes(thumb)
+                            except Exception:
+                                pass
+                            if cached_bytes:
+                                _safe_set_card_pixmap(self.liked_portal_card, cached_bytes, 178, 178)
+                            else:
+                                loader = AsyncImageLoader(thumb, self)
+                                loader.loaded.connect(lambda u, b, c=self.liked_portal_card: _safe_set_card_pixmap(c, b, 178, 178))
+                                loader.finished.connect(lambda l=loader: (self._image_loaders.remove(l) if l in self._image_loaders else None, l.deleteLater()))
+                                self._image_loaders.append(loader)
+                                loader.start()
+                    break
 
     def _on_search_query_changed(self, text: str):
         query = text.strip()

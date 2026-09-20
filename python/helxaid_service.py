@@ -1,5 +1,20 @@
 import sys
 import os
+
+# --- Universal UTF-8 Environment & Console Code Page ---
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 import json
 import time
 import subprocess
@@ -18,6 +33,7 @@ except ImportError:
     pass
 
 PIPE_NAME = r'\\.\pipe\HelxaidCpuPipe'
+SERVICE_BUILD_VERSION = 2026091601
 _service_lhm_computer = None
 
 class HelxaidHelperService(win32serviceutil.ServiceFramework):
@@ -30,10 +46,10 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
         _exe_name_ = sys.executable
         _exe_args_ = '--run-service'
     else:
-        _exe_name_ = sys.executable
-        import os
-        # sys.argv[0] could be helxaid_service.py or launcher.py
-        _exe_args_ = f'"{os.path.abspath(sys.argv[0])}" --run-service'
+        pythonw_path = sys.executable.replace("python.exe", "pythonw.exe")
+        _exe_name_ = pythonw_path if os.path.exists(pythonw_path) else sys.executable
+        _launcher_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher.py")
+        _exe_args_ = f'"{_launcher_path}" --run-service'
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
@@ -62,10 +78,12 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 0, None, win32file.OPEN_EXISTING, 0, None
             )
             win32file.CloseHandle(handle)
-        except:
+        except Exception:
             pass
+        self.ReportServiceStatus(win32service.SERVICE_STOPPED)
 
     def SvcDoRun(self):
+        self.ReportServiceStatus(win32service.SERVICE_RUNNING)
         servicemanager.LogMsg(
             servicemanager.EVENTLOG_INFORMATION_TYPE,
             servicemanager.PYS_SERVICE_STARTED,
@@ -222,6 +240,7 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
             return {"status": "error", "message": f"Failed to spawn ThrottleStop: {spawn_err}"}
 
     def process_command(self, payload_str):
+        global _service_lhm_computer
         try:
             data = json.loads(payload_str)
             action = data.get("action")
@@ -380,7 +399,6 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 # Read LHM sensors from SYSTEM context (elevated) so AMD SMU Tdie temp is accessible.
                 try:
                     import sys as _sys
-                    global _service_lhm_computer
                     if _service_lhm_computer is None:
                         # Build DLL search paths scanning all user AppData dirs
                         dll_candidates = []
@@ -522,36 +540,34 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                         out["igpu_temp"] = out["cpu_temp"]
                     if out["igpu_power"] == 0 and out["cpu_power"] > 0:
                         out["igpu_power"] = out["cpu_power"]
-                    
-                    try:
-                        c.Close()
-                    except Exception:
-                        pass
-                    
+
                     out["status_str"] = "lhm_service"
                     return {"status": "success", "sensors": out}
                 except Exception as ex:
+                    # Reset instance on error so subsequent requests can re-initialize cleanly
+                    _service_lhm_computer = None
                     return {"status": "error", "message": f"LHM service read error: {ex}"}
 
-            elif action == "restart_self":
-                # Restart the service itself to pick up code changes
+            elif action in ("restart_self", "restart"):
+                import threading
+                DETACHED_PROCESS = 0x00000008
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                cmd = 'cmd.exe /c "ping 127.0.0.1 -n 3 >nul & net start HelxaidHelperService"'
                 try:
                     subprocess.Popen(
-                        ['sc.exe', 'stop', 'HelxaidHelperService'],
-                        creationflags=subprocess.CREATE_NO_WINDOW
+                        cmd, shell=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
                     )
-                    import time as _time
-                    _time.sleep(1.5)
-                    subprocess.Popen(
-                        ['sc.exe', 'start', 'HelxaidHelperService'],
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                    )
-                    return {"status": "success", "message": "Service restart initiated."}
-                except Exception as e:
-                    return {"status": "error", "message": str(e)}
+                except Exception:
+                    pass
+                def _delayed_exit():
+                    time.sleep(0.4)
+                    os._exit(0)
+                threading.Thread(target=_delayed_exit, daemon=True).start()
+                return {"status": "success", "message": "Service restart initiated."}
 
             elif action == "get_drive_health":
-                import ctypes, ctypes.wintypes, struct, json as js
+                import ctypes, ctypes.wintypes, struct
 
                 debug_log = []  # Returned in response so main app can print it
 
@@ -566,52 +582,71 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 NVMeDataTypeLogPage = 2
 
                 kernel32 = ctypes.windll.kernel32
-                # Set return type properly so INVALID_HANDLE_VALUE comparison works
                 kernel32.CreateFileW.restype = ctypes.wintypes.HANDLE
                 INVALID_HANDLE_VALUE = ctypes.wintypes.HANDLE(-1).value
 
                 def _read_nvme_smart(drive_idx):
-                    path = f"\\\\.\\PhysicalDrive{drive_idx}"
-                    debug_log.append(f"[NVMe] Opening: {path}")
+                    clean_idx = ''.join(filter(str.isdigit, str(drive_idx))) if any(c.isdigit() for c in str(drive_idx)) else str(drive_idx)
+                    path = f"\\\\.\\PhysicalDrive{clean_idx}"
+                    # Try GENERIC_READ | GENERIC_WRITE first (SYSTEM elevated service has full rights)
                     hnd = kernel32.CreateFileW(
-                        path, GENERIC_READ,
+                        path, GENERIC_READ | GENERIC_WRITE,
                         FILE_SHARE_READ | FILE_SHARE_WRITE,
                         None, OPEN_EXISTING, 0, None
                     )
-                    last_err = ctypes.GetLastError()
-                    debug_log.append(f"[NVMe] hnd={hnd} INVALID={INVALID_HANDLE_VALUE} LastError={last_err}")
                     if hnd is None or hnd == INVALID_HANDLE_VALUE or hnd == -1:
-                        debug_log.append(f"[NVMe] FAILED to open {path}, err={last_err}")
+                        hnd = kernel32.CreateFileW(
+                            path, GENERIC_READ,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            None, OPEN_EXISTING, 0, None
+                        )
+                    if hnd is None or hnd == INVALID_HANDLE_VALUE or hnd == -1:
+                        hnd = kernel32.CreateFileW(
+                            path, 0,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            None, OPEN_EXISTING, 0, None
+                        )
+                    if hnd is None or hnd == INVALID_HANDLE_VALUE or hnd == -1:
                         return None
-                    debug_log.append(f"[NVMe] Handle OK for {path}")
                     try:
-                        header_size = 48
-                        data_size = 512
-                        total_buf_size = header_size + data_size
-                        in_buf = (ctypes.c_byte * total_buf_size)()
-                        out_buf = (ctypes.c_byte * total_buf_size)()
-                        bytes_returned = ctypes.c_ulong(0)
+                        in_buf = (ctypes.c_ubyte * 48)()
+                        out_buf = (ctypes.c_ubyte * 560)()
+                        bytes_returned = ctypes.wintypes.DWORD(0)
 
                         struct.pack_into('<II', in_buf, 0, StorageDeviceProtocolSpecificProperty, 0)
                         struct.pack_into('<IIIIIIIIII', in_buf, 8,
                             ProtocolTypeNvme, NVMeDataTypeLogPage,
-                            0x02, 0, header_size, data_size, 0, 0, 0, 0
+                            0x02, 0, 40, 512, 0, 0, 0, 0
                         )
                         ok = kernel32.DeviceIoControl(
                             hnd, IOCTL_STORAGE_QUERY_PROPERTY,
-                            in_buf, total_buf_size,
-                            out_buf, total_buf_size,
+                            ctypes.byref(in_buf), 48,
+                            ctypes.byref(out_buf), 560,
                             ctypes.byref(bytes_returned), None
                         )
-                        ioctl_err = ctypes.GetLastError()
-                        debug_log.append(f"[NVMe] IOCTL ok={ok}, bytes={bytes_returned.value}, err={ioctl_err}")
-                        if ok:
-                            pct = out_buf[header_size + 5]
-                            temp_k = struct.unpack_from('<H', out_buf, header_size + 1)[0]
-                            temp_c = max(0, temp_k - 273) if temp_k > 200 else 0
-                            debug_log.append(f"[NVMe] Drive{drive_idx}: pct_used={pct}, temp={temp_c}C, raw[48:56]={list(out_buf[48:56])}")
-                            return {"percentage_used": int(pct), "temperature": temp_c, "type": "nvme"}
-                        debug_log.append(f"[NVMe] IOCTL returned False for Drive{drive_idx}")
+                        if ok and bytes_returned.value >= 54:
+                            raw = bytes(out_buf[:bytes_returned.value])
+                            proto_offset = struct.unpack_from('<I', raw, 24)[0] if len(raw) >= 28 else 40
+                            data_offset = 8 + proto_offset if (8 + proto_offset + 6 <= len(raw)) else 48
+                            if data_offset + 6 <= len(raw):
+                                crit_warn = int(raw[data_offset])
+                                temp_k = int.from_bytes(raw[data_offset + 1:data_offset + 3], 'little')
+                                temp_c = max(0, temp_k - 273) if (200 < temp_k < 400) else 0
+                                avail_spare = int(raw[data_offset + 3])
+                                avail_spare_thresh = int(raw[data_offset + 4])
+                                pct_used = int(raw[data_offset + 5])
+                                media_errs = 0
+                                if data_offset + 168 <= len(raw):
+                                    media_errs = int.from_bytes(raw[data_offset + 160:data_offset + 168], 'little')
+                                return {
+                                    "percentage_used": pct_used,
+                                    "temperature": temp_c,
+                                    "available_spare": avail_spare,
+                                    "available_spare_threshold": avail_spare_thresh,
+                                    "critical_warning": crit_warn,
+                                    "media_errors": media_errs,
+                                    "type": "nvme"
+                                }
                         return None
                     except Exception as ex:
                         debug_log.append(f"[NVMe] Exception: {ex}")
@@ -620,26 +655,21 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                         kernel32.CloseHandle(hnd)
 
                 def _read_ata_smart(drive_idx):
-                    debug_log.append(f"[ATA] Reading SMART disk{drive_idx}")
                     try:
                         import win32com.client
                         locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
                         svc = locator.ConnectServer(".", "root\\wmi")
                         data_items = list(svc.ExecQuery("SELECT InstanceName, VendorSpecific FROM MSStorageDriver_FailurePredictData"))
-                        debug_log.append(f"[ATA] Found {len(data_items)} instances")
                         target_idx = str(drive_idx)
                         smart_data = None
                         for item in data_items:
                             iname = str(getattr(item, "InstanceName", "") or "")
-                            debug_log.append(f"[ATA]  Instance: {iname}")
                             if f"disk{target_idx}" in iname.lower() or f"physicaldrive{target_idx}" in iname.lower():
                                 vs = getattr(item, "VendorSpecific", None)
                                 if vs:
                                     smart_data = list(vs)
-                                    debug_log.append(f"[ATA]  Matched! len={len(smart_data)}")
                                 break
                         if not smart_data or len(smart_data) < 362:
-                            debug_log.append(f"[ATA] No valid data for disk{drive_idx}")
                             return None
                         attrs = {}
                         for i in range(30):
@@ -647,89 +677,198 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                             attr_id = smart_data[offset]
                             if attr_id == 0:
                                 continue
+                            current_val = int(smart_data[offset + 3])
                             raw_bytes = bytes(smart_data[offset+5:offset+12]).ljust(8, b'\x00')
-                            attrs[attr_id] = struct.unpack_from('<Q', raw_bytes)[0] & 0xFFFFFFFF
-                        debug_log.append(f"[ATA] disk{drive_idx}: ID5={attrs.get(5,0)} ID197={attrs.get(197,0)} ID198={attrs.get(198,0)}")
-                        return {"attrs": attrs, "type": "ata"}
+                            raw_val = struct.unpack_from('<Q', raw_bytes)[0] & 0xFFFFFFFFFFFF
+                            attrs[attr_id] = {"raw": raw_val, "current": current_val}
+
+                        temp = 0
+                        if 194 in attrs:
+                            t = int(attrs[194]["raw"] & 0xFF)
+                            if 10 <= t <= 95:
+                                temp = t
+                        if not temp and 190 in attrs:
+                            t = int(attrs[190]["raw"] & 0xFF)
+                            if 10 <= t <= 95:
+                                temp = t
+
+                        reallocated = int(attrs.get(5, {}).get("raw", 0))
+                        pending = int(attrs.get(197, {}).get("raw", 0))
+                        uncorrectable = int(attrs.get(198, {}).get("raw", 0))
+                        reported_uncorr = int(attrs.get(187, {}).get("raw", 0))
+                        read_errors = reallocated + pending + uncorrectable + reported_uncorr
+
+                        ssd_wear = 0
+                        has_ssd_wear = False
+                        for wid in (231, 233, 169, 177, 202, 173):
+                            if wid in attrs:
+                                cur = attrs[wid]["current"]
+                                raw = attrs[wid]["raw"]
+                                if 0 < cur <= 100:
+                                    ssd_wear = max(0, 100 - cur)
+                                    has_ssd_wear = True
+                                    break
+                                elif 0 < raw <= 100:
+                                    ssd_wear = max(0, 100 - int(raw))
+                                    has_ssd_wear = True
+                                    break
+
+                        sec_pen = min(99, reallocated * 3 + pending * 5 + uncorrectable * 10 + reported_uncorr * 2)
+                        wear = min(99, max(ssd_wear, sec_pen)) if has_ssd_wear else sec_pen
+
+                        return {
+                            "wear": wear,
+                            "temperature": temp,
+                            "read_errors": read_errors,
+                            "type": "ata"
+                        }
                     except Exception as ex:
                         debug_log.append(f"[ATA] Exception: {ex}")
                         return None
 
                 counters = {}
                 try:
-                    ps_list = subprocess.run(
-                        ['powershell.exe', '-NoProfile', '-Command',
-                         'Get-WmiObject -Namespace root\\microsoft\\windows\\storage -Class MSFT_PhysicalDisk | Select-Object DeviceId, MediaType, BusType | ConvertTo-Json'],
-                        capture_output=True, text=True,
-                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=8
-                    )
-                    debug_log.append(f"PS rc={ps_list.returncode}, out={ps_list.stdout[:200]}")
+                    # 1. Query MSFT_PhysicalDisk and MSFT_StorageReliabilityCounter directly via COM
                     disk_list = []
-                    if ps_list.returncode == 0 and ps_list.stdout.strip():
-                        raw_list = js.loads(ps_list.stdout.strip())
-                        if isinstance(raw_list, dict):
-                            raw_list = [raw_list]
-                        disk_list = raw_list
-
-                    if not disk_list:
-                        disk_list = [{"DeviceId": i, "BusType": 17} for i in range(4)]
-
-                    # SYSTEM elevated query: Get-StorageReliabilityCounter for ALL drives
                     try:
-                        ps_cmd = "Get-PhysicalDisk | Get-StorageReliabilityCounter | Select-Object DeviceId, Wear, Temperature, ReadErrorsTotal, WriteErrorsTotal | ConvertTo-Json"
-                        ps_res = subprocess.run(
-                            ["powershell", "-NoProfile", "-Command", ps_cmd],
-                            capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=8
-                        )
-                        if ps_res.returncode == 0 and ps_res.stdout.strip():
-                            rel_data = js.loads(ps_res.stdout.strip())
-                            if isinstance(rel_data, dict):
-                                rel_data = [rel_data]
-                            for ritem in rel_data:
-                                rid = str(ritem.get("DeviceId", "")).strip()
-                                rwear = int(ritem.get("Wear", 0) or 0)
-                                rtemp = int(ritem.get("Temperature", 0) or 0)
-                                rerrs = int(ritem.get("ReadErrorsTotal", 0) or 0) + int(ritem.get("WriteErrorsTotal", 0) or 0)
-                                counters[rid] = {
-                                    "Wear": rwear,
-                                    "ReadErrors": rerrs,
-                                    "Temperature": rtemp
-                                }
-                            debug_log.append(f"[Get-StorageReliabilityCounter] SYSTEM output: {counters}")
-                    except Exception as ex_rel:
-                        debug_log.append(f"[Get-StorageReliabilityCounter] Exception: {ex_rel}")
+                        import win32com.client
+                        locator = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+                        svc_storage = locator.ConnectServer(".", "root\\microsoft\\windows\\storage")
+                        pd_items = list(svc_storage.ExecQuery("SELECT DeviceId, FriendlyName, MediaType, BusType FROM MSFT_PhysicalDisk"))
+                        for pd in pd_items:
+                            disk_list.append({
+                                "DeviceId": str(getattr(pd, "DeviceId", "")),
+                                "FriendlyName": str(getattr(pd, "FriendlyName", "")),
+                                "MediaType": getattr(pd, "MediaType", 0),
+                                "BusType": getattr(pd, "BusType", 0),
+                            })
+                        rel_items = list(svc_storage.ExecQuery("SELECT DeviceId, Wear, Temperature, ReadErrorsTotal, WriteErrorsTotal, ReadErrorsUncorrected FROM MSFT_StorageReliabilityCounter"))
+                        for rc in rel_items:
+                            rid = str(getattr(rc, "DeviceId", "")).strip()
+                            rwear = int(getattr(rc, "Wear", 0) or 0)
+                            rtemp = int(getattr(rc, "Temperature", 0) or 0)
+                            rerrs = int(getattr(rc, "ReadErrorsTotal", 0) or 0) + int(getattr(rc, "WriteErrorsTotal", 0) or 0) + int(getattr(rc, "ReadErrorsUncorrected", 0) or 0)
+                            counters[rid] = {
+                                "Wear": rwear,
+                                "ReadErrors": rerrs,
+                                "Temperature": rtemp,
+                            }
+                    except Exception as ex_wmi_storage:
+                        debug_log.append(f"[WMI Storage] Direct COM exception: {ex_wmi_storage}")
+
+                    # Fallback to Win32_DiskDrive if MSFT_PhysicalDisk empty
+                    if not disk_list:
+                        try:
+                            import win32com.client
+                            loc = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+                            svc_cim = loc.ConnectServer(".", "root\\cimv2")
+                            dd_items = list(svc_cim.ExecQuery("SELECT Index, Model, MediaType FROM Win32_DiskDrive"))
+                            for dd in dd_items:
+                                disk_list.append({
+                                    "DeviceId": str(getattr(dd, "Index", 0)),
+                                    "FriendlyName": str(getattr(dd, "Model", "")),
+                                    "MediaType": getattr(dd, "MediaType", ""),
+                                    "BusType": 0,
+                                })
+                        except Exception:
+                            disk_list = [{"DeviceId": str(i), "FriendlyName": f"Disk {i}", "MediaType": "SSD", "BusType": 17} for i in range(4)]
+
+                    # Query CrystalDiskInfo if available (Zero-UAC inside elevated SYSTEM context)
+                    cdi_data = {}
+                    try:
+                        from integrations.crystal_disk_info import query_crystal_disk_info
+                        cdi_data = query_crystal_disk_info()
+                        if cdi_data:
+                            debug_log.append(f"[CDI] Found {len(cdi_data)} drive(s) via CrystalDiskInfo.")
+                    except Exception as ex_cdi:
+                        debug_log.append(f"[CDI] Query notice: {ex_cdi}")
 
                     for disk_entry in disk_list:
-                        dev_id = str(disk_entry.get("DeviceId", ""))
-                        bus_type = int(disk_entry.get("BusType") or 0)
-                        
-                        # Use reliability counters if already obtained
+                        raw_dev_id = str(disk_entry.get("DeviceId", "")).strip()
+                        # Strict security sanitization: dev_id must be integer in range [0, 31]
+                        if not raw_dev_id.isdigit() or not (0 <= int(raw_dev_id) <= 31):
+                            continue
+                        dev_id = str(int(raw_dev_id))
+
+                        friendly_name = str(disk_entry.get("FriendlyName", "")).strip()
+                        mt_raw = disk_entry.get("MediaType")
+                        mt_num = int(mt_raw) if str(mt_raw).isdigit() else 0
+                        if mt_num == 4 or "SSD" in str(mt_raw).upper() or any(kw in friendly_name.upper() for kw in ("SSD", "NVME", "M.2", "EVO", "PRO")):
+                            media_type = "SSD"
+                        elif mt_num == 3 or "HDD" in str(mt_raw).upper() or "HARD DISK" in str(mt_raw).upper():
+                            media_type = "HDD"
+                        else:
+                            media_type = "Storage"
+
                         c_entry = counters.get(dev_id, {})
                         wear = c_entry.get("Wear", 0)
                         read_errors = c_entry.get("ReadErrors", 0)
                         temperature = c_entry.get("Temperature", 0)
+                        crit_warn = 0
+                        avail_spare = 0
+                        source = "storage_wmi" if dev_id in counters else "default"
 
-                        if temperature == 0:
+                        # 0. Priority Tier: CrystalDiskInfo data if available
+                        cdi_entry = cdi_data.get(dev_id)
+                        if not cdi_entry:
+                            for _, cd in cdi_data.items():
+                                cd_m = str(cd.get("model", "")).upper()
+                                fn_u = friendly_name.upper()
+                                if cd_m and (cd_m in fn_u or fn_u in cd_m or any(tok in fn_u for tok in cd_m.split() if len(tok) >= 3)):
+                                    cdi_entry = cd
+                                    break
+
+                        if cdi_entry and (cdi_entry.get("temp", 0) > 0 or cdi_entry.get("health_pct", 0) > 0):
+                            if cdi_entry.get("temp", 0) > 0:
+                                temperature = cdi_entry["temp"]
+                            wear = cdi_entry.get("wear", wear)
+                            media_type = cdi_entry.get("media_type", media_type)
+                            source = "crystaldiskinfo"
+                            debug_log.append(f"[CDI] Matched Drive {dev_id} ({friendly_name}): temp={temperature}C health={cdi_entry.get('health_pct')}%")
+                        else:
+                            # 1. Primary: Direct Ring-0 NVMe SMART query for internal PCIe drives
                             nvme = _read_nvme_smart(dev_id)
-                            if nvme:
+                            if nvme and (nvme.get("temperature", 0) > 0 or nvme.get("wear", 0) > 0 or nvme.get("available_spare", 0) > 0):
                                 wear = nvme["percentage_used"]
-                                temperature = nvme["temperature"]
+                                if nvme["temperature"] > 0:
+                                    temperature = nvme["temperature"]
+                                avail_spare = nvme.get("available_spare", 0)
+                                crit_warn = nvme.get("critical_warning", 0)
+                                read_errors = nvme.get("media_errors", read_errors)
+                                source = "nvme_ioctl"
                             else:
+                                # 2. Secondary: Internal ATA SMART query via WMI
                                 ata = _read_ata_smart(dev_id)
-                                if ata:
-                                    attrs = ata["attrs"]
-                                    temperature = int(attrs.get(194, attrs.get(190, 0)) & 0xFF)
-                                    reallocated = int(attrs.get(5, 0))
-                                    pending = int(attrs.get(197, 0))
-                                    uncorrectable = int(attrs.get(198, 0))
-                                    read_errors = reallocated + pending + uncorrectable
-                                    wear = min(99, reallocated * 3 + pending * 2 + uncorrectable * 5)
+                                if ata and (ata.get("temperature", 0) > 0 or ata.get("wear", 0) > 0 or ata.get("read_errors", 0) > 0):
+                                    if ata["wear"] > 0:
+                                        wear = ata["wear"]
+                                    if ata["temperature"] > 0:
+                                        temperature = ata["temperature"]
+                                    read_errors = ata["read_errors"]
+                                    source = "ata_wmi"
+
+                        health_pct = max(0, min(100, 100 - wear))
+                        if crit_warn > 0:
+                            health_pct = min(health_pct, 50)
+                            status = "CRITICAL" if (crit_warn & 0x05) else "WARNING"
+                        elif read_errors > 0 or health_pct < 60:
+                            status = "CRITICAL" if (health_pct < 30 or read_errors >= 10) else "WARNING"
+                        else:
+                            status = "HEALTHY" if health_pct >= 90 else "WARNING"
 
                         counters[dev_id] = {
+                            "Model": friendly_name,
+                            "MediaType": media_type,
                             "Wear": wear,
+                            "HealthPct": health_pct,
+                            "Status": status,
                             "ReadErrors": read_errors,
-                            "Temperature": temperature
+                            "Temperature": temperature,
+                            "AvailableSpare": avail_spare,
+                            "CriticalWarning": crit_warn,
+                            "Source": source,
                         }
+
                     return {"status": "success", "counters": counters, "debug": debug_log}
                 except Exception as e:
                     debug_log.append(f"TOP EXCEPTION: {e}")
@@ -758,6 +897,50 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                     creationflags=flags
                 )
                 return {"status": "success", "message": f"Launched {exe_name} via Zero-UAC Service.", "pid": proc.pid}
+
+            elif action == "kill_processes":
+                proc_names = data.get("process_names", [])
+                pids = data.get("pids", [])
+                results = {}
+
+                for name in proc_names:
+                    if not name:
+                        continue
+                    clean_name = os.path.basename(name).strip()
+                    try:
+                        res = subprocess.run(
+                            ["taskkill.exe", "/F", "/T", "/IM", clean_name],
+                            capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                            timeout=5
+                        )
+                        combined = ((res.stdout or "") + (res.stderr or "")).lower()
+                        if res.returncode == 0 or "success" in combined or "terminated" in combined:
+                            results[clean_name] = {"success": True, "killed": True}
+                        elif "not found" in combined:
+                            results[clean_name] = {"success": True, "killed": False, "reason": "not running"}
+                        else:
+                            results[clean_name] = {"success": False, "error": combined}
+                    except Exception as ex:
+                        results[clean_name] = {"success": False, "error": str(ex)}
+
+                for pid in pids:
+                    try:
+                        pid_int = int(pid)
+                        res = subprocess.run(
+                            ["taskkill.exe", "/F", "/T", "/PID", str(pid_int)],
+                            capture_output=True, text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                            timeout=5
+                        )
+                        combined = ((res.stdout or "") + (res.stderr or "")).lower()
+                        results[str(pid_int)] = {
+                            "success": res.returncode == 0 or "success" in combined or "terminated" in combined
+                        }
+                    except Exception as ex:
+                        results[str(pid)] = {"success": False, "error": str(ex)}
+
+                return {"status": "success", "results": results}
 
             elif action == "manage_service":
                 svc_name = data.get("service_name")
@@ -996,21 +1179,6 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
 
             elif action == "ping":
                 return {"status": "success", "message": "pong"}
-
-            elif action == "restart":
-                def _do_restart():
-                    time.sleep(0.2)
-                    try:
-                        subprocess.Popen(
-                            ["cmd.exe", "/c", "timeout /t 1 /nobreak && net start HelxaidHelperService"],
-                            creationflags=subprocess.CREATE_NO_WINDOW
-                        )
-                    except Exception:
-                        pass
-                    os._exit(1)
-                import threading
-                threading.Thread(target=_do_restart, daemon=True).start()
-                return {"status": "success", "message": "Restarting service..."}
                 
             else:
                 return {"status": "error", "message": "Unknown action."}
@@ -1035,7 +1203,13 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                     sa
                 )
                 
-                win32pipe.ConnectNamedPipe(pipe, None)
+                try:
+                    win32pipe.ConnectNamedPipe(pipe, None)
+                except pywintypes.error as e:
+                    if e.winerror == 535:  # ERROR_PIPE_CONNECTED: client already connected
+                        pass
+                    else:
+                        raise
                 
                 if not self.running:
                     win32file.CloseHandle(pipe)
@@ -1046,6 +1220,8 @@ class HelxaidHelperService(win32serviceutil.ServiceFramework):
                 if hr == 0:
                     payload_str = data.decode('utf-8')
                     response_dict = self.process_command(payload_str)
+                    if isinstance(response_dict, dict):
+                        response_dict["service_version"] = SERVICE_BUILD_VERSION
                     
                     # Send response
                     response_bytes = json.dumps(response_dict).encode('utf-8')
@@ -1094,28 +1270,47 @@ def run_as_service():
                 sys.argv = [sys.argv[0], 'stop']
                 win32serviceutil.HandleCommandLine(HelxaidHelperService)
             elif action == '--setup':
-                sys.argv = [sys.argv[0], '--startup', 'auto', 'install']
-                win32serviceutil.HandleCommandLine(HelxaidHelperService)
-                # Wait a bit for SCM to register it
+                # Remove any existing outdated service registration first
+                try:
+                    win32serviceutil.StopService(HelxaidHelperService._svc_name_)
+                except Exception:
+                    pass
+                try:
+                    win32serviceutil.RemoveService(HelxaidHelperService._svc_name_)
+                except Exception:
+                    pass
                 import time
-                time.sleep(1)
+                time.sleep(0.5)
+                # Register updated service with SCM
+                try:
+                    sys.argv = [sys.argv[0], '--startup', 'auto', 'install']
+                    win32serviceutil.HandleCommandLine(HelxaidHelperService)
+                except Exception:
+                    pass
+                time.sleep(0.5)
                 try:
                     subprocess.run(['sc.exe', 'config', 'HelxaidHelperService', 'start=', 'auto'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
                 except Exception:
                     pass
+                # Start service
                 try:
                     win32serviceutil.StartService(HelxaidHelperService._svc_name_)
-                except Exception as e:
-                    print(f"Failed to start service: {e}")
+                except Exception:
+                    try:
+                        subprocess.run(['net.exe', 'start', 'HelxaidHelperService'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    except Exception:
+                        pass
             elif action == '--teardown':
                 try:
                     win32serviceutil.StopService(HelxaidHelperService._svc_name_)
-                    import time
-                    time.sleep(1)
                 except Exception:
-                    pass # Ignore if not running
-                sys.argv[1] = 'remove'
-                win32serviceutil.HandleCommandLine(HelxaidHelperService)
+                    pass
+                import time
+                time.sleep(0.5)
+                try:
+                    win32serviceutil.RemoveService(HelxaidHelperService._svc_name_)
+                except Exception:
+                    pass
         else:
             # Service Control Manager passes "service name" as arg1 usually, 
             # but PyInstaller passes the exe name. We handle this explicitly in launcher.py.

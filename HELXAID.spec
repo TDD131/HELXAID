@@ -22,6 +22,9 @@ datas = [
     ('python/image_cache_native.pyd', '.'),
     ('python/ambient_glow.cp314-win_amd64.pyd', '.'),
     ('python/ambient_glow.pyd', '.'),
+    ('python/taskbar_native.cp314-win_amd64.pyd', '.'),
+    ('python/taskbar_native.pyd', '.'),
+    ('tools/crystaldiskinfo', 'tools/crystaldiskinfo'),
 ]
 binaries = [
     ('python/helxaid_native.cp314-win_amd64.pyd', '.'),
@@ -36,8 +39,11 @@ binaries = [
     ('python/image_cache_native.pyd', '.'),
     ('python/ambient_glow.cp314-win_amd64.pyd', '.'),
     ('python/ambient_glow.pyd', '.'),
+    ('python/taskbar_native.cp314-win_amd64.pyd', '.'),
+    ('python/taskbar_native.pyd', '.'),
 ]
 hiddenimports = [
+    'taskbar_native',
     'audio_spectrum_native',
     'image_cache_native',
     'ambient_glow',

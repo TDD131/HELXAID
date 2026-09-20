@@ -49,9 +49,9 @@ class ImageCacheEngine:
 
     MAX_RAM_ITEMS = 60          # Reduced from 250 (compact footprint)
     MAX_PIXMAP_ITEMS = 30       # Reduced from 120 (pre-downscaled only)
-    MAX_THUMB_WIDTH = 360       # Never store full-resolution 1280x720 in memory
-    MAX_THUMB_HEIGHT = 360
-    MAX_DISK_SIZE_BYTES = 150 * 1024 * 1024  # 150 MB max disk usage
+    MAX_THUMB_WIDTH = 800       # HD crisp thumbnail resolution for high DPI desktop displays
+    MAX_THUMB_HEIGHT = 800
+    MAX_DISK_SIZE_BYTES = 250 * 1024 * 1024  # 250 MB max disk usage
 
     def __init__(self):
         base_dir = os.environ.get('LOCALAPPDATA') or os.path.expanduser("~")
@@ -109,7 +109,7 @@ class ImageCacheEngine:
                     ba = QByteArray()
                     buf = QBuffer(ba)
                     buf.open(QIODevice.WriteOnly)
-                    scaled.save(buf, "JPEG", 85)
+                    scaled.save(buf, "JPEG", 96)
                     buf.close()
                     return bytes(ba.data())
         except Exception:
