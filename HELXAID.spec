@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 
 build_name = os.environ.get('HELXAID_BUILD_NAME', 'HELXAID')
 
-datas = [
+raw_datas = [
     ('python/UI Icons', 'UI Icons'),
     ('python/UI Sidebar Icons', 'UI Sidebar Icons'),
     ('python/UI Taskbar Icons', 'UI Taskbar Icons'),
@@ -26,7 +26,9 @@ datas = [
     ('python/taskbar_native.pyd', '.'),
     ('tools/crystaldiskinfo', 'tools/crystaldiskinfo'),
 ]
-binaries = [
+datas = [(src, dst) for src, dst in raw_datas if os.path.exists(src)]
+
+raw_binaries = [
     ('python/helxaid_native.cp314-win_amd64.pyd', '.'),
     ('python/helxairo_native.cp314-win_amd64.pyd', '.'),
     ('python/hardware_utils.cp314-win_amd64.pyd', '.'),
@@ -42,6 +44,7 @@ binaries = [
     ('python/taskbar_native.cp314-win_amd64.pyd', '.'),
     ('python/taskbar_native.pyd', '.'),
 ]
+binaries = [(src, dst) for src, dst in raw_binaries if os.path.exists(src)]
 hiddenimports = [
     'taskbar_native',
     'audio_spectrum_native',
