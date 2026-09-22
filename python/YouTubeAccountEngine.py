@@ -3273,37 +3273,35 @@ class FetchYouTubeHomeFeedWorker(QThread):
         })
 
     def _get_fallback_feed(self) -> Tuple[List[Dict[str, Any]], str]:
-        fallback_items = [
-            {"video_id": "4NRXx6U8ABQ", "title": "Hindia - Evaluasi", "channel_name": "Hindia", "channel_id": "UCHindia", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/4NRXx6U8ABQ/mqdefault.jpg", "duration_text": "3:58", "view_count_text": "45M views", "published_time_text": "4 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "36YnV9STBqc", "title": "Bernadya - Satu Bulan", "channel_name": "Bernadya", "channel_id": "UCBernadya", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/36YnV9STBqc/mqdefault.jpg", "duration_text": "3:42", "view_count_text": "28M views", "published_time_text": "3 months ago", "is_live": False, "source": "youtube"},
-            {"video_id": "4xDzrJKXOOY", "title": "Nadin Amizah - Rayuan Perempuan Gila", "channel_name": "Nadin Amizah", "channel_id": "UCNadin", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/4xDzrJKXOOY/mqdefault.jpg", "duration_text": "5:18", "view_count_text": "36M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
-            {"video_id": "60ItHLz5WEA", "title": "Imagine Dragons - Eyes Closed", "channel_name": "Imagine Dragons", "channel_id": "UCImagineDragons", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/60ItHLz5WEA/mqdefault.jpg", "duration_text": "3:20", "view_count_text": "52M views", "published_time_text": "5 months ago", "is_live": False, "source": "youtube"},
-            {"video_id": "sPxXiXucYcM", "title": "The Weeknd - Blinding Lights", "channel_name": "The Weeknd", "channel_id": "UCTheWeeknd", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/sPxXiXucYcM/mqdefault.jpg", "duration_text": "3:22", "view_count_text": "850M views", "published_time_text": "4 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "kJQP7kiw5Fk", "title": "Luis Fonsi - Despacito ft. Daddy Yankee", "channel_name": "Luis Fonsi", "channel_id": "UCLuisFonsi", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/kJQP7kiw5Fk/mqdefault.jpg", "duration_text": "4:42", "view_count_text": "8.4B views", "published_time_text": "7 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "dFAiChO9_OA", "title": "Fujii Kaze - Shinunoga E-Wa", "channel_name": "Fujii Kaze", "channel_id": "UCFujiiKaze", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/dFAiChO9_OA/mqdefault.jpg", "duration_text": "3:05", "view_count_text": "420M views", "published_time_text": "3 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "fJ9rUzIMcZQ", "title": "Queen - Bohemian Rhapsody", "channel_name": "Queen", "channel_id": "UCQueen", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/fJ9rUzIMcZQ/mqdefault.jpg", "duration_text": "5:55", "view_count_text": "1.7B views", "published_time_text": "15 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "JGwWNGJdvx8", "title": "Ed Sheeran - Shape of You", "channel_name": "Ed Sheeran", "channel_id": "UCEdSheeran", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/JGwWNGJdvx8/mqdefault.jpg", "duration_text": "3:53", "view_count_text": "6.2B views", "published_time_text": "7 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "dvgZkm1xWPE", "title": "Coldplay - Viva La Vida", "channel_name": "Coldplay", "channel_id": "UCColdplay", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/dvgZkm1xWPE/mqdefault.jpg", "duration_text": "4:02", "view_count_text": "980M views", "published_time_text": "16 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "PMivT7MJ41M", "title": "Bruno Mars - That's What I Like", "channel_name": "Bruno Mars", "channel_id": "UCBrunoMars", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/PMivT7MJ41M/mqdefault.jpg", "duration_text": "3:26", "view_count_text": "2.2B views", "published_time_text": "7 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "rYEDA3JcQqw", "title": "Adele - Rolling in the Deep", "channel_name": "Adele", "channel_id": "UCAdele", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/rYEDA3JcQqw/mqdefault.jpg", "duration_text": "3:48", "view_count_text": "2.4B views", "published_time_text": "13 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "fhzKLBZJC3w", "title": "King Gnu - SPECIALZ", "channel_name": "King Gnu", "channel_id": "UCKKingGnu", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/fhzKLBZJC3w/mqdefault.jpg", "duration_text": "3:58", "view_count_text": "204M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
-            {"video_id": "ApXoWvfEYVU", "title": "Post Malone, Swae Lee - Sunflower", "channel_name": "Post Malone", "channel_id": "UCPostMalone", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/ApXoWvfEYVU/mqdefault.jpg", "duration_text": "2:38", "view_count_text": "2.1B views", "published_time_text": "5 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "TUVcZfQe-Kw", "title": "Dua Lipa - Levitating", "channel_name": "Dua Lipa", "channel_id": "UCDuaLipa", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/TUVcZfQe-Kw/mqdefault.jpg", "duration_text": "3:23", "view_count_text": "910M views", "published_time_text": "3 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "DyDfgMOUjCI", "title": "Billie Eilish - bad guy", "channel_name": "Billie Eilish", "channel_id": "UCBillieEilish", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/DyDfgMOUjCI/mqdefault.jpg", "duration_text": "3:14", "view_count_text": "1.3B views", "published_time_text": "5 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "09R8_2nJtjg", "title": "Maroon 5 - Sugar", "channel_name": "Maroon 5", "channel_id": "UCMaroon5", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/09R8_2nJtjg/mqdefault.jpg", "duration_text": "3:55", "view_count_text": "4.1B views", "published_time_text": "9 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "b1kbLwvqugk", "title": "Taylor Swift - Anti-Hero", "channel_name": "Taylor Swift", "channel_id": "UCTaylorSwift", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/b1kbLwvqugk/mqdefault.jpg", "duration_text": "3:20", "view_count_text": "220M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
-            {"video_id": "ZRtdQ81jPUQ", "title": "YOASOBI - Idol", "channel_name": "Ayase / YOASOBI", "channel_id": "UCYOASOBI", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/ZRtdQ81jPUQ/mqdefault.jpg", "duration_text": "3:33", "view_count_text": "500M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
-            {"video_id": "Zi_XLOBDo_Y", "title": "Michael Jackson - Billie Jean", "channel_name": "Michael Jackson", "channel_id": "UCMichaelJackson", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/Zi_XLOBDo_Y/mqdefault.jpg", "duration_text": "4:54", "view_count_text": "1.6B views", "published_time_text": "14 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "IcrbM1l_BoI", "title": "Avicii - Wake Me Up", "channel_name": "Avicii", "channel_id": "UCAvicii", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/IcrbM1l_BoI/mqdefault.jpg", "duration_text": "4:07", "view_count_text": "2.3B views", "published_time_text": "10 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "PT2_F-1esPk", "title": "The Chainsmokers - Closer ft. Halsey", "channel_name": "The Chainsmokers", "channel_id": "UCTheChainsmokers", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/PT2_F-1esPk/mqdefault.jpg", "duration_text": "4:05", "view_count_text": "3.1B views", "published_time_text": "7 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "nfs8NYg7yQM", "title": "Charlie Puth - Attention", "channel_name": "Charlie Puth", "channel_id": "UCCharliePuth", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/nfs8NYg7yQM/mqdefault.jpg", "duration_text": "3:28", "view_count_text": "1.5B views", "published_time_text": "6 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "RlPNh_PBZb4", "title": "Olivia Rodrigo - vampire", "channel_name": "Olivia Rodrigo", "channel_id": "UCOliviaRodrigo", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/RlPNh_PBZb4/mqdefault.jpg", "duration_text": "3:39", "view_count_text": "180M views", "published_time_text": "1 year ago", "is_live": False, "source": "youtube"},
-            {"video_id": "H5v3kku4y6Q", "title": "Harry Styles - As It Was", "channel_name": "Harry Styles", "channel_id": "UCHarryStyles", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/H5v3kku4y6Q/mqdefault.jpg", "duration_text": "2:47", "view_count_text": "760M views", "published_time_text": "2 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "Pkh8UtuejGw", "title": "Shawn Mendes, Camila Cabello - Señorita", "channel_name": "Shawn Mendes", "channel_id": "UCShawnMendes", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/Pkh8UtuejGw/mqdefault.jpg", "duration_text": "3:11", "view_count_text": "1.7B views", "published_time_text": "5 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "bpOSxM07931", "title": "Arctic Monkeys - Do I Wanna Know?", "channel_name": "Arctic Monkeys", "channel_id": "UCArcticMonkeys", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/bpOSxM07931/mqdefault.jpg", "duration_text": "4:32", "view_count_text": "1.6B views", "published_time_text": "11 years ago", "is_live": False, "source": "youtube"},
-            {"video_id": "hT_nvWreIhg", "title": "OneRepublic - Counting Stars", "channel_name": "OneRepublic", "channel_id": "UCOneRepublic", "channel_avatar": "", "thumbnail_url": "https://i.ytimg.com/vi/hT_nvWreIhg/mqdefault.jpg", "duration_text": "4:17", "view_count_text": "4.0B views", "published_time_text": "11 years ago", "is_live": False, "source": "youtube"}
-        ]
-        return fallback_items, ""
+        """Dynamically fetch trending global music for unauthenticated / cold-start fallback."""
+        try:
+            from CanonicalMetadataEngine import InnertubeSearchClient
+            live_results = InnertubeSearchClient.search("Top 50 Global Music Hits Official", limit=25, live_only=False)
+            if live_results:
+                items = []
+                for r in live_results:
+                    vid_id = r.get("id", "")
+                    if not vid_id:
+                        continue
+                    items.append({
+                        "video_id": vid_id,
+                        "title": r.get("title", "Unknown Track"),
+                        "channel_name": r.get("uploader", "YouTube Artist"),
+                        "channel_id": "",
+                        "channel_avatar": "",
+                        "thumbnail_url": r.get("thumbnail") or f"https://i.ytimg.com/vi/{vid_id}/mqdefault.jpg",
+                        "duration_text": str(int(r.get("duration", 0) // 60)) + ":" + f"{int(r.get('duration', 0) % 60):02d}" if r.get("duration") else "3:30",
+                        "view_count_text": "Trending",
+                        "published_time_text": "Recent",
+                        "is_live": r.get("is_live", False),
+                        "source": "youtube"
+                    })
+                if items:
+                    return items, ""
+        except Exception as ex:
+            print(f"[YouTubeAccountEngine] Dynamic fallback fetch notice: {ex}")
+
+        return [], ""
 
 
 class SyncYTCookiesWorker(QThread):

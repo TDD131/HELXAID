@@ -1,6 +1,7 @@
 import os
 import json
 import datetime
+import uuid
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox,
     QTreeWidget, QTreeWidgetItem, QHeaderView, QLineEdit, QFrame,
@@ -9,6 +10,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize, QTimer, QThread, QObject, QEvent, QPoint
 from PySide6.QtGui import QCursor, QColor, QIcon, QFont, QKeySequence, QShortcut
 from AnimatedButton import HoverCloseButton
+from VirtualFolderDialog import VirtualFolderDialog
+
 
 class FloatingInvalidPathPanel(QFrame):
     """Floating error dialog panel matching HELXAIL Guide / Modal Panel design system.
@@ -166,59 +169,148 @@ class MediaLibraryTree(QTreeWidget):
         self._rubber_band_origin = None
         self._rubber_band_active = False
         self._rubber_band_dragged = False
+        self._is_drag_hovered = False
+        self._drag_hover_item = None
 
     def eventFilter(self, obj, event):
         if obj == self.viewport():
             if event.type() in (QEvent.DragEnter, QEvent.DragMove):
-                if event.source() == self:
-                    event.ignore()
-                    return True
-                if event.mimeData().hasUrls():
-                    event.acceptProposedAction()
-                    return True
+                event.acceptProposedAction()
+                self._is_drag_hovered = True
+                try:
+                    pos = event.position().toPoint()
+                except AttributeError:
+                    pos = event.pos()
+                self._drag_hover_item = self.itemAt(pos)
+                self.viewport().update()
+                return True
+            elif event.type() == QEvent.DragLeave:
+                self._is_drag_hovered = False
+                self._drag_hover_item = None
+                self.viewport().update()
+                return True
             elif event.type() == QEvent.Drop:
+                target_item = self._drag_hover_item
+                self._is_drag_hovered = False
+                self._drag_hover_item = None
+                self.viewport().update()
                 if event.source() == self:
-                    event.ignore()
+                    event.acceptProposedAction()
                     return True
                 if event.mimeData().hasUrls():
                     urls = event.mimeData().urls()
                     paths = [u.toLocalFile() for u in urls if u.isLocalFile()]
                     if paths and self.page_parent:
-                        self.page_parent._process_dropped_paths(paths)
+                        self.page_parent._process_dropped_paths(paths, target_folder_item=target_item)
                     event.acceptProposedAction()
                     return True
         return super().eventFilter(obj, event)
 
     def dragEnterEvent(self, event):
-        if event.source() == self:
-            event.ignore()
-            return
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragEnterEvent(event)
+        event.acceptProposedAction()
+        self._is_drag_hovered = True
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:
+            pos = event.pos()
+        self._drag_hover_item = self.itemAt(pos)
+        self.viewport().update()
 
     def dragMoveEvent(self, event):
-        if event.source() == self:
-            event.ignore()
-            return
-        if event.mimeData().hasUrls():
-            event.acceptProposedAction()
-        else:
-            super().dragMoveEvent(event)
+        event.acceptProposedAction()
+        self._is_drag_hovered = True
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:
+            pos = event.pos()
+        self._drag_hover_item = self.itemAt(pos)
+        self.viewport().update()
+
+    def dragLeaveEvent(self, event):
+        self._is_drag_hovered = False
+        self._drag_hover_item = None
+        self.viewport().update()
+        super().dragLeaveEvent(event)
 
     def dropEvent(self, event):
+        target_item = self._drag_hover_item
+        self._is_drag_hovered = False
+        self._drag_hover_item = None
+        self.viewport().update()
         if event.source() == self:
-            event.ignore()
+            event.acceptProposedAction()
             return
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             paths = [u.toLocalFile() for u in urls if u.isLocalFile()]
             if paths and self.page_parent:
-                self.page_parent._process_dropped_paths(paths)
+                self.page_parent._process_dropped_paths(paths, target_folder_item=target_item)
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if getattr(self, '_is_drag_hovered', False):
+            from PySide6.QtGui import QPainter, QPen, QColor, QFont
+            from PySide6.QtCore import QRect
+            painter = QPainter(self.viewport())
+            painter.setRenderHint(QPainter.Antialiasing)
+            vp_rect = self.viewport().rect()
+            
+            # Glowing dashed border around tree viewport
+            glow_pen = QPen(QColor("#FF5B06"), 2, Qt.DashLine)
+            painter.setPen(glow_pen)
+            painter.setBrush(QColor(255, 91, 6, 12))
+            painter.drawRoundedRect(vp_rect.adjusted(2, 2, -2, -2), 6, 6)
+            
+            hover_item = getattr(self, '_drag_hover_item', None)
+            if hover_item:
+                item_rect = self.visualItemRect(hover_item)
+                if not item_rect.isEmpty():
+                    is_folder = (hover_item.data(0, Qt.UserRole) == "folder")
+                    is_virtual = (hover_item.data(2, Qt.UserRole) == "virtual")
+                    row_rect = QRect(0, item_rect.top(), self.viewport().width(), item_rect.height())
+                    if is_folder:
+                        if is_virtual:
+                            painter.setPen(QPen(QColor(0, 229, 255, 230), 1.5))
+                            painter.setBrush(QColor(0, 229, 255, 45))
+                            painter.drawRoundedRect(row_rect.adjusted(4, 1, -4, -1), 4, 4)
+                            
+                            painter.setPen(QColor("#00E5FF"))
+                            painter.setFont(QFont("Orbitron", 8, QFont.Bold))
+                            f_title = hover_item.text(1).replace("  [VIRTUAL]", "")
+                            badge_text = f"+ Add into [V] {f_title}"
+                            painter.drawText(row_rect.adjusted(0, 0, -12, 0), Qt.AlignRight | Qt.AlignVCenter, badge_text)
+                        else:
+                            painter.setPen(QPen(QColor(255, 91, 6, 230), 1.5))
+                            painter.setBrush(QColor(255, 91, 6, 50))
+                            painter.drawRoundedRect(row_rect.adjusted(4, 1, -4, -1), 4, 4)
+                            
+                            painter.setPen(QColor("#ffffff"))
+                            painter.setFont(QFont("Orbitron", 8, QFont.Bold))
+                            badge_text = f"+ Add into {hover_item.text(1)}"
+                            painter.drawText(row_rect.adjusted(0, 0, -12, 0), Qt.AlignRight | Qt.AlignVCenter, badge_text)
+                    else:
+                        painter.setPen(QPen(QColor(255, 91, 6, 240), 2))
+                        painter.drawLine(row_rect.left() + 6, row_rect.bottom(), row_rect.right() - 6, row_rect.bottom())
+            else:
+                badge_w = 260
+                badge_h = 32
+                badge_x = (vp_rect.width() - badge_w) // 2
+                badge_y = max(10, vp_rect.height() - badge_h - 16)
+                badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
+                
+                painter.setPen(QPen(QColor("#FF5B06"), 1.5))
+                painter.setBrush(QColor(24, 24, 28, 230))
+                painter.drawRoundedRect(badge_rect, 6, 6)
+                
+                painter.setPen(QColor("#ffffff"))
+                painter.setFont(QFont("Orbitron", 9, QFont.Bold))
+                painter.drawText(badge_rect, Qt.AlignCenter, "DROP TO ADD TO LIBRARY")
+                
+            painter.end()
+
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -496,12 +588,13 @@ class MediaLibraryPage(QWidget):
     def _update_item_selection_styles(self):
         from PySide6.QtGui import QColor
         for folder_item in getattr(self, '_all_folder_items', []):
+            is_virtual = (folder_item.data(2, Qt.UserRole) == "virtual")
             if folder_item.isSelected():
                 for c in range(5):
-                    folder_item.setBackground(c, QColor(255, 255, 255, 31))
+                    folder_item.setBackground(c, QColor(0, 229, 255, 45) if is_virtual else QColor(255, 255, 255, 31))
             else:
                 for c in range(5):
-                    folder_item.setBackground(c, QColor(40, 40, 45, 180))
+                    folder_item.setBackground(c, QColor(20, 38, 52, 200) if is_virtual else QColor(40, 40, 45, 180))
         self.tree.viewport().update()
 
     def _delete_selected_if_not_input(self):
@@ -525,19 +618,47 @@ class MediaLibraryPage(QWidget):
         top_layout.setContentsMargins(30, 20, 30, 20)
         top_layout.setSpacing(15)
         
-        # Top Header (Allow Same folder + Stats)
+        # Top Header (Allow Same folder + Virtual Folder + Stats)
         header_layout = QHBoxLayout()
+        header_layout.setSpacing(14)
         
         self.allow_same_btn = AnimatedCheckBox("Allow Same folder")
         self.allow_same_btn.setObjectName("mediaLibraryAllowSameBtn")
         self.allow_same_btn.setCursor(Qt.PointingHandCursor)
         self.allow_same_btn.toggled.connect(self._on_allow_same_toggled)
         
+        self.new_virtual_folder_btn = QPushButton("+ New Virtual Folder")
+        self.new_virtual_folder_btn.setObjectName("mediaLibraryNewVirtualFolderBtn")
+        self.new_virtual_folder_btn.setCursor(Qt.PointingHandCursor)
+        self.new_virtual_folder_btn.setFixedHeight(26)
+        self.new_virtual_folder_btn.setStyleSheet("""
+            QPushButton#mediaLibraryNewVirtualFolderBtn {
+                background-color: rgba(0, 229, 255, 0.12);
+                color: #00E5FF;
+                border: 1px solid rgba(0, 229, 255, 0.4);
+                border-radius: 6px;
+                padding: 0px 14px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 10px;
+                font-weight: bold;
+            }
+            QPushButton#mediaLibraryNewVirtualFolderBtn:hover {
+                background-color: rgba(0, 229, 255, 0.25);
+                border: 1px solid #00E5FF;
+                color: #ffffff;
+            }
+            QPushButton#mediaLibraryNewVirtualFolderBtn:pressed {
+                background-color: rgba(0, 229, 255, 0.45);
+            }
+        """)
+        self.new_virtual_folder_btn.clicked.connect(self._on_create_virtual_folder_clicked)
+        
         self.stats_label = QLabel("0 tracks | 0:00 total | 0 folder(s)")
         self.stats_label.setObjectName("mediaLibraryStatsLabel")
         self.stats_label.setStyleSheet("color: #b3b3b3; font-size: 13px; font-weight: bold;")
         
         header_layout.addWidget(self.allow_same_btn)
+        header_layout.addWidget(self.new_virtual_folder_btn)
         header_layout.addStretch()
         header_layout.addWidget(self.stats_label)
         
@@ -790,23 +911,48 @@ class MediaLibraryPage(QWidget):
         
         target_item = item if item else (selected[0] if len(selected) == 1 else None)
         if target_item:
+            role = target_item.data(0, Qt.UserRole)
+            role_type = target_item.data(2, Qt.UserRole)
             target_path = target_item.data(1, Qt.UserRole)
-            if target_path:
-                view_explorer_action = QAction("View at Explorer", self)
-                view_explorer_action.triggered.connect(lambda _, p=target_path: self._on_view_at_explorer(p))
-                menu.addAction(view_explorer_action)
+            
+            # 1. Virtual Folder specific actions
+            if role == "folder" and role_type == "virtual":
+                rename_action = QAction("Rename Virtual Folder...", self)
+                rename_action.triggered.connect(lambda _, it=target_item: self._on_rename_virtual_folder(it))
+                menu.addAction(rename_action)
                 
-                if target_path.lower().endswith(('.hxstream', '.strm')):
-                    from StreamFileEngine import read_stream_file
-                    st_data = read_stream_file(target_path)
-                    if st_data and st_data.get('original_url'):
-                        from PySide6.QtGui import QDesktopServices
-                        from PySide6.QtCore import QUrl
-                        open_browser_action = QAction("Open Stream in Browser", self)
-                        open_browser_action.triggered.connect(lambda _, u=st_data['original_url']: QDesktopServices.openUrl(QUrl(u)))
-                        menu.addAction(open_browser_action)
-                        
+                add_tracks_action = QAction("Add Tracks to Virtual Folder...", self)
+                add_tracks_action.triggered.connect(lambda _, it=target_item: self._on_add_tracks_to_virtual_folder_dialog(it))
+                menu.addAction(add_tracks_action)
                 menu.addSeparator()
+            elif role == "track" and role_type == "virtual_track":
+                remove_track_action = QAction("Remove from Virtual Folder", self)
+                remove_track_action.triggered.connect(lambda _, it=target_item: self._on_remove_track_from_virtual_folder(it))
+                menu.addAction(remove_track_action)
+                
+                if target_path and os.path.exists(target_path):
+                    view_explorer_action = QAction("View at Explorer", self)
+                    view_explorer_action.triggered.connect(lambda _, p=target_path: self._on_view_at_explorer(p))
+                    menu.addAction(view_explorer_action)
+                menu.addSeparator()
+            else:
+                # Real folder or standalone file with real path
+                if target_path and os.path.exists(target_path):
+                    view_explorer_action = QAction("View at Explorer", self)
+                    view_explorer_action.triggered.connect(lambda _, p=target_path: self._on_view_at_explorer(p))
+                    menu.addAction(view_explorer_action)
+                    
+                    if target_path.lower().endswith(('.hxstream', '.strm')):
+                        from StreamFileEngine import read_stream_file
+                        st_data = read_stream_file(target_path)
+                        if st_data and st_data.get('original_url'):
+                            from PySide6.QtGui import QDesktopServices
+                            from PySide6.QtCore import QUrl
+                            open_browser_action = QAction("Open Stream in Browser", self)
+                            open_browser_action.triggered.connect(lambda _, u=st_data['original_url']: QDesktopServices.openUrl(QUrl(u)))
+                            menu.addAction(open_browser_action)
+                            
+                    menu.addSeparator()
 
         if selected:
             add_selected_action = QAction("Add to Playlist", self)
@@ -820,6 +966,10 @@ class MediaLibraryPage(QWidget):
         menu.addSeparator()
 
         # Add Media Actions
+        create_vfolder_action = QAction("+ New Virtual Folder...", self)
+        create_vfolder_action.triggered.connect(self._on_create_virtual_folder_clicked)
+        menu.addAction(create_vfolder_action)
+
         add_file_action = QAction("Add File...\tCtrl+O", self)
         add_file_action.triggered.connect(self._add_single_file)
         menu.addAction(add_file_action)
@@ -828,7 +978,7 @@ class MediaLibraryPage(QWidget):
         add_multiple_action.triggered.connect(self._add_multiple_files)
         menu.addAction(add_multiple_action)
 
-        add_folder_action = QAction("Add Folder...\tCtrl+Shift+O", self)
+        add_folder_action = QAction("Add Local Folder...\tCtrl+Shift+O", self)
         add_folder_action.triggered.connect(self._add_single_folder)
         menu.addAction(add_folder_action)
         
@@ -868,8 +1018,17 @@ class MediaLibraryPage(QWidget):
         tracks = []
         role = item.data(0, Qt.UserRole)
         path = item.data(1, Qt.UserRole)
+        role_type = item.data(2, Qt.UserRole)
+        
         if role == "folder":
-            tracks.extend(self._scan_folder(path))
+            if role_type == "virtual":
+                v_id = item.data(3, Qt.UserRole)
+                for lib_item in self._library_data:
+                    if lib_item.get('is_virtual') and (lib_item.get('id') == v_id or lib_item.get('path') == path):
+                        tracks.extend(lib_item.get('tracks', []))
+                        break
+            else:
+                tracks.extend(self._scan_folder(path))
         elif role == "track":
             meta = self._get_track_meta(path)
             if meta:
@@ -879,8 +1038,20 @@ class MediaLibraryPage(QWidget):
     def _on_add_to_playlist(self, item):
         tracks = self._get_tracks_from_item(item)
         group_name = None
-        if item.data(0, Qt.UserRole) == "folder":
-            group_name = os.path.basename(item.data(1, Qt.UserRole)) or item.data(1, Qt.UserRole)
+        role = item.data(0, Qt.UserRole)
+        if role == "folder":
+            if item.data(2, Qt.UserRole) == "virtual":
+                v_id = item.data(3, Qt.UserRole)
+                for lib_item in self._library_data:
+                    if lib_item.get('is_virtual') and (lib_item.get('id') == v_id or lib_item.get('path') == item.data(1, Qt.UserRole)):
+                        group_name = lib_item.get('name', 'Virtual Folder')
+                        break
+                if not group_name:
+                    group_name = item.text(1).replace("  [VIRTUAL]", "").strip()
+                for t in tracks:
+                    t['is_virtual_group'] = True
+            else:
+                group_name = os.path.basename(item.data(1, Qt.UserRole)) or item.data(1, Qt.UserRole)
         if tracks:
             self.tracksAddedToPlaylist.emit(tracks, group_name)
 
@@ -890,37 +1061,79 @@ class MediaLibraryPage(QWidget):
             
     def _on_add_all_to_playlist(self):
         for data in self._library_data:
-            path = data['path']
-            if data.get('is_folder', True) or os.path.isdir(path):
-                tracks = self._scan_folder(path)
-                group_name = os.path.basename(path) or path
-                if tracks:
-                    self.tracksAddedToPlaylist.emit(tracks, group_name)
+            if data.get('is_virtual'):
+                v_tracks = data.get('tracks', [])
+                group_name = data.get('name', 'Virtual Folder')
+                for t in v_tracks:
+                    t['is_virtual_group'] = True
+                if v_tracks:
+                    self.tracksAddedToPlaylist.emit(v_tracks, group_name)
             else:
-                meta = self._get_track_meta(path)
-                if meta:
-                    self.tracksAddedToPlaylist.emit([meta], None)
+                path = data['path']
+                if data.get('is_folder', True) or os.path.isdir(path):
+                    tracks = self._scan_folder(path)
+                    group_name = os.path.basename(path) or path
+                    if tracks:
+                        self.tracksAddedToPlaylist.emit(tracks, group_name)
+                else:
+                    meta = self._get_track_meta(path)
+                    if meta:
+                        self.tracksAddedToPlaylist.emit([meta], None)
             
     def _on_delete_selected(self):
-        root_paths_to_remove = set()
-        for item in self.tree.selectedItems():
-            top = item
-            while top.parent() is not None:
-                top = top.parent()
-            path = top.data(1, Qt.UserRole)
-            if path:
-                root_paths_to_remove.add(path)
-                
-        if not root_paths_to_remove:
+        selected = self.tree.selectedItems()
+        if not selected:
             return
             
-        new_library = []
-        for data in self._library_data:
-            if data['path'] not in root_paths_to_remove:
-                new_library.append(data)
-                
-        if len(new_library) != len(self._library_data):
+        modified = False
+        paths_to_remove = set()
+        virtual_folders_to_remove = set()
+        virtual_track_deletions = []
+
+        for item in selected:
+            role = item.data(0, Qt.UserRole)
+            role_type = item.data(2, Qt.UserRole)
+            if role == "track" and role_type == "virtual_track":
+                v_id = item.data(3, Qt.UserRole)
+                t_path = item.data(1, Qt.UserRole)
+                if v_id and t_path:
+                    virtual_track_deletions.append((v_id, t_path))
+            else:
+                top = item
+                while top.parent() is not None:
+                    top = top.parent()
+                if top.data(2, Qt.UserRole) == "virtual":
+                    v_id = top.data(3, Qt.UserRole) or top.data(1, Qt.UserRole)
+                    if v_id:
+                        virtual_folders_to_remove.add(v_id)
+                else:
+                    path = top.data(1, Qt.UserRole)
+                    if path:
+                        paths_to_remove.add(path)
+
+        if virtual_track_deletions:
+            for v_id, t_path in virtual_track_deletions:
+                for lib_item in self._library_data:
+                    if lib_item.get('is_virtual') and (lib_item.get('id') == v_id or lib_item.get('path') == v_id):
+                        lib_item['tracks'] = [t for t in lib_item.get('tracks', []) if t.get('path') != t_path]
+                        modified = True
+
+        if paths_to_remove or virtual_folders_to_remove:
+            new_library = []
+            for data in self._library_data:
+                if data.get('is_virtual'):
+                    if data.get('id') not in virtual_folders_to_remove and data.get('path') not in virtual_folders_to_remove:
+                        new_library.append(data)
+                    else:
+                        modified = True
+                else:
+                    if data.get('path') not in paths_to_remove:
+                        new_library.append(data)
+                    else:
+                        modified = True
             self._library_data = new_library
+
+        if modified:
             self._save_library()
             self._refresh_tree()
             
@@ -960,7 +1173,14 @@ class MediaLibraryPage(QWidget):
             item = self.tree.topLevelItem(i)
             role_data = item.data(0, Qt.UserRole)
             path = item.data(1, Qt.UserRole)
-            if role_data == "folder":
+            is_virtual = (item.data(2, Qt.UserRole) == "virtual")
+            if is_virtual:
+                v_id = item.data(3, Qt.UserRole) or path
+                for orig in self._library_data:
+                    if orig.get('is_virtual') and (orig.get('id') == v_id or orig.get('path') == path):
+                        new_library.append(orig)
+                        break
+            elif role_data == "folder":
                 new_library.append({'path': path, 'is_folder': True})
             elif role_data == "track":
                 new_library.append({'path': path, 'is_folder': False})
@@ -971,7 +1191,22 @@ class MediaLibraryPage(QWidget):
             self._save_library()
             self._refresh_tree()
         
-    def _process_dropped_paths(self, paths):
+    def _process_dropped_paths(self, paths, target_folder_item=None):
+        if target_folder_item and target_folder_item.data(0, Qt.UserRole) == "folder":
+            if target_folder_item.data(2, Qt.UserRole) == "virtual":
+                v_id = target_folder_item.data(3, Qt.UserRole) or target_folder_item.data(1, Qt.UserRole)
+                self.add_tracks_to_virtual_folder(v_id, paths)
+                return
+            else:
+                for path in paths:
+                    if os.path.isdir(path):
+                        self._add_path_to_library(path, is_folder=True)
+                    elif os.path.isfile(path) and os.path.splitext(path)[1].lower() in self.audio_exts:
+                        self._add_path_to_library(path, is_folder=False)
+                self._save_library()
+                self._refresh_tree()
+                return
+
         for path in paths:
             if os.path.isdir(path):
                 self._add_path_to_library(path, is_folder=True)
@@ -980,6 +1215,90 @@ class MediaLibraryPage(QWidget):
         self._save_library()
         self._refresh_tree()
         
+    # --- Virtual Folder Management ---
+    def _on_create_virtual_folder_clicked(self):
+        name = VirtualFolderDialog.get_name(self, title="CREATE VIRTUAL FOLDER", initial_name="New Virtual Folder", confirm_text="CREATE")
+        if name:
+            self.create_virtual_folder(name)
+
+    def _on_rename_virtual_folder(self, item):
+        v_id = item.data(3, Qt.UserRole) or item.data(1, Qt.UserRole)
+        current_name = item.text(1).replace("  [VIRTUAL]", "").strip()
+        new_name = VirtualFolderDialog.get_name(self, title="RENAME VIRTUAL FOLDER", initial_name=current_name, confirm_text="SAVE")
+        if new_name and new_name != current_name:
+            self.rename_virtual_folder(v_id, new_name)
+
+    def _on_add_tracks_to_virtual_folder_dialog(self, item):
+        v_id = item.data(3, Qt.UserRole) or item.data(1, Qt.UserRole)
+        filters = "Audio Files (" + " ".join(["*" + e for e in self.audio_exts]) + ");;All Files (*.*)"
+        paths, _ = QFileDialog.getOpenFileNames(self, "Add Tracks to Virtual Folder", "", filters)
+        if paths:
+            self.add_tracks_to_virtual_folder(v_id, paths)
+
+    def _on_remove_track_from_virtual_folder(self, item):
+        v_id = item.data(3, Qt.UserRole)
+        track_path = item.data(1, Qt.UserRole)
+        if v_id and track_path:
+            self.remove_track_from_virtual_folder(v_id, track_path)
+
+    def create_virtual_folder(self, name: str):
+        v_id = f"vfolder_{uuid.uuid4().hex[:8]}"
+        new_vfolder = {
+            'id': v_id,
+            'name': name,
+            'is_folder': True,
+            'is_virtual': True,
+            'path': f"virtual://{v_id}",
+            'tracks': []
+        }
+        self._library_data.insert(0, new_vfolder)
+        self._save_library()
+        self._refresh_tree()
+
+    def rename_virtual_folder(self, v_id: str, new_name: str):
+        for item in self._library_data:
+            if item.get('is_virtual') and (item.get('id') == v_id or item.get('path') == v_id):
+                item['name'] = new_name
+                self._save_library()
+                self._refresh_tree()
+                break
+
+    def delete_virtual_folder(self, v_id: str):
+        self._library_data = [item for item in self._library_data if not (item.get('is_virtual') and (item.get('id') == v_id or item.get('path') == v_id))]
+        self._save_library()
+        self._refresh_tree()
+
+    def add_tracks_to_virtual_folder(self, v_id: str, tracks_or_paths: list):
+        for item in self._library_data:
+            if item.get('is_virtual') and (item.get('id') == v_id or item.get('path') == v_id):
+                if 'tracks' not in item:
+                    item['tracks'] = []
+                for trk in tracks_or_paths:
+                    if isinstance(trk, str):
+                        if os.path.isdir(trk):
+                            scanned = self._scan_folder(trk)
+                            for s_trk in scanned:
+                                if not any(t.get('path') == s_trk['path'] for t in item['tracks']):
+                                    item['tracks'].append(s_trk)
+                        elif os.path.isfile(trk) or trk.startswith(('http://', 'https://')):
+                            meta = self._get_track_meta(trk)
+                            if meta and not any(t.get('path') == meta['path'] for t in item['tracks']):
+                                item['tracks'].append(meta)
+                    elif isinstance(trk, dict):
+                        if not any(t.get('path') == trk.get('path') for t in item['tracks']):
+                            item['tracks'].append(trk)
+                self._save_library()
+                self._refresh_tree()
+                break
+
+    def remove_track_from_virtual_folder(self, v_id: str, track_path: str):
+        for item in self._library_data:
+            if item.get('is_virtual') and (item.get('id') == v_id or item.get('path') == v_id):
+                item['tracks'] = [t for t in item.get('tracks', []) if t.get('path') != track_path]
+                self._save_library()
+                self._refresh_tree()
+                break
+
     # --- Shortcuts ---
     def _add_single_file(self):
         filters = "Audio Files (" + " ".join(["*" + e for e in self.audio_exts]) + ");;All Files (*.*)"
@@ -1006,8 +1325,6 @@ class MediaLibraryPage(QWidget):
             self._refresh_tree()
             
     def _add_multiple_folders(self):
-        # QFileDialog doesn't directly support multiple folders on all OS.
-        # Fallback to single folder picker.
         path = QFileDialog.getExistingDirectory(self, "Add Multiple Folders (Select one by one)")
         if path:
             self._add_path_to_library(path, is_folder=True)
@@ -1026,8 +1343,7 @@ class MediaLibraryPage(QWidget):
     def _add_path_to_library(self, path, is_folder):
         norm_target = os.path.normcase(os.path.normpath(path))
         if not self._allow_same_folder:
-            # Check if path already exists
-            if any(os.path.normcase(os.path.normpath(item.get('path', ''))) == norm_target for item in self._library_data):
+            if any(os.path.normcase(os.path.normpath(item.get('path', ''))) == norm_target for item in self._library_data if not item.get('is_virtual')):
                 return # Skip duplicate
         
         self._library_data.append({
@@ -1069,8 +1385,14 @@ class MediaLibraryPage(QWidget):
 
     # --- Tree View Logic ---
     def _refresh_tree(self):
-        # Auto-purge invalid/deleted root paths from library data
-        valid_items = [item for item in self._library_data if item.get('path') and os.path.exists(item.get('path'))]
+        # Auto-purge invalid/deleted root paths from library data, preserving virtual folders
+        valid_items = []
+        for item in self._library_data:
+            if item.get('is_virtual'):
+                valid_items.append(item)
+            elif item.get('path') and os.path.exists(item.get('path')):
+                valid_items.append(item)
+                
         if len(valid_items) != len(self._library_data):
             self._library_data = valid_items
             self._save_library()
@@ -1096,6 +1418,8 @@ class MediaLibraryPage(QWidget):
             
             # Sort folders
             def sort_folder(item_data):
+                if item_data.get('is_virtual'):
+                    return natural_sort_key(item_data.get('name', ''))
                 return natural_sort_key(os.path.basename(item_data['path']))
                 
             if self._sort_column is not None:
@@ -1125,36 +1449,63 @@ class MediaLibraryPage(QWidget):
             sorted_library_data = folders + standalone_files
             
             for item_data in sorted_library_data:
-                path = item_data['path']
-                is_folder = item_data.get('is_folder', True) # Backwards compat
+                path = item_data.get('path', '')
+                is_folder = item_data.get('is_folder', True)
+                is_virtual = item_data.get('is_virtual', False)
                 
                 if is_folder:
                     total_folders += 1
                     folder_item = QTreeWidgetItem(self.tree)
-                    folder_name = os.path.basename(path) or path
                     from PySide6.QtGui import QIcon
-                    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
-                    folder_item.setIcon(1, QIcon(icon_path))
-                    folder_item.setText(1, folder_name)
-                    folder_item.setData(0, Qt.UserRole, "folder")
-                    folder_item.setData(1, Qt.UserRole, path)
+                    
+                    if is_virtual:
+                        folder_name = item_data.get('name', 'Virtual Folder')
+                        v_id = item_data.get('id', '')
+                        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "virtual-folder-icon.svg").replace("\\", "/")
+                        folder_item.setIcon(1, QIcon(icon_path))
+                        folder_item.setText(1, f"{folder_name}  [VIRTUAL]")
+                        folder_item.setData(0, Qt.UserRole, "folder")
+                        folder_item.setData(1, Qt.UserRole, path or f"virtual://{v_id}")
+                        folder_item.setData(2, Qt.UserRole, "virtual")
+                        folder_item.setData(3, Qt.UserRole, v_id)
+                        
+                        v_tracks = item_data.get('tracks', [])
+                        folder_item.setToolTip(1, f"Virtual Folder: {folder_name} ({len(v_tracks)} tracks) [In-App Collection]")
+                        
+                        # Make virtual folder row highlighted with cyber cyan accent
+                        for c in range(5):
+                            folder_item.setBackground(c, QColor(20, 38, 52, 200))
+                            font = folder_item.font(c)
+                            font.setBold(True)
+                            folder_item.setFont(c, font)
+                            if c not in (0, 1):
+                                folder_item.setText(c, "")
+                        tracks = v_tracks
+                    else:
+                        folder_name = os.path.basename(path) or path
+                        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
+                        folder_item.setIcon(1, QIcon(icon_path))
+                        folder_item.setText(1, folder_name)
+                        folder_item.setData(0, Qt.UserRole, "folder")
+                        folder_item.setData(1, Qt.UserRole, path)
+                        folder_item.setData(2, Qt.UserRole, "local")
+                        folder_item.setToolTip(1, f"Local Folder: {path}")
+                        
+                        # Make local folder row highlighted
+                        for c in range(5):
+                            folder_item.setBackground(c, QColor(40, 40, 45, 180))
+                            font = folder_item.font(c)
+                            font.setBold(True)
+                            folder_item.setFont(c, font)
+                            if c not in (0, 1):
+                                folder_item.setText(c, "")
+                        tracks = self._scan_folder(path)
                     
                     folder_item.setText(0, str(total_folders))
                     folder_item.setTextAlignment(0, Qt.AlignCenter)
-                    
-                    # Make folder row highlighted
-                    for c in range(5):
-                        folder_item.setBackground(c, QColor(40, 40, 45, 180))
-                        font = folder_item.font(c)
-                        font.setBold(True)
-                        folder_item.setFont(c, font)
-                        if c not in (0, 1):
-                            folder_item.setText(c, "")
-                            
                     self._all_folder_items.append(folder_item)
                     
-                    # Scan and sort tracks inside folder
-                    tracks = self._scan_folder(path)
+                    # Sort tracks inside folder
                     def sort_track(track):
                         if self._sort_column == "title":
                             return natural_sort_key(track.get('title', ''))
@@ -1177,18 +1528,21 @@ class MediaLibraryPage(QWidget):
                         track_item.setFlags(track_item.flags() & ~Qt.ItemIsDropEnabled)
                         track_item.setData(0, Qt.UserRole, "track")
                         track_item.setData(1, Qt.UserRole, track['path'])
+                        if is_virtual:
+                            track_item.setData(2, Qt.UserRole, "virtual_track")
+                            track_item.setData(3, Qt.UserRole, item_data.get('id', ''))
                         
                         track_item.setText(0, "")
-                        track_item.setText(1, track['title'])
-                        track_item.setText(2, track['artist'])
-                        track_item.setText(3, track['album'])
+                        track_item.setText(1, track.get('title', 'Unknown Track'))
+                        track_item.setText(2, track.get('artist', ''))
+                        track_item.setText(3, track.get('album', ''))
                         
                         if track.get('is_stream') or track.get('is_online') or track.get('is_stream_file') or track['path'].lower().endswith(('.hxstream', '.strm')):
                             stream_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "stream-signal-icon.svg").replace("\\", "/")
                             if os.path.exists(stream_icon_path):
                                 track_item.setIcon(1, QIcon(stream_icon_path))
                         
-                        dur = track['duration']
+                        dur = track.get('duration', 0)
                         if dur > 0:
                             m, s = divmod(int(dur), 60)
                             track_item.setText(4, f"{m}:{s:02d}")
@@ -1251,6 +1605,7 @@ class MediaLibraryPage(QWidget):
             self._update_item_selection_styles()
         finally:
             self.tree.setUpdatesEnabled(True)
+
 
     def _on_item_double_clicked(self, item, column):
         role = item.data(0, Qt.UserRole)

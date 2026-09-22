@@ -140,6 +140,7 @@ class ConvertMp3Worker(QThread):
             cmd = [
                 ffmpeg_bin,
                 "-y",
+                "-threads", "0",
                 "-i", input_path,
                 "-vn",
                 "-acodec", "libmp3lame",

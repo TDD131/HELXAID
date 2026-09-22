@@ -72,9 +72,9 @@ class LyricLineWidget(QWidget):
         if getattr(self, '_is_animating_slide', False):
             return
 
-        parent_w = self.parent().width() if self.parent() else 550
-        w = max(200, self.width() if self.width() > 0 else parent_w)
-        avail_w = max(100, w - 48)
+        parent_w = self.parent().width() if (self.parent() and self.parent().width() > 50) else 380
+        w = max(100, self.width() if self.width() > 0 else parent_w)
+        avail_w = max(50, w - 48)
 
         if getattr(self, '_last_calc_w', None) == avail_w:
             return
@@ -179,11 +179,10 @@ class LyricLineWidget(QWidget):
         super().mousePressEvent(event)
 
     def sizeHint(self) -> QSize:
-        w = max(200, self.width() if self.width() > 0 else 600)
-        return QSize(w, self.height() if self.height() > 0 else 48)
+        return QSize(200, self.height() if self.height() > 0 else 48)
 
     def minimumSizeHint(self) -> QSize:
-        return self.sizeHint()
+        return QSize(50, 48 if not self.translation else 70)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -772,7 +771,6 @@ class LyricsWidget(QWidget):
         self.container_layout = QVBoxLayout(self.container)
         self.container_layout.setContentsMargins(10, 40, 10, 80)
         self.container_layout.setSpacing(8)
-        self.container_layout.setAlignment(Qt.AlignHCenter)
 
         self.scroll_area.setWidget(self.container)
         main_layout.addWidget(self.scroll_area, stretch=1)
@@ -948,7 +946,7 @@ class LyricsWidget(QWidget):
         self.btn_reload.setToolTip("Re-fetch lyrics for current track")
         self.btn_reload.setFixedSize(20, 18)
         self.btn_reload.setIcon(QIcon(self._refresh_icon_path))
-        self.btn_reload.setIconSize(QSize(13, 13))
+        self.btn_reload.setIconSize(QSize(12, 12))
         self.btn_reload.setStyleSheet("""
             QPushButton#lyricReloadBtn {
                 background-color: transparent;
@@ -966,8 +964,6 @@ class LyricsWidget(QWidget):
             }
             QPushButton#lyricReloadBtn:pressed {
                 background-color: rgba(255, 91, 6, 0.50);
-                padding-top: 1px;
-                padding-left: 1px;
             }
         """)
         self.btn_reload.clicked.connect(self.reload_current_track)
@@ -1497,6 +1493,10 @@ class LyricsWidget(QWidget):
             clean_sub = target.strip() if target else None
             if is_instrumental_line(clean_sub):
                 clean_sub = None
+            elif clean_sub:
+                # Defensive guard: reject any subtext containing unparsed delimiter remnants or excessive block lengths
+                if '⟦' in clean_sub or '⟧' in clean_sub or '[ # ]' in clean_sub or '§#§' in clean_sub or '|||' in clean_sub or len(clean_sub) > max(140, len(lw.text or "") * 5):
+                    clean_sub = None
             raw_vocal_subtexts.append(clean_sub)
 
         # 2. Map subtexts strictly across vocal lines respecting subtext_line_offset
@@ -1666,29 +1666,31 @@ class LyricsWidget(QWidget):
             self._reload_spin_anim.start()
 
     def _on_reload_spin_frame(self, angle: float):
-        """Rotate reload SVG icon around center during spin animation."""
+        """Rotate reload SVG icon around invariant center pivot during spin animation."""
         if not hasattr(self, 'btn_reload') or not self.btn_reload:
             return
         if not hasattr(self, '_orig_refresh_pixmap') or self._orig_refresh_pixmap is None or self._orig_refresh_pixmap.isNull():
             path = getattr(self, '_refresh_icon_path', '')
             if not path or not os.path.exists(path):
                 return
-            self._orig_refresh_pixmap = QIcon(path).pixmap(QSize(24, 24))
+            self._orig_refresh_pixmap = QIcon(path).pixmap(QSize(32, 32))
             if self._orig_refresh_pixmap.isNull():
                 return
 
-        size = self._orig_refresh_pixmap.size()
-        rotated = QPixmap(size)
-        rotated.fill(Qt.transparent)
-        p = QPainter(rotated)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-        p.translate(size.width() / 2.0, size.height() / 2.0)
+        canvas_size = 48
+        canvas = QPixmap(canvas_size, canvas_size)
+        canvas.fill(Qt.transparent)
+        p = QPainter(canvas)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        center = canvas_size / 2.0
+        p.translate(center, center)
         p.rotate(angle)
-        p.translate(-size.width() / 2.0, -size.height() / 2.0)
-        p.drawPixmap(0, 0, self._orig_refresh_pixmap)
+        src_w = self._orig_refresh_pixmap.width()
+        src_h = self._orig_refresh_pixmap.height()
+        p.drawPixmap(int(-src_w / 2.0), int(-src_h / 2.0), self._orig_refresh_pixmap)
         p.end()
-        self.btn_reload.setIcon(QIcon(rotated))
+        self.btn_reload.setIcon(QIcon(canvas))
 
     def _on_reload_spin_finished(self):
         """Reset icon to original clean state after rotation animation completes."""
@@ -1778,8 +1780,11 @@ class LyricsWidget(QWidget):
 
     def _render_lyrics(self, data: LyricData):
         if not data:
+            self.current_data = None
             self._clear_lines()
             return
+
+        self.current_data = data
 
         # Smooth in-place update if widgets already match the line count (e.g. Romaji / translation arrival)
         if self.line_widgets and len(self.line_widgets) == len(data.lines):
@@ -1899,6 +1904,13 @@ class LyricsWidget(QWidget):
                 line.set_animating_state(is_animating)
         if not is_animating and hasattr(self, 'active_index') and self.active_index >= 0:
             self._scroll_to_index(self.active_index)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not getattr(self, '_is_animating_slide', False):
+            for line in getattr(self, 'line_widgets', []):
+                if hasattr(line, '_recalculate_height'):
+                    line._recalculate_height()
 
     def cleanup(self):
         """Stop all running timers and property animations before destruction."""

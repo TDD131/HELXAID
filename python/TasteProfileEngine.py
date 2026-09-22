@@ -24,89 +24,89 @@ class TasteProfileEngine:
 
     DEFAULT_PRESETS = [
         {
-            "title": "J-Pop & Anime Live Hits",
-            "artist": "YOASOBI & ZUTOMAYO",
-            "subtitle": "Trending J-Pop Anthems",
-            "original_url": "YOASOBI ZUTOMAYO official music video",
+            "title": "Top 50 Global Hits",
+            "artist": "Worldwide Charts",
+            "subtitle": "Global Top Music Hits",
+            "original_url": "Top 50 Global Hits official music",
             "bg_colors": ["#16222f", "#1f4037"],
-            "badge": "J-POP",
+            "badge": "TOP HITS",
             "is_online": True,
             "is_stream": True,
             "duration": 0
         },
         {
-            "title": "Synthwave Radio 24/7",
-            "artist": "Nightride FM",
-            "subtitle": "Cyberpunk Live Beats",
-            "original_url": "Synthwave 24/7 live stream radio",
+            "title": "Trending Music Worldwide",
+            "artist": "YouTube Charts",
+            "subtitle": "Latest Viral Anthems",
+            "original_url": "Trending Music Hits official music video",
+            "bg_colors": ["#2b1055", "#7597de"],
+            "badge": "TRENDING",
+            "is_online": True,
+            "is_stream": True,
+            "duration": 0
+        },
+        {
+            "title": "Chill Lofi Radio 24/7",
+            "artist": "Lofi Beats",
+            "subtitle": "Relax & Study Stream",
+            "original_url": "Lofi Hip Hop Chill Beats live stream 24/7",
             "bg_colors": ["#4a0e2e", "#e84393"],
-            "badge": "LIVE 24/7",
+            "badge": "LOFI 24/7",
             "is_online": True,
             "is_stream": True,
             "duration": 0
         },
         {
-            "title": "Tokyo City Pop 24/7",
-            "artist": "Tokyo Nights",
-            "subtitle": "80s Japanese Grooves",
-            "original_url": "Japanese City Pop 24/7 live stream",
+            "title": "Synthwave & Retrowave 24/7",
+            "artist": "Cyber Wave",
+            "subtitle": "Cyberpunk Neon Beats",
+            "original_url": "Synthwave 24/7 live stream radio",
             "bg_colors": ["#0f2027", "#203a43"],
-            "badge": "LIVE 24/7",
+            "badge": "SYNTH 24/7",
             "is_online": True,
             "is_stream": True,
             "duration": 0
         },
         {
-            "title": "Dark Industrial & Phonk",
-            "artist": "Cyber Club",
-            "subtitle": "Drift & Bass Stream",
-            "original_url": "Cyberpunk Industrial Dark Electro live stream 24/7",
-            "bg_colors": ["#16222f", "#1f4037"],
-            "badge": "PHONK",
-            "is_online": True,
-            "is_stream": True,
-            "duration": 0
-        },
-        {
-            "title": "Cyberpunk Gaming EDM 24/7",
-            "artist": "Glitch Beat",
-            "subtitle": "High-Energy Gaming Station",
-            "original_url": "Cyberpunk Gaming EDM live stream 24/7",
+            "title": "Pop Essentials",
+            "artist": "Pop Hits",
+            "subtitle": "Popular Global Pop Hits",
+            "original_url": "Today's Top Pop Hits official music video",
             "bg_colors": ["#0575E6", "#00F260"],
-            "badge": "GAMING",
+            "badge": "POP",
             "is_online": True,
             "is_stream": True,
             "duration": 0
         },
         {
-            "title": "Deep Focus & Ambient Space",
-            "artist": "Cosmic Sound",
-            "subtitle": "Atmospheric Space Beats",
-            "original_url": "Deep Focus Ambient live stream 24/7",
+            "title": "Rock & Alternative Classics",
+            "artist": "Rock Anthems",
+            "subtitle": "Legendary Guitar & Rock",
+            "original_url": "Greatest Rock Anthems Classics",
             "bg_colors": ["#141E30", "#243B55"],
-            "badge": "AMBIENT",
+            "badge": "ROCK",
             "is_online": True,
             "is_stream": True,
             "duration": 0
         },
         {
-            "title": "Retro Wave & Future Funk",
-            "artist": "Neon Groove",
-            "subtitle": "80s Retro Arcade Radio",
-            "original_url": "Future Funk Retro Wave live stream 24/7",
+            "title": "Electronic & Dance Beats",
+            "artist": "EDM Club",
+            "subtitle": "High Energy Festival EDM",
+            "original_url": "EDM Dance Hits official music video",
             "bg_colors": ["#8A2387", "#E94057"],
-            "badge": "RETRO",
+            "badge": "EDM",
             "is_online": True,
             "is_stream": True,
             "duration": 0
         },
         {
-            "title": "Gaming OST & Action Beats",
-            "artist": "HoYoFair & Ellen Joe",
-            "subtitle": "Zenless Zone Zero OST",
-            "original_url": "HoYoFair Zenless Zone Zero music",
+            "title": "Acoustic & Peaceful Melodies",
+            "artist": "Acoustic Vibes",
+            "subtitle": "Relaxing Guitar & Piano",
+            "original_url": "Acoustic Guitar Piano Relaxing music",
             "bg_colors": ["#3A1C71", "#D76D77"],
-            "badge": "GAMING OST",
+            "badge": "ACOUSTIC",
             "is_online": True,
             "is_stream": True,
             "duration": 0
@@ -314,76 +314,37 @@ class TasteProfileEngine:
 
         cat_upper = category.upper()
 
-        # Fallback Seed Archetypes (Only if user has zero history whatsoever)
-        COLD_START_SEEDS = {
-            "CHILL": [
-                {"title": "Synthwave Radio Chill Beats", "artist": "Lofi Girl", "duration": 240, "video_id": "4xDzrJKXOOY"},
-                {"title": "Blurred", "artist": "Kiasmos", "duration": 305, "video_id": "as_1_b3v8jA"},
-                {"title": "Awake", "artist": "Tycho", "duration": 283, "video_id": "2fRk5nF_n0s"},
-                {"title": "Singularity", "artist": "Jon Hopkins", "duration": 389, "video_id": "1H3pA4X-nrU"},
-                {"title": "Kerala", "artist": "Bonobo", "duration": 237, "video_id": "S0Q4gqBUs7c"},
-                {"title": "Wet Hands", "artist": "C418", "duration": 90, "video_id": "51oxZ3A8Oq4"},
-                {"title": "Sol", "artist": "Solar Fields", "duration": 502, "video_id": "f02mOEt11OQ"},
-                {"title": "World of Sleepers", "artist": "Carbon Based Lifeforms", "duration": 315, "video_id": "0k50e0Yt9wA"},
-            ],
-            "ENERGY": [
-                {"title": "The Only Thing They Fear Is You", "artist": "Mick Gordon", "duration": 413, "video_id": "kpnW68QNrLg"},
-                {"title": "Bury the Light", "artist": "Casey Edwards", "duration": 582, "video_id": "Jrg9KxGNeJY"},
-                {"title": "CASANOVA POSSE", "artist": "ALI", "duration": 245, "video_id": "sPxXiXucYcM"},
-                {"title": "Rakuen", "artist": "Fujifabric", "duration": 228, "video_id": "6H7AiODxnMs"},
-                {"title": "Haruka Kanata", "artist": "ASIAN KUNG-FU GENERATION", "duration": 242, "video_id": "nJ6A6GC_ki4"},
-                {"title": "Rivers in the Desert", "artist": "Shoji Meguro, Lyn", "duration": 315, "video_id": "sdDiHZMms-s"},
-                {"title": "Rules of Nature", "artist": "Jamie Christopherson", "duration": 150, "video_id": "N3472Q6kvg0"},
-                {"title": "Devil Trigger", "artist": "Casey Edwards", "duration": 405, "video_id": "YV5IheNfKWB"},
-            ],
-            "DEFAULT": [
-                {"title": "Korekara mo Gotobun", "artist": "Nakanoke no Itsutsugo", "duration": 309, "video_id": "sBYRfW0wO1k"},
-                {"title": "Tabiji", "artist": "Fujii Kaze", "duration": 291, "video_id": "yP7K2lXr6GA"},
-                {"title": "Rakuen (Dr. STONE Season 2 OP)", "artist": "Fujifabric", "duration": 228, "video_id": "6H7AiODxnMs"},
-                {"title": "CASANOVA POSSE", "artist": "ALI", "duration": 245, "video_id": "sPxXiXucYcM"},
-                {"title": "Rewrite", "artist": "ASIAN KUNG-FU GENERATION", "duration": 227, "video_id": "OZmGTENstbg"},
-                {"title": "SPECIALZ", "artist": "King Gnu", "duration": 238, "video_id": "fOz_VpZ6f78"},
-                {"title": "Kaikai Kitan", "artist": "Eve", "duration": 220, "video_id": "1tk1P15DXfY"},
-                {"title": "Silhouette", "artist": "KANA-BOON", "duration": 240, "video_id": "dlFA0Zq1k2A"},
-                {"title": "I Really Want to Stay at Your House", "artist": "Rosa Walton", "duration": 246, "video_id": "KvMY1uzSC1E"},
-                {"title": "Charlie's Inferno", "artist": "That Handsome Devil", "duration": 225, "video_id": "HkSUnEiSVYM"}
-            ]
+        # 2. Cold Start: Dynamically query YouTube live charts for the category in real-time
+        seed_key = "CHILL" if "CHILL" in cat_upper else ("ENERGY" if "ENERGY" in cat_upper else ("REPLAY" if "REPLAY" in cat_upper else "DEFAULT"))
+        category_queries = {
+            "CHILL": "Lofi Chill Relax Study Music Hits",
+            "ENERGY": "High Energy Workout Gaming Rock Music",
+            "REPLAY": "Top 50 Global Official Music Hits",
+            "DEFAULT": "Trending Worldwide Music Hits"
         }
+        query_term = category_queries.get(seed_key, category_queries["DEFAULT"])
+        try:
+            from CanonicalMetadataEngine import InnertubeSearchClient
+            live_results = InnertubeSearchClient.search(query_term, limit=count, live_only=False)
+            if live_results:
+                return [
+                    {
+                        "id": f"dyn_{r.get('id', '')}",
+                        "video_id": r.get('id', ''),
+                        "title": r.get('title', 'Unknown Track'),
+                        "artist": r.get('uploader', 'YouTube Artist'),
+                        "album": f"{category.upper()} Mix",
+                        "duration": float(r.get('duration') or 210.0),
+                        "thumbnail_url": r.get('thumbnail') or (f"https://i.ytimg.com/vi/{r.get('id')}/hqdefault.jpg" if r.get('id') else ""),
+                        "source": "youtube",
+                        "original_url": f"https://www.youtube.com/watch?v={r.get('id', '')}",
+                        "badge": category.upper(),
+                        "is_stream": True,
+                        "is_online": True
+                    }
+                    for r in live_results if r.get('id')
+                ]
+        except Exception as ex:
+            print(f"[TasteProfileEngine] Cold start dynamic live fetch notice: {ex}")
 
-        # 1. If user has authentic history pool, filter & synthesize
-        if all_pool:
-            if "REPLAY" in cat_upper:
-                # Most repeated / most frequent tracks first
-                return all_pool[:count]
-            elif "CHILL" in cat_upper:
-                chill_matches = [t for t in all_pool if any(k in t['title'].lower() or k in t['artist'].lower() for k in ['chill', 'lofi', 'slow', 'acoustic', 'ambient', 'piano', 'relax', 'night', 'sun', 'star'])]
-                remaining = [t for t in all_pool if t not in chill_matches]
-                return (chill_matches + remaining)[:count]
-            elif "ENERGY" in cat_upper:
-                energy_matches = [t for t in all_pool if any(k in t['title'].lower() or k in t['artist'].lower() for k in ['rock', 'ost', 'op', 'theme', 'metal', 'phonk', 'bass', 'fast', 'live', 'ali', 'fujifabric', 'generation'])]
-                remaining = [t for t in all_pool if t not in energy_matches]
-                return (energy_matches + remaining)[:count]
-            else:
-                # SUPERMIX & DISCOVER MIX: User's genuine top mix
-                return all_pool[:count]
-
-        # 2. Cold Start fallback: return seed archetype matching the mix category
-        seed_key = "CHILL" if "CHILL" in cat_upper else ("ENERGY" if "ENERGY" in cat_upper else "DEFAULT")
-        seeds = COLD_START_SEEDS.get(seed_key, COLD_START_SEEDS["DEFAULT"])
-        return [
-            {
-                "id": f"dyn_{s['video_id']}",
-                "video_id": s["video_id"],
-                "title": s["title"],
-                "artist": s["artist"],
-                "album": "Recommended Station",
-                "duration": float(s["duration"]),
-                "thumbnail_url": f"https://i.ytimg.com/vi/{s['video_id']}/hqdefault.jpg",
-                "source": "youtube",
-                "original_url": f"https://www.youtube.com/watch?v={s['video_id']}",
-                "badge": category.upper(),
-                "is_stream": True,
-                "is_online": True
-            }
-            for s in seeds
-        ]
+        return []

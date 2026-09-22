@@ -11,12 +11,13 @@ import math
 import subprocess
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QSlider, QTableWidget, QTableWidgetItem, QHeaderView,
+    QSlider, QTableWidget, QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QHeaderView,
     QFrame, QStackedWidget, QSizePolicy, QAbstractItemView,
     QScrollArea, QLineEdit, QSpinBox, QSpacerItem,
     QDialog, QComboBox, QRadioButton, QButtonGroup, QCheckBox,
     QProgressBar, QGroupBox, QSplitter, QSplitterHandle, QApplication, QToolButton,
-    QStyledItemDelegate, QStyle, QMenu, QGraphicsDropShadowEffect, QGraphicsOpacityEffect
+    QStyledItemDelegate, QStyle, QMenu, QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
+    QRubberBand
 )
 from AnimatedButton import FadeHoverButton, AnimatedButton, AnimatedCheckBox
 from smooth_scroll import SmoothScrollArea
@@ -496,7 +497,12 @@ class DownloadWorker(QThread):
                 'no_warnings': True,
                 'retries': 10,
                 'fragment_retries': 10,
-                'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web']}},
+                'file_access_retries': 5,
+                'concurrent_fragment_downloads': 8,
+                'buffersize': 1048576,
+                'http_chunk_size': 10485760,
+                'socket_timeout': 15,
+                'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web', 'mweb']}},
                 'http_headers': {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -9393,14 +9399,11 @@ class PlaylistHeader(QFrame):
     def _on_cover_mousepress(self, event):
         """
         Route mouse button events on the cover container:
-          - Right button → If empty, directly open file picker & template modal. If existing, show context menu.
-          - Left button → Directly open immersive review lightbox.
+          - Right button → Show custom dark-cyber context menu with cover options.
+          - Left button → Open immersive review lightbox.
         """
         if event.button() == Qt.RightButton:
-            if not self._cover_photos and not self._cover_sources:
-                self._open_template_picker()
-            else:
-                self._show_cover_context_menu(event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos())
+            self._show_cover_context_menu(event.globalPosition().toPoint() if hasattr(event, 'globalPosition') else event.globalPos())
         elif event.button() == Qt.LeftButton:
             self._open_cover_manager('review')
 
@@ -9413,26 +9416,23 @@ class PlaylistHeader(QFrame):
         menu.setObjectName("playlistCoverContextMenu")
         menu.setStyleSheet("""
             QMenu#playlistCoverContextMenu {
-                background-color: #12131A;
-                border: 1px solid rgba(255, 255, 255, 0.12);
+                background: rgba(25, 25, 35, 0.98);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 0.1);
                 border-radius: 8px;
-                padding: 4px;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 11px;
+                padding: 5px;
             }
             QMenu#playlistCoverContextMenu::item {
-                color: #D1D5DB;
-                padding: 7px 22px 7px 10px;
-                border-radius: 5px;
+                padding: 8px 25px;
+                border-radius: 4px;
             }
             QMenu#playlistCoverContextMenu::item:selected {
-                background-color: rgba(255, 91, 6, 0.25);
-                color: #FFFFFF;
+                background: rgba(255, 255, 255, 0.12);
             }
             QMenu#playlistCoverContextMenu::separator {
                 height: 1px;
-                background: rgba(255, 255, 255, 0.08);
-                margin: 4px 6px;
+                background: rgba(255, 255, 255, 0.1);
+                margin: 5px 10px;
             }
         """)
 
@@ -9440,7 +9440,7 @@ class PlaylistHeader(QFrame):
         menu.aboutToHide.connect(self._resume_resume_timer)
 
         menu.addAction("Review Cover (Lightbox)", lambda: self._open_cover_manager('review'))
-        menu.addAction("Edit Cover & Collage...", lambda: self._open_cover_manager('edit'))
+        menu.addAction("Edit Cover && Collage...", lambda: self._open_cover_manager('edit'))
         menu.addAction("Change Template...", self._open_template_picker)
         menu.addAction("Save Current Cover As...", self._export_current_cover)
         menu.addSeparator()
@@ -9871,6 +9871,475 @@ class PlaylistHeader(QFrame):
             print(f"[Cover] Failed to load saved cover: {e}")
 
 
+class PlaylistTreeWidget(QTreeWidget):
+    """
+    Custom QTreeWidget subclass with native C++ virtual overrides for Drag & Drop,
+    streaming track export (.hxstream generation), rubber band selection, and viewport events.
+    """
+    def __init__(self, table_parent=None, parent=None):
+        super().__init__(parent)
+        self.table_parent = table_parent
+        self.setAcceptDrops(True)
+        self.viewport().setAcceptDrops(True)
+        self.viewport().installEventFilter(self)
+        
+        self._drag_start_pos = None
+        self._click_start_pos = None
+        
+        from PySide6.QtWidgets import QRubberBand
+        from PySide6.QtCore import QRect
+        self._rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
+        self._rubber_band_origin = None
+        self._rubber_band_active = False
+        self._rubber_band_dragged = False
+        self._is_drag_hovered = False
+        self._drag_hover_item = None
+        self._dropped_target_group = None
+
+    def eventFilter(self, obj, event):
+        if obj == self.viewport():
+            if event.type() in (QEvent.DragEnter, QEvent.DragMove):
+                event.acceptProposedAction()
+                self._is_drag_hovered = True
+                try:
+                    pos = event.position().toPoint()
+                except AttributeError:
+                    pos = event.pos()
+                self._drag_hover_item = self.itemAt(pos)
+                self.viewport().update()
+                return True
+            elif event.type() == QEvent.DragLeave:
+                self._is_drag_hovered = False
+                self._drag_hover_item = None
+                self.viewport().update()
+                return True
+            elif event.type() == QEvent.Drop:
+                target_folder = self._drag_hover_item.text(1).replace("  [VIRTUAL]", "").strip() if (self._drag_hover_item and self._drag_hover_item.data(0, Qt.UserRole) == "folder") else None
+                is_virtual_drop = bool(self._drag_hover_item and self._drag_hover_item.data(2, Qt.UserRole) == "virtual")
+                self._is_drag_hovered = False
+                self._drag_hover_item = None
+                self.viewport().update()
+                if event.source() == self:
+                    self._handle_internal_move(target_folder, is_virtual=is_virtual_drop)
+                    event.acceptProposedAction()
+                    return True
+                self._dropped_target_group = target_folder
+                self._forward_drop(event)
+                event.acceptProposedAction()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _handle_internal_move(self, target_folder, is_virtual=False):
+        """Move dragged playlist tracks into or out of folders."""
+        if not self.table_parent or not hasattr(self.table_parent, '_tracks'):
+            return
+        selected = self.selectedItems()
+        if not selected:
+            return
+            
+        modified = False
+        for item in selected:
+            orig_idx = item.data(0, Qt.UserRole)
+            if isinstance(orig_idx, int) and 0 <= orig_idx < len(self.table_parent._tracks):
+                track = self.table_parent._tracks[orig_idx]
+                if target_folder:
+                    if track.get('playlist_group') != target_folder:
+                        track['playlist_group'] = target_folder
+                        if is_virtual:
+                            track['is_virtual_group'] = True
+                        modified = True
+                else:
+                    if 'playlist_group' in track:
+                        track.pop('playlist_group', None)
+                        track.pop('is_virtual_group', None)
+                        modified = True
+                        
+        if modified:
+            self.table_parent.set_tracks(self.table_parent._tracks)
+            p = self.table_parent.parent()
+            while p:
+                if hasattr(p, '_save_state'):
+                    p._save_state()
+                    break
+                p = p.parent()
+
+    def _forward_drop(self, event):
+        w = self.table_parent.parent() if self.table_parent else self.parent()
+        music_panel = None
+        while w:
+            if hasattr(w, '_playlist') and hasattr(w, '_save_state'):
+                music_panel = w
+                break
+            w = w.parent()
+        if music_panel and hasattr(music_panel, 'dropEvent'):
+            music_panel.dropEvent(event)
+        elif self.table_parent and hasattr(self.table_parent.parent(), 'dropEvent'):
+            self.table_parent.parent().dropEvent(event)
+
+    def dragEnterEvent(self, event):
+        event.acceptProposedAction()
+        self._is_drag_hovered = True
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:
+            pos = event.pos()
+        self._drag_hover_item = self.itemAt(pos)
+        self.viewport().update()
+
+    def dragMoveEvent(self, event):
+        event.acceptProposedAction()
+        self._is_drag_hovered = True
+        try:
+            pos = event.position().toPoint()
+        except AttributeError:
+            pos = event.pos()
+        self._drag_hover_item = self.itemAt(pos)
+        self.viewport().update()
+
+    def dragLeaveEvent(self, event):
+        self._is_drag_hovered = False
+        self._drag_hover_item = None
+        self.viewport().update()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        target_folder = self._drag_hover_item.text(1).replace("  [VIRTUAL]", "").strip() if (self._drag_hover_item and self._drag_hover_item.data(0, Qt.UserRole) == "folder") else None
+        is_virtual_drop = bool(self._drag_hover_item and self._drag_hover_item.data(2, Qt.UserRole) == "virtual")
+        self._is_drag_hovered = False
+        self._drag_hover_item = None
+        self.viewport().update()
+        if event.source() == self:
+            self._handle_internal_move(target_folder, is_virtual=is_virtual_drop)
+            event.acceptProposedAction()
+            return
+        self._dropped_target_group = target_folder
+        self._forward_drop(event)
+        event.acceptProposedAction()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if getattr(self, '_is_drag_hovered', False):
+            from PySide6.QtGui import QPainter, QPen, QColor, QFont
+            from PySide6.QtCore import QRect
+            painter = QPainter(self.viewport())
+            painter.setRenderHint(QPainter.Antialiasing)
+            vp_rect = self.viewport().rect()
+            
+            # Glowing dashed border around tree viewport
+            glow_pen = QPen(QColor("#FF5B06"), 2, Qt.DashLine)
+            painter.setPen(glow_pen)
+            painter.setBrush(QColor(255, 91, 6, 12))
+            painter.drawRoundedRect(vp_rect.adjusted(2, 2, -2, -2), 6, 6)
+            
+            hover_item = getattr(self, '_drag_hover_item', None)
+            if hover_item:
+                item_rect = self.visualItemRect(hover_item)
+                if not item_rect.isEmpty():
+                    is_folder = (hover_item.data(0, Qt.UserRole) == "folder")
+                    is_virtual = (hover_item.data(2, Qt.UserRole) == "virtual")
+                    row_rect = QRect(0, item_rect.top(), self.viewport().width(), item_rect.height())
+                    if is_folder:
+                        if is_virtual:
+                            painter.setPen(QPen(QColor(0, 229, 255, 230), 1.5))
+                            painter.setBrush(QColor(0, 229, 255, 45))
+                            painter.drawRoundedRect(row_rect.adjusted(4, 1, -4, -1), 4, 4)
+                            
+                            painter.setPen(QColor("#00E5FF"))
+                            painter.setFont(QFont("Orbitron", 8, QFont.Bold))
+                            f_clean = hover_item.text(1).replace("  [VIRTUAL]", "").strip()
+                            badge_text = f"+ Add into [V] {f_clean}"
+                            painter.drawText(row_rect.adjusted(0, 0, -12, 0), Qt.AlignRight | Qt.AlignVCenter, badge_text)
+                        else:
+                            painter.setPen(QPen(QColor(255, 91, 6, 230), 1.5))
+                            painter.setBrush(QColor(255, 91, 6, 50))
+                            painter.drawRoundedRect(row_rect.adjusted(4, 1, -4, -1), 4, 4)
+                            
+                            painter.setPen(QColor("#ffffff"))
+                            painter.setFont(QFont("Orbitron", 8, QFont.Bold))
+                            badge_text = f"+ Add into {hover_item.text(1)}"
+                            painter.drawText(row_rect.adjusted(0, 0, -12, 0), Qt.AlignRight | Qt.AlignVCenter, badge_text)
+                    else:
+                        painter.setPen(QPen(QColor(255, 91, 6, 240), 2))
+                        painter.drawLine(row_rect.left() + 6, row_rect.bottom(), row_rect.right() - 6, row_rect.bottom())
+            else:
+                badge_w = 280
+                badge_h = 32
+                badge_x = (vp_rect.width() - badge_w) // 2
+                badge_y = max(10, vp_rect.height() - badge_h - 16)
+                badge_rect = QRect(badge_x, badge_y, badge_w, badge_h)
+                
+                painter.setPen(QPen(QColor("#FF5B06"), 1.5))
+                painter.setBrush(QColor(24, 24, 28, 230))
+                painter.drawRoundedRect(badge_rect, 6, 6)
+                
+                painter.setPen(QColor("#ffffff"))
+                painter.setFont(QFont("Orbitron", 9, QFont.Bold))
+                painter.drawText(badge_rect, Qt.AlignCenter, "DROP TRACKS / STREAMS TO ADD")
+                
+            painter.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+            self._click_start_pos = event.pos()
+            item = self.itemAt(event.pos())
+            column = self.columnAt(event.pos().x())
+            
+            should_rubber_band = False
+            if not item or column == -1:
+                should_rubber_band = True
+            elif item and item.isSelected():
+                should_rubber_band = False
+            
+            if should_rubber_band:
+                self._rubber_band_origin = event.pos()
+                from PySide6.QtCore import QRect
+                self._rubber_band.setGeometry(QRect(self._rubber_band_origin, self._rubber_band_origin))
+                self._rubber_band.show()
+                self._rubber_band_active = True
+                self._rubber_band_dragged = False
+                
+                if not item and not (event.modifiers() & Qt.ControlModifier):
+                    self.clearSelection()
+                    if self.table_parent:
+                        self.table_parent._update_item_selection_styles()
+                    
+                super().mousePressEvent(event)
+                return
+            else:
+                self._rubber_band_active = False
+            
+            if self.table_parent:
+                if not self.table_parent._click_timer.isActive():
+                    self.table_parent._click_count = 1
+                    self.table_parent._last_clicked_item = item
+                    self.table_parent._click_timer.start(500)
+                else:
+                    self.table_parent._click_count += 1
+                
+                if self.table_parent._click_count >= 3:
+                    self.table_parent._click_timer.stop()
+                    item_target = getattr(self.table_parent, '_last_clicked_item', None)
+                    if item_target:
+                        try:
+                            if item_target.data(0, Qt.UserRole) == "folder":
+                                folder_name = item_target.text(1)
+                                self.table_parent.flattenGroup.emit(folder_name)
+                        except RuntimeError:
+                            pass
+                    self.table_parent._click_count = 0
+                    self.table_parent._last_clicked_item = None
+                    return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            item = self.itemAt(event.pos())
+            
+            if self.table_parent:
+                if self.table_parent._click_timer.isActive():
+                    self.table_parent._click_count += 1
+                else:
+                    self.table_parent._click_count = 2
+                    self.table_parent._last_clicked_item = item
+                    self.table_parent._click_timer.start(500)
+                    
+                if self.table_parent._click_count >= 3:
+                    self.table_parent._click_timer.stop()
+                    item_target = getattr(self.table_parent, '_last_clicked_item', None)
+                    if item_target and item_target.data(0, Qt.UserRole) == "folder":
+                        folder_name = item_target.text(1)
+                        self.table_parent.flattenGroup.emit(folder_name)
+                    self.table_parent._click_count = 0
+                    self.table_parent._last_clicked_item = None
+                    return
+                
+            if item and item.data(0, Qt.UserRole) == "folder":
+                return # Block native expansion!
+                
+        super().mouseDoubleClickEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if getattr(self, '_rubber_band_active', False) and getattr(self, '_rubber_band_origin', None) is not None:
+            if (event.pos() - self._rubber_band_origin).manhattanLength() > 3:
+                self._rubber_band_dragged = True
+                
+            from PySide6.QtCore import QRect
+            rect = QRect(self._rubber_band_origin, event.pos()).normalized()
+            self._rubber_band.setGeometry(rect)
+            
+            def check_item(item):
+                item_rect = self.visualItemRect(item)
+                if rect.top() <= item_rect.bottom() and rect.bottom() >= item_rect.top():
+                    item.setSelected(True)
+                else:
+                    item.setSelected(False)
+                if item.isExpanded():
+                    for j in range(item.childCount()):
+                        check_item(item.child(j))
+                        
+            for i in range(self.topLevelItemCount()):
+                check_item(self.topLevelItem(i))
+            if self.table_parent:
+                self.table_parent._update_item_selection_styles()
+            return
+
+        if (event.buttons() & Qt.LeftButton) and self._drag_start_pos is not None:
+            dist = (event.pos() - self._drag_start_pos).manhattanLength()
+            if dist >= QApplication.startDragDistance():
+                selected = self.selectedItems()
+                if selected:
+                    self.startDrag(Qt.CopyAction | Qt.MoveAction)
+                    self._drag_start_pos = None
+                    return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if getattr(self, '_rubber_band_active', False):
+                self._rubber_band.hide()
+                self._rubber_band_active = False
+                self._rubber_band_origin = None
+                if getattr(self, '_rubber_band_dragged', False):
+                    if self.table_parent:
+                        self.table_parent._update_item_selection_styles()
+                    return
+            else:
+                click_pos = getattr(self, '_click_start_pos', None)
+                if click_pos and (event.pos() - click_pos).manhattanLength() < 5:
+                    if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
+                        item = self.itemAt(event.pos())
+                        if item:
+                            self.clearSelection()
+                            item.setSelected(True)
+                            self.setCurrentItem(item)
+                        else:
+                            self.clearSelection()
+                        if self.table_parent:
+                            self.table_parent._update_item_selection_styles()
+                        return
+        self._drag_start_pos = None
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+            if self.table_parent:
+                self.table_parent.select_all()
+            event.accept()
+            return
+        elif event.key() == Qt.Key_Delete:
+            if self.table_parent:
+                self.table_parent._on_delete_selected()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def mimeData(self, items):
+        import os
+        import tempfile
+        from PySide6.QtCore import QMimeData, QUrl
+        
+        mime = QMimeData()
+        urls = []
+        tracks = getattr(self.table_parent, '_tracks', []) if self.table_parent else []
+        
+        def process_track(track, item_title=""):
+            path = track.get('path')
+            if path and os.path.exists(path):
+                urls.append(QUrl.fromLocalFile(path))
+            else:
+                # Direct stream track without a physical file on disk yet
+                # Automatically create an ultra-light .hxstream descriptor file for dragging into File Explorer / Media Library
+                try:
+                    from StreamFileEngine import write_stream_file
+                    temp_drag_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_DragExport')
+                    os.makedirs(temp_drag_dir, exist_ok=True)
+                    
+                    orig_url = track.get('original_url') or track.get('stream_url') or track.get('path') or ''
+                    track_meta = {
+                        'title': track.get('title') or item_title or 'Unknown Stream',
+                        'artist': track.get('artist') or '',
+                        'album': track.get('album') or 'Online Stream',
+                        'duration': track.get('duration') or 0,
+                        'original_url': orig_url,
+                        'is_stream': True,
+                        'is_online': True,
+                        'source': track.get('source') or track.get('stream_provider') or 'online',
+                        'thumbnail_url': track.get('cover_url') or track.get('thumbnail_url', '')
+                    }
+                    stream_file = write_stream_file(temp_drag_dir, track_meta, format_ext=".hxstream")
+                    if stream_file and os.path.exists(stream_file):
+                        urls.append(QUrl.fromLocalFile(stream_file))
+                except Exception as e:
+                    print(f"[PlaylistTreeWidget] Error creating .hxstream for drag: {e}")
+
+        for item in items:
+            role_data = item.data(0, Qt.UserRole)
+            if isinstance(role_data, int) and 0 <= role_data < len(tracks):
+                process_track(tracks[role_data], item.text(1))
+            elif role_data == "folder":
+                folder_path = item.data(1, Qt.UserRole)
+                if folder_path and os.path.exists(folder_path):
+                    urls.append(QUrl.fromLocalFile(folder_path))
+                else:
+                    group_name = item.text(1)
+                    found_folder = None
+                    for track in tracks:
+                        if track.get('playlist_group') == group_name:
+                            tpath = track.get('path')
+                            if tpath and os.path.exists(tpath):
+                                parent_dir = os.path.dirname(tpath)
+                                if os.path.isdir(parent_dir):
+                                    found_folder = parent_dir
+                                    break
+                    if found_folder and os.path.exists(found_folder):
+                        urls.append(QUrl.fromLocalFile(found_folder))
+                    else:
+                        for track in tracks:
+                            if track.get('playlist_group') == group_name:
+                                process_track(track, track.get('title', ''))
+
+        if urls:
+            mime.setUrls(urls)
+        return mime
+
+    def startDrag(self, supportedActions):
+        from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont
+        from PySide6.QtCore import Qt, QPoint
+        
+        selected_items = self.selectedItems()
+        if not selected_items:
+            return
+            
+        drag = QDrag(self)
+        drag.setMimeData(self.mimeData(selected_items))
+        
+        count = len(selected_items)
+        text = f"Dragging {count} item{'s' if count > 1 else ''}"
+        if count == 1:
+            text = selected_items[0].text(1)
+            if len(text) > 25: text = text[:22] + "..."
+            
+        pixmap = QPixmap(200, 36)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(QColor(40, 40, 45, 230))
+        painter.setPen(QColor("#FF5B06"))
+        painter.drawRoundedRect(1, 1, 198, 34, 6, 6)
+        
+        painter.setPen(QColor("#ffffff"))
+        font = QFont("Orbitron", 9, QFont.Bold)
+        painter.setFont(font)
+        painter.drawText(0, 0, 200, 36, Qt.AlignCenter, text)
+        painter.end()
+        
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
+        drag.exec_(supportedActions)
+
+
 class PlaylistTable(QWidget):
     """
     Playlist table using QTreeWidget to support folders.
@@ -9899,18 +10368,36 @@ class PlaylistTable(QWidget):
         self._sorted_indices = []  # Stores sorted order of original indices
         self._click_count = 0
         self._last_clicked_item = None
+        
+        from PySide6.QtCore import QTimer
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.timeout.connect(self._on_click_timeout)
+        
         self._setup_ui()
+
+    def _on_click_timeout(self):
+        if self._click_count == 2:
+            item = getattr(self, '_last_clicked_item', None)
+            try:
+                if item and item.data(0, Qt.UserRole) == "folder":
+                    item.setExpanded(not item.isExpanded())
+            except RuntimeError:
+                pass
+        
+        self._click_count = 0
+        self._last_clicked_item = None
     
     def _setup_ui(self):
-        from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QHeaderView, QAbstractItemView
+        from PySide6.QtWidgets import QTreeWidgetItem, QHeaderView, QAbstractItemView
         from smooth_scroll import SmoothTableWidget
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Create tree
-        self.tree = QTreeWidget()
+        # Create tree using dedicated PlaylistTreeWidget subclass
+        self.tree = PlaylistTreeWidget(table_parent=self)
         self.tree.setObjectName("playlistTree")
         self.tree.setColumnCount(4)
         self.tree.setHeaderLabels(["#", "Title", "Date Added", "Duration"])
@@ -9934,320 +10421,6 @@ class PlaylistTable(QWidget):
         self.tree.setAcceptDrops(True)
         self.tree.setDropIndicatorShown(True)
         self.tree.setDragDropMode(QAbstractItemView.DragDrop)
-        
-        orig_tree_dragEnterEvent = self.tree.dragEnterEvent
-        orig_tree_dragMoveEvent = self.tree.dragMoveEvent
-        orig_tree_dropEvent = self.tree.dropEvent
-
-        def _playlist_dragEnterEvent(event):
-            if event.source() == self.tree:
-                orig_tree_dragEnterEvent(event)
-            elif event.mimeData().hasUrls():
-                event.acceptProposedAction()
-            else:
-                event.ignore()
-
-        def _playlist_dragMoveEvent(event):
-            if event.source() == self.tree:
-                orig_tree_dragMoveEvent(event)
-            elif event.mimeData().hasUrls():
-                event.acceptProposedAction()
-            else:
-                event.ignore()
-
-        def _playlist_dropEvent(event):
-            if event.source() == self.tree:
-                orig_tree_dropEvent(event)
-                return
-            if event.mimeData().hasUrls():
-                w = self.parent()
-                music_panel = None
-                while w:
-                    if hasattr(w, '_playlist') and hasattr(w, '_save_state'):
-                        music_panel = w
-                        break
-                    w = w.parent()
-                if music_panel and hasattr(music_panel, 'dropEvent'):
-                    music_panel.dropEvent(event)
-                elif hasattr(self.parent(), 'dropEvent'):
-                    self.parent().dropEvent(event)
-                event.acceptProposedAction()
-
-        self.tree.dragEnterEvent = _playlist_dragEnterEvent
-        self.tree.dragMoveEvent = _playlist_dragMoveEvent
-        self.tree.dropEvent = _playlist_dropEvent
-
-        orig_playlist_keyPressEvent = self.tree.keyPressEvent
-        def _playlist_keyPressEvent(event):
-            if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
-                self.select_all()
-                event.accept()
-                return
-            elif event.key() == Qt.Key_Delete:
-                self._on_delete_selected()
-                event.accept()
-                return
-            orig_playlist_keyPressEvent(event)
-        self.tree.keyPressEvent = _playlist_keyPressEvent
-
-        # --- Rubber Band Setup ---
-        from PySide6.QtWidgets import QRubberBand
-        from PySide6.QtCore import QRect
-        self.tree._rubber_band = QRubberBand(QRubberBand.Rectangle, self.tree.viewport())
-        self.tree._rubber_band_origin = None
-        self.tree._rubber_band_active = False
-        
-        orig_mousePressEvent = self.tree.mousePressEvent
-        orig_mouseMoveEvent = self.tree.mouseMoveEvent
-        orig_mouseReleaseEvent = self.tree.mouseReleaseEvent
-        orig_mouseDoubleClickEvent = self.tree.mouseDoubleClickEvent
-        
-        from PySide6.QtCore import QTimer
-        self._click_timer = QTimer(self)
-        self._click_timer.setSingleShot(True)
-        
-        def _on_click_timeout():
-            if self._click_count == 2:
-                item = getattr(self, '_last_clicked_item', None)
-                try:
-                    if item and item.data(0, Qt.UserRole) == "folder":
-                        item.setExpanded(not item.isExpanded())
-                except RuntimeError:
-                    pass
-            
-            self._click_count = 0
-            self._last_clicked_item = None
-            
-        self._click_timer.timeout.connect(_on_click_timeout)
-
-        def _tree_mousePressEvent(event):
-            if event.button() == Qt.LeftButton:
-                self.tree._click_start_pos = event.pos()
-                item = self.tree.itemAt(event.pos())
-                column = self.tree.columnAt(event.pos().x())
-                
-                should_rubber_band = False
-                if not item or column == -1:
-                    should_rubber_band = True
-                elif item and item.isSelected():
-                    should_rubber_band = False
-                
-                if should_rubber_band:
-                    self.tree._rubber_band_origin = event.pos()
-                    self.tree._rubber_band.setGeometry(QRect(self.tree._rubber_band_origin, self.tree._rubber_band_origin))
-                    self.tree._rubber_band.show()
-                    self.tree._rubber_band_active = True
-                    self.tree._rubber_band_dragged = False
-                    
-                    if not item and not (event.modifiers() & Qt.ControlModifier):
-                        self.tree.clearSelection()
-                        self._update_item_selection_styles()
-                        
-                    orig_mousePressEvent(event)
-                    return
-                else:
-                    self.tree._rubber_band_active = False
-                
-                if not self._click_timer.isActive():
-                    self._click_count = 1
-                    self._last_clicked_item = item
-                    self._click_timer.start(500)
-                else:
-                    self._click_count += 1
-                    
-                if self._click_count >= 3:
-                    self._click_timer.stop()
-                    item_target = getattr(self, '_last_clicked_item', None)
-                    if item_target:
-                        try:
-                            if item_target.data(0, Qt.UserRole) == "folder":
-                                folder_name = item_target.text(1)
-                                self.flattenGroup.emit(folder_name)
-                        except RuntimeError:
-                            pass
-                    self._click_count = 0
-                    self._last_clicked_item = None
-                    return
-            orig_mousePressEvent(event)
-            
-        def _tree_mouseDoubleClickEvent(event):
-            if event.button() == Qt.LeftButton:
-                item = self.tree.itemAt(event.pos())
-                
-                if self._click_timer.isActive():
-                    self._click_count += 1
-                else:
-                    self._click_count = 2
-                    self._last_clicked_item = item
-                    self._click_timer.start(500)
-                    
-                if self._click_count >= 3:
-                    self._click_timer.stop()
-                    item_target = getattr(self, '_last_clicked_item', None)
-                    if item_target and item_target.data(0, Qt.UserRole) == "folder":
-                        folder_name = item_target.text(1)
-                        self.flattenGroup.emit(folder_name)
-                    self._click_count = 0
-                    self._last_clicked_item = None
-                    return
-                    
-                if item and item.data(0, Qt.UserRole) == "folder":
-                    return # Block native expansion!
-                    
-            orig_mouseDoubleClickEvent(event)
-            
-        def _tree_mouseMoveEvent(event):
-            if getattr(self.tree, '_rubber_band_active', False) and getattr(self.tree, '_rubber_band_origin', None) is not None:
-                if (event.pos() - self.tree._rubber_band_origin).manhattanLength() > 3:
-                    self.tree._rubber_band_dragged = True
-                    
-                rect = QRect(self.tree._rubber_band_origin, event.pos()).normalized()
-                self.tree._rubber_band.setGeometry(rect)
-                
-                def check_item(item):
-                    item_rect = self.tree.visualItemRect(item)
-                    if rect.top() <= item_rect.bottom() and rect.bottom() >= item_rect.top():
-                        item.setSelected(True)
-                    else:
-                        item.setSelected(False)
-                    if item.isExpanded():
-                        for j in range(item.childCount()):
-                            check_item(item.child(j))
-                            
-                for i in range(self.tree.topLevelItemCount()):
-                    check_item(self.tree.topLevelItem(i))
-                self._update_item_selection_styles()
-                return
-            orig_mouseMoveEvent(event)
-            
-        def _tree_mouseReleaseEvent(event):
-            if event.button() == Qt.LeftButton:
-                if getattr(self.tree, '_rubber_band_active', False):
-                    self.tree._rubber_band.hide()
-                    self.tree._rubber_band_active = False
-                    self.tree._rubber_band_origin = None
-                    if getattr(self.tree, '_rubber_band_dragged', False):
-                        self._update_item_selection_styles()
-                        return
-                else:
-                    click_pos = getattr(self.tree, '_click_start_pos', None)
-                    if click_pos and (event.pos() - click_pos).manhattanLength() < 5:
-                        if not (event.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)):
-                            item = self.tree.itemAt(event.pos())
-                            if item:
-                                self.tree.clearSelection()
-                                item.setSelected(True)
-                                self.tree.setCurrentItem(item)
-                            else:
-                                self.tree.clearSelection()
-                            self._update_item_selection_styles()
-                            return
-                orig_mouseReleaseEvent(event)
-            else:
-                orig_mouseReleaseEvent(event)
-        self.tree.mousePressEvent = _tree_mousePressEvent
-        self.tree.mouseDoubleClickEvent = _tree_mouseDoubleClickEvent
-        self.tree.mouseMoveEvent = _tree_mouseMoveEvent
-        self.tree.mouseReleaseEvent = _tree_mouseReleaseEvent
-        
-        # Override mimeData to allow dragging items out (to OS or other widgets)
-        orig_mimeData = self.tree.mimeData
-        def _tree_mimeData(items):
-            from PySide6.QtCore import QUrl
-            import os
-            import tempfile
-            mime = orig_mimeData(items)
-            urls = []
-            for item in items:
-                role_data = item.data(0, Qt.UserRole)
-                if isinstance(role_data, int) and 0 <= role_data < len(self._tracks):
-                    track = self._tracks[role_data]
-                    path = track.get('path')
-                    if path and os.path.exists(path):
-                        urls.append(QUrl.fromLocalFile(path))
-                    else:
-                        # Direct stream track without a physical file on disk yet
-                        # Automatically create an ultra-light .hxstream descriptor file for dragging into File Explorer
-                        try:
-                            from StreamFileEngine import write_stream_file
-                            temp_drag_dir = os.path.join(tempfile.gettempdir(), 'HELXAID_DragExport')
-                            os.makedirs(temp_drag_dir, exist_ok=True)
-                            
-                            track_meta = {
-                                'title': track.get('title') or item.text(1) or 'Unknown Stream',
-                                'artist': track.get('artist') or item.text(2) or '',
-                                'duration': track.get('duration') or 0,
-                                'original_url': track.get('original_url') or track.get('stream_url') or track.get('path') or ''
-                            }
-                            stream_file = write_stream_file(temp_drag_dir, track_meta, format_ext=".hxstream")
-                            if stream_file and os.path.exists(stream_file):
-                                urls.append(QUrl.fromLocalFile(stream_file))
-                        except Exception as e:
-                            print(f"[PlaylistTable] Error creating .hxstream for drag: {e}")
-                elif role_data == "folder":
-                    folder_path = item.data(1, Qt.UserRole)
-                    if folder_path and os.path.exists(folder_path):
-                        urls.append(QUrl.fromLocalFile(folder_path))
-                    else:
-                        group_name = item.text(1)
-                        found_folder = None
-                        for track in self._tracks:
-                            if track.get('playlist_group') == group_name:
-                                tpath = track.get('path')
-                                if tpath and os.path.exists(tpath):
-                                    parent_dir = os.path.dirname(tpath)
-                                    if os.path.isdir(parent_dir):
-                                        found_folder = parent_dir
-                                        break
-                        if found_folder and os.path.exists(found_folder):
-                            urls.append(QUrl.fromLocalFile(found_folder))
-                        else:
-                            for track in self._tracks:
-                                if track.get('playlist_group') == group_name:
-                                    path = track.get('path')
-                                    if path and os.path.exists(path):
-                                        urls.append(QUrl.fromLocalFile(path))
-            if urls:
-                mime.setUrls(urls)
-            return mime
-        self.tree.mimeData = _tree_mimeData
-        # Override startDrag to show a custom clean pixmap instead of a huge row snapshot
-        def _custom_startDrag(supportedActions):
-            from PySide6.QtGui import QDrag, QPixmap, QPainter, QColor, QFont
-            from PySide6.QtCore import Qt, QPoint
-            
-            selected_items = self.tree.selectedItems()
-            if not selected_items:
-                return
-                
-            drag = QDrag(self.tree)
-            drag.setMimeData(self.tree.mimeData(selected_items))
-            
-            count = len(selected_items)
-            text = f"Dragging {count} item{'s' if count > 1 else ''}"
-            if count == 1:
-                text = selected_items[0].text(1)
-                if len(text) > 25: text = text[:22] + "..."
-                
-            pixmap = QPixmap(200, 36)
-            pixmap.fill(Qt.transparent)
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setBrush(QColor(40, 40, 45, 230))
-            painter.setPen(QColor("#FF5B06"))
-            painter.drawRoundedRect(1, 1, 198, 34, 6, 6)
-            
-            painter.setPen(QColor("#ffffff"))
-            font = QFont("Orbitron", 9, QFont.Bold)
-            painter.setFont(font)
-            painter.drawText(0, 0, 200, 36, Qt.AlignCenter, text)
-            painter.end()
-            
-            drag.setPixmap(pixmap)
-            drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
-            drag.exec_(supportedActions)
-            
-        self.tree.startDrag = _custom_startDrag
         
         # Column widths & resize behavior
         self.tree.setColumnWidth(0, 70)    # Index
@@ -10641,12 +10814,13 @@ class PlaylistTable(QWidget):
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
             if item.data(0, Qt.UserRole) == "folder":
+                is_virtual = (item.data(2, Qt.UserRole) == "virtual")
                 if item.isSelected():
                     for c in range(4):
-                        item.setBackground(c, QColor(255, 255, 255, 31))
+                        item.setBackground(c, QColor(0, 229, 255, 45) if is_virtual else QColor(255, 255, 255, 31))
                 else:
                     for c in range(4):
-                        item.setBackground(c, QColor(40, 40, 45, 180))
+                        item.setBackground(c, QColor(20, 38, 52, 200) if is_virtual else QColor(40, 40, 45, 180))
         self.tree.viewport().update()
     
     def set_tracks(self, tracks: list):
@@ -10662,7 +10836,7 @@ class PlaylistTable(QWidget):
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
             if item.data(0, Qt.UserRole) == "folder":
-                group_name = item.text(1)
+                group_name = item.text(1).replace("  [VIRTUAL]", "").strip()
                 expanded_states[group_name] = item.isExpanded()
                 
         self.tree.setUpdatesEnabled(False)
@@ -10762,29 +10936,47 @@ class PlaylistTable(QWidget):
         for group, items in folders_dict.items():
             folder_item = QTreeWidgetItem(self.tree)
             from PySide6.QtGui import QIcon
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
-            folder_item.setIcon(1, QIcon(icon_path))
-            folder_item.setText(1, group)
-            folder_item.setData(0, Qt.UserRole, "folder")
             
-            # Store group folder path if available
+            # Check if this group is a virtual collection or real disk folder
+            is_virtual_group = any(trk.get('is_virtual_group') for _, trk in items)
             group_folder_path = None
-            for _, trk in items:
-                t_p = trk.get('path')
-                if t_p and os.path.exists(t_p):
-                    p_dir = os.path.dirname(t_p)
-                    if os.path.isdir(p_dir) and (os.path.basename(p_dir) == group or not group_folder_path):
-                        group_folder_path = p_dir
-                        if os.path.basename(p_dir) == group:
-                            break
-            if group_folder_path:
+            if not is_virtual_group:
+                for _, trk in items:
+                    t_p = trk.get('path')
+                    if t_p and os.path.exists(t_p):
+                        p_dir = os.path.dirname(t_p)
+                        if os.path.isdir(p_dir) and (os.path.basename(p_dir) == group or not group_folder_path):
+                            group_folder_path = p_dir
+                            if os.path.basename(p_dir) == group:
+                                break
+
+            if is_virtual_group or not group_folder_path:
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "virtual-folder-icon.svg").replace("\\", "/")
+                folder_item.setIcon(1, QIcon(icon_path))
+                folder_item.setText(1, f"{group}  [VIRTUAL]")
+                folder_item.setData(0, Qt.UserRole, "folder")
+                folder_item.setData(1, Qt.UserRole, f"virtual://{group}")
+                folder_item.setData(2, Qt.UserRole, "virtual")
+                folder_item.setToolTip(1, f"Virtual Playlist Group: {group}")
+                for c in range(4):
+                    folder_item.setBackground(c, QColor(20, 38, 52, 200))
+                    font = folder_item.font(c)
+                    font.setBold(True)
+                    folder_item.setFont(c, font)
+            else:
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
+                folder_item.setIcon(1, QIcon(icon_path))
+                folder_item.setText(1, group)
+                folder_item.setData(0, Qt.UserRole, "folder")
                 folder_item.setData(1, Qt.UserRole, group_folder_path)
-                
-            for c in range(4):
-                folder_item.setBackground(c, QColor(40, 40, 45, 180))
-                font = folder_item.font(c)
-                font.setBold(True)
-                folder_item.setFont(c, font)
+                folder_item.setData(2, Qt.UserRole, "local")
+                folder_item.setToolTip(1, f"Local Folder: {group_folder_path}")
+                for c in range(4):
+                    folder_item.setBackground(c, QColor(40, 40, 45, 180))
+                    font = folder_item.font(c)
+                    font.setBold(True)
+                    folder_item.setFont(c, font)
+
             self.tree.addTopLevelItem(folder_item)
             created_folders[group] = folder_item
             
@@ -12629,6 +12821,9 @@ class MusicPanelWidget(QWidget):
         self._shuffled_sequence = []
         self._shuffled_pointer = -1
         self._music_folder = None
+        self._auto_audio_device = True
+        self._preferred_device_id = ""
+        self._preferred_device_desc = ""
 
         self._helxaic_page_visible = False
         self._render_gate_reason = None
@@ -13203,63 +13398,90 @@ class MusicPanelWidget(QWidget):
             self._known_device_ids = set()
     
     def _on_audio_devices_changed(self):
-        """Handle audio output device list changes.
+        """Handle audio output device list changes without hijacking user's preferred output.
         
         Called by Qt when audio devices are added or removed.
-        Compares current device list against the known snapshot
-        to identify newly connected devices. If a new device is
-        found, auto-switches audio output to it.
-        
-        Device removal (e.g. Bluetooth disconnecting) is handled
-        automatically by Qt - it falls back to the default device.
+        - If the user configured a specific preferred output device:
+          - If the preferred device is currently connected, maintain/restore output to it.
+          - Never switch away from the preferred device when new unrelated devices connect.
+          - If the preferred device was disconnected, temporarily fall back to system default.
+        - If the user selected System Default:
+          - Automatically update to the current system default audio output.
         """
         try:
             from PySide6.QtMultimedia import QMediaDevices
             
             current_devices = QMediaDevices.audioOutputs()
             current_ids = set()
-            new_devices = []
-            
             for device in current_devices:
-                dev_id = device.id().data().decode() if isinstance(device.id(), (bytes, bytearray)) else str(device.id())
+                dev_id = device.id().data().decode('utf-8', 'ignore') if isinstance(device.id(), (bytes, bytearray)) else str(device.id())
                 current_ids.add(dev_id)
-                
-                # Check if this is a newly connected device
-                if dev_id not in self._known_device_ids:
-                    new_devices.append(device)
             
             # Update known devices snapshot
             self._known_device_ids = current_ids
             
-            if new_devices:
-                # Switch to the most recently added device
-                # (usually the one the user just connected)
-                new_device = new_devices[-1]
-                print(f"[Audio] New device detected: {new_device.description()}")
-                print(f"[Audio] Auto-switching output to: {new_device.description()}")
-                
-                # Switch both the main player and crossfade player
+            is_auto = getattr(self, '_auto_audio_device', False)
+            preferred_id = getattr(self, '_preferred_device_id', '')
+            preferred_desc = getattr(self, '_preferred_device_desc', '')
+            
+            # If user has a specific preferred device
+            if not is_auto and (preferred_id or preferred_desc):
+                preferred_dev = None
+                for device in current_devices:
+                    dev_id = device.id().data().decode('utf-8', 'ignore') if isinstance(device.id(), (bytes, bytearray)) else str(device.id())
+                    if preferred_id and dev_id == preferred_id:
+                        preferred_dev = device
+                        break
+                    if preferred_desc and device.description() == preferred_desc:
+                        preferred_dev = device
+                        break
+                        
+                if preferred_dev is not None:
+                    # Preferred device is connected. Ensure audio output remains on or switches back to it.
+                    curr_dev = self._audio_output.device() if self._audio_output else None
+                    curr_id = curr_dev.id().data().decode('utf-8', 'ignore') if curr_dev and isinstance(curr_dev.id(), (bytes, bytearray)) else str(curr_dev.id() if curr_dev else '')
+                    target_id = preferred_dev.id().data().decode('utf-8', 'ignore') if isinstance(preferred_dev.id(), (bytes, bytearray)) else str(preferred_dev.id())
+                    
+                    if curr_id != target_id:
+                        print(f"[Audio] Restoring user preferred output device: {preferred_dev.description()}")
+                        if self._audio_output:
+                            self._audio_output.setDevice(preferred_dev)
+                        if hasattr(self, '_audio_output2') and self._audio_output2:
+                            self._audio_output2.setDevice(preferred_dev)
+                        if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
+                            try:
+                                self._vlc_player.audio_output_device_set(None, preferred_dev.description())
+                            except Exception:
+                                pass
+                    return
+                else:
+                    # Preferred device was unplugged/disconnected - fall back to system default temporarily
+                    print(f"[Audio] Preferred output ({preferred_desc or preferred_id}) unavailable. Falling back to default.")
+                    default_dev = QMediaDevices.defaultAudioOutput()
+                    if self._audio_output:
+                        self._audio_output.setDevice(default_dev)
+                    if hasattr(self, '_audio_output2') and self._audio_output2:
+                        self._audio_output2.setDevice(default_dev)
+                    if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
+                        try:
+                            self._vlc_player.audio_output_device_set(None, default_dev.description())
+                        except Exception:
+                            pass
+                    return
+            
+            # If in System Default mode, use the system default device
+            if is_auto:
+                default_dev = QMediaDevices.defaultAudioOutput()
                 if self._audio_output:
-                    self._audio_output.setDevice(new_device)
+                    self._audio_output.setDevice(default_dev)
                 if hasattr(self, '_audio_output2') and self._audio_output2:
-                    self._audio_output2.setDevice(new_device)
-                
-                # Update VLC player output if active
+                    self._audio_output2.setDevice(default_dev)
                 if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
                     try:
-                        # VLC uses its own audio routing - set the device name
-                        self._vlc_player.audio_output_device_set(None, new_device.description())
-                        print(f"[Audio] VLC output switched to: {new_device.description()}")
+                        self._vlc_player.audio_output_device_set(None, default_dev.description())
                     except Exception:
                         pass
-                
-                print(f"[Audio] Output device auto-switched successfully")
-            else:
-                # Device removed - Qt handles fallback automatically
-                removed = self._known_device_ids - current_ids
-                if removed:
-                    print(f"[Audio] Device(s) removed, Qt will fallback to default")
-                    
+                        
         except Exception as e:
             print(f"[Audio] Device change handling error: {e}")
 
@@ -13438,7 +13660,7 @@ class MusicPanelWidget(QWidget):
         super().keyPressEvent(event)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
             event.acceptProposedAction()
             
     def dropEvent(self, event):
@@ -13460,96 +13682,126 @@ class MusicPanelWidget(QWidget):
             event.ignore()
             return
             
-        urls = event.mimeData().urls()
-        if urls:
-            paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
-            if not paths:
-                return
+        urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
+        local_paths = [url.toLocalFile() for url in urls if url.isLocalFile()]
+        remote_urls = [url.toString() for url in urls if not url.isLocalFile() and url.toString().startswith(('http://', 'https://', 'www.'))]
+        
+        if not local_paths and not remote_urls and event.mimeData().hasText():
+            text_val = event.mimeData().text().strip()
+            for line in text_val.splitlines():
+                line = line.strip()
+                if line.startswith(('http://', 'https://', 'www.')):
+                    remote_urls.append(line)
+                    
+        if not local_paths and not remote_urls:
+            return
             
-            import os
-            import datetime
-            audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.hxstream', '.strm'}
+        import os
+        import datetime
+        audio_exts = {'.mp3', '.flac', '.wav', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.hxstream', '.strm'}
+        
+        if not hasattr(self, '_playlist'):
+            self._playlist = []
             
-            if not hasattr(self, '_playlist'):
-                self._playlist = []
-                
-            start_idx = len(self._playlist)
-            tracks_to_add = []
-            
-            for path in paths:
-                if os.path.isdir(path):
-                    folder_name = os.path.basename(path) or path
-                    folder_tracks = []
-                    try:
-                        for entry in os.scandir(path):
-                            if entry.is_file():
-                                ext = os.path.splitext(entry.name)[1].lower()
-                                if ext in audio_exts:
-                                    if ext in ('.hxstream', '.strm'):
-                                        from StreamFileEngine import read_stream_file
-                                        st_meta = read_stream_file(entry.path)
-                                        if st_meta:
-                                            st_meta['playlist_group'] = folder_name
-                                            folder_tracks.append(st_meta)
-                                    else:
-                                        title = os.path.splitext(entry.name)[0]
-                                        try:
-                                            mtime = entry.stat().st_mtime
-                                            dt = datetime.datetime.fromtimestamp(mtime)
-                                            date_str = dt.strftime("%b %d, %Y")
-                                        except Exception:
-                                            date_str = ""
-                                        folder_tracks.append({
-                                            'path': entry.path,
-                                            'title': title,
-                                            'artist': 'Dropped File',
-                                            'duration': 0,
-                                            'date_added': date_str,
-                                            'playlist_group': folder_name
-                                        })
-                    except Exception:
-                        pass
-                    tracks_to_add.extend(folder_tracks)
-                elif os.path.isfile(path):
-                    ext = os.path.splitext(path)[1].lower()
-                    if ext in audio_exts:
-                        if ext in ('.hxstream', '.strm'):
-                            from StreamFileEngine import read_stream_file
-                            st_meta = read_stream_file(path)
-                            if st_meta:
-                                tracks_to_add.append(st_meta)
-                        else:
-                            title = os.path.splitext(os.path.basename(path))[0]
-                            try:
-                                mtime = os.path.getmtime(path)
-                                dt = datetime.datetime.fromtimestamp(mtime)
-                                date_str = dt.strftime("%b %d, %Y")
-                            except Exception:
-                                date_str = ""
-                                
-                            tracks_to_add.append({
-                                'path': path,
-                                'title': title,
-                                'artist': 'Dropped File',
-                                'duration': 0,
-                                'date_added': date_str
-                            })
+        tracks_to_add = []
+        
+        for path in local_paths:
+            if os.path.isdir(path):
+                folder_name = os.path.basename(path) or path
+                folder_tracks = []
+                try:
+                    for entry in os.scandir(path):
+                        if entry.is_file():
+                            ext = os.path.splitext(entry.name)[1].lower()
+                            if ext in audio_exts:
+                                if ext in ('.hxstream', '.strm'):
+                                    from StreamFileEngine import read_stream_file
+                                    st_meta = read_stream_file(entry.path)
+                                    if st_meta:
+                                        st_meta['playlist_group'] = folder_name
+                                        folder_tracks.append(st_meta)
+                                else:
+                                    title = os.path.splitext(entry.name)[0]
+                                    try:
+                                        mtime = entry.stat().st_mtime
+                                        dt = datetime.datetime.fromtimestamp(mtime)
+                                        date_str = dt.strftime("%b %d, %Y")
+                                    except Exception:
+                                        date_str = ""
+                                    folder_tracks.append({
+                                        'path': entry.path,
+                                        'title': title,
+                                        'artist': 'Dropped File',
+                                        'duration': 0,
+                                        'date_added': date_str,
+                                        'playlist_group': folder_name
+                                    })
+                except Exception:
+                    pass
+                tracks_to_add.extend(folder_tracks)
+            elif os.path.isfile(path):
+                ext = os.path.splitext(path)[1].lower()
+                if ext in audio_exts:
+                    if ext in ('.hxstream', '.strm'):
+                        from StreamFileEngine import read_stream_file
+                        st_meta = read_stream_file(path)
+                        if st_meta:
+                            tracks_to_add.append(st_meta)
+                    else:
+                        title = os.path.splitext(os.path.basename(path))[0]
+                        try:
+                            mtime = os.path.getmtime(path)
+                            dt = datetime.datetime.fromtimestamp(mtime)
+                            date_str = dt.strftime("%b %d, %Y")
+                        except Exception:
+                            date_str = ""
+                            
+                        tracks_to_add.append({
+                            'path': path,
+                            'title': title,
+                            'artist': 'Dropped File',
+                            'duration': 0,
+                            'date_added': date_str
+                        })
                         
-            if tracks_to_add:
-                self._playlist.extend(tracks_to_add)
-                if hasattr(self, 'table'):
-                    self.table.set_tracks(self._playlist)
-                if getattr(self.player_bar, '_is_shuffled', False):
-                    self._generate_shuffled_sequence()
-                self._save_state()
-                self.refresh_playlist_stats()
-                if hasattr(self, '_track_count_label'):
-                    self._track_count_label.setText(f"{len(self._playlist)} tracks")
+        for r_url in remote_urls:
+            tracks_to_add.append({
+                'path': r_url,
+                'title': r_url,
+                'artist': 'Online Stream',
+                'duration': 0,
+                'date_added': "Cloud Stream",
+                'is_stream': True,
+                'is_online': True,
+                'original_url': r_url,
+                'stream_url': r_url
+            })
+                    
+        if tracks_to_add:
+            target_group = None
+            if hasattr(self, 'table') and hasattr(self.table, 'tree'):
+                target_group = getattr(self.table.tree, '_dropped_target_group', None)
+                self.table.tree._dropped_target_group = None
                 
-                # Fetch metadata asynchronously for the newly added local tracks (skip stream files)
-                local_new_tracks = [t for t in self._playlist if not t.get('is_stream') and not t.get('is_online') and not str(t.get('path', '')).lower().endswith(('.hxstream', '.strm'))]
-                if local_new_tracks:
-                    self._fetch_metadata_async(self._playlist, "Playlist")
+            if target_group:
+                for t in tracks_to_add:
+                    t['playlist_group'] = target_group
+
+            self._playlist.extend(tracks_to_add)
+            if hasattr(self, 'table'):
+                self.table.set_tracks(self._playlist)
+            if getattr(self.player_bar, '_is_shuffled', False):
+                self._generate_shuffled_sequence()
+            self._save_state()
+            self.refresh_playlist_stats()
+            if hasattr(self, '_track_count_label'):
+                self._track_count_label.setText(f"{len(self._playlist)} tracks")
+            
+            # Fetch metadata asynchronously for the newly added local tracks (skip stream files)
+            local_new_tracks = [t for t in self._playlist if not t.get('is_stream') and not t.get('is_online') and not str(t.get('path', '')).lower().endswith(('.hxstream', '.strm'))]
+            if local_new_tracks:
+                self._fetch_metadata_async(self._playlist, "Playlist")
+        event.acceptProposedAction()
     
     def _save_sidebar_button_order(self, order_keys: list):
         try:
@@ -13622,8 +13874,9 @@ class MusicPanelWidget(QWidget):
             def __init__(self, parent_panel):
                 super().__init__()
                 self.parent_panel = parent_panel
+                self.setFixedWidth(200)
+                self.setMinimumWidth(200)
                 self.setMaximumWidth(200)
-                self.setMinimumWidth(50)
                 self.setObjectName("musicSidebar")
                 self._transitioning = False
                 self.setAcceptDrops(True)
@@ -13898,6 +14151,9 @@ class MusicPanelWidget(QWidget):
 
 
         self.sidebar_widget = SidebarWidget(self)
+        self.sidebar_widget.setFixedWidth(200)
+        self.sidebar_widget.setMinimumWidth(200)
+        self.sidebar_widget.setMaximumWidth(200)
         
         # Style for the sidebar and buttons
         self.sidebar_widget.setStyleSheet("""
@@ -14304,6 +14560,8 @@ class MusicPanelWidget(QWidget):
 
         # Keep main content dominant when splitter moves
         # Index 0: Sidebar, Index 1: Stack, Index 2: Right Panel
+        self.main_splitter.setCollapsible(0, False)
+        self.main_splitter.setCollapsible(1, False)
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
         self.main_splitter.setStretchFactor(2, 0)
@@ -15346,9 +15604,9 @@ class MusicPanelWidget(QWidget):
         
         self._device_menu.clear()
         
-        # Newly Connected Device (Auto)
-        is_auto = getattr(self, '_auto_audio_device', True)
-        auto_action = QAction("Newly Connected Device", self)
+        # System Default (Auto)
+        is_auto = getattr(self, '_auto_audio_device', False)
+        auto_action = QAction("System Default", self)
         auto_action.setCheckable(True)
         auto_action.setChecked(is_auto)
         auto_action.triggered.connect(self._set_default_audio_device)
@@ -15357,7 +15615,9 @@ class MusicPanelWidget(QWidget):
         self._device_menu.addSeparator()
         
         devices = QMediaDevices.audioOutputs()
-        current_device = self._audio_output.device()
+        current_device = self._audio_output.device() if self._audio_output else None
+        preferred_id = getattr(self, '_preferred_device_id', '')
+        preferred_desc = getattr(self, '_preferred_device_desc', '')
         
         if not devices:
             action = QAction("No devices found", self)
@@ -15366,35 +15626,67 @@ class MusicPanelWidget(QWidget):
             return
         
         for device in devices:
-            action = QAction(device.description(), self)
+            desc = device.description()
+            dev_id = device.id().data().decode('utf-8', 'ignore') if isinstance(device.id(), (bytes, bytearray)) else str(device.id())
+            action = QAction(desc, self)
             action.setCheckable(True)
-            action.setChecked(not is_auto and device.id() == current_device.id())
+            
+            # Check if this is the active/preferred device when not in auto mode
+            is_checked = False
+            if not is_auto:
+                if preferred_id and dev_id == preferred_id:
+                    is_checked = True
+                elif preferred_desc and desc == preferred_desc:
+                    is_checked = True
+                elif not preferred_id and not preferred_desc and current_device and device.id() == current_device.id():
+                    is_checked = True
+                    
+            action.setChecked(is_checked)
             action.triggered.connect(lambda checked, d=device: self._set_audio_device(d))
             self._device_menu.addAction(action)
 
     def _set_default_audio_device(self):
-        """Set to automatically use default (newly connected) device."""
+        """Set to automatically use system default device."""
         from PySide6.QtMultimedia import QMediaDevices
         self._auto_audio_device = True
+        self._preferred_device_id = ""
+        self._preferred_device_desc = ""
         default_dev = QMediaDevices.defaultAudioOutput()
-        self._audio_output.setDevice(default_dev)
+        if getattr(self, '_audio_output', None) is not None:
+            self._audio_output.setDevice(default_dev)
         if getattr(self, '_audio_output2', None) is not None:
             self._audio_output2.setDevice(default_dev)
+            
+        if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
+            try:
+                self._vlc_player.audio_output_device_set(None, default_dev.description())
+            except Exception:
+                pass
+                
         self._save_state()
-        print("Audio device set to: Newly Connected Device (Auto)")
+        print("Audio device set to: System Default")
     
     def _set_audio_device(self, device):
-        """Set the audio output device."""
-        from PySide6.QtMultimedia import QAudioDevice
-        
+        """Set the preferred audio output device."""
         self._auto_audio_device = False
-        self._audio_output.setDevice(device)
+        dev_id = device.id().data().decode('utf-8', 'ignore') if isinstance(device.id(), (bytes, bytearray)) else str(device.id())
+        self._preferred_device_id = dev_id
+        self._preferred_device_desc = device.description()
+        
+        if getattr(self, '_audio_output', None) is not None:
+            self._audio_output.setDevice(device)
         if getattr(self, '_audio_output2', None) is not None:
             self._audio_output2.setDevice(device)
+            
+        if getattr(self, '_playing_vlc', False) and hasattr(self, '_vlc_player') and self._vlc_player:
+            try:
+                self._vlc_player.audio_output_device_set(None, device.description())
+            except Exception:
+                pass
         
         # Save to config
         self._save_state()
-        print(f"Audio device set to: {device.description()}")
+        print(f"Preferred audio device set to: {device.description()}")
     
     def _set_playback_speed(self, rate: float):
         """Set playback speed."""
@@ -15513,6 +15805,8 @@ class MusicPanelWidget(QWidget):
             from PySide6.QtMultimedia import QVideoSink
             self._player2 = QMediaPlayer()
             self._audio_output2 = QAudioOutput()
+            if self._audio_output and self._audio_output.device():
+                self._audio_output2.setDevice(self._audio_output.device())
             self._player2.setAudioOutput(self._audio_output2)
             self._video_sink2 = QVideoSink(self)
             self._player2.setVideoSink(self._video_sink2)
@@ -17724,17 +18018,18 @@ class MusicPanelWidget(QWidget):
                 # Restore audio device
                 auto_audio = state.get('auto_audio_device', True)
                 self._auto_audio_device = auto_audio
-                if not auto_audio:
-                    device_id = state.get('audio_device_id', '')
-                    if device_id:
-                        from PySide6.QtMultimedia import QMediaDevices
-                        for device in QMediaDevices.audioOutputs():
-                            if device.id().data().decode('utf-8', 'ignore') == device_id:
-                                if getattr(self, '_audio_output', None) is not None:
-                                    self._audio_output.setDevice(device)
-                                if getattr(self, '_audio_output2', None) is not None:
-                                    self._audio_output2.setDevice(device)
-                                break
+                self._preferred_device_id = state.get('audio_device_id', '')
+                self._preferred_device_desc = state.get('audio_device_desc', '')
+                if not auto_audio and (self._preferred_device_id or self._preferred_device_desc):
+                    from PySide6.QtMultimedia import QMediaDevices
+                    for device in QMediaDevices.audioOutputs():
+                        dev_id = device.id().data().decode('utf-8', 'ignore') if isinstance(device.id(), (bytes, bytearray)) else str(device.id())
+                        if (self._preferred_device_id and dev_id == self._preferred_device_id) or (self._preferred_device_desc and device.description() == self._preferred_device_desc):
+                            if getattr(self, '_audio_output', None) is not None:
+                                self._audio_output.setDevice(device)
+                            if getattr(self, '_audio_output2', None) is not None:
+                                self._audio_output2.setDevice(device)
+                            break
                                 
                 # Restore playback speed
                 speed = state.get('playback_speed', 1.0)
@@ -17983,7 +18278,8 @@ class MusicPanelWidget(QWidget):
                 'shuffled_sequence': self._shuffled_sequence,
                 'shuffled_pointer': self._shuffled_pointer,
                 'auto_audio_device': getattr(self, '_auto_audio_device', True),
-                'audio_device_id': getattr(self._audio_output.device(), 'id', lambda: b'')().data().decode('utf-8', 'ignore') if hasattr(self, '_audio_output') and hasattr(self._audio_output, 'device') else '',
+                'audio_device_id': getattr(self, '_preferred_device_id', '') or (getattr(self._audio_output.device(), 'id', lambda: b'')().data().decode('utf-8', 'ignore') if hasattr(self, '_audio_output') and hasattr(self._audio_output, 'device') else ''),
+                'audio_device_desc': getattr(self, '_preferred_device_desc', '') or (self._audio_output.device().description() if hasattr(self, '_audio_output') and hasattr(self._audio_output, 'device') and hasattr(self._audio_output.device(), 'description') else ''),
                 'playback_speed': getattr(self._player, 'playbackRate', lambda: 1.0)() if hasattr(self, '_player') else 1.0,
                 'crossfade_enabled': getattr(self, '_crossfade_enabled', True),
                 'crossfade_duration': getattr(self, '_crossfade_duration', 3.0),
@@ -18133,13 +18429,7 @@ class MusicPanelWidget(QWidget):
             # Switch to Playlist View (Tab Index 0)
             if hasattr(self, 'stack'):
                 self.stack.setCurrentIndex(0)
-            if hasattr(self, 'btn_playlist') and hasattr(self, 'btn_stream'):
-                self.btn_playlist.setProperty("active", True)
-                self.btn_stream.setProperty("active", False)
-                self.btn_playlist.style().unpolish(self.btn_playlist)
-                self.btn_playlist.style().polish(self.btn_playlist)
-                self.btn_stream.style().unpolish(self.btn_stream)
-                self.btn_stream.style().polish(self.btn_stream)
+            self._on_stack_current_changed(0)
                 
             # Play 1st track immediately
             self._play_track(0)
@@ -18444,8 +18734,13 @@ class MusicPanelWidget(QWidget):
                 'extract_flat': False,
                 'retries': 10,
                 'fragment_retries': 10,
+                'file_access_retries': 5,
+                'concurrent_fragment_downloads': 8,
+                'buffersize': 1048576,
+                'http_chunk_size': 10485760,
+                'socket_timeout': 15,
                 'default_search': 'ytsearch',
-                'extractor_args': {'youtube': {'player_client': ['android', 'mweb', 'web', 'ios']}},
+                'extractor_args': {'youtube': {'player_client': ['android', 'ios', 'web', 'mweb']}},
                 'http_headers': {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

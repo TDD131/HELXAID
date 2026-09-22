@@ -32,8 +32,8 @@ from typing import Optional, Dict, Any, List
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFrame, QStackedWidget, QGridLayout,
-    QApplication, QSizePolicy, QGraphicsOpacityEffect, QComboBox,
+    QPushButton, QToolButton, QFrame, QStackedWidget, QGridLayout,
+    QApplication, QSizePolicy, QGraphicsOpacityEffect, QGraphicsDropShadowEffect, QComboBox,
     QMenu, QDialog, QScrollArea, QMainWindow, QProgressBar, QFileDialog
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QThread, QSize, QSettings, QVariantAnimation, QEasingCurve, QRectF, QPoint, QUrl, QPropertyAnimation, QEvent
@@ -49,6 +49,12 @@ from SpotifyAccountEngine import (
     SpotifyAccountEngine, FetchSpotifyLikedSongsWorker, FetchSpotifyPlaylistsWorker, FetchSpotifyAlgorithmicFeedsWorker
 )
 from AnimatedButton import AnimatedButton, AnimatedCheckBox, FadeHoverButton, HoverCloseButton
+
+try:
+    from shiboken6 import isValid
+except ImportError:
+    def isValid(obj):
+        return obj is not None
 
 
 # === ICON ASSET CONSTANTS (Loaded from UI Icons/ directory) ===
@@ -254,6 +260,393 @@ def scroll_horizontal_by_items(scroll_area: QScrollArea, direction: int, item_wi
     anim.setEndValue(end_val)
     anim.start()
     scroll_area._scroll_anim = anim
+
+
+SVG_EXTENSION_PUZZLE = """<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#FF5B06" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7s2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"></path>
+</svg>"""
+
+
+def resolve_chrome_extension_dir() -> str:
+    """Find the chrome_extension directory across frozen exe, bundle _MEIPASS, AppData, and workspace."""
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        meipass = getattr(sys, '_MEIPASS', '')
+        if meipass:
+            candidates.append(os.path.join(meipass, 'chrome_extension'))
+        exe_dir = os.path.dirname(sys.executable)
+        candidates.append(os.path.join(exe_dir, 'chrome_extension'))
+        candidates.append(os.path.join(exe_dir, '_internal', 'chrome_extension'))
+
+    base_src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates.append(os.path.join(base_src, 'chrome_extension'))
+    candidates.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'chrome_extension'))
+    candidates.append(os.path.join(os.environ.get('APPDATA', ''), 'HELXAID', 'chrome_extension'))
+
+    for p in candidates:
+        if p and os.path.isdir(p) and (os.path.exists(os.path.join(p, 'manifest.json')) or os.path.exists(os.path.join(p, 'popup.html'))):
+            return os.path.abspath(p)
+
+    return os.path.abspath(candidates[0]) if candidates else ""
+
+
+class ChromeExtensionGuideFloatingPanel(QFrame):
+    """
+    In-App Floating Tool Panel (QFrame overlay on host window) for Chrome Extension Installation & Setup.
+    Adheres strictly to HELXAID's signature floating panel architecture:
+    - Less use border, more use background-color
+    - 100% Orbitron typography
+    - Vector SVG iconography (SVG_EXTENSION_PUZZLE)
+    - HoverCloseButton on sleek custom draggable titlebar
+    - Dark glassmorphism with QGraphicsDropShadowEffect
+    - Smooth draggable header with parent boundary clamping
+    - Complete component names (setObjectName) for every single element
+    
+    Component Name: chromeExtensionGuideFloatingPanel
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("chromeExtensionGuideFloatingPanel")
+        self.setWindowFlags(Qt.Widget | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setFixedSize(580, 420)
+
+        self._is_dragging = False
+        self._drag_start_pos = QPoint()
+
+        # Authentic HELXAID Floating Drop Shadow
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setColor(QColor(0, 0, 0, 220))
+        shadow.setOffset(0, 8)
+        self.setGraphicsEffect(shadow)
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setStyleSheet("""
+            QFrame#chromeExtensionGuideFloatingPanel {
+                background-color: #0C0D12;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QWidget#chromeExtensionGuideTitleBar {
+                background-color: #07080B;
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QLabel#chromeExtensionGuideTitleLabel {
+                color: #FFFFFF;
+                font-size: 13px;
+                font-weight: 800;
+                font-family: 'Orbitron', sans-serif;
+                letter-spacing: 1px;
+                background: transparent;
+            }
+            QLabel#chromeExtensionGuideSubtitle {
+                color: #A4A8BC;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                line-height: 1.4;
+                background: transparent;
+            }
+            QFrame#chromeExtensionGuideStepsCard {
+                background: rgba(255, 255, 255, 0.025);
+                border: 1px solid rgba(255, 255, 255, 0.05);
+                border-radius: 10px;
+            }
+            QLabel.chromeGuideStepBadge, QLabel[class="chromeGuideStepBadge"], QLabel#chromeExtensionGuideStepBadge_1, QLabel#chromeExtensionGuideStepBadge_2, QLabel#chromeExtensionGuideStepBadge_3 {
+                background-color: #FF5B06;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 6px;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 900;
+            }
+            QLabel.chromeGuideStepTitle {
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.5px;
+                background: transparent;
+            }
+            QLabel.chromeGuideStepDetail {
+                color: #9DA2B6;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                line-height: 1.4;
+                background: transparent;
+            }
+            QLineEdit#chromeExtensionGuidePathEdit {
+                background: rgba(30, 30, 30, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+                padding: 8px 16px;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 13px;
+                selection-background-color: #ffffff;
+                selection-color: #000000;
+            }
+            QLineEdit#chromeExtensionGuidePathEdit:read-only {
+                background: rgba(30, 30, 30, 0.85);
+                color: #FFFFFF;
+            }
+            QLineEdit#chromeExtensionGuidePathEdit:focus {
+                background: #383b41;
+                border: 1px solid rgba(255, 255, 255, 0.16);
+            }
+            QToolButton#extGuideOpenFolderBtn, QPushButton#extGuideOpenFolderBtn {
+                background: rgba(30, 30, 30, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 8px;
+            }
+            QToolButton#extGuideOpenFolderBtn:hover, QPushButton#extGuideOpenFolderBtn:hover {
+                background: #383b41;
+                border: 1px solid rgba(255, 255, 255, 0.16);
+            }
+            QToolButton#extGuideOpenFolderBtn:pressed, QPushButton#extGuideOpenFolderBtn:pressed {
+                background: rgba(255, 91, 6, 0.2);
+                border: 1px solid rgba(255, 91, 6, 0.4);
+            }
+            QPushButton#extGuideLaunchChromeBtn {
+                background: #FF5B06;
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 800;
+                border-radius: 6px;
+                padding: 0 16px;
+                border: none;
+            }
+            QPushButton#extGuideLaunchChromeBtn:hover {
+                background: #FF7026;
+            }
+            QPushButton#extGuideLaunchChromeBtn:pressed {
+                background: #E04E00;
+            }
+            QPushButton#extGuideCopyBtn {
+                background: rgba(255, 255, 255, 0.05);
+                color: #FFFFFF;
+                font-family: 'Orbitron', sans-serif;
+                font-size: 11px;
+                font-weight: 800;
+                border-radius: 6px;
+                padding: 0 16px;
+                border: 1px solid rgba(255, 255, 255, 0.08);
+            }
+            QPushButton#extGuideCopyBtn:hover {
+                background: rgba(255, 255, 255, 0.1);
+                color: #FF5B06;
+                border-color: rgba(255, 91, 6, 0.4);
+            }
+            QPushButton#extGuideCopyBtn:pressed {
+                background: rgba(255, 91, 6, 0.15);
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 1. Draggable Title Bar
+        self.title_bar = QWidget(self)
+        self.title_bar.setObjectName("chromeExtensionGuideTitleBar")
+        self.title_bar.setFixedHeight(44)
+        title_layout = QHBoxLayout(self.title_bar)
+        title_layout.setContentsMargins(16, 0, 14, 0)
+        title_layout.setSpacing(10)
+
+        icon_lbl = QLabel(self.title_bar)
+        icon_lbl.setObjectName("chromeExtensionGuideTitleIcon")
+        icon_lbl.setPixmap(render_svg_pixmap(SVG_EXTENSION_PUZZLE, 22, 22))
+        title_layout.addWidget(icon_lbl, 0, Qt.AlignVCenter)
+
+        title_lbl = QLabel("INSTALL CHROME EXTENSION", self.title_bar)
+        title_lbl.setObjectName("chromeExtensionGuideTitleLabel")
+        title_layout.addWidget(title_lbl, 0, Qt.AlignVCenter)
+
+        title_layout.addStretch()
+
+        self.close_btn = HoverCloseButton(size=22, icon_size=12, parent=self.title_bar)
+        self.close_btn.setObjectName("chromeExtensionGuideCloseBtn")
+        self.close_btn.clicked.connect(self.close_panel)
+        title_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter)
+
+        layout.addWidget(self.title_bar)
+
+        # 2. Content Body
+        content = QWidget(self)
+        content.setObjectName("chromeExtensionGuideContent")
+        c_layout = QVBoxLayout(content)
+        c_layout.setContentsMargins(22, 14, 22, 16)
+        c_layout.setSpacing(12)
+
+        desc_lbl = QLabel("Install the lightweight HELXAID extension into Google Chrome / Edge / Brave to unlock 1-click VIP audio stream extraction & Liked Songs sync:", content)
+        desc_lbl.setObjectName("chromeExtensionGuideSubtitle")
+        desc_lbl.setWordWrap(True)
+        desc_lbl.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        c_layout.addWidget(desc_lbl)
+
+        # Steps Container Card
+        steps_frame = QFrame(content)
+        steps_frame.setObjectName("chromeExtensionGuideStepsCard")
+        s_layout = QVBoxLayout(steps_frame)
+        s_layout.setContentsMargins(16, 12, 16, 12)
+        s_layout.setSpacing(10)
+
+        steps = [
+            ("1", "OPEN EXTENSIONS PAGE", "Navigate to chrome://extensions and enable Developer mode."),
+            ("2", "LOAD UNPACKED EXTENSION", "Click the 'Load unpacked' button at the top-left toolbar."),
+            ("3", "SELECT EXTENSION FOLDER", "Select the HELXAID chrome_extension directory displayed below.")
+        ]
+
+        for i, (num, title, detail) in enumerate(steps, 1):
+            step_row = QHBoxLayout()
+            step_row.setSpacing(12)
+
+            num_badge = QLabel(num, steps_frame)
+            num_badge.setObjectName(f"chromeExtensionGuideStepBadge_{i}")
+            num_badge.setProperty("class", "chromeGuideStepBadge")
+            num_badge.setFixedSize(24, 24)
+            num_badge.setAlignment(Qt.AlignCenter)
+            step_row.addWidget(num_badge, 0, Qt.AlignTop)
+
+            txt_col = QVBoxLayout()
+            txt_col.setSpacing(3)
+
+            s_title = QLabel(title, steps_frame)
+            s_title.setObjectName(f"chromeExtensionGuideStepTitle_{i}")
+            s_title.setProperty("class", "chromeGuideStepTitle")
+            txt_col.addWidget(s_title)
+
+            s_desc = QLabel(detail, steps_frame)
+            s_desc.setObjectName(f"chromeExtensionGuideStepDetail_{i}")
+            s_desc.setProperty("class", "chromeGuideStepDetail")
+            s_desc.setWordWrap(True)
+            txt_col.addWidget(s_desc)
+
+            step_row.addLayout(txt_col, 1)
+            s_layout.addLayout(step_row)
+
+        c_layout.addWidget(steps_frame)
+
+        # Folder Path Display Row (Matching ytFolderEdit and ytBrowseBtn)
+        path_row = QHBoxLayout()
+        path_row.setSpacing(8)
+
+        ext_dir = resolve_chrome_extension_dir()
+        self.path_edit = QLineEdit(ext_dir, content)
+        self.path_edit.setObjectName("chromeExtensionGuidePathEdit")
+        self.path_edit.setReadOnly(True)
+        self.path_edit.setCursor(Qt.ArrowCursor)
+        self.path_edit.setMinimumWidth(10)
+        self.path_edit.setMinimumHeight(36)
+        self.path_edit.setFixedHeight(36)
+        path_row.addWidget(self.path_edit, 1)
+
+        open_folder_btn = QToolButton(content)
+        open_folder_btn.setObjectName("extGuideOpenFolderBtn")
+        open_folder_btn.setFixedSize(36, 36)
+        open_folder_btn.setCursor(Qt.PointingHandCursor)
+        open_folder_btn.setToolTip("Open Extension Folder in Windows Explorer")
+
+        folder_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon.svg").replace("\\", "/")
+        if not os.path.exists(folder_icon_path):
+            folder_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon-white.svg").replace("\\", "/")
+        if os.path.exists(folder_icon_path):
+            open_folder_btn.setIcon(QIcon(folder_icon_path))
+            open_folder_btn.setIconSize(QSize(16, 16))
+        open_folder_btn.clicked.connect(self._open_folder)
+        path_row.addWidget(open_folder_btn)
+
+        c_layout.addLayout(path_row)
+
+        # Action Buttons Row
+        act_row = QHBoxLayout()
+        act_row.setSpacing(10)
+
+        self.copy_btn = QPushButton("Copy Path", content)
+        self.copy_btn.setObjectName("extGuideCopyBtn")
+        self.copy_btn.setFixedHeight(36)
+        self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.clicked.connect(self._copy_path)
+        act_row.addWidget(self.copy_btn)
+
+        launch_chrome_btn = QPushButton("Open Chrome Extensions", content)
+        launch_chrome_btn.setObjectName("extGuideLaunchChromeBtn")
+        launch_chrome_btn.setFixedHeight(36)
+        launch_chrome_btn.setCursor(Qt.PointingHandCursor)
+        launch_chrome_btn.clicked.connect(self._open_chrome_extensions)
+        act_row.addWidget(launch_chrome_btn)
+
+        c_layout.addLayout(act_row)
+        layout.addWidget(content)
+
+    def close_panel(self):
+        self.close()
+
+    def exec(self):
+        """Backward compatibility for any legacy .exec() calls."""
+        self.show()
+        self.raise_()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and hasattr(self, 'title_bar') and self.title_bar.geometry().contains(event.pos()):
+            self._is_dragging = True
+            self._drag_start_pos = event.globalPosition().toPoint() - self.pos()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._is_dragging and event.buttons() & Qt.LeftButton:
+            new_pos = event.globalPosition().toPoint() - self._drag_start_pos
+            if self.parent():
+                parent_rect = self.parent().rect()
+                new_x = max(0, min(new_pos.x(), parent_rect.width() - self.width()))
+                new_y = max(0, min(new_pos.y(), parent_rect.height() - self.height()))
+                new_pos = QPoint(new_x, new_y)
+            self.move(new_pos)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._is_dragging = False
+        super().mouseReleaseEvent(event)
+
+    def _open_folder(self):
+        ext_dir = resolve_chrome_extension_dir()
+        if os.path.exists(ext_dir):
+            try:
+                os.startfile(ext_dir)
+            except Exception as e:
+                print(f"[ChromeExtensionGuideFloatingPanel] Error opening folder: {e}")
+
+    def _copy_path(self):
+        ext_dir = resolve_chrome_extension_dir()
+        try:
+            QApplication.clipboard().setText(ext_dir)
+            self.copy_btn.setText("Copied!")
+            QTimer.singleShot(2000, lambda: self.copy_btn.setText("Copy Path"))
+        except Exception as e:
+            print(f"[ChromeExtensionGuideFloatingPanel] Copy error: {e}")
+
+    def _open_chrome_extensions(self):
+        try:
+            import webbrowser
+            webbrowser.open("chrome://extensions/")
+            QApplication.clipboard().setText("chrome://extensions/")
+        except Exception:
+            pass
+
+
+ExtensionInstallGuideDialog = ChromeExtensionGuideFloatingPanel
 
 
 class SvgHoverButton(QPushButton):
@@ -1177,14 +1570,30 @@ class CloudProfileView(QWidget):
         self.setStyleSheet("QWidget#cloudProfileView { background: transparent; }")
         self._yt_sync_worker: Optional[SyncYTCookiesWorker] = None
         YouTubeAccountEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)
-        YouTubeAccountEngine.get_instance().sessionChanged.connect(lambda ok, u: self.refresh_state())
-        YouTubeAccountEngine.get_instance().accountDetailsUpdated.connect(lambda d: self.refresh_state())
+        YouTubeAccountEngine.get_instance().sessionChanged.connect(self._on_engine_session_changed)
+        YouTubeAccountEngine.get_instance().accountDetailsUpdated.connect(self._on_engine_account_details_updated)
+        SpotifyAccountEngine.get_instance().authStatusChanged.connect(self._on_engine_session_changed)
         self._setup_ui()
 
-    def _on_extension_cookies_received(self, cookies: dict):
+    def _on_engine_session_changed(self, *args, **kwargs):
+        if not isValid(self):
+            return
+        self.refresh_state()
+
+    def _on_engine_account_details_updated(self, *args, **kwargs):
+        if not isValid(self):
+            return
+        self.refresh_state()
+
+    def _on_extension_cookies_received(self, cookies: dict = None):
+        if not isValid(self):
+            return
         print("[CloudProfileView] YouTube session synchronized in real-time from Chrome Extension!")
         self.refresh_state()
-        self.accountsChanged.emit()
+        try:
+            self.accountsChanged.emit()
+        except Exception:
+            pass
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1242,21 +1651,6 @@ class CloudProfileView(QWidget):
         nav_row.addWidget(title_lbl)
         nav_row.addStretch()
 
-        self.global_status_pill = QLabel("AUTHENTICATION STATUS", self)
-        self.global_status_pill.setObjectName("profileGlobalStatus")
-        self.global_status_pill.setStyleSheet("""
-            QLabel#profileGlobalStatus {
-                background: #161822;
-                color: #8C90A0;
-                font-family: 'Orbitron', sans-serif;
-                font-size: 9px;
-                font-weight: bold;
-                border-radius: 6px;
-                padding: 6px 12px;
-            }
-        """)
-        nav_row.addWidget(self.global_status_pill)
-
         layout.addLayout(nav_row)
 
         # 2. Hero Identity Overview Card
@@ -1294,17 +1688,6 @@ class CloudProfileView(QWidget):
         hero_info.addWidget(self.hero_user_desc)
 
         hero_layout.addLayout(hero_info, stretch=1)
-
-        # Status Pill
-        hero_actions = QHBoxLayout()
-        hero_actions.setSpacing(8)
-
-        self.hero_status_pill = QLabel("SESSION STATUS", self.hero_card)
-        self.hero_status_pill.setObjectName("cloudHeroStatusPill")
-        self.hero_status_pill.setStyleSheet("background: #141722; color: #8C90A0; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
-        hero_actions.addWidget(self.hero_status_pill)
-
-        hero_layout.addLayout(hero_actions)
         layout.addWidget(self.hero_card)
 
         # 3. Two Cloud Service Cards (Side-by-Side on desktop, Stacked on narrow screens)
@@ -1344,21 +1727,6 @@ class CloudProfileView(QWidget):
         self.yt_badge.setAlignment(Qt.AlignCenter)
         self.yt_badge.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); color: #7A7E8F; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
         yt_header_row.addWidget(self.yt_badge)
-
-        self.yt_options_btn = SvgHoverButton(
-            "more-vertical.svg",
-            size=26,
-            icon_size=16,
-            idle_color="#555968",
-            hover_color="#FFFFFF",
-            idle_bg="#141722",
-            hover_bg="#222634",
-            parent=self.yt_card
-        )
-        self.yt_options_btn.setObjectName("ytCloudOptionsBtn")
-        self.yt_options_btn.setToolTip("Advanced Options (Browser Selection, Cookie Import)")
-        self.yt_options_btn.clicked.connect(self._show_yt_options_menu)
-        yt_header_row.addWidget(self.yt_options_btn)
 
         yt_layout.addLayout(yt_header_row)
 
@@ -1402,17 +1770,6 @@ class CloudProfileView(QWidget):
 
         self.yt_account_box.hide()
         yt_layout.addWidget(self.yt_account_box)
-
-        # Feature pills
-        yt_features = QHBoxLayout()
-        yt_features.setSpacing(6)
-        for idx, feat in enumerate(["Liked Songs (LM)", "Playlists", "Supermix"]):
-            f_lbl = QLabel(feat, self.yt_card)
-            f_lbl.setObjectName(f"ytCloudFeaturePill_{idx}")
-            f_lbl.setStyleSheet("background: #0E1015; color: #9DA3B8; font-family: 'Orbitron'; font-size: 10px; font-weight: 600; border-radius: 4px; padding: 4px 8px;")
-            yt_features.addWidget(f_lbl)
-        yt_features.addStretch()
-        yt_layout.addLayout(yt_features)
 
         yt_actions = QHBoxLayout()
         yt_actions.setSpacing(8)
@@ -1597,23 +1954,148 @@ class CloudProfileView(QWidget):
 
         layout.addLayout(self.cards_grid)
 
+        # 3.5 Chrome Extension Quick-Install & Sync Banner Bar (Directly above cloudTelemetryBar)
+        ext_banner = QFrame(self)
+        ext_banner.setObjectName("chromeExtensionBannerBar")
+        ext_banner.setStyleSheet("""
+            QFrame#chromeExtensionBannerBar {
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QFrame#chromeExtensionBannerBar:hover {
+                border-color: rgba(255, 91, 6, 0.4);
+            }
+        """)
+        ext_layout = QHBoxLayout(ext_banner)
+        ext_layout.setContentsMargins(14, 12, 14, 12)
+        ext_layout.setSpacing(12)
+        ext_layout.setAlignment(Qt.AlignVCenter)
+
+        ext_icon = QLabel(ext_banner)
+        ext_icon.setObjectName("chromeExtensionBannerIcon")
+        ext_icon.setPixmap(render_svg_pixmap(SVG_EXTENSION_PUZZLE, 22, 22))
+        ext_layout.addWidget(ext_icon, 0, Qt.AlignVCenter)
+
+        ext_info = QVBoxLayout()
+        ext_info.setSpacing(2)
+        ext_title_row = QHBoxLayout()
+        ext_title_row.setSpacing(8)
+        ext_title = QLabel("HELXAID Chrome Extension", ext_banner)
+        ext_title.setObjectName("chromeExtensionBannerTitle")
+        ext_title.setStyleSheet("color: #FFFFFF; font-family: 'Orbitron', sans-serif; font-size: 11px; font-weight: bold;")
+        ext_title_row.addWidget(ext_title)
+        ext_title_row.addStretch()
+        ext_info.addLayout(ext_title_row)
+
+        ext_desc = QLabel("Auto-extract and sync YouTube Music VIP cookies, Liked Songs, and high-bitrate streaming sessions.", ext_banner)
+        ext_desc.setObjectName("chromeExtensionBannerDesc")
+        ext_desc.setStyleSheet("color: #707584; font-size: 10px;")
+        ext_info.addWidget(ext_desc)
+        ext_layout.addLayout(ext_info, stretch=1)
+
+        ext_guide_btn = QPushButton(ext_banner)
+        ext_guide_btn.setObjectName("chromeExtensionGuideBtn")
+        ext_guide_btn.setFixedSize(30, 30)
+        ext_guide_btn.setCursor(Qt.PointingHandCursor)
+        ext_guide_btn.setToolTip("Extension Installation Guide & Instructions")
+        
+        info_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "info-icon.svg").replace("\\", "/")
+        if os.path.exists(info_icon_path):
+            ext_guide_btn.setIcon(QIcon(info_icon_path))
+            ext_guide_btn.setIconSize(QSize(18, 18))
+        ext_guide_btn.setStyleSheet("""
+            QPushButton#chromeExtensionGuideBtn {
+                background: transparent;
+                border: none;
+                border-radius: 15px;
+            }
+            QPushButton#chromeExtensionGuideBtn:hover {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QPushButton#chromeExtensionGuideBtn:pressed {
+                background: rgba(255, 255, 255, 0.15);
+            }
+        """)
+        ext_guide_btn.clicked.connect(self._open_chrome_extension_helper)
+        ext_layout.addWidget(ext_guide_btn, 0, Qt.AlignVCenter)
+
+        ext_folder_btn = QPushButton(ext_banner)
+        ext_folder_btn.setObjectName("chromeExtensionFolderBtn")
+        ext_folder_btn.setFixedSize(30, 30)
+        ext_folder_btn.setCursor(Qt.PointingHandCursor)
+        ext_folder_btn.setToolTip("Open Extension Folder in Windows Explorer")
+        
+        folder_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "folder-icon-white.svg").replace("\\", "/")
+        if os.path.exists(folder_icon_path):
+            ext_folder_btn.setIcon(QIcon(folder_icon_path))
+            ext_folder_btn.setIconSize(QSize(18, 18))
+        ext_folder_btn.setStyleSheet("""
+            QPushButton#chromeExtensionFolderBtn {
+                background: transparent;
+                border: none;
+                border-radius: 15px;
+            }
+            QPushButton#chromeExtensionFolderBtn:hover {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QPushButton#chromeExtensionFolderBtn:pressed {
+                background: rgba(255, 255, 255, 0.15);
+            }
+        """)
+        ext_folder_btn.clicked.connect(self._open_extension_folder_direct)
+        ext_layout.addWidget(ext_folder_btn, 0, Qt.AlignVCenter)
+
+        ext_sync_btn = QPushButton(ext_banner)
+        ext_sync_btn.setObjectName("chromeExtensionSyncBtn")
+        ext_sync_btn.setFixedSize(30, 30)
+        ext_sync_btn.setCursor(Qt.PointingHandCursor)
+        ext_sync_btn.setToolTip("Auto-Sync Session from Chrome Extension")
+        
+        sync_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "refresh.svg").replace("\\", "/")
+        if os.path.exists(sync_icon_path):
+            ext_sync_btn.setIcon(QIcon(sync_icon_path))
+            ext_sync_btn.setIconSize(QSize(18, 18))
+        ext_sync_btn.setStyleSheet("""
+            QPushButton#chromeExtensionSyncBtn {
+                background: transparent;
+                border: none;
+                border-radius: 15px;
+            }
+            QPushButton#chromeExtensionSyncBtn:hover {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QPushButton#chromeExtensionSyncBtn:pressed {
+                background: rgba(255, 255, 255, 0.15);
+            }
+        """)
+        ext_sync_btn.clicked.connect(self._auto_sync_browser)
+        ext_layout.addWidget(ext_sync_btn, 0, Qt.AlignVCenter)
+
+        layout.addWidget(ext_banner)
+
         # 4. Telemetry & Cache Bar
         telemetry_card = QFrame(self)
         telemetry_card.setObjectName("cloudTelemetryBar")
         telemetry_card.setStyleSheet("""
             QFrame#cloudTelemetryBar {
-                background: #12141D;
-                border-radius: 10px;
+                background: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 14px;
+            }
+            QFrame#cloudTelemetryBar:hover {
+                border-color: rgba(255, 91, 6, 0.4);
             }
         """)
         t_layout = QHBoxLayout(telemetry_card)
         t_layout.setContentsMargins(14, 12, 14, 12)
         t_layout.setSpacing(12)
+        t_layout.setAlignment(Qt.AlignVCenter)
 
         db_icon = QLabel(telemetry_card)
         db_icon.setObjectName("cloudTelemetryIcon")
         db_icon.setPixmap(render_svg_pixmap(SVG_DATABASE, 20, 20))
-        t_layout.addWidget(db_icon)
+        t_layout.addWidget(db_icon, 0, Qt.AlignVCenter)
 
         t_info = QVBoxLayout()
         t_info.setSpacing(2)
@@ -1630,149 +2112,140 @@ class CloudProfileView(QWidget):
 
         t_layout.addLayout(t_info, stretch=1)
 
-        clear_btn = QPushButton("Clear Cache", telemetry_card)
+        clear_btn = QPushButton(telemetry_card)
         clear_btn.setObjectName("cloudTelemetryClearBtn")
-        clear_btn.setFixedHeight(30)
+        clear_btn.setFixedSize(30, 30)
         clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.setToolTip("Clear Cloud Storage Cache")
+
+        trash_icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "UI Icons", "trash-icon-white.svg").replace("\\", "/")
+        if os.path.exists(trash_icon_path):
+            clear_btn.setIcon(QIcon(trash_icon_path))
+            clear_btn.setIconSize(QSize(18, 18))
         clear_btn.setStyleSheet("""
-            QPushButton {
-                background: #181A24;
-                color: #A0A4B4;
-                font-family: 'Orbitron';
-                font-size: 9px;
-                font-weight: bold;
-                border-radius: 6px;
-                padding: 4px 14px;
+            QPushButton#cloudTelemetryClearBtn {
+                background: transparent;
                 border: none;
+                border-radius: 15px;
             }
-            QPushButton:hover { color: #FFFFFF; background: #FF5B06; }
+            QPushButton#cloudTelemetryClearBtn:hover {
+                background: rgba(255, 255, 255, 0.08);
+            }
+            QPushButton#cloudTelemetryClearBtn:pressed {
+                background: rgba(255, 255, 255, 0.15);
+            }
         """)
         clear_btn.clicked.connect(self._clear_cache)
-        t_layout.addWidget(clear_btn)
+        t_layout.addWidget(clear_btn, 0, Qt.AlignVCenter)
 
         layout.addWidget(telemetry_card)
         layout.addStretch()
 
         self.refresh_state()
 
-    def refresh_state(self):
-        yt = YouTubeAccountEngine.get_instance()
-        sp = SpotifyAccountEngine.get_instance()
+    def refresh_state(self, *args, **kwargs):
+        if not isValid(self):
+            return
+        try:
+            yt = YouTubeAccountEngine.get_instance()
+            sp = SpotifyAccountEngine.get_instance()
 
-        yt_active = yt.is_authenticated()
-        sp_active = sp.is_authenticated()
+            yt_active = yt.is_authenticated()
+            sp_active = sp.is_authenticated()
 
-        # Update Hero Card based on active music services
-        if yt_active and sp_active:
-            yt_name = yt.get_user_name()
-            sp_name = sp.get_display_name()
-            self.hero_user_name.setText(f"{yt_name.upper()} • {sp_name.upper()}")
-            self.hero_user_desc.setText("YouTube Music & Spotify Active • Lossless Hybrid Stream Resolver Ready")
-            self.hero_avatar_lbl.setPixmap(render_svg_pixmap(SVG_USER_AVATAR, 42, 42))
-            self.hero_status_pill.setText("ALL SERVICES ACTIVE")
-            self.hero_status_pill.setStyleSheet("background: #0E2B18; color: #00E676; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
-        elif yt_active:
-            display_str = yt.get_account_display_str()
-            self.hero_user_name.setText(f"YOUTUBE: {display_str.upper()}")
-            self.hero_user_desc.setText("Active YouTube Music session synchronized via Chrome Extension")
-            self.hero_avatar_lbl.setPixmap(render_svg_pixmap("lighting-adaptive.svg", 42, 42))
-            self.hero_status_pill.setText("YOUTUBE SYNCED")
-            self.hero_status_pill.setStyleSheet("background: #2B1212; color: #FF5252; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
-        elif sp_active:
-            sp_name = sp.get_display_name()
-            self.hero_user_name.setText(f"SPOTIFY: {sp_name.upper()}")
-            self.hero_user_desc.setText("Active Spotify session synchronized via OAuth2 PKCE")
-            self.hero_avatar_lbl.setPixmap(render_svg_pixmap("spotify-icon.svg", 42, 42))
-            self.hero_status_pill.setText("SPOTIFY LINKED")
-            self.hero_status_pill.setStyleSheet("background: #0E2B18; color: #1DB954; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
-        else:
-            self.hero_user_name.setText("STANDALONE STREAMING MODE")
-            self.hero_user_desc.setText("Sync your YouTube Music or Spotify account below to unlock playlists, liked songs, and algorithmic mixes.")
-            self.hero_avatar_lbl.setPixmap(render_svg_pixmap(SVG_USER_AVATAR, 42, 42))
-            self.hero_status_pill.setText("OFFLINE / UNLINKED")
-            self.hero_status_pill.setStyleSheet("background: #161822; color: #8C90A0; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
-
-        # Update YouTube Card
-        if yt_active:
-            name = yt.get_user_name()
-            acc_name = yt.get_account_name()
-            acc_email = yt.get_account_email()
-            acc_handle = yt.get_account_handle()
-            display_str = yt.get_account_display_str()
-            browser_raw = (yt.session_data.get("browser") or "chrome").lower()
-            if "google_web" in browser_raw or "chrome" in browser_raw or "extension" in browser_raw:
-                browser_str = "Google Chrome"
-            elif "edge" in browser_raw:
-                browser_str = "Microsoft Edge"
-            elif "brave" in browser_raw:
-                browser_str = "Brave Browser"
-            elif "cookies_txt" in browser_raw:
-                browser_str = "Cookie Import"
+            # Update Hero Card based on active music services
+            if yt_active and sp_active:
+                yt_name = yt.get_user_name()
+                sp_name = sp.get_display_name()
+                self.hero_user_name.setText(f"{yt_name.upper()} • {sp_name.upper()}")
+                self.hero_user_desc.setText("YouTube Music & Spotify Active • Lossless Hybrid Stream Resolver Ready")
+                self.hero_avatar_lbl.setPixmap(render_svg_pixmap(SVG_USER_AVATAR, 42, 42))
+            elif yt_active:
+                display_str = yt.get_account_display_str()
+                self.hero_user_name.setText(f"YOUTUBE: {display_str.upper()}")
+                self.hero_user_desc.setText("Active YouTube Music session synchronized via Chrome Extension")
+                self.hero_avatar_lbl.setPixmap(render_svg_pixmap("lighting-adaptive.svg", 42, 42))
+            elif sp_active:
+                sp_name = sp.get_display_name()
+                self.hero_user_name.setText(f"SPOTIFY: {sp_name.upper()}")
+                self.hero_user_desc.setText("Active Spotify session synchronized via OAuth2 PKCE")
+                self.hero_avatar_lbl.setPixmap(render_svg_pixmap("spotify-icon.svg", 42, 42))
             else:
-                browser_str = yt.session_data.get("browser", "Browser").replace("_", " ").title()
+                self.hero_user_name.setText("STANDALONE STREAMING MODE")
+                self.hero_user_desc.setText("Sync your YouTube Music or Spotify account below to unlock playlists, liked songs, and algorithmic mixes.")
+                self.hero_avatar_lbl.setPixmap(render_svg_pixmap(SVG_USER_AVATAR, 42, 42))
 
-            self.yt_badge.setText("LINKED")
-            self.yt_badge.setStyleSheet("background-color: rgba(0, 230, 118, 0.12); color: #00E676; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
-            self.yt_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
-            self.yt_status_lbl.setText(f"Connected as {display_str}. Session active and synchronized.")
+            # Update YouTube Card
+            if yt_active:
+                name = yt.get_user_name()
+                acc_name = yt.get_account_name()
+                acc_email = yt.get_account_email()
+                acc_handle = yt.get_account_handle()
+                display_str = yt.get_account_display_str()
+                browser_raw = (yt.session_data.get("browser") or "chrome").lower()
+                if "google_web" in browser_raw or "chrome" in browser_raw or "extension" in browser_raw:
+                    browser_str = "Google Chrome"
+                elif "edge" in browser_raw:
+                    browser_str = "Microsoft Edge"
+                elif "brave" in browser_raw:
+                    browser_str = "Brave Browser"
+                elif "cookies_txt" in browser_raw:
+                    browser_str = "Cookie Import"
+                else:
+                    browser_str = yt.session_data.get("browser", "Browser").replace("_", " ").title()
 
-            if hasattr(self, 'yt_account_box'):
-                primary_name = acc_name or name
-                self.yt_account_name_lbl.setText(f"SYNCED: {primary_name.upper()}")
+                self.yt_badge.setText("LINKED")
+                self.yt_badge.setStyleSheet("background-color: rgba(0, 230, 118, 0.12); color: #00E676; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
+                self.yt_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
+                self.yt_status_lbl.setText(f"Connected as {display_str}. Session active and synchronized.")
 
-                sub_items = []
-                if acc_handle:
-                    h_clean = acc_handle if acc_handle.startswith("@") else f"@{acc_handle}"
-                    sub_items.append(h_clean)
-                if acc_email and acc_email != primary_name and "@" in acc_email:
-                    sub_items.append(acc_email)
-                sub_items.append(browser_str)
+                if hasattr(self, 'yt_account_box'):
+                    primary_name = acc_name or name
+                    self.yt_account_name_lbl.setText(f"SYNCED: {primary_name.upper()}")
 
-                self.yt_account_sub_lbl.setText(" • ".join(sub_items))
-                self.yt_account_box.show()
+                    sub_items = []
+                    if acc_handle:
+                        h_clean = acc_handle if acc_handle.startswith("@") else f"@{acc_handle}"
+                        sub_items.append(h_clean)
+                    if acc_email and acc_email != primary_name and "@" in acc_email:
+                        sub_items.append(acc_email)
+                    sub_items.append(browser_str)
 
-            self.yt_sync_btn.hide()
-            self.yt_import_btn.hide()
-            self.yt_disc_btn.show()
-        else:
-            self.yt_badge.setText("UNLINKED")
-            self.yt_badge.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); color: #7A7E8F; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
-            self.yt_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
-            self.yt_status_lbl.setText("1-Click Auto-Sync YouTube algorithms from your active browser session.")
-            if hasattr(self, 'yt_account_box'):
-                self.yt_account_box.hide()
-            self.yt_sync_btn.show()
-            self.yt_import_btn.show()
-            self.yt_disc_btn.hide()
+                    self.yt_account_sub_lbl.setText(" • ".join(sub_items))
+                    self.yt_account_box.show()
 
-        # Update Spotify Card
-        if sp_active:
-            name = sp.get_display_name()
-            self.sp_badge.setText("LINKED")
-            self.sp_badge.setStyleSheet("background-color: rgba(29, 185, 84, 0.15); color: #1DB954; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
-            self.sp_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
-            self.sp_status_lbl.setText(f"Connected as {name}. Lossless hybrid stream resolver ready.")
-            self.sp_connect_btn.hide()
-            self.sp_disc_btn.show()
-        else:
-            self.sp_badge.setText("UNLINKED")
-            self.sp_badge.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); color: #7A7E8F; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
-            self.sp_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
-            self.sp_status_lbl.setText("1-Click OAuth2 PKCE login. Spotify tracks are streamed in pristine quality.")
-            self.sp_connect_btn.show()
-            self.sp_disc_btn.hide()
+                self.yt_sync_btn.hide()
+                self.yt_import_btn.hide()
+                self.yt_disc_btn.show()
+            else:
+                self.yt_badge.setText("UNLINKED")
+                self.yt_badge.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); color: #7A7E8F; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
+                self.yt_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
+                self.yt_status_lbl.setText("1-Click Auto-Sync YouTube algorithms from your active browser session.")
+                if hasattr(self, 'yt_account_box'):
+                    self.yt_account_box.hide()
+                self.yt_sync_btn.show()
+                self.yt_import_btn.show()
+                self.yt_disc_btn.hide()
 
-        # Update Global Status
-        total_linked = sum([1 for x in [yt_active, sp_active] if x])
-        if total_linked == 2:
-            self.global_status_pill.setText("ALL SERVICES LINKED (2/2)")
-            self.global_status_pill.setStyleSheet("background: #0E2B18; color: #00E676; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
-        elif total_linked > 0:
-            self.global_status_pill.setText(f"SERVICES LINKED ({total_linked}/2)")
-            self.global_status_pill.setStyleSheet("background: #182032; color: #00E5FF; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
-        else:
-            self.global_status_pill.setText("STANDALONE MODE (0/2)")
-            self.global_status_pill.setStyleSheet("background: #161822; color: #8C90A0; font-family: 'Orbitron'; font-size: 9px; font-weight: bold; border-radius: 6px; padding: 6px 12px;")
+            # Update Spotify Card
+            if sp_active:
+                name = sp.get_display_name()
+                self.sp_badge.setText("LINKED")
+                self.sp_badge.setStyleSheet("background-color: rgba(29, 185, 84, 0.15); color: #1DB954; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
+                self.sp_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
+                self.sp_status_lbl.setText(f"Connected as {name}. Lossless hybrid stream resolver ready.")
+                self.sp_connect_btn.hide()
+                self.sp_disc_btn.show()
+            else:
+                self.sp_badge.setText("UNLINKED")
+                self.sp_badge.setStyleSheet("background-color: rgba(255, 255, 255, 0.05); color: #7A7E8F; font-family: 'Orbitron'; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0 8px;")
+                self.sp_status_lbl.setStyleSheet("color: #D2D6E6; font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 600; line-height: 1.4;")
+                self.sp_status_lbl.setText("1-Click OAuth2 PKCE login. Spotify tracks are streamed in pristine quality.")
+                self.sp_connect_btn.show()
+                self.sp_disc_btn.hide()
+        except (RuntimeError, Exception):
+            pass
 
     def _load_remote_avatar(self, url: str):
         def _fetch():
@@ -1817,60 +2290,37 @@ class CloudProfileView(QWidget):
 
 
 
-    def _show_yt_options_menu(self):
-        menu = QMenu(self)
-        menu.setObjectName("ytCloudOptionsMenu")
-        menu.setStyleSheet("""
-            QMenu#ytCloudOptionsMenu {
-                background-color: #161923;
-                color: #FFFFFF;
-                border-radius: 8px;
-                padding: 6px;
-                font-size: 11px;
-                border: none;
-            }
-            QMenu#ytCloudOptionsMenu::item {
-                padding: 6px 16px;
-                border-radius: 4px;
-            }
-            QMenu#ytCloudOptionsMenu::item:selected {
-                background-color: #252A3C;
-                color: #FF5252;
-            }
-            QMenu#ytCloudOptionsMenu::separator {
-                height: 1px;
-                background: #222636;
-                margin: 4px 8px;
-            }
-        """)
-
-        act_sync = menu.addAction("🔄 1-Click Auto-Sync from Browser")
-        act_sync.triggered.connect(self._auto_sync_browser)
-
-        act_ext = menu.addAction("🧩 Open HELXAID Chrome Extension Folder...")
-        act_ext.triggered.connect(self._open_chrome_extension_helper)
-
-        act_cookie = menu.addAction("🍪 Import Cookies (.txt / JSON)...")
-        act_cookie.triggered.connect(self._open_youtube_cookie_dialog)
-
-        menu.addSeparator()
-
-        act_logout = menu.addAction("🚪 Disconnect YouTube")
-        act_logout.triggered.connect(self._disconnect_youtube)
-
-        pos = self.yt_options_btn.mapToGlobal(QPoint(0, self.yt_options_btn.height() + 4))
-        menu.exec(pos)
-
     def _open_chrome_extension_helper(self):
-        """Open the Chrome Extension folder and chrome://extensions page."""
-        ext_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chrome_extension")
+        """Open the in-app Chrome Extension Installation Guide Floating Panel."""
+        if hasattr(self, '_extension_guide_panel') and self._extension_guide_panel is not None:
+            try:
+                if self._extension_guide_panel.isVisible():
+                    self._extension_guide_panel.raise_()
+                    self._extension_guide_panel.activateWindow()
+                    return
+            except RuntimeError:
+                pass
+
+        target_parent = self.window() or self
+        self._extension_guide_panel = ChromeExtensionGuideFloatingPanel(parent=target_parent)
+        pw = target_parent.width()
+        ph = target_parent.height()
+        w = self._extension_guide_panel.width()
+        h = self._extension_guide_panel.height()
+        self._extension_guide_panel.move(max(10, (pw - w) // 2), max(10, (ph - h) // 2))
+        self._extension_guide_panel.show()
+        self._extension_guide_panel.raise_()
+
+    def _open_extension_folder_direct(self):
+        """Open the resolved Chrome Extension directory directly in Windows Explorer."""
+        ext_dir = resolve_chrome_extension_dir()
         if os.path.exists(ext_dir):
             try:
-                import webbrowser
-                webbrowser.open("chrome://extensions/")
                 os.startfile(ext_dir)
             except Exception as e:
                 print(f"[DirectStreamPage] Error opening extension folder: {e}")
+        else:
+            self._open_chrome_extension_helper()
 
     def _auto_sync_browser(self):
         """1-Click Auto-Extract and Sync YouTube Session Cookies from Google Chrome in background."""
@@ -1974,7 +2424,7 @@ class StreamProfilePillButton(QPushButton):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("streamProfilePillButton")
-        self.setFixedHeight(30)
+        self.setFixedHeight(28)
         self.setCursor(Qt.PointingHandCursor)
         self.setFont(QFont("Orbitron", 9, QFont.Bold))
         self._is_compact = False
@@ -1991,52 +2441,112 @@ class StreamProfilePillButton(QPushButton):
         yt_auth = YouTubeAccountEngine.get_instance().is_authenticated()
         sp_auth = SpotifyAccountEngine.get_instance().is_authenticated()
 
-        active_border = "border: 1px solid #FF5B06; background: #242838;" if is_active_panel else ""
-        pad = "padding: 4px 6px;" if self._is_compact else "padding: 4px 12px;"
+        active_style = "background: rgba(255, 91, 6, 0.22); border: 1px solid #FF5B06; color: #FFFFFF;" if is_active_panel else ""
+        pad = "padding: 0px 8px;" if self._is_compact else "padding: 0px 12px;"
 
         if yt_auth and sp_auth:
-            self.setIcon(QIcon(render_svg_pixmap(SVG_USER_AVATAR, 16, 16)))
+            self.setIcon(QIcon(render_svg_pixmap(SVG_USER_AVATAR, 14, 14)))
             self.setText("  2 Active  " if self._is_compact else "  Accounts: 2 Active  ")
             self.setStyleSheet(f"""
                 QPushButton#streamProfilePillButton {{
-                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(255, 91, 6, 0.4); border-radius: 15px; {pad}
-                    {active_border}
+                    background: rgba(255, 255, 255, 0.08);
+                    color: #FFFFFF;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    {pad}
+                    {active_style}
                 }}
-                QPushButton#streamProfilePillButton:hover {{ background: #202430; border: 1px solid #FF5B06; }}
+                QPushButton#streamProfilePillButton:hover {{
+                    background: rgba(255, 255, 255, 0.14);
+                    color: #FFFFFF;
+                }}
+                QPushButton#streamProfilePillButton:pressed {{
+                    background: rgba(255, 91, 6, 0.35);
+                    border: 1px solid #FF5B06;
+                    color: #FFFFFF;
+                }}
             """)
         elif yt_auth:
-            self.setIcon(QIcon(render_svg_pixmap("lighting-adaptive.svg", 16, 16)))
+            self.setIcon(QIcon(render_svg_pixmap("lighting-adaptive.svg", 14, 14)))
             name = YouTubeAccountEngine.get_instance().get_user_name()
             short_name = (name[:8] + "..") if self._is_compact else ((name[:12] + "..") if len(name) > 14 else name)
             self.setText(f"  {short_name}  " if self._is_compact else f"  YT: {short_name}  ")
             self.setStyleSheet(f"""
                 QPushButton#streamProfilePillButton {{
-                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(255, 0, 0, 0.4); border-radius: 15px; {pad}
-                    {active_border}
+                    background: rgba(255, 255, 255, 0.08);
+                    color: #FFFFFF;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    {pad}
+                    {active_style}
                 }}
-                QPushButton#streamProfilePillButton:hover {{ background: #202430; border: 1px solid #FF0000; }}
+                QPushButton#streamProfilePillButton:hover {{
+                    background: rgba(255, 255, 255, 0.14);
+                    color: #FFFFFF;
+                }}
+                QPushButton#streamProfilePillButton:pressed {{
+                    background: rgba(255, 91, 6, 0.35);
+                    border: 1px solid #FF5B06;
+                    color: #FFFFFF;
+                }}
             """)
         elif sp_auth:
-            self.setIcon(QIcon(render_svg_pixmap("spotify-icon.svg", 16, 16)))
+            self.setIcon(QIcon(render_svg_pixmap("spotify-icon.svg", 14, 14)))
             name = SpotifyAccountEngine.get_instance().get_display_name()
             short_name = (name[:8] + "..") if self._is_compact else ((name[:12] + "..") if len(name) > 14 else name)
             self.setText(f"  {short_name}  " if self._is_compact else f"  Spotify: {short_name}  ")
             self.setStyleSheet(f"""
                 QPushButton#streamProfilePillButton {{
-                    background: #181B24; color: #FFFFFF; border: 1px solid rgba(29, 185, 84, 0.4); border-radius: 15px; {pad}
-                    {active_border}
+                    background: rgba(255, 255, 255, 0.08);
+                    color: #FFFFFF;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    {pad}
+                    {active_style}
                 }}
-                QPushButton#streamProfilePillButton:hover {{ background: #202430; border: 1px solid #1DB954; }}
+                QPushButton#streamProfilePillButton:hover {{
+                    background: rgba(255, 255, 255, 0.14);
+                    color: #FFFFFF;
+                }}
+                QPushButton#streamProfilePillButton:pressed {{
+                    background: rgba(255, 91, 6, 0.35);
+                    border: 1px solid #FF5B06;
+                    color: #FFFFFF;
+                }}
             """)
         else:
-            self.setIcon(QIcon(render_svg_pixmap(SVG_USER_AVATAR, 16, 16)))
+            self.setIcon(QIcon(render_svg_pixmap(SVG_USER_AVATAR, 14, 14)))
             self.setText("  Sync  " if self._is_compact else "  Link Accounts  ")
             self.setStyleSheet(f"""
                 QPushButton#streamProfilePillButton {{
-                    background: #14161F; color: #A0A4B4; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 15px; {pad}
-                    {active_border}
+                    background: rgba(255, 255, 255, 0.05);
+                    color: #9A9DAE;
+                    font-family: 'Orbitron', sans-serif;
+                    font-size: 10px;
+                    font-weight: bold;
+                    border: none;
+                    border-radius: 6px;
+                    {pad}
+                    {active_style}
                 }}
-                QPushButton#streamProfilePillButton:hover {{ background: #1B1E2B; color: #FFFFFF; border: 1px solid rgba(255, 91, 6, 0.4); }}
+                QPushButton#streamProfilePillButton:hover {{
+                    background: rgba(255, 255, 255, 0.14);
+                    color: #FFFFFF;
+                }}
+                QPushButton#streamProfilePillButton:pressed {{
+                    background: rgba(255, 91, 6, 0.35);
+                    border: 1px solid #FF5B06;
+                    color: #FFFFFF;
+                }}
             """)
 
 
@@ -2095,7 +2605,7 @@ class StreamOmniSearchBar(QFrame):
         super().__init__(parent)
         self.setObjectName("streamOmniSearchBar")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(140)
+        self.setFixedHeight(144)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -2106,7 +2616,7 @@ class StreamOmniSearchBar(QFrame):
         # Header Row Container
         header_widget = QWidget(self)
         header_widget.setObjectName("streamOmniHeaderWidget")
-        header_widget.setFixedHeight(30)
+        header_widget.setFixedHeight(36)
         header_row = QHBoxLayout(header_widget)
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(10)
@@ -4965,11 +5475,8 @@ class DirectStreamSyncWarningOverlayPanel(QWidget):
 
     def _open_extension(self):
         try:
-            import webbrowser
-            ext_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chrome_extension")
-            webbrowser.open("chrome://extensions/")
-            if os.path.exists(ext_dir):
-                os.startfile(ext_dir)
+            dialog = ExtensionInstallGuideDialog(self.parent_window or self)
+            dialog.exec()
         except Exception:
             pass
         self._on_proceed()
@@ -5066,11 +5573,6 @@ class LikedMusicPortalCard(QFrame):
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(0, 2, 0, 2)
         content_layout.setSpacing(6)
-
-        self.eyebrow_lbl = QLabel("PERSONAL HUB", self)
-        self.eyebrow_lbl.setObjectName("streamLikedEyebrow")
-        self.eyebrow_lbl.setStyleSheet("color: #FF0055; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.2px;")
-        content_layout.addWidget(self.eyebrow_lbl)
 
         self.title_lbl = QLabel("Liked Music", self)
         self.title_lbl.setObjectName("streamLikedTitle")
@@ -5346,11 +5848,6 @@ class YouTubeDiscoveryPortalCard(QFrame):
         content_layout = QVBoxLayout()
         content_layout.setContentsMargins(0, 2, 0, 2)
         content_layout.setSpacing(6)
-
-        self.eyebrow_lbl = QLabel("RECOMMENDED FOR YOU", self)
-        self.eyebrow_lbl.setObjectName("streamDiscoveryEyebrow")
-        self.eyebrow_lbl.setStyleSheet("color: #FF5B06; font-family: 'Orbitron', sans-serif; font-size: 9px; font-weight: 900; letter-spacing: 1.2px;")
-        content_layout.addWidget(self.eyebrow_lbl)
 
         self.title_lbl = QLabel("Algorithm Discovery", self)
         self.title_lbl.setObjectName("streamDiscoveryTitle")
@@ -6492,7 +6989,7 @@ class DirectStreamPage(QWidget):
         self._load_cloud_feeds()
 
         YouTubeAccountEngine.get_instance().sessionChanged.connect(self._on_accounts_state_changed)
-        YouTubeAccountEngine.get_instance().accountDetailsUpdated.connect(lambda d: self._on_accounts_state_changed())
+        YouTubeAccountEngine.get_instance().accountDetailsUpdated.connect(self._on_accounts_state_changed)
         YouTubeAccountEngine.get_instance().cookiesReceived.connect(self._on_extension_cookies_received)
         SpotifyAccountEngine.get_instance().authStatusChanged.connect(self._on_accounts_state_changed)
 
@@ -7157,7 +7654,9 @@ class DirectStreamPage(QWidget):
             self.view_stack.setCurrentIndex(2)
             self.search_bar.profile_btn.update_status(is_active_panel=True)
 
-    def _on_extension_cookies_received(self, cookies: dict):
+    def _on_extension_cookies_received(self, cookies: dict = None):
+        if not isValid(self):
+            return
         print("[DirectStreamPage] Real-time session sync received from Chrome extension!")
         self._live_extension_synced = True
         self._on_accounts_state_changed()
@@ -7188,174 +7687,78 @@ class DirectStreamPage(QWidget):
 
     def on_page_activated(self):
         """Lifecycle hook invoked whenever user navigates to or loads the Direct Stream page."""
-        is_profile_active = (self.view_stack.currentIndex() == 2)
-        if hasattr(self, 'search_bar') and hasattr(self.search_bar, 'profile_btn'):
-            self.search_bar.profile_btn.update_status(is_active_panel=is_profile_active)
-        if hasattr(self, 'profile_view') and self.profile_view:
-            self.profile_view.refresh_state()
+        if not isValid(self):
+            return
+        try:
+            is_profile_active = (self.view_stack.currentIndex() == 2) if (hasattr(self, 'view_stack') and self.view_stack and isValid(self.view_stack)) else False
+            if hasattr(self, 'search_bar') and hasattr(self.search_bar, 'profile_btn') and isValid(self.search_bar):
+                self.search_bar.profile_btn.update_status(is_active_panel=is_profile_active)
+            if hasattr(self, 'profile_view') and self.profile_view and isValid(self.profile_view):
+                self.profile_view.refresh_state()
 
-        # Re-verify live authentication from disk cache in case session was synced while on another tab
-        yt_engine = YouTubeAccountEngine.get_instance()
-        persisted = yt_engine._load_persisted_session()
-        if persisted and isinstance(persisted, dict):
-            cookies = persisted.get("cookies", {})
-            sapisid = persisted.get("sapisid") or cookies.get("SAPISID") or cookies.get("__Secure-3PAPISID")
-            if sapisid or persisted.get("access_token"):
-                if not yt_engine.session_data or yt_engine.session_data.get("sapisid") != sapisid:
-                    yt_engine.session_data = persisted
-                    self._on_accounts_state_changed()
-                    return
+            # Re-verify live authentication from disk cache in case session was synced while on another tab
+            yt_engine = YouTubeAccountEngine.get_instance()
+            persisted = yt_engine._load_persisted_session()
+            if persisted and isinstance(persisted, dict):
+                cookies = persisted.get("cookies", {})
+                sapisid = persisted.get("sapisid") or cookies.get("SAPISID") or cookies.get("__Secure-3PAPISID")
+                if sapisid or persisted.get("access_token"):
+                    if not yt_engine.session_data or yt_engine.session_data.get("sapisid") != sapisid:
+                        yt_engine.session_data = persisted
+                        self._on_accounts_state_changed()
+                        return
 
-        # If authenticated, ensure cloud feeds are genuinely loaded
-        if yt_engine.is_authenticated():
-            self._load_cloud_feeds()
+            # If authenticated, ensure cloud feeds are genuinely loaded
+            if yt_engine.is_authenticated():
+                self._load_cloud_feeds()
+        except (RuntimeError, Exception):
+            pass
 
     def showEvent(self, event):
         super().showEvent(event)
         self.on_page_activated()
 
     def _show_home_panel(self):
-        self.search_bar.show()
-        self.view_stack.setCurrentIndex(0)
-        self.search_bar.profile_btn.update_status(is_active_panel=False)
+        if not isValid(self):
+            return
+        try:
+            self.search_bar.show()
+            self.view_stack.setCurrentIndex(0)
+            self.search_bar.profile_btn.update_status(is_active_panel=False)
+        except (RuntimeError, Exception):
+            pass
 
-    def _on_accounts_state_changed(self):
-        is_profile_active = (self.view_stack.currentIndex() == 2)
-        self.search_bar.profile_btn.update_status(is_active_panel=is_profile_active)
-        if hasattr(self, 'profile_view') and self.profile_view:
-            self.profile_view.refresh_state()
-        self._load_cloud_feeds()
-        self._load_recommendations()
+    def _on_accounts_state_changed(self, *args, **kwargs):
+        if not isValid(self):
+            return
+        try:
+            if hasattr(self, 'view_stack') and self.view_stack and isValid(self.view_stack):
+                is_profile_active = (self.view_stack.currentIndex() == 2)
+            else:
+                is_profile_active = False
+
+            if hasattr(self, 'search_bar') and hasattr(self.search_bar, 'profile_btn') and isValid(self.search_bar):
+                self.search_bar.profile_btn.update_status(is_active_panel=is_profile_active)
+            if hasattr(self, 'profile_view') and self.profile_view and isValid(self.profile_view):
+                self.profile_view.refresh_state()
+            self._load_cloud_feeds()
+            self._load_recommendations()
+        except (RuntimeError, Exception):
+            pass
 
     def _load_cloud_feeds(self):
         yt_engine = YouTubeAccountEngine.get_instance()
-        if yt_engine.is_authenticated():
-            if hasattr(self, "_yt_mixes_worker") and self._yt_mixes_worker and self._yt_mixes_worker.isRunning():
-                self._yt_mixes_worker.cancel()
-            self._yt_mixes_worker = FetchYTMixesWorker(self)
-            self._yt_mixes_worker.mixesLoaded.connect(self._on_cloud_mixes_loaded)
-            self._yt_mixes_worker.start()
+        if hasattr(self, "_yt_mixes_worker") and self._yt_mixes_worker and self._yt_mixes_worker.isRunning():
+            self._yt_mixes_worker.cancel()
+        self._yt_mixes_worker = FetchYTMixesWorker(self)
+        self._yt_mixes_worker.mixesLoaded.connect(self._on_cloud_mixes_loaded)
+        self._yt_mixes_worker.start()
 
-            if hasattr(self, "_yt_pl_worker") and self._yt_pl_worker and self._yt_pl_worker.isRunning():
-                self._yt_pl_worker.cancel()
-            self._yt_pl_worker = FetchYTPlaylistsWorker(self)
-            self._yt_pl_worker.playlistsLoaded.connect(self._on_cloud_playlists_loaded)
-            self._yt_pl_worker.start()
-        else:
-            fallback_mixes = [
-                {
-                    "id": "RDTMAK5uy_n_eQ6L28892s923kdkf023",
-                    "title": "Discover Mix",
-                    "description": "Fresh tracks and new discoveries tailored for you every Wednesday",
-                    "track_count": 50,
-                    "thumbnail_url": "https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg",
-                    "source": "youtube",
-                    "is_algorithmic": True,
-                    "badge": "DISCOVER"
-                }
-            ]
-            self._on_cloud_mixes_loaded(fallback_mixes)
-
-            fallback_playlists = [
-                {
-                    "id": "yt_pl1",
-                    "title": "Global Top 50 Hits",
-                    "description": "Worldwide trending music & chart toppers",
-                    "track_count": 12,
-                    "thumbnail_url": "https://i.ytimg.com/vi/sPxXiXucYcM/hqdefault.jpg",
-                    "source": "youtube",
-                    "badge": "TOP 50",
-                    "is_playlist": True,
-                    "original_url": "https://www.youtube.com/watch?v=sPxXiXucYcM",
-                    "tracks": [
-                        {"title": "Houdini", "artist": "Dua Lipa", "duration": 186, "original_url": "https://www.youtube.com/watch?v=suAR1PYFNYA", "is_stream": True, "is_online": True},
-                        {"title": "Blinding Lights", "artist": "The Weeknd", "duration": 200, "original_url": "https://www.youtube.com/watch?v=4NRXx6U8ABQ", "is_stream": True, "is_online": True},
-                        {"title": "Sunflower", "artist": "Post Malone, Swae Lee", "duration": 158, "original_url": "https://www.youtube.com/watch?v=ApXoWvfEYVU", "is_stream": True, "is_online": True},
-                        {"title": "Old Town Road", "artist": "Lil Nas X", "duration": 157, "original_url": "https://www.youtube.com/watch?v=w2Ov5jzm3j8", "is_stream": True, "is_online": True},
-                        {"title": "As It Was", "artist": "Harry Styles", "duration": 167, "original_url": "https://www.youtube.com/watch?v=H5v3kku4y6Q", "is_stream": True, "is_online": True},
-                        {"title": "Birds of a Feather", "artist": "Billie Eilish", "duration": 198, "original_url": "https://www.youtube.com/watch?v=d5gf9dXbPi0", "is_stream": True, "is_online": True},
-                        {"title": "Espresso", "artist": "Sabrina Carpenter", "duration": 175, "original_url": "https://www.youtube.com/watch?v=eVli-tstM5E", "is_stream": True, "is_online": True},
-                        {"title": "Die With A Smile", "artist": "Lady Gaga, Bruno Mars", "duration": 252, "original_url": "https://www.youtube.com/watch?v=kPa7bsKwL-c", "is_stream": True, "is_online": True},
-                        {"title": "Lose Control", "artist": "Teddy Swims", "duration": 211, "original_url": "https://www.youtube.com/watch?v=GZ3zL7kT6_c", "is_stream": True, "is_online": True},
-                        {"title": "Beautiful Things", "artist": "Benson Boone", "duration": 180, "original_url": "https://www.youtube.com/watch?v=Oa_RSwwpPaA", "is_stream": True, "is_online": True},
-                        {"title": "Cruel Summer", "artist": "Taylor Swift", "duration": 178, "original_url": "https://www.youtube.com/watch?v=ic8j13U_FS8", "is_stream": True, "is_online": True},
-                        {"title": "Not Like Us", "artist": "Kendrick Lamar", "duration": 274, "original_url": "https://www.youtube.com/watch?v=H58vbez_m4E", "is_stream": True, "is_online": True}
-                    ]
-                },
-                {
-                    "id": "yt_pl2",
-                    "title": "Cyberpunk 2077 Night City",
-                    "description": "Futuristic electronic & darksynth vibes",
-                    "track_count": 11,
-                    "thumbnail_url": "https://i.ytimg.com/vi/BnnbP7pCIvQ/hqdefault.jpg",
-                    "source": "youtube",
-                    "badge": "CYBER",
-                    "is_playlist": True,
-                    "original_url": "https://www.youtube.com/watch?v=BnnbP7pCIvQ",
-                    "tracks": [
-                        {"title": "Let You Down", "artist": "Dawid Podsiadło", "duration": 230, "original_url": "https://www.youtube.com/watch?v=BnnbP7pCIvQ", "is_stream": True, "is_online": True},
-                        {"title": "I Really Want to Stay at Your House", "artist": "Rosa Walton", "duration": 246, "original_url": "https://www.youtube.com/watch?v=KvMY1uzSC1E", "is_stream": True, "is_online": True},
-                        {"title": "Spoiler (Original Mix)", "artist": "Hyper", "duration": 345, "original_url": "https://www.youtube.com/watch?v=9ayYeLLT8Yy", "is_stream": True, "is_online": True},
-                        {"title": "Major Crimes", "artist": "Health", "duration": 245, "original_url": "https://www.youtube.com/watch?v=QjHw7b7O3z0", "is_stream": True, "is_online": True},
-                        {"title": "Chippin' In", "artist": "SAMURAI (Refused)", "duration": 213, "original_url": "https://www.youtube.com/watch?v=Igq3d6XA75Y", "is_stream": True, "is_online": True},
-                        {"title": "Never Fade Away", "artist": "SAMURAI (Refused)", "duration": 190, "original_url": "https://www.youtube.com/watch?v=P4bKxWpG44I", "is_stream": True, "is_online": True},
-                        {"title": "The Ballad of Buck Ravers", "artist": "SAMURAI (Refused)", "duration": 267, "original_url": "https://www.youtube.com/watch?v=7gX_mZJgG1U", "is_stream": True, "is_online": True},
-                        {"title": "Black Dog", "artist": "SAMURAI (Refused)", "duration": 262, "original_url": "https://www.youtube.com/watch?v=1uN3H6Z0_9s", "is_stream": True, "is_online": True},
-                        {"title": "The Rebel Path (Cello Version)", "artist": "P.T. Adamczyk", "duration": 251, "original_url": "https://www.youtube.com/watch?v=5rT_2xT8Nq4", "is_stream": True, "is_online": True},
-                        {"title": "Gr4ves", "artist": "Konrad OldMoney", "duration": 170, "original_url": "https://www.youtube.com/watch?v=5L5YJ0x9W9s", "is_stream": True, "is_online": True},
-                        {"title": "Violence", "artist": "Le Destroy", "duration": 282, "original_url": "https://www.youtube.com/watch?v=4xDzrJKXOOY", "is_stream": True, "is_online": True}
-                    ]
-                },
-                {
-                    "id": "yt_pl3",
-                    "title": "Epic Gaming & Boss Themes",
-                    "description": "Adrenaline-fueled OSTs & orchestrations",
-                    "track_count": 12,
-                    "thumbnail_url": "https://i.ytimg.com/vi/r7qovpFAGrQ/hqdefault.jpg",
-                    "source": "youtube",
-                    "badge": "GAMING",
-                    "is_playlist": True,
-                    "original_url": "https://www.youtube.com/watch?v=r7qovpFAGrQ",
-                    "tracks": [
-                        {"title": "The Only Thing They Fear Is You", "artist": "Mick Gordon", "duration": 413, "original_url": "https://www.youtube.com/watch?v=kpnW68QNrLg", "is_stream": True, "is_online": True},
-                        {"title": "Bury the Light", "artist": "Casey Edwards", "duration": 582, "original_url": "https://www.youtube.com/watch?v=Jrg9KxGNeJY", "is_stream": True, "is_online": True},
-                        {"title": "Rivers in the Desert", "artist": "Shoji Meguro, Lyn", "duration": 315, "original_url": "https://www.youtube.com/watch?v=sdDiHZMms-s", "is_stream": True, "is_online": True},
-                        {"title": "BFG Division", "artist": "Mick Gordon", "duration": 506, "original_url": "https://www.youtube.com/watch?v=QHRuTYtSbJQ", "is_stream": True, "is_online": True},
-                        {"title": "Rules of Nature", "artist": "Jamie Christopherson", "duration": 150, "original_url": "https://www.youtube.com/watch?v=N3472Q6kvg0", "is_stream": True, "is_online": True},
-                        {"title": "Elden Ring Main Theme", "artist": "Tsukasa Saitoh", "duration": 220, "original_url": "https://www.youtube.com/watch?v=r7qovpFAGrQ", "is_stream": True, "is_online": True},
-                        {"title": "Devil Trigger", "artist": "Casey Edwards", "duration": 405, "original_url": "https://www.youtube.com/watch?v=YV5IheNfKWB", "is_stream": True, "is_online": True},
-                        {"title": "MEGALOVANIA", "artist": "Toby Fox", "duration": 156, "original_url": "https://www.youtube.com/watch?v=wDgQdr8ZkTw", "is_stream": True, "is_online": True},
-                        {"title": "Soul of Cinder", "artist": "Yuka Kitamura", "duration": 353, "original_url": "https://www.youtube.com/watch?v=Z9dNrmGD7mU", "is_stream": True, "is_online": True},
-                        {"title": "Sogno di Volare", "artist": "Geoff Knorr", "duration": 232, "original_url": "https://www.youtube.com/watch?v=WQYN2P3E06s", "is_stream": True, "is_online": True},
-                        {"title": "Baba Yetu", "artist": "Christopher Tin", "duration": 210, "original_url": "https://www.youtube.com/watch?v=IJiHDmyhE1A", "is_stream": True, "is_online": True},
-                        {"title": "Halo Theme Mjolnir Mix", "artist": "Martin O'Donnell", "duration": 251, "original_url": "https://www.youtube.com/watch?v=sCxv2daOwjQ", "is_stream": True, "is_online": True}
-                    ]
-                },
-                {
-                    "id": "yt_pl4",
-                    "title": "Deep Focus / Code Beats",
-                    "description": "Ambient, lo-fi & chill electronic",
-                    "track_count": 10,
-                    "thumbnail_url": "https://i.ytimg.com/vi/f02mOEt11OQ/hqdefault.jpg",
-                    "source": "youtube",
-                    "badge": "FOCUS",
-                    "is_playlist": True,
-                    "original_url": "https://www.youtube.com/watch?v=f02mOEt11OQ",
-                    "tracks": [
-                        {"title": "Synthwave Radio Chill Beats", "artist": "Lofi Girl", "duration": 240, "original_url": "https://www.youtube.com/watch?v=4xDzrJKXOOY", "is_stream": True, "is_online": True},
-                        {"title": "Blurred", "artist": "Kiasmos", "duration": 305, "original_url": "https://www.youtube.com/watch?v=as_1_b3v8jA", "is_stream": True, "is_online": True},
-                        {"title": "Awake", "artist": "Tycho", "duration": 283, "original_url": "https://www.youtube.com/watch?v=2fRk5nF_n0s", "is_stream": True, "is_online": True},
-                        {"title": "Singularity", "artist": "Jon Hopkins", "duration": 389, "original_url": "https://www.youtube.com/watch?v=1H3pA4X-nrU", "is_stream": True, "is_online": True},
-                        {"title": "Kerala", "artist": "Bonobo", "duration": 237, "original_url": "https://www.youtube.com/watch?v=S0Q4gqBUs7c", "is_stream": True, "is_online": True},
-                        {"title": "Wet Hands", "artist": "C418", "duration": 90, "original_url": "https://www.youtube.com/watch?v=51oxZ3A8Oq4", "is_stream": True, "is_online": True},
-                        {"title": "Sol", "artist": "Solar Fields", "duration": 502, "original_url": "https://www.youtube.com/watch?v=f02mOEt11OQ", "is_stream": True, "is_online": True},
-                        {"title": "World of Sleepers", "artist": "Carbon Based Lifeforms", "duration": 315, "original_url": "https://www.youtube.com/watch?v=0k50e0Yt9wA", "is_stream": True, "is_online": True},
-                        {"title": "Soon It Will Be Cold Enough", "artist": "Emancipator", "duration": 265, "original_url": "https://www.youtube.com/watch?v=xQ4MAGHmMw4", "is_stream": True, "is_online": True},
-                        {"title": "Says", "artist": "Nils Frahm", "duration": 518, "original_url": "https://www.youtube.com/watch?v=dIwwjy4slI8", "is_stream": True, "is_online": True}
-                    ]
-                }
-            ]
-            self._on_cloud_playlists_loaded(fallback_playlists)
+        if hasattr(self, "_yt_pl_worker") and self._yt_pl_worker and self._yt_pl_worker.isRunning():
+            self._yt_pl_worker.cancel()
+        self._yt_pl_worker = FetchYTPlaylistsWorker(self)
+        self._yt_pl_worker.playlistsLoaded.connect(self._on_cloud_playlists_loaded)
+        self._yt_pl_worker.start()
 
         sp_engine = SpotifyAccountEngine.get_instance()
         if sp_engine.is_authenticated():
@@ -7378,76 +7781,86 @@ class DirectStreamPage(QWidget):
             self.search_bar.profile_btn.update_status(is_active_panel=False)
 
     def _on_cloud_mixes_loaded(self, mixes: list):
-        while self.cloud_mixes_layout.count() > 1:
-            child = self.cloud_mixes_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        if not isValid(self):
+            return
+        try:
+            while self.cloud_mixes_layout.count() > 1:
+                child = self.cloud_mixes_layout.takeAt(0)
+                if child and child.widget():
+                    child.widget().deleteLater()
 
-        for idx, item in enumerate(mixes[:12]):
-            accent = "#FF0000" if item.get("source") == "youtube" else "#FF5B06"
-            card = CloudMediaCard(item, accent_color=accent, parent=self.mixes_container)
-            curr_w = getattr(self, '_current_card_w', 319)
-            curr_h = getattr(self, '_current_card_h', 236)
-            card.update_dimensions(curr_w, curr_h)
-            card.playClicked.connect(self._show_playlist_detail)
-            self.cloud_mixes_layout.insertWidget(idx, card)
+            for idx, item in enumerate((mixes or [])[:12]):
+                accent = "#FF0000" if item.get("source") == "youtube" else "#FF5B06"
+                card = CloudMediaCard(item, accent_color=accent, parent=self.mixes_container)
+                curr_w = getattr(self, '_current_card_w', 319)
+                curr_h = getattr(self, '_current_card_h', 236)
+                card.update_dimensions(curr_w, curr_h)
+                card.playClicked.connect(self._show_playlist_detail)
+                self.cloud_mixes_layout.insertWidget(idx, card)
 
-            thumb = item.get("thumbnail_url")
-            if not thumb:
-                from fast_stream_resolver import extract_youtube_video_id
-                vid = item.get("seed_video_id") or extract_youtube_video_id(item.get("original_url") or "")
-                if vid:
-                    thumb = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
-                elif item.get("tracks") and len(item["tracks"]) > 0:
-                    thumb = item["tracks"][0].get("thumbnail_url")
+                thumb = item.get("thumbnail_url")
+                if not thumb:
+                    from fast_stream_resolver import extract_youtube_video_id
+                    vid = item.get("seed_video_id") or extract_youtube_video_id(item.get("original_url") or "")
+                    if vid:
+                        thumb = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+                    elif item.get("tracks") and len(item["tracks"]) > 0:
+                        thumb = item["tracks"][0].get("thumbnail_url")
 
-            if thumb:
-                cached_bytes = None
-                try:
-                    from ImageCacheEngine import ImageCacheEngine
-                    cached_bytes = ImageCacheEngine.get_instance().get_bytes(thumb)
-                except Exception:
-                    pass
+                if thumb:
+                    cached_bytes = None
+                    try:
+                        from ImageCacheEngine import ImageCacheEngine
+                        cached_bytes = ImageCacheEngine.get_instance().get_bytes(thumb)
+                    except Exception:
+                        pass
 
-                if cached_bytes:
-                    _safe_set_card_pixmap(card, cached_bytes)
-                else:
-                    loader = AsyncImageLoader(thumb, self)
-                    loader.loaded.connect(lambda u, b, c=card: _safe_set_card_pixmap(c, b))
-                    loader.finished.connect(lambda l=loader: (self._image_loaders.remove(l) if l in self._image_loaders else None, l.deleteLater()))
-                    self._image_loaders.append(loader)
-                    loader.start()
+                    if cached_bytes:
+                        _safe_set_card_pixmap(card, cached_bytes)
+                    else:
+                        loader = AsyncImageLoader(thumb, self)
+                        loader.loaded.connect(lambda u, b, c=card: _safe_set_card_pixmap(c, b))
+                        loader.finished.connect(lambda l=loader: (self._image_loaders.remove(l) if l in self._image_loaders else None, l.deleteLater()))
+                        self._image_loaders.append(loader)
+                        loader.start()
+        except (RuntimeError, Exception):
+            pass
 
     def _on_spotify_recs_loaded(self, recs: list):
         # Dedicated to Spotify Cloud Playlists/Feeds without overriding the 5 signature mixes
         pass
 
     def _on_cloud_playlists_loaded(self, playlists: list):
-        # Update Liked Music Portal Card with genuine synchronized track count and cover art
-        for it in (playlists or []):
-            if isinstance(it, dict):
-                t_low = str(it.get("title", "")).lower()
-                if it.get("id") in ("LM", "VLLM", "FEmusic_liked_videos") or "liked music" in t_low or "musik yang disukai" in t_low:
-                    cnt = it.get("track_count") or 0
-                    if hasattr(self, 'liked_portal_card') and self.liked_portal_card:
-                        self.liked_portal_card.set_track_count(cnt)
-                        thumb = it.get("thumbnail_url")
-                        if thumb:
-                            cached_bytes = None
-                            try:
-                                from ImageCacheEngine import ImageCacheEngine
-                                cached_bytes = ImageCacheEngine.get_instance().get_bytes(thumb)
-                            except Exception:
-                                pass
-                            if cached_bytes:
-                                _safe_set_card_pixmap(self.liked_portal_card, cached_bytes, 178, 178)
-                            else:
-                                loader = AsyncImageLoader(thumb, self)
-                                loader.loaded.connect(lambda u, b, c=self.liked_portal_card: _safe_set_card_pixmap(c, b, 178, 178))
-                                loader.finished.connect(lambda l=loader: (self._image_loaders.remove(l) if l in self._image_loaders else None, l.deleteLater()))
-                                self._image_loaders.append(loader)
-                                loader.start()
-                    break
+        if not isValid(self):
+            return
+        try:
+            # Update Liked Music Portal Card with genuine synchronized track count and cover art
+            for it in (playlists or []):
+                if isinstance(it, dict):
+                    t_low = str(it.get("title", "")).lower()
+                    if it.get("id") in ("LM", "VLLM", "FEmusic_liked_videos") or "liked music" in t_low or "musik yang disukai" in t_low:
+                        cnt = it.get("track_count") or 0
+                        if hasattr(self, 'liked_portal_card') and self.liked_portal_card:
+                            self.liked_portal_card.set_track_count(cnt)
+                            thumb = it.get("thumbnail_url")
+                            if thumb:
+                                cached_bytes = None
+                                try:
+                                    from ImageCacheEngine import ImageCacheEngine
+                                    cached_bytes = ImageCacheEngine.get_instance().get_bytes(thumb)
+                                except Exception:
+                                    pass
+                                if cached_bytes:
+                                    _safe_set_card_pixmap(self.liked_portal_card, cached_bytes, 178, 178)
+                                else:
+                                    loader = AsyncImageLoader(thumb, self)
+                                    loader.loaded.connect(lambda u, b, c=self.liked_portal_card: _safe_set_card_pixmap(c, b, 178, 178))
+                                    loader.finished.connect(lambda l=loader: (self._image_loaders.remove(l) if l in self._image_loaders else None, l.deleteLater()))
+                                    self._image_loaders.append(loader)
+                                    loader.start()
+                        break
+        except (RuntimeError, Exception):
+            pass
 
     def _on_search_query_changed(self, text: str):
         query = text.strip()

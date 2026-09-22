@@ -15151,7 +15151,6 @@ class GameLauncher(QWidget):
             kill_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             kill_sock.sendto(json.dumps({'cmd': 'exit'}).encode('utf-8'), ('127.0.0.1', 48123))
             kill_sock.close()
-            time.sleep(0.3)
         except Exception:
             pass
         
@@ -22972,12 +22971,104 @@ if __name__ == "__main__":
     update_splash(10, "Loading fonts...")
     update_splash(30, "Loading configuration...")
     
+    def apply_global_dark_theme(target_app):
+        """Enforces application-wide dark QPalette and base stylesheets to eliminate unstyled black text."""
+        from PySide6.QtGui import QPalette, QColor
+        dark_palette = QPalette()
+        dark_bg = QColor("#0D0E15")
+        dark_surface = QColor("#141622")
+        card_bg = QColor("#1A1D2D")
+        text_white = QColor("#FFFFFF")
+        disabled_text = QColor("#666677")
+        accent_orange = QColor("#FF5B06")
+
+        dark_palette.setColor(QPalette.Window, dark_bg)
+        dark_palette.setColor(QPalette.WindowText, text_white)
+        dark_palette.setColor(QPalette.Base, dark_surface)
+        dark_palette.setColor(QPalette.AlternateBase, card_bg)
+        dark_palette.setColor(QPalette.ToolTipBase, card_bg)
+        dark_palette.setColor(QPalette.ToolTipText, text_white)
+        dark_palette.setColor(QPalette.Text, text_white)
+        dark_palette.setColor(QPalette.Button, dark_surface)
+        dark_palette.setColor(QPalette.ButtonText, text_white)
+        dark_palette.setColor(QPalette.BrightText, QColor("#FF4444"))
+        dark_palette.setColor(QPalette.Link, accent_orange)
+        dark_palette.setColor(QPalette.Highlight, accent_orange)
+        dark_palette.setColor(QPalette.HighlightedText, text_white)
+        dark_palette.setColor(QPalette.PlaceholderText, QColor("#777788"))
+
+        dark_palette.setColor(QPalette.Disabled, QPalette.WindowText, disabled_text)
+        dark_palette.setColor(QPalette.Disabled, QPalette.Text, disabled_text)
+        dark_palette.setColor(QPalette.Disabled, QPalette.ButtonText, disabled_text)
+        dark_palette.setColor(QPalette.Disabled, QPalette.Highlight, QColor("#2A2D3D"))
+        dark_palette.setColor(QPalette.Disabled, QPalette.HighlightedText, disabled_text)
+
+        target_app.setPalette(dark_palette)
+
+    apply_global_dark_theme(app)
+
     # Set default application font (Orbitron)
     default_font = QFont("Orbitron", 9)
     app.setFont(default_font)
     app.setStyleSheet("""
         * {
+            font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            color: #FFFFFF;
+        }
+        QWidget {
+            color: #FFFFFF;
+        }
+        QDialog, QFileDialog {
+            background-color: #0D0E15;
+            color: #FFFFFF;
+        }
+        QLabel {
+            color: #FFFFFF;
+        }
+        QLineEdit, QTextEdit, QPlainTextEdit {
+            background-color: #141622;
+            color: #FFFFFF;
+            selection-background-color: #FF5B06;
+            selection-color: #FFFFFF;
+        }
+        QSpinBox, QDoubleSpinBox {
+            background-color: #141622;
+            color: #FFFFFF;
+        }
+        QComboBox {
+            background-color: #141622;
+            color: #FFFFFF;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #141622;
+            color: #FFFFFF;
+            selection-background-color: #FF5B06;
+            selection-color: #FFFFFF;
+        }
+        QToolTip {
+            background-color: #141622;
+            color: #FFFFFF;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 6px;
             font-family: 'Orbitron', sans-serif;
+            font-size: 11px;
+        }
+        QMenu {
+            background-color: #141622;
+            color: #FFFFFF;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 4px;
+            border-radius: 6px;
+        }
+        QMenu::item {
+            color: #FFFFFF;
+            padding: 6px 24px;
+            border-radius: 4px;
+        }
+        QMenu::item:selected {
+            background-color: #FF5B06;
+            color: #FFFFFF;
         }
         QMessageBox {
             background-color: #121212;

@@ -436,11 +436,14 @@ class MusicSettingsDialog(QDialog):
     def change_audio_device(self, index):
         if 0 <= index < len(self.devices):
             selected_device = self.devices[index]
-            self.audio_output.setDevice(selected_device)
+            if self.audio_output:
+                self.audio_output.setDevice(selected_device)
             desc = selected_device.description()
             print(f"Switched audio device to: {desc}")
-            if hasattr(self.audio_player, '_save_last_track'):
-                 self.audio_player._save_last_track()
+            if hasattr(self.audio_player, '_set_audio_device'):
+                self.audio_player._set_audio_device(selected_device)
+            elif hasattr(self.audio_player, '_save_last_track'):
+                self.audio_player._save_last_track()
 
     def change_stereo_mode(self, index):
         if hasattr(self.audio_player, 'set_stereo_mode'):

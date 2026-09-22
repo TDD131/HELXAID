@@ -10253,7 +10253,16 @@ class CursorClampCanvas(QWidget):
         if key in self._hz_cache:
             return self._hz_cache[key]
 
-        max_hz = 0
+        max_hz = 60
+        if screen:
+            try:
+                rate = int(round(screen.refreshRate()))
+                if rate > 0:
+                    self._hz_cache[key] = rate
+                    return rate
+            except Exception:
+                pass
+
         try:
             class DEVMODEW(ctypes.Structure):
                 _fields_ = [
@@ -10306,14 +10315,10 @@ class CursorClampCanvas(QWidget):
                     if dm.dmDisplayFrequency > max_hz:
                         max_hz = dm.dmDisplayFrequency
                 i += 1
+                if i > 64:  # Safety cap to avoid infinite loops
+                    break
         except Exception:
-            max_hz = 0
-
-        if max_hz <= 0 and screen:
-            try:
-                max_hz = int(round(screen.refreshRate()))
-            except Exception:
-                max_hz = 60
+            pass
 
         self._hz_cache[key] = max_hz
         return max_hz
@@ -13590,7 +13595,28 @@ class BossKeyDynamicAppCombo(QComboBox):
         self.setFixedHeight(30)
         self._target_mode = "process_name"  # "process_name" | "file_path"
         self._cached_apps = []
-        self.refresh_process_list(preserve_text="code.exe")
+        # Populate fast presets immediately for 0ms panel init latency
+        self._populate_presets(preserve_text="code.exe")
+
+    def _populate_presets(self, preserve_text=None):
+        PRESETS = [
+            {"name": "code.exe", "path": "code.exe"},
+            {"name": "excel.exe", "path": "excel.exe"},
+            {"name": "winword.exe", "path": "winword.exe"},
+            {"name": "notepad.exe", "path": "notepad.exe"},
+            {"name": "calc.exe", "path": "calc.exe"},
+            {"name": "chrome.exe", "path": "chrome.exe"},
+            {"name": "msedge.exe", "path": "msedge.exe"},
+        ]
+        self.blockSignals(True)
+        self.clear()
+        items = [p["name"] for p in PRESETS]
+        self.addItems(items)
+        if preserve_text:
+            self.setEditText(preserve_text)
+        elif items:
+            self.setEditText(items[0])
+        self.blockSignals(False)
 
     def text(self) -> str:
         return self.currentText().strip()
@@ -16266,8 +16292,6 @@ class MacroSettingsPanel(QWidget):
             kill_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             kill_sock.sendto(json.dumps({'cmd': 'exit'}).encode('utf-8'), ('127.0.0.1', 48123))
             kill_sock.close()
-            import time
-            time.sleep(0.5)  # Wait for old hook to cleanly unhook and exit
         except Exception:
             pass
         

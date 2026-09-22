@@ -147,21 +147,20 @@ class AHKPluginManager:
         with open(self.script_path, "w", encoding="utf-8") as f:
             f.write(script_content)
 
-        # Check if AutoHotkey.exe exists (auto-download if missing)
+        # Check if AutoHotkey.exe exists
         if not os.path.exists(self.ahk_exe_path):
-            print(f"[AHKPluginManager] AutoHotkey.exe not found at {self.ahk_exe_path}. Attempting auto-download...")
+            # Check tools_downloader path once before giving up
             try:
-                from integrations.tools_downloader import download_ahk, get_ahk_path
-                success, res = download_ahk()
-                if success:
-                    self.ahk_exe_path = res
-                    print(f"[AHKPluginManager] Auto-download succeeded: {res}")
-                else:
-                    print(f"[AHKPluginManager] Auto-download failed: {res}")
-                    return
-            except Exception as e:
-                print(f"[AHKPluginManager] Auto-download error: {e}")
-                return
+                from integrations.tools_downloader import get_ahk_path
+                detected_path = get_ahk_path()
+                if os.path.exists(detected_path):
+                    self.ahk_exe_path = detected_path
+            except Exception:
+                pass
+
+        if not os.path.exists(self.ahk_exe_path):
+            print(f"[AHKPluginManager] AutoHotkey.exe not found at {self.ahk_exe_path}. Skipping spawn (use UI banner to download).")
+            return
 
         # Start process
         try:

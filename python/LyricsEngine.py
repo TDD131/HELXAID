@@ -634,24 +634,62 @@ class LyricsCacheManager:
                         raw_translation=l.get('raw_translation')
                     ) for l in data.get('lines', [])
                 ]
-                if not lines:
-                    return None
+                # Sanitize loaded cached lines from previous delimiter corruption or malformed batch strings
+                clean_lines = []
+                delim_pattern = re.compile(r'⟦\s*[#＃]\s*⟧|\[\s*[#＃]\s*\]|【\s*[#＃]\s*】|§\s*[#＃]\s*§|[⟦⟧【】§]|\|{2,3}', re.IGNORECASE)
+                for l in lines:
+                    txt = l.text or ""
+                    max_allowed_len = max(130, len(txt) * 5)
+                    
+                    roma = l.romaji
+                    if roma and (delim_pattern.search(roma) or len(roma) > max_allowed_len):
+                        roma = None
+                    g_roma = l.google_romaji
+                    if g_roma and (delim_pattern.search(g_roma) or len(g_roma) > max_allowed_len):
+                        g_roma = None
+                    gen_roma = l.genius_romaji
+                    if gen_roma and (delim_pattern.search(gen_roma) or len(gen_roma) > max_allowed_len):
+                        gen_roma = None
+                    ne_roma = l.netease_romaji
+                    if ne_roma and (delim_pattern.search(ne_roma) or len(ne_roma) > max_allowed_len):
+                        ne_roma = None
+                    trans = l.translation
+                    if trans and (delim_pattern.search(trans) or len(trans) > max_allowed_len):
+                        trans = None
+                    raw_trans = l.raw_translation
+                    if raw_trans and (delim_pattern.search(raw_trans) or len(raw_trans) > max_allowed_len):
+                        raw_trans = None
+
+                    active_sub = trans or roma or g_roma or gen_roma or ne_roma or raw_trans
+                    clean_lines.append(
+                        LyricLine(
+                            time_ms=l.time_ms,
+                            text=txt,
+                            translation=active_sub,
+                            romaji=roma or g_roma or gen_roma or ne_roma,
+                            google_romaji=g_roma,
+                            genius_romaji=gen_roma,
+                            netease_romaji=ne_roma,
+                            raw_translation=raw_trans
+                        )
+                    )
+
                 res = LyricData(
                     is_synced=data.get('is_synced', False),
-                    lines=lines,
+                    lines=clean_lines,
                     source=data.get('source', 'Cached (LRCLIB)'),
                     title=data.get('title', title),
                     artist=data.get('artist', artist),
                     album=data.get('album', ''),
                     offset_ms=data.get('offset_ms', 0),
                     plain_text=data.get('plain_text', ''),
-                    has_romaji=data.get('has_romaji', False) or any(bool(l.romaji or l.google_romaji) for l in lines),
-                    has_google_romaji=data.get('has_google_romaji', False) or any(bool(l.google_romaji) for l in lines),
-                    has_genius_romaji=data.get('has_genius_romaji', False) or any(bool(l.genius_romaji) for l in lines),
-                    has_netease_romaji=data.get('has_netease_romaji', False) or any(bool(l.netease_romaji) for l in lines),
-                    has_translation=data.get('has_translation', False) or any(bool(l.raw_translation) for l in lines),
+                    has_romaji=any(bool(l.romaji or l.google_romaji) for l in clean_lines),
+                    has_google_romaji=any(bool(l.google_romaji) for l in clean_lines),
+                    has_genius_romaji=any(bool(l.genius_romaji) for l in clean_lines),
+                    has_netease_romaji=any(bool(l.netease_romaji) for l in clean_lines),
+                    has_translation=any(bool(l.raw_translation) for l in clean_lines),
                     genius_url=data.get('genius_url', ''),
-                    romaji_status=data.get('romaji_status', 'none'),
+                    romaji_status=data.get('romaji_status', 'none') if any(bool(l.google_romaji) for l in clean_lines) else 'none',
                     romaji_attempt_ts=data.get('romaji_attempt_ts', 0.0)
                 )
                 if is_valid_lyric_content(res):
@@ -1720,7 +1758,7 @@ class GoogleRomajiClient:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0"
     ]
-    DELIMITER = " ⟦#⟧ "
+    DELIMITER = "\n⟦#⟧\n"
     breaker = RomajiCircuitBreaker()
 
     @classmethod
@@ -1794,13 +1832,16 @@ class GoogleRomajiClient:
     def fetch_romaji_for_lines(cls, raw_lines: List[str], cancellation_check: Optional[Callable[[], bool]] = None) -> List[Optional[str]]:
         """
         Translates a list of plain lines to Romanized text via throttled batch chunking
-        with automatic client rotation and local kana fallback.
+        with resilient delimiter splitting, whitespace tolerance, and local kana fallback.
         """
         if not raw_lines:
             return []
 
         results: List[Optional[str]] = [None] * len(raw_lines)
-        CHUNK_SIZE = 35
+        CHUNK_SIZE = 25
+
+        split_regex = re.compile(r'\s*(?:⟦\s*[#＃]\s*⟧|\[\s*[#＃]\s*\]|【\s*[#＃]\s*】|§\s*[#＃]\s*§|\|{2,3})\s*', re.IGNORECASE)
+        artifact_regex = re.compile(r'⟦\s*[#＃]\s*⟧|\[\s*[#＃]\s*\]|【\s*[#＃]\s*】|§\s*[#＃]\s*§|[⟦⟧【】§]', re.IGNORECASE)
 
         for i in range(0, len(raw_lines), CHUNK_SIZE):
             if cancellation_check and cancellation_check():
@@ -1812,13 +1853,35 @@ class GoogleRomajiClient:
             romaji_raw, status = cls._fetch_romaji_chunk(joined)
 
             if romaji_raw:
-                parts = re.split(r'\s*⟦#⟧\s*|\s*\|\s*\|\s*\|\s*', romaji_raw)
-                if len(parts) == len(chunk_slice):
-                    for j, part in enumerate(parts):
-                        results[i + j] = parts[j].strip()
+                # 1. Primary delimiter split (matches '⟦#⟧', '⟦ # ⟧', '[ # ]', etc.)
+                raw_parts = [p.strip() for p in split_regex.split(romaji_raw) if p.strip()]
+
+                # 2. Secondary newline split if primary split failed to produce expected length
+                if len(raw_parts) != len(chunk_slice):
+                    newline_parts = [p.strip() for p in re.split(r'\r?\n+', romaji_raw) if p.strip()]
+                    filtered_nl = [
+                        p for p in newline_parts 
+                        if not split_regex.fullmatch(p) and p not in ('⟦#⟧', '⟦ # ⟧', '[#]', '[ # ]', '#', '|||')
+                    ]
+                    if len(filtered_nl) == len(chunk_slice):
+                        raw_parts = filtered_nl
+
+                # 3. Defensive mapping with strict artifact rejection
+                if len(raw_parts) == len(chunk_slice):
+                    for j, part in enumerate(raw_parts):
+                        clean_part = artifact_regex.sub('', part).strip()
+                        max_len = max(120, len(chunk_slice[j]) * 5)
+                        if clean_part and len(clean_part) <= max_len:
+                            results[i + j] = clean_part
                 else:
-                    for j in range(min(len(parts), len(chunk_slice))):
-                        results[i + j] = parts[j].strip()
+                    # Mismatch recovery: Only assign clean, single-line parts; NEVER dump a multi-line monster string!
+                    for j, part in enumerate(raw_parts):
+                        if j < len(chunk_slice):
+                            clean_part = artifact_regex.sub('', part).strip()
+                            max_len = max(120, len(chunk_slice[j]) * 4)
+                            if clean_part and not ('⟦' in part or '⟧' in part or '\n' in part) and len(clean_part) <= max_len:
+                                results[i + j] = clean_part
+
             elif status == 429:
                 break
 
